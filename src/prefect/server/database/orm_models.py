@@ -53,6 +53,13 @@ from prefect.utilities.names import generate_slug
 # extra operator) and fall back to the generic JSON variant for SQLite
 sa_JSON: postgresql.JSON = postgresql.JSON().with_variant(sa.JSON(), "sqlite")
 
+# Stream values preserve protocol-significant JSON scalar semantics. PostgreSQL
+# JSONB normalizes signed zero, and Prefect's general JSON type maps Python
+# `None` to SQL NULL; both would change a valid value after durable acceptance.
+stream_value_JSON: postgresql.JSON = postgresql.JSON(none_as_null=False).with_variant(
+    sa.JSON(none_as_null=False), "sqlite"
+)
+
 
 class Base(DeclarativeBase):
     """
@@ -645,6 +652,182 @@ class FlowRun(Run):
                 sqlite_where=cls.state_type == schemas.states.StateType.SCHEDULED,
             ),
         )
+
+
+class StreamPartition(Base):
+    """A durable stream owned by a flow run."""
+
+    flow_run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("flow_run.id", ondelete="CASCADE"), index=True
+    )
+    protocol_version: Mapped[int] = mapped_column(server_default="1", default=1)
+    state: Mapped[str] = mapped_column(server_default="OPEN", default="OPEN")
+    error: Mapped[Optional[str]] = mapped_column(sa.Text)
+    tail_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    last_sequence: Mapped[int] = mapped_column(
+        sa.BigInteger, server_default="0", default=0
+    )
+    producer_position: Mapped[int] = mapped_column(
+        sa.BigInteger, server_default="0", default=0
+    )
+    producer_kind: Mapped[Optional[str]]
+    producer_task_run_id: Mapped[Optional[uuid.UUID]]
+    owner_id: Mapped[Optional[uuid.UUID]]
+    attempt: Mapped[int] = mapped_column(server_default="0", default=0)
+    owner_epoch: Mapped[int] = mapped_column(server_default="0", default=0)
+    limits: Mapped[dict[str, Any]] = mapped_column(
+        JSON, server_default="{}", default=dict
+    )
+    record_count: Mapped[int] = mapped_column(
+        sa.BigInteger, server_default="0", default=0
+    )
+    byte_count: Mapped[int] = mapped_column(
+        sa.BigInteger, server_default="0", default=0
+    )
+    released: Mapped[bool] = mapped_column(server_default="0", default=False)
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("id", "flow_run_id"),
+        sa.CheckConstraint("protocol_version = 1", name="protocol_version_supported"),
+        sa.CheckConstraint(
+            "state IN ('OPEN', 'COMPLETED', 'FAILED')", name="state_valid"
+        ),
+        sa.CheckConstraint(
+            "producer_kind IS NULL OR producer_kind IN ('SOURCE', 'CONSUMER')",
+            name="producer_kind_valid",
+        ),
+        sa.CheckConstraint(
+            "last_sequence >= 0 AND producer_position >= last_sequence",
+            name="sequence_progress_valid",
+        ),
+        sa.CheckConstraint(
+            "record_count >= 0 AND byte_count >= 0", name="usage_nonnegative"
+        ),
+        sa.CheckConstraint(
+            "attempt >= 0 AND owner_epoch >= 0", name="authority_nonnegative"
+        ),
+        sa.CheckConstraint(
+            "(owner_id IS NULL AND attempt = 0 AND owner_epoch = 0) OR "
+            "(owner_id IS NOT NULL AND attempt >= 1 AND owner_epoch >= 1)",
+            name="authority_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(state = 'OPEN' AND tail_sequence IS NULL AND error IS NULL) OR "
+            "(state = 'COMPLETED' AND tail_sequence = last_sequence "
+            "AND error IS NULL) OR "
+            "(state = 'FAILED' AND tail_sequence = last_sequence "
+            "AND error IS NOT NULL)",
+            name="terminal_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "released = false OR state IN ('COMPLETED', 'FAILED')",
+            name="release_requires_terminal",
+        ),
+        sa.Index("ix_stream_partition__flow_run_id_state", "flow_run_id", "state"),
+    )
+
+
+class StreamRecord(Base):
+    """An immutable record in a durable stream."""
+
+    stream_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("stream_partition.id", ondelete="CASCADE")
+    )
+    sequence: Mapped[int] = mapped_column(sa.BigInteger)
+    producer_position: Mapped[int] = mapped_column(sa.BigInteger)
+    value: Mapped[Any] = mapped_column(stream_value_JSON)
+    value_digest: Mapped[str] = mapped_column(sa.String(64))
+    size_bytes: Mapped[int]
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("stream_id", "sequence"),
+        sa.UniqueConstraint("stream_id", "producer_position"),
+        sa.CheckConstraint("sequence > 0", name="sequence_positive"),
+        sa.CheckConstraint("producer_position > 0", name="producer_position_positive"),
+        sa.CheckConstraint("length(value_digest) = 64", name="digest_length_valid"),
+        sa.CheckConstraint("size_bytes > 0", name="size_positive"),
+    )
+
+
+class StreamConsumer(Base):
+    """A logical TaskRun consumer and its durable cursor."""
+
+    flow_run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("flow_run.id", ondelete="CASCADE"), index=True
+    )
+    input_stream_id: Mapped[uuid.UUID]
+    output_stream_id: Mapped[uuid.UUID]
+    owner_id: Mapped[uuid.UUID]
+    attempt: Mapped[int]
+    owner_epoch: Mapped[int]
+    completed_through: Mapped[int] = mapped_column(
+        sa.BigInteger, server_default="0", default=0
+    )
+    managed_state: Mapped[dict[str, Any]] = mapped_column(
+        stream_value_JSON, server_default="{}", default=dict
+    )
+    inflight_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    delivery_id: Mapped[Optional[uuid.UUID]]
+
+    __table_args__: Any = (
+        sa.ForeignKeyConstraint(
+            ["input_stream_id", "flow_run_id"],
+            ["stream_partition.id", "stream_partition.flow_run_id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["output_stream_id", "flow_run_id"],
+            ["stream_partition.id", "stream_partition.flow_run_id"],
+            ondelete="CASCADE",
+        ),
+        sa.UniqueConstraint("output_stream_id"),
+        sa.UniqueConstraint("delivery_id"),
+        sa.CheckConstraint(
+            "input_stream_id != output_stream_id", name="distinct_streams"
+        ),
+        sa.CheckConstraint("attempt >= 1", name="attempt_positive"),
+        sa.CheckConstraint("owner_epoch >= 1", name="owner_epoch_positive"),
+        sa.CheckConstraint(
+            "completed_through >= 0", name="completed_through_nonnegative"
+        ),
+        sa.CheckConstraint(
+            "(inflight_sequence IS NULL AND delivery_id IS NULL) OR "
+            "(inflight_sequence = completed_through + 1 AND delivery_id IS NOT NULL)",
+            name="delivery_shape_valid",
+        ),
+        sa.Index("ix_stream_consumer__input_stream_id", "input_stream_id"),
+    )
+
+
+class StreamCompletion(Base):
+    """The immutable terminal witness for one consumed input record."""
+
+    consumer_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("stream_consumer.id", ondelete="CASCADE")
+    )
+    input_sequence: Mapped[int] = mapped_column(sa.BigInteger)
+    delivery_id: Mapped[uuid.UUID]
+    owner_epoch: Mapped[int]
+    kind: Mapped[str]
+    intent_digest: Mapped[str] = mapped_column(sa.String(64))
+    output_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("consumer_id", "input_sequence"),
+        sa.UniqueConstraint("consumer_id", "delivery_id"),
+        sa.UniqueConstraint("consumer_id", "output_sequence"),
+        sa.CheckConstraint("input_sequence > 0", name="input_sequence_positive"),
+        sa.CheckConstraint("owner_epoch >= 1", name="owner_epoch_positive"),
+        sa.CheckConstraint("kind IN ('YIELD', 'RETURN')", name="kind_valid"),
+        sa.CheckConstraint(
+            "length(intent_digest) = 64", name="intent_digest_length_valid"
+        ),
+        sa.CheckConstraint(
+            "(kind = 'YIELD' AND output_sequence > 0) OR "
+            "(kind = 'RETURN' AND output_sequence IS NULL)",
+            name="output_shape_valid",
+        ),
+    )
 
 
 _TaskInput = Union[
