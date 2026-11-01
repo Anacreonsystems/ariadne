@@ -424,7 +424,21 @@ class NativeStreamStore:
             )
         async with self._session() as session:
             peek = await self._peek(session, input_stream_id)
+            # An inserted consumer takes an implicit FK lock on its FlowRun.
+            # Acquire the parent before children to avoid reversing release's
+            # FlowRun -> stream order; SHARE also fences terminal transitions.
+            flow = await session.scalar(
+                sa.select(self.db.FlowRun)
+                .where(self.db.FlowRun.id == peek.flow_run_id)
+                .with_for_update(read=True)
+            )
+            if flow is None:
+                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
             await self._task(session, task_run_id, peek.flow_run_id, attempt)
+            if flow.state_type in TERMINAL_STATES:
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT", "Cannot open a consumer for a final FlowRun"
+                )
             streams = await self._streams(session, [input_stream_id, output_stream_id])
             upstream, output = streams[input_stream_id], streams[output_stream_id]
             if upstream.flow_run_id != output.flow_run_id:

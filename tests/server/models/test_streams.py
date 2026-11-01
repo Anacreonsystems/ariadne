@@ -7,7 +7,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -729,6 +729,179 @@ async def test_release_and_append_race_leaves_no_payload_after_horizon(db, graph
                 )
             )
         ).all()
+
+
+async def reserve_consumer(db: PrefectDBInterface, graph: Graph) -> tuple[UUID, UUID]:
+    async with db.session_context(begin_transaction=True) as session:
+        task = await models.task_runs.create_task_run(
+            session=session,
+            task_run=schemas.core.TaskRun(
+                flow_run_id=graph.consumer.flow_run_id,
+                task_key=f"first-open-{uuid4()}",
+                dynamic_key="0",
+                state=schemas.states.Running(),
+            ),
+        )
+    output_id = uuid4()
+    await graph.store.create(graph.consumer.flow_run_id, output_id)
+    return task.id, output_id
+
+
+async def wait_for_lock_waiter(db: PrefectDBInterface, holder_pid: int) -> int:
+    async def find_waiter() -> int:
+        async with db.session_context() as session:
+            while True:
+                await session.execute(sa.text("SELECT pg_stat_clear_snapshot()"))
+                pid = await session.scalar(
+                    sa.text(
+                        "SELECT pid FROM pg_stat_activity "
+                        "WHERE :holder = ANY(pg_blocking_pids(pid)) LIMIT 1"
+                    ),
+                    {"holder": holder_pid},
+                )
+                if pid is not None:
+                    return pid
+                await asyncio.sleep(0.01)
+
+    return await asyncio.wait_for(find_waiter(), timeout=10)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [schemas.states.Completed(), schemas.states.Failed(), schemas.states.Cancelled()],
+)
+async def test_first_consumer_rejects_final_flow_with_running_task(
+    db: PrefectDBInterface, graph: Graph, state: schemas.states.State
+):
+    task_id, output_id = await reserve_consumer(db, graph)
+    before = await graph.store.status(output_id)
+    async with db.session_context(begin_transaction=True) as session:
+        await models.flow_runs.set_flow_run_state(
+            session=session,
+            flow_run_id=graph.consumer.flow_run_id,
+            state=state,
+            force=True,
+        )
+    with pytest.raises(NativeStreamError) as error:
+        await graph.store.open_consumer(
+            graph.source.stream_id, output_id, task_id, uuid4(), 1
+        )
+    assert error.value.code == "TERMINAL_CONFLICT"
+    assert await graph.store.status(output_id) == before
+    async with db.session_context() as session:
+        assert await session.get(db.StreamConsumer, task_id) is None
+
+
+async def test_first_open_waits_for_flow_before_task_and_headers_during_release(
+    db: PrefectDBInterface, graph: Graph
+):
+    task_id, output_id = await reserve_consumer(db, graph)
+    tasks = []
+    try:
+        async with db.session_context(begin_transaction=True) as gate:
+            await gate.scalar(
+                sa.select(db.FlowRun)
+                .where(db.FlowRun.id == graph.consumer.flow_run_id)
+                .with_for_update()
+            )
+            await models.flow_runs.set_flow_run_state(
+                session=gate,
+                flow_run_id=graph.consumer.flow_run_id,
+                state=schemas.states.Failed(),
+                force=True,
+            )
+            holder = await gate.scalar(sa.text("SELECT pg_backend_pid()"))
+            opened = asyncio.create_task(
+                graph.store.open_consumer(
+                    graph.source.stream_id, output_id, task_id, uuid4(), 1
+                )
+            )
+            tasks.append(opened)
+            await wait_for_lock_waiter(db, holder)
+            # A blocked first-open must own neither child lock. Otherwise its
+            # implicit parent FK lock reverses release/delete's lock order.
+            async with db.session_context(begin_transaction=True) as observer:
+                await observer.scalar(
+                    sa.select(db.TaskRun)
+                    .where(db.TaskRun.id == task_id)
+                    .with_for_update(nowait=True)
+                )
+                await observer.scalars(
+                    sa.select(db.StreamPartition)
+                    .where(
+                        db.StreamPartition.id.in_([graph.source.stream_id, output_id])
+                    )
+                    .order_by(db.StreamPartition.id)
+                    .with_for_update(nowait=True)
+                )
+            released = asyncio.create_task(
+                graph.store.release_flow(graph.consumer.flow_run_id)
+            )
+            tasks.append(released)
+        open_result, release_result = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True), timeout=10
+        )
+        assert isinstance(open_result, NativeStreamError)
+        assert open_result.code == "TERMINAL_CONFLICT"
+        assert release_result == 3
+        async with db.session_context() as session:
+            assert await session.get(db.StreamConsumer, task_id) is None
+        assert (await graph.store.status(output_id)).released
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_first_open_commits_before_waiting_finalization_and_release(
+    db: PrefectDBInterface, graph: Graph
+):
+    task_id, output_id = await reserve_consumer(db, graph)
+
+    async def finalize_and_release() -> int:
+        async with db.session_context(begin_transaction=True) as session:
+            await models.flow_runs.set_flow_run_state(
+                session=session,
+                flow_run_id=graph.consumer.flow_run_id,
+                state=schemas.states.Failed(),
+                force=True,
+            )
+        return await graph.store.release_flow(graph.consumer.flow_run_id)
+
+    tasks = []
+    try:
+        async with db.session_context(begin_transaction=True) as gate:
+            await gate.scalar(
+                sa.select(db.StreamPartition)
+                .where(db.StreamPartition.id == output_id)
+                .with_for_update()
+            )
+            holder = await gate.scalar(sa.text("SELECT pg_backend_pid()"))
+            opened = asyncio.create_task(
+                graph.store.open_consumer(
+                    graph.source.stream_id, output_id, task_id, uuid4(), 1
+                )
+            )
+            tasks.append(opened)
+            opener_pid = await wait_for_lock_waiter(db, holder)
+            released = asyncio.create_task(finalize_and_release())
+            tasks.append(released)
+            await wait_for_lock_waiter(db, opener_pid)
+        open_result, release_result = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True), timeout=10
+        )
+        assert isinstance(open_result, ConsumerBinding)
+        assert open_result.consumer_id == task_id
+        assert release_result == 3
+        async with db.session_context() as session:
+            assert await session.get(db.StreamConsumer, task_id) is None
+        assert (await graph.store.status(output_id)).released
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def test_json_roundtrip_preserves_signed_zero_and_managed_state(graph):
