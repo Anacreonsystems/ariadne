@@ -12,7 +12,7 @@ checks. The first sprint earned its planned 10% share after the complete
 The [CI integration successor](evidence/native-stage1-ci-acceptance-2026-11-01.json)
 binds the final code revision, complete runtime reruns, full type check and
 client wheel/source build; failed intermediate observations are retained.
-The [N1.2 gate](evidence/native-stage2-acceptance-successor-2026-11-01.json) accepts the
+The [N1.2 gate](evidence/native-stage2-closure-acceptance-2026-11-01.json) accepts the
 native storage-only slice. [ADR-0034](adr/ADR-0034-native-stream-http-adapter.md)
 retains the pending HTTP/admission boundary.
 
@@ -46,7 +46,7 @@ medium delivery risk.
 | NI1-010 | `done` | NI1-004 | [ADR-0033](adr/ADR-0033-native-durable-stream-storage.md), bounded native storage and retention agreement. As a developer, I can distinguish storage-only acceptance from HTTP/runtime admission. |
 | NI1-011 | `done` | NI1-010 | Four native ORM models and paired migrations. As a system, I got actual dialect upgrade/downgrade and round-trip fidelity. |
 | NI1-012 | `done` | NI1-011 | Atomic fenced store, quotas and whole-flow release. As a user, I can recover the incomplete input or durable completion without partial output/state/progress. |
-| NI1-013 | `done` | NI1-012 | Independent hostile review and frozen real PostgreSQL gates. As a developer, I can reproduce code hashes, failures and ordinary-flow/database regression. |
+| NI1-013 | `done` | NI1-012 | Independent hostile review and frozen real PostgreSQL gates, including implicit FK lock ordering and owned test APIs. As a developer, I can reproduce code hashes, failures and ordinary-flow/database regression. |
 | NI1-020 | `pending` | NI1-013 | Review [ADR-0034](adr/ADR-0034-native-stream-http-adapter.md). As a developer, I can identify safe HTTP admission and metadata-lag behavior. |
 | NI1-021 | `pending` | NI1-020 | Native API and client adapter. As a user, I can use platform storage without DB credentials in the worker. |
 | NI1-022 | `pending` | NI1-021 | HTTP/process/server-restart acceptance and packaging. As a system, I got verified remote recovery, not only local model tests. |

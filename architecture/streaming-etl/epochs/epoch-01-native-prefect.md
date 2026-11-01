@@ -113,7 +113,7 @@ adapter for Stage 2 native production-storage atomicity/migrations or Stage 6
 real deployment acceptance. Stage exits earn readiness
 only after code and their acceptance criteria pass; documentation work alone
 does not earn readiness. Stage 1 earned 10%; the accepted
-[N1.2 storage gate](../evidence/native-stage2-acceptance-successor-2026-11-01.json) adds
+[N1.2 storage gate](../evidence/native-stage2-closure-acceptance-2026-11-01.json) adds
 the next planned 10%, reaching 20% of this bounded foundation.
 
 The initial document cycle did not allocate tasks or sprint shares. On
@@ -200,8 +200,8 @@ supports the first 10% foundation share.
 The [final Stage 1 Principal acceptance](../evidence/native-stage1-principal-acceptance-2026-11-01.json)
 reviews both real-system profiles, finite regressions, wheel, source hashes and
 scope limits. It accepts N1.1 as done with the planned 10% foundation share.
-The [N1.2 acceptance](../evidence/native-stage2-acceptance-successor-2026-11-01.json) and
-[Principal verdict](../evidence/native-stage2-principal-acceptance-successor-2026-11-01.json)
+The [N1.2 acceptance](../evidence/native-stage2-closure-acceptance-2026-11-01.json) and
+[Principal verdict](../evidence/native-stage2-closure-principal-2026-11-01.json)
 accept native migrations, fenced atomic storage, quotas and final-flow row
 release. Earned foundation readiness reaches 20%; Stage 2 remains open for
 N1.3 HTTP transport. No full-epoch criterion is checked by this storage slice.

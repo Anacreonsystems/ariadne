@@ -3,6 +3,7 @@
 - Status: `accepted`
 - Date: 2026-11-01
 - Accepted: 2026-11-01, N1.2 bounded storage-only scope
+- Review: [PR #4](https://github.com/Anacreonsystems/ariadne/pull/4)
 - Epoch: [Native integration epoch 1](../epochs/epoch-01-native-prefect.md), Stage 2
 - Owners: ETL Architect / HighLoad Principal, server/database maintainers
 - Depends on: [ADR-0032](ADR-0032-native-task-stream-contract.md),
@@ -99,8 +100,14 @@ future attempt cannot poison ownership; a previous attempt is fenced even
 before its replacement claims the stream. This may contend with state events;
 no high-load acceptance is inferred.
 Every operation needing multiple stream headers locks them in UUID order,
-then locks the consumer. No path reverses that order. Flow release first locks
-the FlowRun, then its ordered stream headers.
+then locks the consumer. Opening a consumer first locks the parent FlowRun
+`FOR SHARE`, then validates/locks its TaskRun, then acquires headers and the
+consumer. The FlowRun must remain nonterminal through this transaction.
+TaskRun authority validation still precedes the terminal-state refusal, so a
+finished TaskRun retains `ATTEMPT_NOT_CURRENT` precedence. Record operations
+retain TaskRun-before-header order and do not acquire a parent FlowRun lock.
+Flow release first locks the FlowRun `FOR UPDATE`, then its ordered headers.
+The parent-before-child order also accounts for implicit foreign-key locks.
 
 An initial claim binds the exact producer or consumer identity. An identical
 owner/attempt request is idempotent; only a strictly newer task attempt can
@@ -185,6 +192,9 @@ SQLite stream concurrency or PostgreSQL HA/throughput claim is made.
   continue at 201 after accepted completion, including a new store/process.
 - [x] As a system, I can reject stale owners, changed bindings, changed
   completion intent, cross-flow TaskRuns and incompatible terminal markers.
+- [x] As a system, I can serialize first consumer open with finalization and
+  release in either winning order, including implicit foreign-key locks,
+  without exposing a PostgreSQL deadlock.
 - [x] As a system, I got a dense ordered immutable output prefix and correct
   YIELD/RETURN/EOF behavior under concurrent completion/takeover/close.
 - [x] As a system, I can refuse record/state/capacity limits without partial
@@ -196,8 +206,49 @@ SQLite stream concurrency or PostgreSQL HA/throughput claim is made.
   bounded profile for online GC or indefinitely running ETL acceptance.
 - [x] As a developer, I got real PostgreSQL tests and ordinary-flow/database
   regression with frozen source hashes and independent Principal review.
+- [x] As a developer, I can run concurrent owned test APIs and reject a
+  healthy foreign listener, so real HTTP regression cannot silently use
+  another worker's database.
 
 ## Evidence
+
+### Current closure gate
+
+The [closure record](../evidence/native-stage2-closure-acceptance-2026-11-01.json)
+binds twelve implementation, test and workflow files to `e953e0b`, including
+the first-open lock correction and hosted API ownership fix. All before/after
+hashes match current files and committed source; no source drift occurred.
+
+| Gate | Current result |
+| --- | --- |
+| [Native store](../evidence/native-stage2-closure-store-2026-11-01.json) | PostgreSQL 17.11: 45 pass, zero skip/error, including both first-open/finalization orders. |
+| [PostgreSQL database](../evidence/native-stage2-closure-postgres-database-2026-11-01.json) | 126 pass and one existing Alembic-command skip; all four native migration cases execute. |
+| [SQLite database](../evidence/native-stage2-closure-sqlite-database-2026-11-01.json) | 118 pass and nine existing dialect/slow-test skips; all four native migration cases execute. |
+| [SQLite capability](../evidence/native-stage2-closure-sqlite-capability-2026-11-01.json) | 1 pass, refusal before native data-plane writes. |
+| [Hosted fixture](../evidence/native-stage2-closure-fixture-2026-11-01.json) | 5 pass and one existing Windows-only skip; real foreign listener, concurrent owned servers and cleanup checks. |
+| [SDK compatibility](../evidence/native-stage2-closure-stage1-sdk-2026-11-01.json) | 36 pass, zero skip/error, using real HTTP metadata and the explicit Stage 1 PostgreSQL test adapter. |
+| [Ordinary kernel](../evidence/native-stage2-closure-kernel-2026-11-01.json) | 718 pass and two known synchronous-sleep timeout xfails. |
+| [Static checks](../evidence/native-stage2-closure-static-gate-2026-11-01.json) | Full Pyright 1285 files and focused storage 4 files: zero errors; public type completeness 100%. |
+
+The SDK compatibility adapter still loads the retained prototype. This gate
+proves the hosted-fixture change against the existing SDK contract; it does
+not connect the SDK to the new native store through HTTP. The 45 native-store
+cases execute the actual server models and migrations without that adapter.
+Its reporting flag was corrected explicitly, with the original report retained
+in the SDK evidence; test source, raw log and JUnit bytes were unchanged.
+
+The [independent closure review](../evidence/native-stage2-closure-principal-2026-11-01.json)
+verifies all twelve working/Git hashes, seven execution profiles and their
+raw/JUnit evidence, both dialect migration gates and the explicit scope.
+It accepts N1.2 after the lock and fixture corrections at `e953e0b`. This
+revalidates the same +10% contribution, reaching 20% of the bounded native
+foundation; correcting the reopened findings earns no additional share.
+
+Hosted successor CI remains a separate observation after publication. These
+local results do not convert the previous canonical failure into a pass or
+claim that a newly published full matrix has completed.
+
+### Earlier acceptance and retained findings
 
 The [acceptance record](../evidence/native-stage2-acceptance-2026-11-01.json)
 checks all ten implementation/test/workflow hashes before and after the final
@@ -281,6 +332,65 @@ The [successor Principal verdict](../evidence/native-stage2-principal-acceptance
 checks all ten current/Git hashes, the isolated PostgreSQL rerun, the complete
 set of runtime/static records and the NULL-shape hardening. It accepts
 `f9e0171` for N1.2 with no remaining scoped blocker. N1.3 remains pending.
+
+### Post-publication implicit foreign-key lock counterexample
+
+The [independent negative probe](../evidence/native-stage2-fk-lock-cycle-negative-2026-11-01.json)
+found a liveness gap after the initial publication. PostgreSQL's consumer
+foreign key acquires `FlowRun FOR KEY SHARE` implicitly. With the former
+TaskRun/header-first open, release held `FlowRun FOR UPDATE` while waiting
+for a header, and first-open held that header while waiting for the parent
+FK lock. PostgreSQL aborted one transaction with a deadlock. Atomic rollback
+preserved data but did not satisfy the intended named-refusal/liveness gate.
+The previous "no path reverses that order" claim omitted this implicit lock.
+[ADR-0095](ADR-0095-implicit-foreign-key-lock-order.md) retains that rejected
+ordering theory and the parent-first replacement agreement.
+
+Earlier local records and the [published CI run](../evidence/native-stage2-published-ci-2026-11-01.json) are retained as observations
+of the old source. Their green result did not cover this counterexample.
+Acceptance was reopened while fixing the lock order. The implementation now
+locks FlowRun `FOR SHARE` before TaskRun and headers, preserving TaskRun error
+precedence while rejecting a final FlowRun before consumer/output mutation.
+This serializes first-open with lifecycle transitions and release; concurrent
+opens may share the parent lock.
+
+New regressions inspect actual PostgreSQL blocking PIDs and attempt child
+locks with NOWAIT. They prove release/finalization wins before first-open, or
+first-open commits before the waiting finalization and release. They also
+cover COMPLETED/FAILED/CANCELLED FlowRuns whose TaskRun is still RUNNING.
+The initial test observer cached a statistics snapshot and missed a newly
+created backend; its [failed run](../evidence/native-stage2-flow-lock-focused-initial-2026-11-01.log)
+is preserved. Refreshing PostgreSQL's statistics snapshot made the six
+focused cases pass; full source-bound acceptance follows separately.
+
+### Hosted test API ownership
+
+The [published canonical failure](../evidence/native-stage2-published-canonical-group2-failure-2026-11-01.json)
+is retained separately from the passing native lanes. Worker `gw3` selected
+port 39505, but its Uvicorn process 3537 failed to bind with `address already
+in use`. The old readiness check accepted another server's HTTP 200. Because
+each worker has its own database, a healthy foreign API is not a valid test
+server. The [incident record](../evidence/native-stage2-hosted-api-port-incident-2026-11-01.json)
+distinguishes this observed collision from the later migration connection
+termination and from inferences about individual downstream failures.
+
+The agreed correction reserves the POSIX socket through subprocess handoff,
+verifies a unique server response header and checks that the started child
+is alive before yielding its URL. The Windows path retains its platform
+process-group handling and must refuse a foreign listener rather than accept
+its health response. Real occupied-port and concurrent-start regressions are
+required; fewer workers, larger timeouts or excluded tests do not establish
+server ownership. This supporting test fix earns no extra foundation share.
+
+The [fixture execution history](../evidence/native-stage2-hosted-api-fixture-exploration-2026-11-01.json)
+retains serial and xdist runs, plus a clearly marked interrupted discovery
+observation for which no raw file was saved. The interruption exposed cleanup
+after generator close: termination must happen in `finally` before leaving the
+process context that waits for exit. Current cleanup shields termination and
+closes an untransferred socket on spawn failure. The real concurrent test
+checks that closed generators leave no API listener, while rejection leaves
+the foreign healthy listener intact. Windows process execution is not claimed
+by the Linux gate; its platform-specific case remains an explicit skip.
 
 ## Consequences
 

@@ -16,7 +16,7 @@ against the actual runtime and storage.
 
 The 20% is a planning estimate toward the explicitly bounded native foundation,
 not a measurement of production readiness. The [complete Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json)
-and the [N1.2 storage gate](evidence/native-stage2-acceptance-successor-2026-11-01.json)
+and the [N1.2 storage gate](evidence/native-stage2-closure-acceptance-2026-11-01.json)
 now pass; earned readiness is 20%. N1.3 remains a planned +10% contribution,
 not earned. Later sprints remain unallocated.
 

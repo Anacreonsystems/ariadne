@@ -1,0 +1,58 @@
+{
+  "bootstrap_observation": {
+    "counts_as_reproduction": false,
+    "detail": "First container attempt hit the post-init TCP restart window before executing the probe; retained rather than hidden.",
+    "path": "architecture/streaming-etl/evidence/native-stage2-fk-lock-cycle-bootstrap-failed-2026-11-01.log",
+    "sha256": "36a238ba32cbe9c362e625de1f82a2cedaff8a593d8e00a62344ff24a9f4be36"
+  },
+  "code_revision": "f9e0171c65e88c854566a1938f443c3b7f72ebda",
+  "negative_log": {
+    "path": "architecture/streaming-etl/evidence/native-stage2-fk-lock-cycle-negative-2026-11-01.log",
+    "sha256": "f11cb35a6c29ba2b318e58db454c0479b6bdf671da3f2842b2733b01829abd28"
+  },
+  "observed": {
+    "container_removed": true,
+    "deadlock_reproduced": true,
+    "deadlock_victims": 1,
+    "postgres_context": "FK trigger SELECT on flow_run FOR KEY SHARE",
+    "victim": "open StreamConsumer INSERT"
+  },
+  "postgresql": "17.11 isolated postgres:17-alpine",
+  "recommended_order": "FlowRun FOR SHARE and terminal validation -> TaskRun FOR UPDATE -> ordered stream headers FOR UPDATE -> consumer",
+  "recorded_at": "2026-11-01T16:20:36.539407+00:00",
+  "reproduction": {
+    "deadlock_timeout": "100ms",
+    "schedule": [
+      "release locks FlowRun",
+      "open locks TaskRun and both headers",
+      "open starts INSERT and waits for implicit parent FlowRun KEY SHARE",
+      "release requests headers",
+      "deadlock detector resolves cycle"
+    ],
+    "setup_sql": [
+      "CREATE TABLE flow_run (id uuid PRIMARY KEY, final boolean NOT NULL)",
+      "CREATE TABLE task_run (id uuid PRIMARY KEY, flow_run_id uuid NOT NULL REFERENCES flow_run(id), running boolean NOT NULL)",
+      "CREATE TABLE stream_partition (id uuid PRIMARY KEY, flow_run_id uuid NOT NULL REFERENCES flow_run(id))",
+      "CREATE TABLE stream_consumer (id uuid PRIMARY KEY, flow_run_id uuid NOT NULL REFERENCES flow_run(id), input_stream_id uuid NOT NULL REFERENCES stream_partition(id), output_stream_id uuid NOT NULL REFERENCES stream_partition(id))"
+    ],
+    "transaction_open": [
+      "SELECT id FROM task_run WHERE id=:task FOR UPDATE",
+      "SELECT id FROM stream_partition WHERE id IN (:input,:output) ORDER BY id FOR UPDATE",
+      "INSERT INTO stream_consumer(id,flow_run_id,input_stream_id,output_stream_id) VALUES (:consumer,:flow,:input,:output)"
+    ],
+    "transaction_release": [
+      "SELECT id FROM flow_run WHERE id=:flow FOR UPDATE",
+      "SELECT id FROM stream_partition WHERE flow_run_id=:flow ORDER BY id FOR UPDATE"
+    ]
+  },
+  "schema": "native-stage2-fk-lock-cycle/v1",
+  "scope": [
+    "Minimal PostgreSQL lock-shape reproduction of the implicit FK lock in the actual store order.",
+    "No application source, test source, ADR, migration, shared database, or CI state was changed."
+  ],
+  "source_sha256": {
+    "src/prefect/server/models/streams.py": "89eeb326d5c9bf7cfd8edfebc6ecd10a9e04c2b9799c1cc59617cfcda98fda4b",
+    "tests/server/models/test_streams.py": "21c95a99470ccb2a448ab63edada9ee7ea6b80442f207f0abec9693cf6b39326"
+  },
+  "verdict": "BLOCKER_REPRODUCED"
+}
