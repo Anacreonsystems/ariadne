@@ -713,9 +713,11 @@ class StreamPartition(Base):
         ),
         sa.CheckConstraint(
             "(state = 'OPEN' AND tail_sequence IS NULL AND error IS NULL) OR "
-            "(state = 'COMPLETED' AND tail_sequence = last_sequence "
+            "(state = 'COMPLETED' AND tail_sequence IS NOT NULL "
+            "AND tail_sequence = last_sequence "
             "AND error IS NULL) OR "
-            "(state = 'FAILED' AND tail_sequence = last_sequence "
+            "(state = 'FAILED' AND tail_sequence IS NOT NULL "
+            "AND tail_sequence = last_sequence "
             "AND error IS NOT NULL)",
             name="terminal_shape_valid",
         ),
@@ -792,7 +794,9 @@ class StreamConsumer(Base):
         ),
         sa.CheckConstraint(
             "(inflight_sequence IS NULL AND delivery_id IS NULL) OR "
-            "(inflight_sequence = completed_through + 1 AND delivery_id IS NOT NULL)",
+            "(inflight_sequence IS NOT NULL "
+            "AND inflight_sequence = completed_through + 1 "
+            "AND delivery_id IS NOT NULL)",
             name="delivery_shape_valid",
         ),
         sa.Index("ix_stream_consumer__input_stream_id", "input_stream_id"),
@@ -823,7 +827,8 @@ class StreamCompletion(Base):
             "length(intent_digest) = 64", name="intent_digest_length_valid"
         ),
         sa.CheckConstraint(
-            "(kind = 'YIELD' AND output_sequence > 0) OR "
+            "(kind = 'YIELD' AND output_sequence IS NOT NULL "
+            "AND output_sequence > 0) OR "
             "(kind = 'RETURN' AND output_sequence IS NULL)",
             name="output_shape_valid",
         ),

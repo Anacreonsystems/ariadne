@@ -110,9 +110,11 @@ def upgrade():
         ),
         sa.CheckConstraint(
             "(state = 'OPEN' AND tail_sequence IS NULL AND error IS NULL) OR "
-            "(state = 'COMPLETED' AND tail_sequence = last_sequence "
+            "(state = 'COMPLETED' AND tail_sequence IS NOT NULL "
+            "AND tail_sequence = last_sequence "
             "AND error IS NULL) OR "
-            "(state = 'FAILED' AND tail_sequence = last_sequence "
+            "(state = 'FAILED' AND tail_sequence IS NOT NULL "
+            "AND tail_sequence = last_sequence "
             "AND error IS NOT NULL)",
             name=op.f("ck_stream_partition__terminal_shape_valid"),
         ),
@@ -245,7 +247,9 @@ def upgrade():
         ),
         sa.CheckConstraint(
             "(inflight_sequence IS NULL AND delivery_id IS NULL) OR "
-            "(inflight_sequence = completed_through + 1 AND delivery_id IS NOT NULL)",
+            "(inflight_sequence IS NOT NULL "
+            "AND inflight_sequence = completed_through + 1 "
+            "AND delivery_id IS NOT NULL)",
             name=op.f("ck_stream_consumer__delivery_shape_valid"),
         ),
         sa.CheckConstraint(
@@ -332,7 +336,8 @@ def upgrade():
             name=op.f("ck_stream_completion__kind_valid"),
         ),
         sa.CheckConstraint(
-            "(kind = 'YIELD' AND output_sequence > 0) OR "
+            "(kind = 'YIELD' AND output_sequence IS NOT NULL "
+            "AND output_sequence > 0) OR "
             "(kind = 'RETURN' AND output_sequence IS NULL)",
             name=op.f("ck_stream_completion__output_shape_valid"),
         ),

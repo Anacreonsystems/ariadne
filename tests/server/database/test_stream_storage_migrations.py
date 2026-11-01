@@ -4,6 +4,7 @@ from typing import cast
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from prefect.server.database.alembic_commands import (
@@ -182,6 +183,96 @@ async def test_native_stream_json_preserves_null_and_signed_zero(
     assert math.copysign(1.0, value["negative_zero"]) == -1.0
     assert math.copysign(1.0, state["negative_zero"]) == -1.0
     assert {str(column_type).upper() for column_type in json_types.values()} == {"JSON"}
+
+
+async def test_native_stream_shape_constraints_reject_null_bypasses(
+    db: PrefectDBInterface,
+    flow_run,
+):
+    input_stream_id = uuid.uuid4()
+    output_stream_id = uuid.uuid4()
+    invalid_output_stream_id = uuid.uuid4()
+    consumer_id = uuid.uuid4()
+    async with db.session_context(begin_transaction=True) as session:
+        session.add_all(
+            [
+                db.StreamPartition(
+                    id=stream_id,
+                    flow_run_id=flow_run.id,
+                    limits={},
+                )
+                for stream_id in (
+                    input_stream_id,
+                    output_stream_id,
+                    invalid_output_stream_id,
+                )
+            ]
+        )
+        await session.flush()
+        session.add(
+            db.StreamConsumer(
+                id=consumer_id,
+                flow_run_id=flow_run.id,
+                input_stream_id=input_stream_id,
+                output_stream_id=output_stream_id,
+                owner_id=uuid.uuid4(),
+                attempt=1,
+                owner_epoch=1,
+            )
+        )
+
+    statements = [
+        (
+            "completed_partition_without_tail",
+            sa.insert(db.StreamPartition).values(
+                id=uuid.uuid4(),
+                flow_run_id=flow_run.id,
+                limits={},
+                state="COMPLETED",
+                tail_sequence=None,
+                last_sequence=0,
+                error=None,
+            ),
+        ),
+        (
+            "delivery_without_inflight_sequence",
+            sa.insert(db.StreamConsumer).values(
+                id=uuid.uuid4(),
+                flow_run_id=flow_run.id,
+                input_stream_id=input_stream_id,
+                output_stream_id=invalid_output_stream_id,
+                owner_id=uuid.uuid4(),
+                attempt=1,
+                owner_epoch=1,
+                inflight_sequence=None,
+                delivery_id=uuid.uuid4(),
+            ),
+        ),
+        (
+            "yield_completion_without_output",
+            sa.insert(db.StreamCompletion).values(
+                consumer_id=consumer_id,
+                input_sequence=1,
+                delivery_id=uuid.uuid4(),
+                owner_epoch=1,
+                kind="YIELD",
+                intent_digest="0" * 64,
+                output_sequence=None,
+            ),
+        ),
+    ]
+    accepted_bypasses: list[str] = []
+    for name, statement in statements:
+        try:
+            async with db.session_context(begin_transaction=True) as session:
+                await session.execute(statement)
+        except IntegrityError:
+            pass
+        else:
+            accepted_bypasses.append(name)
+    assert not accepted_bypasses, (
+        f"Shape constraints accepted NULL bypasses: {accepted_bypasses}"
+    )
 
 
 def _reflect_stream_tables(
