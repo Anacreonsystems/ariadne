@@ -9,6 +9,9 @@ is `progress`, with **10% earned native foundation readiness** after its first g
 is accepted for its native Task SDK/engine scope with real HTTP/PostgreSQL
 checks. The first sprint earned its planned 10% share after the complete
 [Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json) passed.
+The [CI integration successor](evidence/native-stage1-ci-acceptance-2026-11-01.json)
+binds the final code revision, complete runtime reruns, full type check and
+client wheel/source build; failed intermediate observations are retained.
 
 The separate DS-052a follow-up is now `done` under
 [ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md): the

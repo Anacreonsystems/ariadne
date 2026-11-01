@@ -436,7 +436,7 @@ focused startup matrix passed all six sync/async cases before final acceptance.
 
 ## Stage 1 acceptance evidence (2026-11-01)
 
-The [acceptance record](../evidence/native-stage1-acceptance-2026-11-01.json)
+The initial [acceptance record](../evidence/native-stage1-acceptance-2026-11-01.json)
 binds all six native core files, two native test files and the retained
 PostgreSQL data-plane dependency before and after execution. All nine hashes
 match across both native profiles and the complete regression profile, with
@@ -447,7 +447,7 @@ no source drift.
 | [SQLite orchestration](../evidence/native-stage1-sqlite-2026-11-01.json) | Real Uvicorn HTTP API, native Prefect SDK/engines and PostgreSQL 17.11 stream storage: 36/36 tests, no skip; 156.23 pytest seconds. |
 | [PostgreSQL orchestration](../evidence/native-stage1-postgres-2026-11-01.json) | Real Uvicorn HTTP API, PostgreSQL orchestration metadata and PostgreSQL 17.11 stream storage: 36/36 tests, no skip; 153.42 pytest seconds. |
 | [Finite runtime regression](../evidence/native-stage1-regression-2026-11-01.json) | Complete `test_task_engine`, `test_futures`, `test_tasks`, and `test_task_runners`: 718 pass, two existing expected xfails, no failure/error; 156.30 pytest seconds. |
-| [Client wheel](../evidence/native-stage1-client-wheel-2026-11-01.json) and [source audit](../evidence/native-stage1-client-wheel-source-audit-2026-11-01.json) | Actual stripped `prefect-client` build and isolated Python 3.11 import pass. All six packaged core modules match current source byte for byte; server database code is absent. |
+| [Client wheel](../evidence/native-stage1-client-wheel-2026-11-01.json) and [source audit](../evidence/native-stage1-client-wheel-source-audit-2026-11-01.json) | Actual stripped `prefect-client` build and isolated Python 3.11 import pass. All six packaged core modules match the initial tested source byte for byte; server database code is absent. |
 
 The tests are in [test_stream_tasks.py](../../../tests/test_stream_tasks.py).
 They run a separate HTTP server process and real SQL operations, including
@@ -485,8 +485,74 @@ criteria in [epoch 1](../epochs/epoch-01-native-prefect.md).
 
 The [final Principal acceptance](../evidence/native-stage1-principal-acceptance-2026-11-01.json)
 verifies all gate records and frozen sources, accepts this scoped status and
-closes sprint N1.1 at its planned 10% foundation share. No Stage 1 blocker
-remains; the later-stage scope above remains unaccepted.
+closes sprint N1.1 at its planned 10% foundation share for that local gate.
+Subsequent hosted CI findings and their successor validation are recorded below;
+the later-stage scope above remains unaccepted.
+
+## Hosted CI integration follow-up
+
+The first hosted run of [PR 3](https://github.com/Anacreonsystems/ariadne/pull/3)
+at revision `7943f3d` exposed 17 errors in the new native type annotations.
+These were real implementation defects in the static contract. Local runtime
+success did not establish a clean hosted type check. The fixes narrow the
+initialized TaskRun, parameters and stream configuration in both executors,
+keep opaque submission metadata in the internal executor, validate collection
+limits through an object-typed boundary, and explicitly type dynamic task
+results while narrowing async awaitables. No checker exclusion or error
+suppression was added.
+
+The same run exposed four fork/CI configuration issues: the new test module
+was absent from the explicit matrix, the stripped client lacked the full
+package's tagless-version fallback, and optional image-build login required
+upstream registry credentials. A later benchmark job completed its functional
+cases but failed an external result upload with HTTP 401 because the fork was
+not registered with the service. The workflow now routes the module, builds the
+client with the same fallback, and skips optional login when credentials are
+absent while retaining the image build and its tests.
+Unconfigured forks execute the same benchmark import/task paths as smoke
+checks; measured external profiling remains enabled for a configured token or
+the upstream repository. A smoke-only run is not performance acceptance.
+
+Dedicated native CI lanes run Python 3.12 with PostgreSQL 17 stream storage
+and either SQLite or PostgreSQL orchestration metadata. Each uses a real HTTP
+server and requires nonempty JUnit results with no skipped case. The ordinary
+PostgreSQL 14 matrix retains its existing backend scope; it does not establish
+PostgreSQL 14 stream-storage compatibility. The executable contract and CI
+configuration remain linked through this ADR and the epoch's acceptance graph.
+
+The final successor evidence below records the source hashes actually tested
+after the type and packaging fixes. Initial and intermediate records are
+retained; they do not bind the successor source bytes.
+
+The [successor acceptance](../evidence/native-stage1-ci-acceptance-2026-11-01.json)
+checks all nine runtime/test source hashes against committed revision `5d347be`.
+Its actual gates pass:
+
+| Gate | Executed successor result |
+| --- | --- |
+| [SQLite metadata + PostgreSQL stream](../evidence/native-stage1-isolated-sqlite-2026-11-01.json) | 36/36, no skips or teardown errors, 146.94 pytest seconds. |
+| [PostgreSQL metadata + PostgreSQL stream](../evidence/native-stage1-isolated-postgres-2026-11-01.json) | 36/36, no skips or teardown errors, 148.74 pytest seconds. |
+| [Finite runtime regression](../evidence/native-stage1-isolated-regression-2026-11-01.json) | 718 pass, two documented expected xfails, no failures or teardown errors, 152.25 pytest seconds. |
+| [Full type check](../evidence/native-stage1-pyright-2026-11-01.json) | 1281 source files analyzed, zero errors; [public completeness](../evidence/native-stage1-type-completeness-2026-11-01.log) 100%. |
+| [Client packaging](../evidence/native-stage1-client-verified-2026-11-01.json) | Wheel and source distribution built and imported in isolated environments; packaged core bytes match tested source; no staging-only version override. |
+| [Benchmark path smoke](../evidence/native-stage1-benchmark-smoke-2026-11-01.json) | Same cold-import/task paths pass with a real HTTP server and no external upload. This is execution smoke, not measured performance. |
+
+The retained [initial hosted findings](../evidence/native-stage1-hosted-initial-findings-2026-11-01.json)
+and intermediate type-check failures remain available. An attempted combined
+run also correctly failed module teardown: concurrent benchmark smoke created
+the root `.benchmarks` directory, violating the existing clean-checkout
+fixture. Native test bodies all passed, but those contaminated gate records
+remain failures. After the benchmark finished, its output was moved outside
+the checkout and all three profiles above were rerun successfully without
+changing runtime code, fixture rules or thresholds. The successor record
+links these failed observations separately from acceptance.
+
+Hosted results after publication are a separate observation; the local gate
+does not claim that queued or running GitHub jobs have passed.
+The [successor Principal review](../evidence/native-stage1-ci-principal-2026-11-01.json)
+accepts this local scope after checking sources against Git, every successor
+and failed gate, and the packaging version-metadata boundary. Hosted client
+packaging will carry its own published-commit provenance.
 
 ## Links
 

@@ -17,6 +17,11 @@ not a measurement of production readiness. The [complete Stage 1 gate](evidence/
 now passes; earned readiness is 10%. Later short sprints are not allocated in
 this cycle.
 
+N1.1 follow-up: [final code/CI acceptance](evidence/native-stage1-ci-acceptance-2026-11-01.json)
+records both real PostgreSQL-stream profiles, full finite regression, type
+checking and wheel/source builds after hosted findings. This earns no extra
+percentage beyond the same Stage 1 scope.
+
 ## Experimental handoff
 
 The separate DS-052a lane is `done` under

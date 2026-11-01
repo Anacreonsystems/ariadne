@@ -195,6 +195,10 @@ supports the current 10% foundation share.
 The [final Stage 1 Principal acceptance](../evidence/native-stage1-principal-acceptance-2026-11-01.json)
 reviews both real-system profiles, finite regressions, wheel, source hashes and
 scope limits. It accepts N1.1 as done with the planned 10% foundation share.
+The [CI integration successor](../evidence/native-stage1-ci-acceptance-2026-11-01.json)
+retains initial hosted/static failures and verifies the final committed source
+with both real-storage profiles, finite regression, type checks and client
+wheel/source builds. It does not extend Stage 1 acceptance to later stages.
 
 ## Failure modes and consequences
 

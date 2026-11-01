@@ -32,8 +32,10 @@ starts a separate product-delivery scale. Its
 [first-stage ADR](ADR-0032-native-task-stream-contract.md) is now `accepted` for
 the native SDK/task-engine contract, earning **10% of the planned foundation**;
 production storage, source and deployment stages remain open.
-The [current graph validation](../evidence/adr-graph-native-stage1-2026-11-01.json)
+The [initial Stage 1 graph validation](../evidence/adr-graph-native-stage1-2026-11-01.json)
 checks retained ADR statuses, required accepted sections and local evidence links.
+The [CI follow-up graph](../evidence/adr-graph-native-stage1-ci-2026-11-01.json)
+also covers the final source-bound acceptance and retained failed observations.
 
 ## Decision graph
 
