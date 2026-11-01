@@ -196,3 +196,19 @@ and ADR-0029 are accepted only within their declared scope. Broader production
 criteria and the separate DS-052a campaign remain open. No 72-hour PASS or
 general production-readiness claim is made. Earlier failed/interrupted
 candidates remain evidence; no source change followed this final gate.
+
+## Experimental handoff to native integration (2026-11-01)
+
+The separate DS-052a follow-up has now passed the real continuous 72-hour
+campaign and fresh publication under
+[ADR-0030](ADR-0030-continuous-arc-soak-and-evidence-collection.md).
+[ADR-0031](ADR-0031-validated-durable-stream-theory.md) accepts the successful
+prototype theory within its measured scope. Historical statements above about
+unpassed duration work describe their original gate dates.
+
+[Native integration epoch 1](../epochs/epoch-01-native-prefect.md) is a separate
+product-delivery cycle starting at 0% earned implementation readiness. It
+preserves this protocol's terminal-yield semantics while extending Prefect
+core. The first native contract is
+[ADR-0032](ADR-0032-native-task-stream-contract.md); no native percentage or
+production acceptance is inherited from the experimental gates.

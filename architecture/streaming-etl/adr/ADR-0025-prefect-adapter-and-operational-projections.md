@@ -7,6 +7,15 @@
 - Validated by: [ADR-0009](ADR-0009-failure-injection-evidence.md)
 - Delivery: DS-041a…d, W34–W36 in [todo](../todo.md) and [sprint board](../sprint_board.md)
 
+Current product direction: [native integration epoch 1](../epochs/epoch-01-native-prefect.md)
+and [ADR-0032](ADR-0032-native-task-stream-contract.md) supersede the adapter as
+the final product architecture. The implementation and evidence below remain
+an experimental integration reference. Petya and Anna are Prefect TaskRuns;
+Tanya is Anna's retry attempt. The completed standalone soak in
+[ADR-0031](ADR-0031-validated-durable-stream-theory.md) did not execute this
+adapter or native Prefect tasks for 72 hours. This ADR remains `progress` for
+its broader criteria; the new epoch requires independent native evidence.
+
 ## Problem
 
 A working streaming control service is not yet an integrated Prefect workflow.

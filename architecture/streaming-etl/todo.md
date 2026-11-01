@@ -4,18 +4,21 @@ This registry slices the [ADR graph](adr/README.md) into delivery tasks. Task
 completion does not make an ADR `accepted`; evidence for every criterion in
 the declared ADR scope must be linked back to it.
 
-Current separate DS-052a work follows
-[ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md): one
-continuous ARC job, 18 monitor steps and a fresh evidence collector. Its gates
-are a short end-to-end publication control, the real 72-hour workload, and
-successful final reconstruction/upload. It remains `progress` and contributes
-no additional short-delivery percentage.
+Current direction: [Native integration epoch 1](epochs/epoch-01-native-prefect.md)
+is `planning`, with **0% earned native implementation readiness**. Its
+[first-stage contract](adr/ADR-0032-native-task-stream-contract.md) is ready for
+discussion and implementation planning. This cycle creates the epoch and ADR;
+new native tasks and sprint shares will be sliced in the next requested cycle.
 
-Actual execution: [72-hour ARC run 40672223609](https://github.com/Anacreonsystems/ariadne/actions/runs/40672223609)
-passed bootstrap and entered monitor 00 on 2026-10-28 at 10:28:36 UTC. Its
-[start record](evidence/ci-arc-72h-start-40672223609.json) binds the source and
-[passing short successor](evidence/ci-arc-transport-smoke-observed-40671702946.json).
-DS-052a remains `progress` pending full duration, final review and publication.
+The separate DS-052a follow-up is now `done` under
+[ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md): the
+[actual campaign](https://github.com/Anacreonsystems/ariadne/actions/runs/40672223609)
+completed on 2026-10-31 with 18 passing segments, original long review, fresh
+collector and publication. The [completion record](evidence/ci-arc-72h-completed-40672223609.json)
+and [published-artifact audit](evidence/ci-arc-72h-artifact-audit-40672223609.json)
+close its criteria. [ADR-0031](adr/ADR-0031-validated-durable-stream-theory.md)
+accepts the tested prototype theory. This lane adds no percentage to either the
+historical short delivery or the new native implementation scale.
 
 Delivery states are separate from ADR statuses. Sizes assume `S` ≤ 2 engineer
 days, `M` = 3–4 days, and `L` ≈ one engineer week. `H` and `M` denote high and
@@ -248,7 +251,12 @@ earns 95%; it does not claim whole-cluster DR, zero RPO or general worker isolat
 | **DS-051c** | `done` | DS-051a | M / M | Security and credential-boundary review. As a system, workers cannot forge storage authority. |
 | **DS-051d** | `done` | DS-051a…c | H / S | Final Principal acceptance and ADR evidence graph. As a user, I got the published guarantee and measured limits with no missing evidence link. |
 
-Separate nonblocking follow-up: **DS-052a** — `progress` — actual 72-hour soak, with its own workload, faults, resource and invariant evidence. The user directed use of the three existing self-hosted runners; the CI chain and deterministic reviewer are being configured under [ADR-0028](adr/ADR-0028-self-hosted-soak-ci-and-reviewer.md) and the [operator guide](soak_ci.md). It carries no percentage in the current delivery; the user selected short acceptance now in [ADR-0027](adr/ADR-0027-short-acceptance-and-separate-long-soak.md). A short smoke is not a long-duration PASS.
+Separate nonblocking follow-up: **DS-052a** — `done` — the real 72-hour campaign, original reviewer, fresh collector, publication and downloaded-artifact audit passed under [ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md). The [completion record](evidence/ci-arc-72h-completed-40672223609.json) and [artifact audit](evidence/ci-arc-72h-artifact-audit-40672223609.json) bind the unchanged profile and exact source. It carries no additional delivery percentage under [ADR-0027](adr/ADR-0027-short-acceptance-and-separate-long-soak.md).
+
+### Historical DS-052a execution observations
+
+The dated observations below retain their original running/queued statuses.
+The current final result appears above and in the [operator guide](soak_ci.md).
 
 2026-10-27 follow-up: the repository transfer is verified and the
 [static-analysis repair](evidence/ci-static-analysis-repair-2026-10-27.json)

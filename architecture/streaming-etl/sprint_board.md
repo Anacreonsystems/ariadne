@@ -1,16 +1,20 @@
 # Streaming ETL sprint board
 
-The separate DS-052a lane remains `progress` under
-[ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md): validate
-the complete short ARC/collector path, then run 72 continuous hours with the
-unchanged duration/fault/resource criteria and final artifact publication.
-This lane adds no short-delivery percentage.
+Current product cycle: [Native integration epoch 1](epochs/epoch-01-native-prefect.md),
+`planning`, **0% earned native implementation readiness**. The
+[first-stage ADR](adr/ADR-0032-native-task-stream-contract.md) defines its next
+contract gate. New short sprints, tasks and percentage shares are not allocated
+in this documentation cycle; they follow a separate task-slicing instruction.
 
-The [actual ARC campaign](https://github.com/Anacreonsystems/ariadne/actions/runs/40672223609)
-has passed startup and is executing monitor 00; the
-[start evidence](evidence/ci-arc-72h-start-40672223609.json) records the exact
-source and verified short control. DS-052a remains `progress` until all 72-hour
-and final publication criteria pass.
+The separate DS-052a lane is `done` under
+[ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md). The
+[real campaign](https://github.com/Anacreonsystems/ariadne/actions/runs/40672223609)
+completed on 2026-10-31; [final evidence](evidence/ci-arc-72h-completed-40672223609.json)
+and the [artifact audit](evidence/ci-arc-72h-artifact-audit-40672223609.json)
+confirm original review, 18 segments, fresh collection and retrievable upload.
+This lane adds no percentage. [ADR-0031](adr/ADR-0031-validated-durable-stream-theory.md)
+records successful experimental theory without transferring readiness to native
+core integration.
 
 Default cadence is one week with parallel owners. A task sized `L` consumes one
 owner for most of the sprint. If staffing cannot satisfy the exit criteria, work
@@ -22,7 +26,7 @@ replacement workers redeliver the first input without a durable downstream
 `yield`/`return`, and periodic barriers preserve graph state. Client code owns
 determinism and external-effect idempotency.
 
-Current earned readiness: **100% of the agreed short experimental delivery**. The earlier 53% measured a different protocol
+Historical experimental earned readiness: **100% of the agreed short experimental delivery**. The earlier 53% measured a different protocol
 that coupled source acknowledgement, global checkpoint decisions, and external
 sink outcomes. Its evidence is retained below but is not counted toward the new
 target.
@@ -114,11 +118,16 @@ DS-009 runs in a separate no-percentage research lane. Detailed task acceptance
 is in [todo.md](todo.md), governed by
 [ADR-0012](adr/ADR-0012-protocol-epoch-2-delivery-gates.md).
 
-DS-052a is a separate `progress` lane with no percentage: configure the continuous
-72-hour campaign on an existing self-hosted runner under
-[ADR-0028](adr/ADR-0028-self-hosted-soak-ci-and-reviewer.md). Its
+DS-052a is a separate `done` lane with no percentage: the continuous
+72-hour campaign and publication passed under
+[ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md). Its
 [CI status and run instructions](soak_ci.md) distinguish local checks, published
 workflows, GitHub smoke evidence and actual long-duration acceptance.
+
+## Historical DS-052a execution observations
+
+The dated entries below preserve their original statuses. The current
+completed result and native successor cycle are recorded at the top.
 
 CI follow-up on 2026-10-27: repository transfer to `Anacreonsystems` is verified.
 The [static-analysis repair](evidence/ci-static-analysis-repair-2026-10-27.json)
