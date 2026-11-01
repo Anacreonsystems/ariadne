@@ -15,13 +15,19 @@ from prefect.streams import (
     StreamContext,
     StreamProtocolError,
     StreamRunResult,
-    _StreamRun,
 )
 from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.utilities.callables import call_with_parameters
 
 if TYPE_CHECKING:
     from prefect.task_engine import AsyncTaskRunEngine, SyncTaskRunEngine
+
+
+class _StreamRun:
+    """Opaque submission metadata; dependency traversal must not inspect it."""
+
+    def __init__(self, output: Stream[Any]) -> None:
+        self.output = output
 
 
 def validate_stream_parameters(task: Any, parameters: dict[str, Any]) -> _StreamRun:
@@ -75,17 +81,24 @@ async def _input_drained(upstream: Stream[Any]) -> bool:
 
 
 def execute_stream_sync(engine: SyncTaskRunEngine[Any, Any]) -> StreamRunResult:
-    run = validate_stream_parameters(engine.task, engine.parameters)
-    upstream = engine.parameters[engine.task.stream.input]
+    config, parameters, task_run = (
+        engine.task.stream,
+        engine.parameters,
+        engine.task_run,
+    )
+    if config is None or parameters is None or task_run is None:
+        raise StreamProtocolError("Stream execution requires an initialized TaskRun")
+    run = validate_stream_parameters(engine.task, parameters)
+    upstream = parameters[config.input]
     storage = upstream.storage
-    consumer_id = str(engine.task_run.id)
+    consumer_id = str(task_run.id)
     binding = run_coro_as_sync(
         storage.open_consumer(
             upstream.stream_id,
             run.output.stream_id,
             consumer_id,
             uuid4().hex,
-            engine.task_run.run_count,
+            task_run.run_count,
         )
     )
     while True:
@@ -103,11 +116,11 @@ def execute_stream_sync(engine: SyncTaskRunEngine[Any, Any]) -> StreamRunResult:
                 time.sleep(0.01)
                 continue
         parameters = _parameters(engine, record, consumer_id)
-        context = parameters[engine.task.stream.context]
+        context = parameters[config.context]
         generator = None
         kind: Literal["YIELD", "RETURN"] = "RETURN"
         try:
-            value = call_with_parameters(engine.task.fn, parameters)
+            value: Any = call_with_parameters(engine.task.fn, parameters)
             if inspect.isgenerator(value):
                 generator = value
                 try:
@@ -134,16 +147,23 @@ def execute_stream_sync(engine: SyncTaskRunEngine[Any, Any]) -> StreamRunResult:
 async def execute_stream_async(
     engine: AsyncTaskRunEngine[Any, Any],
 ) -> StreamRunResult:
-    run = validate_stream_parameters(engine.task, engine.parameters)
-    upstream = engine.parameters[engine.task.stream.input]
+    config, parameters, task_run = (
+        engine.task.stream,
+        engine.parameters,
+        engine.task_run,
+    )
+    if config is None or parameters is None or task_run is None:
+        raise StreamProtocolError("Stream execution requires an initialized TaskRun")
+    run = validate_stream_parameters(engine.task, parameters)
+    upstream = parameters[config.input]
     storage = upstream.storage
-    consumer_id = str(engine.task_run.id)
+    consumer_id = str(task_run.id)
     binding = await storage.open_consumer(
         upstream.stream_id,
         run.output.stream_id,
         consumer_id,
         uuid4().hex,
-        engine.task_run.run_count,
+        task_run.run_count,
     )
     while True:
         _check_execution(engine)
@@ -158,11 +178,11 @@ async def execute_stream_async(
                 await asyncio.sleep(0.01)
                 continue
         parameters = _parameters(engine, record, consumer_id)
-        context = parameters[engine.task.stream.context]
+        context = parameters[config.context]
         generator = None
         kind: Literal["YIELD", "RETURN"] = "RETURN"
         try:
-            value = call_with_parameters(engine.task.fn, parameters)
+            value: Any = call_with_parameters(engine.task.fn, parameters)
             if inspect.isasyncgen(value):
                 generator = value
                 try:
@@ -170,8 +190,12 @@ async def execute_stream_async(
                     kind = "YIELD"
                 except StopAsyncIteration:
                     value = None
-            else:
+            elif inspect.isawaitable(value):
                 value = await value
+            else:
+                raise StreamProtocolError(
+                    "Async stream tasks require an awaitable or async generator"
+                )
             if kind == "RETURN":
                 state = context.managed_state if value is None else value
                 value = None

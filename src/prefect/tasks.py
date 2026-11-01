@@ -43,6 +43,7 @@ from typing_extensions import (
 import prefect.states
 from prefect._flow_run_suspension import raise_if_flow_run_suspension_requested
 from prefect._internal.compatibility.async_dispatch import async_dispatch
+from prefect._internal.stream_engine import _StreamRun
 from prefect._internal.uuid7 import uuid7
 from prefect.assets import Asset
 from prefect.cache_policies import DEFAULT, NO_CACHE, CachePolicy
@@ -71,7 +72,7 @@ from prefect.results import (
 )
 from prefect.settings.context import get_current_settings
 from prefect.states import Pending, Scheduled, State
-from prefect.streams import Stream, StreamProtocolError, StreamTaskConfig, _StreamRun
+from prefect.streams import Stream, StreamProtocolError, StreamTaskConfig
 from prefect.utilities.annotations import NotSet
 from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.utilities.callables import (

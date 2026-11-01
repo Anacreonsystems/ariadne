@@ -28,6 +28,8 @@ jobs:
     name: Benchmark
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      CODSPEED_UPLOAD_AVAILABLE: ${{ github.repository == 'PrefectHQ/prefect' || secrets.CODSPEED_TOKEN != '' }}
 
     steps:
       - uses: actions/checkout@v7
@@ -55,6 +57,7 @@ jobs:
           #       https://github.com/PrefectHQ/prefect/issues/6990
 
       - name: Run benchmarks
+        if: env.CODSPEED_UPLOAD_AVAILABLE == 'true'
         uses: CodSpeedHQ/action@v5
         env:
           PREFECT_API_URL: "http://127.0.0.1:4200/api"
@@ -97,3 +100,33 @@ jobs:
               --dist worksteal \
               -vv
           token: ${{ secrets.CODSPEED_TOKEN }}
+
+      - name: Run benchmark smoke checks without external upload
+        if: env.CODSPEED_UPLOAD_AVAILABLE != 'true'
+        env:
+          PREFECT_API_URL: "http://127.0.0.1:4200/api"
+        # An unregistered fork can verify the same imports and task paths, but
+        # cannot claim instrumented performance measurements or upload them.
+        run: |
+          for module in \
+            prefect \
+            prefect.client.schemas.objects \
+            prefect.flows \
+            prefect.deployments \
+            prefect.events \
+            prefect.server.api.server \
+            prefect.task_runners \
+          ; do
+            uv run pytest "benches/bench_import.py::bench_import_module[$module]" \
+              --benchmark-disable -vv -o 'filterwarnings='
+          done
+          uv run pytest benches/bench_import.py::bench_import_prefect_flow \
+            --benchmark-disable -vv -o 'filterwarnings='
+          uv run pytest \
+            benches/bench_tasks.py \
+            benches/bench_flows.py::bench_flow_decorator \
+            benches/bench_flows.py::bench_flow_call \
+            --benchmark-disable \
+            --numprocesses auto \
+            --dist worksteal \
+            -vv

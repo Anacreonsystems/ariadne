@@ -22,6 +22,11 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
+def _validate_collection_limit(limit: object) -> None:
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        raise StreamProtocolError("Collection requires an explicit positive limit")
+
+
 class StreamProtocolError(PrefectException):
     """An unsupported stream profile or invalid terminal operation."""
 
@@ -199,8 +204,7 @@ class Stream(Generic[T]):
 
     def collect(self, *, limit: int) -> StreamCollection[T]:
         """Declare a finite prefix bound; a closed stream can contain fewer items."""
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
-            raise StreamProtocolError("Collection requires an explicit positive limit")
+        _validate_collection_limit(limit)
         return StreamCollection(self, limit)
 
     def wait(self, timeout: float | None = None) -> Any:
@@ -216,8 +220,7 @@ class StreamCollection(Generic[T]):
     dependency_kind: Literal["stream_collection"] = "stream_collection"
 
     def __init__(self, stream: Stream[T], limit: int) -> None:
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
-            raise StreamProtocolError("Collection requires an explicit positive limit")
+        _validate_collection_limit(limit)
         self.stream = stream
         self.limit = limit
 
@@ -237,13 +240,6 @@ class StreamCollection(Generic[T]):
                     self.stream.stream_id, self.limit
                 )
             await asyncio.sleep(0.01)
-
-
-class _StreamRun:
-    """Opaque submission metadata; dependency traversal must not inspect it."""
-
-    def __init__(self, output: Stream[Any]) -> None:
-        self.output = output
 
 
 @dataclass(frozen=True)

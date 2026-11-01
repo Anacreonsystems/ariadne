@@ -152,6 +152,7 @@ jobs:
               tests/test_futures.py
               tests/test_states.py
               tests/test_subprocess_logging.py
+              tests/test_stream_tasks.py
               tests/test_task_engine.py
               tests/test_task_runs.py
               tests/test_task_worker.py
@@ -230,6 +231,7 @@ jobs:
                 tests/test_futures.py
                 tests/test_states.py
                 tests/test_subprocess_logging.py
+                tests/test_stream_tasks.py
                 tests/test_task_engine.py
                 tests/test_task_runs.py
                 tests/test_task_worker.py
@@ -269,7 +271,8 @@ jobs:
       - &python-test-database-url
         name: Set database connection URL
         if: ${{ startsWith(matrix.database, 'postgres') }}
-        run: echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://prefect:prefect@localhost/prefect" >> $GITHUB_ENV
+        run: |
+          echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://prefect:prefect@localhost/prefect" >> $GITHUB_ENV
 
       - name: Run tests
         run: |
@@ -291,6 +294,58 @@ jobs:
           docker container inspect ${{ job.services.postgres.id }} \
           && docker container logs ${{ job.services.postgres.id }} \
           || echo "Ignoring bad exit code"
+
+  run-native-stream-tests:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    runs-on: ubuntu-latest
+    name: Native stream tasks - python:3.12, ${{ matrix.database }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        database: [sqlite, "postgres:17"]
+    services:
+      postgres:
+        image: postgres:17
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: prefect
+          POSTGRES_PASSWORD: prefect
+          POSTGRES_DB: prefect
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      ARIADNE_NATIVE_STREAM_TEST_DSN: postgresql://prefect:prefect@localhost/prefect
+    steps:
+      - *python-test-checkout
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install packages
+        run: uv sync --locked
+      - *python-test-database-url
+      - name: Run native tasks with real HTTP and PostgreSQL storage
+        run: uv run pytest tests/test_stream_tasks.py -q --junitxml=native-stream-tests.xml
+      - name: Require every native case to execute
+        run: |
+          uv run python - <<'PY'
+          import xml.etree.ElementTree as ET
+          cases = ET.parse("native-stream-tests.xml").findall(".//testcase")
+          assert cases, "Native stream tests were not collected"
+          assert not any(case.find("skipped") is not None for case in cases), "Native cases were skipped"
+          PY
+      - name: Upload native test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-stream-tests-${{ strategy.job-index }}
+          path: native-stream-tests.xml
 
   prepare-canonical-test-durations:
     if: ${{ github.event_name != 'repository_dispatch' }}
@@ -637,6 +692,8 @@ jobs:
     if: ${{ github.event_name != 'repository_dispatch' }}
     runs-on: ubuntu-latest
     name: docker, python:${{ matrix.python-version }}
+    env:
+      DOCKERHUB_LOGIN_AVAILABLE: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
 
     services:
       redis:
@@ -717,7 +774,7 @@ jobs:
 
       - name: Login to DockerHub
         uses: docker/login-action@v4.6.0
-        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && env.DOCKERHUB_LOGIN_AVAILABLE == 'true'
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
