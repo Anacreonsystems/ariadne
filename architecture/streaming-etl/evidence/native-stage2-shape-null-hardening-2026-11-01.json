@@ -1,0 +1,79 @@
+{
+  "commands": [
+    "uv run pytest tests/server/database/test_stream_storage_migrations.py -q",
+    "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://<redacted>@127.0.0.1:55436/native_stage2 uv run pytest tests/server/database/test_stream_storage_migrations.py -q",
+    "uv run ruff check <paired migrations> tests/server/database/test_stream_storage_migrations.py",
+    "uv run ruff format --check <ORM, paired migrations, migration test>",
+    "uv run pyright src/prefect/server/database/orm_models.py tests/server/database/test_stream_storage_migrations.py"
+  ],
+  "evidence_sha256": {
+    "architecture/streaming-etl/evidence/native-stage2-shape-null-all-negative-2026-11-01.log": "f7d92420da1ff036c57b207006a6a54098bf7cb86098e6dc4ddf5ccbf5c9747c",
+    "architecture/streaming-etl/evidence/native-stage2-shape-null-negative-2026-11-01.log": "c1cfd2fbc69ae4c18af1915d9c0e3d597e0c4a53cf73f74811121ce4fa0d0dec",
+    "architecture/streaming-etl/evidence/native-stage2-shape-null-successor-final-2026-11-01.log": "6a34e9aaa4e53ca143c604cd7b26f09163f546132c61efe4abbe32bbb26281fd"
+  },
+  "finding": {
+    "accepted_bypasses": [
+      "StreamPartition(state=COMPLETED, tail_sequence=NULL, error=NULL)",
+      "StreamConsumer(inflight_sequence=NULL, delivery_id=UUID)",
+      "StreamCompletion(kind=YIELD, output_sequence=NULL)"
+    ],
+    "cause": "SQL CHECK accepts UNKNOWN, so nullable operands allowed invalid terminal, delivery, and output shapes.",
+    "reproduced_before_fix": true
+  },
+  "fix": {
+    "dialects": [
+      "sqlite",
+      "postgresql"
+    ],
+    "guards": [
+      "terminal COMPLETED/FAILED requires tail_sequence IS NOT NULL",
+      "active delivery requires inflight_sequence IS NOT NULL",
+      "YIELD completion requires output_sequence IS NOT NULL"
+    ],
+    "orm_and_migration_parity": true,
+    "runtime_store_changed": false
+  },
+  "git_head_before_unpublished_changes": "a0a81d654346a4e6e05448d838a10feea61d6b8a",
+  "limits": [
+    "This record verifies DDL shape constraints and migration parity only.",
+    "It does not expand N1.2 scope or claim N1.3 HTTP/process acceptance.",
+    "Previously completed runtime/store gates remain historical evidence; runtime store code was not changed by this hardening."
+  ],
+  "non_gating_observation": {
+    "description": "An auxiliary unscoped Ruff invocation over the entire historical orm_models.py reported pre-existing UP045 findings; the focused repository checks and Pyright in the final successor record passed.",
+    "path": "architecture/streaming-etl/evidence/native-stage2-shape-null-successor-2026-11-01.log",
+    "sha256": "28c286e5aec7d44e35c5f4484daa98a560bacf16c473774a2126c1e4f67cf5a4"
+  },
+  "recorded_at": "2026-11-01T15:45:57.471322+00:00",
+  "schema_version": 1,
+  "scope": "native-stream-stage2-ddl-null-shape-hardening",
+  "source_sha256": {
+    "src/prefect/server/database/_migrations/versions/postgresql/2026_11_01_000000_7f3c2a9e4b11_add_native_stream_storage.py": "d2d2cf7214625e02901bb4671a8182100b489258143061eae3d5818a0f56117b",
+    "src/prefect/server/database/_migrations/versions/sqlite/2026_11_01_000000_9b6d4e1c8a20_add_native_stream_storage.py": "6c12ea7aaa40572c9b3285b5612da8652c3ba660623ce8f2926dbb9416eb5223",
+    "src/prefect/server/database/orm_models.py": "73a3ba3da5558fd3ca221c696fe623dbf3a21330ba94aec4f26650d12c11db86",
+    "tests/server/database/test_stream_storage_migrations.py": "e535586ba9c194ad708457cc7ffe44d07f0c9a66aa3947731596570681ecb736"
+  },
+  "verdict": "PASS",
+  "verification": {
+    "direct_sql_adversarial_cases": 3,
+    "direct_sql_adversarial_rejected": 3,
+    "git_diff_check": "PASS",
+    "postgresql": {
+      "errors": 0,
+      "isolated_port": 55436,
+      "passed": 4,
+      "server": "PostgreSQL 17.11",
+      "skipped": 0,
+      "tests": 4
+    },
+    "pyright_focused": "0 errors, 0 warnings",
+    "ruff_focused": "PASS",
+    "ruff_format": "PASS",
+    "sqlite": {
+      "errors": 0,
+      "passed": 4,
+      "skipped": 0,
+      "tests": 4
+    }
+  }
+}

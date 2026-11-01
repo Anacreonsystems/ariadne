@@ -1,0 +1,58 @@
+F
+=================================== FAILURES ===================================
+_________ test_json_roundtrip_preserves_signed_zero_and_managed_state __________
+
+graph = Graph(store=<prefect.server.models.streams.NativeStreamStore object at 0x7f3ca7406cc0>, source=SourceBinding(flow_run_...d4c9e6-6acb-45f6-b32b-da91bf2bb729'), owner_id=UUID('ddf90509-1baf-4a6c-94f4-5e6c25277bac'), attempt=1, owner_epoch=1))
+
+    async def test_json_roundtrip_preserves_signed_zero_and_managed_state(graph):
+        await graph.store.append(graph.source, 1, {"negative_zero": -0.0})
+        await graph.store.append(graph.source, 2, {"document": 2})
+        item = await graph.store.read(graph.consumer)
+>       assert math.copysign(1, item.value["negative_zero"]) == -1
+E       assert 1.0 == -1
+E        +  where 1.0 = <built-in function copysign>(1, 0.0)
+E        +    where <built-in function copysign> = math.copysign
+
+tests/server/models/test_streams.py:738: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://native_stage2:native_stage2@127.0.0.1:55435/native_stage2'
+Connecting to postgres at 'postgres://native_stage2:native_stage2@127.0.0.1:55435/postgres'
+Creating test postgres database 'native_stage2_tests_master'
+Using test database connection URL 'postgresql+asyncpg://native_stage2:native_stage2@127.0.0.1:55435/native_stage2_tests_master'
+Running hosted API server on port 51453
+---------------------------- Captured stderr setup -----------------------------
+14:35:19.997 | INFO    | uvicorn.error - Started server process [3926]
+14:35:20.001 | INFO    | uvicorn.error - Waiting for application startup.
+14:35:20.201 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+14:35:20.206 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+14:35:20.207 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+14:35:20.207 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+14:35:20.207 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+14:35:20.207 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+14:35:20.207 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+14:35:20.207 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+14:35:20.207 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+14:35:20.208 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+14:35:20.208 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+14:35:20.208 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+14:35:20.208 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+14:35:20.208 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+14:35:20.208 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+14:35:20.209 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+14:35:20.209 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+14:35:20.210 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+14:35:20.211 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+14:35:20.212 | INFO    | uvicorn.error - Application startup complete.
+14:35:20.213 | INFO    | uvicorn.error - Uvicorn running on http://127.0.0.1:51453 (Press CTRL+C to quit)
+14:35:20.254 | INFO    | uvicorn.access - 127.0.0.1:35282 - "GET /api/health HTTP/1.1" 200
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+14:35:20.718 | INFO    | uvicorn.error - Shutting down
+14:35:20.820 | INFO    | uvicorn.error - Waiting for application shutdown.
+14:35:20.821 | INFO    | uvicorn.error - Application shutdown complete.
+14:35:20.822 | INFO    | uvicorn.error - Finished server process [3926]
+=========================== short test summary info ============================
+FAILED tests/server/models/test_streams.py::test_json_roundtrip_preserves_signed_zero_and_managed_state
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 32 deselected in 6.06s

@@ -30,12 +30,17 @@ experimental execution and publication scope, and
 runtime theory and its limits. [Native integration epoch 1](../epochs/epoch-01-native-prefect.md)
 starts a separate product-delivery scale. Its
 [first-stage ADR](ADR-0032-native-task-stream-contract.md) is now `accepted` for
-the native SDK/task-engine contract, earning **10% of the planned foundation**;
-production storage, source and deployment stages remain open.
+the native SDK/task-engine contract. The bounded storage-only
+[ADR-0033](ADR-0033-native-durable-stream-storage.md) also passes, reaching
+**20% of the planned foundation**. HTTP transport, source and deployment
+stages remain open.
 The [initial Stage 1 graph validation](../evidence/adr-graph-native-stage1-2026-11-01.json)
 checks retained ADR statuses, required accepted sections and local evidence links.
 The [CI follow-up graph](../evidence/adr-graph-native-stage1-ci-2026-11-01.json)
 also covers the final source-bound acceptance and retained failed observations.
+The [native storage graph](../evidence/adr-graph-native-stage2-2026-11-01.json)
+covers accepted ADR-0033, pending ADR-0034, the rejected JSONB alternative,
+and the frozen N1.2 code/test evidence.
 
 ## Decision graph
 
@@ -110,6 +115,9 @@ graph TD
     A0030 --> A0031[ADR-0031: Validated durable-stream theory]
     A0031 --> E1[Native integration epoch 1]
     E1 --> A0032[ADR-0032: Native task and stream contract]
+    A0032 --> A0033[ADR-0033: Native storage]
+    A0033 --> A0034[ADR-0034: HTTP adapter - pending]
+    A0094[ADR-0094: JSONB fidelity - rejected] -. evidence .-> A0033
     A0010 --> A0032
     A0011 --> A0032
     A0025 -. transition evidence .-> A0032
@@ -186,10 +194,13 @@ graph TD
 - [ADR-0030: Continuous ARC soak and fresh-job evidence collection](ADR-0030-continuous-arc-soak-and-evidence-collection.md) — `accepted`
 - [ADR-0031: Validated durable-stream theory and native integration handoff](ADR-0031-validated-durable-stream-theory.md) — `accepted`
 - [ADR-0032: Native task and stream dependency contract](ADR-0032-native-task-stream-contract.md) — `accepted`
+- [ADR-0033: Native durable stream storage](ADR-0033-native-durable-stream-storage.md) — `accepted`
+- [ADR-0034: Native stream HTTP adapter and runtime admission](ADR-0034-native-stream-http-adapter.md) — `pending`
 - [ADR-0090: Use Prefect transactions as the streaming coordinator](ADR-0090-prefect-transactions-as-coordinator.md) — `rejected`
 - [ADR-0091: Idempotency alone provides multi-sink atomicity](ADR-0091-idempotency-alone-is-atomic.md) — `rejected`
 - [ADR-0092: Split lifecycle and progress state machines](ADR-0092-split-safety-state-machines.md) — `rejected`
 - [ADR-0093: Implicit regeneration of missing durable output](ADR-0093-implicit-regeneration-of-missing-durable-output.md) — `rejected`
+- [ADR-0094: Use JSONB for canonical stream values](ADR-0094-jsonb-canonical-stream-values.md) — `rejected`
 
 Delivery planning is tracked in [todo.md](../todo.md) and
 [sprint_board.md](../sprint_board.md). Those files may change as work is sliced;
