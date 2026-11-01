@@ -44,6 +44,13 @@ from prefect._internal.states import (
     exception_to_failed_state_sync,
     return_value_to_state_sync,
 )
+from prefect._internal.stream_engine import (
+    execute_stream_async,
+    execute_stream_sync,
+    finish_stream_async,
+    finish_stream_sync,
+    reject_stream_execution,
+)
 from prefect._internal.uuid7 import uuid7
 from prefect.cache_policies import CachePolicy
 from prefect.client.orchestration import PrefectClient, SyncPrefectClient, get_client
@@ -100,6 +107,7 @@ from prefect.states import (
     exception_to_failed_state,
     return_value_to_state,
 )
+from prefect.streams import StreamProtocolError
 from prefect.telemetry.run_telemetry import RunTelemetry
 from prefect.transactions import (
     AsyncTransaction,
@@ -311,7 +319,12 @@ class BaseTaskRunEngine(Generic[P, R]):
                     return_data=True,
                     max_depth=-1,
                     remove_annotations=True,
-                    context={"parameter_name": parameter},
+                    context={
+                        "parameter_name": parameter,
+                        "allow_stream": bool(
+                            self.task.stream and parameter == self.task.stream.input
+                        ),
+                    },
                 )
             except (UpstreamTaskError, PrefectException):
                 raise
@@ -1038,7 +1051,9 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
         task is async.
         """
         parameters = self.parameters or {}
-        if transaction.is_committed():
+        if self.task.stream is not None:
+            result = execute_stream_sync(self)
+        elif transaction.is_committed():
             result = transaction.read()
         else:
             result = call_with_parameters(self.task.fn, parameters)
@@ -1659,7 +1674,9 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
         task is async.
         """
         parameters = self.parameters or {}
-        if transaction.is_committed():
+        if self.task.stream is not None:
+            result = await execute_stream_async(self)
+        elif transaction.is_committed():
             result = await transaction.read()
         else:
             result = await call_with_parameters(self.task.fn, parameters)
@@ -1685,16 +1702,24 @@ def run_task_sync(
         context=context,
     )
 
-    with engine.start(task_run_id=task_run_id, dependencies=dependencies):
-        while engine.is_running():
-            engine.wait_until_ready()
-            with (
-                engine.asset_context(),
-                engine.run_context(),
-                engine.transaction_context() as txn,
-            ):
-                engine.call_task_fn(txn)
-            raise_if_flow_run_suspension_requested()
+    try:
+        with engine.start(task_run_id=task_run_id, dependencies=dependencies):
+            while engine.is_running():
+                engine.wait_until_ready()
+                with (
+                    engine.asset_context(),
+                    engine.run_context(),
+                    engine.transaction_context() as txn,
+                ):
+                    engine.call_task_fn(txn)
+                raise_if_flow_run_suspension_requested()
+    except Exception as exc:
+        if task.stream is not None:
+            run_coro_as_sync(reject_stream_execution(engine, type(exc).__name__))
+        raise
+    finally:
+        if task.stream is not None and engine.task_run is not None:
+            finish_stream_sync(engine)
 
     return engine.state if return_type == "state" else engine.result()
 
@@ -1717,16 +1742,24 @@ async def run_task_async(
         context=context,
     )
 
-    async with engine.start(task_run_id=task_run_id, dependencies=dependencies):
-        while engine.is_running():
-            await engine.wait_until_ready()
-            async with (
-                engine.asset_context(),
-                engine.run_context(),
-                engine.transaction_context() as txn,
-            ):
-                await engine.call_task_fn(txn)
-            raise_if_flow_run_suspension_requested()
+    try:
+        async with engine.start(task_run_id=task_run_id, dependencies=dependencies):
+            while engine.is_running():
+                await engine.wait_until_ready()
+                async with (
+                    engine.asset_context(),
+                    engine.run_context(),
+                    engine.transaction_context() as txn,
+                ):
+                    await engine.call_task_fn(txn)
+                raise_if_flow_run_suspension_requested()
+    except Exception as exc:
+        if task.stream is not None:
+            await reject_stream_execution(engine, type(exc).__name__)
+        raise
+    finally:
+        if task.stream is not None and engine.task_run is not None:
+            await finish_stream_async(engine)
 
     return engine.state if return_type == "state" else await engine.result()
 
@@ -1741,6 +1774,8 @@ def run_generator_task_sync(
     dependencies: Optional[dict[str, set[RunInput]]] = None,
     context: Optional[dict[str, Any]] = None,
 ) -> Generator[R, None, None]:
+    if task.stream is not None:
+        raise StreamProtocolError("Use submit_stream() for a native stream task")
     if return_type != "result":
         raise ValueError("The return_type for a generator task must be 'result'")
 
@@ -1802,6 +1837,8 @@ async def run_generator_task_async(
     dependencies: Optional[dict[str, set[RunInput]]] = None,
     context: Optional[dict[str, Any]] = None,
 ) -> AsyncGenerator[R, None]:
+    if task.stream is not None:
+        raise StreamProtocolError("Use submit_stream() for a native stream task")
     if return_type != "result":
         raise ValueError("The return_type for a generator task must be 'result'")
     engine = AsyncTaskRunEngine[P, R](
@@ -1919,6 +1956,8 @@ def run_task(
         dependencies=dependencies,
         context=context,
     )
+    if task.stream is not None:
+        return run_task_async(**kwargs) if task.isasync else run_task_sync(**kwargs)
     if task.isasync and task.isgenerator:
         return run_generator_task_async(**kwargs)
     elif task.isgenerator:

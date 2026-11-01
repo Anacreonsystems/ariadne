@@ -1,7 +1,8 @@
 # ADR-0032: Native task and stream dependency contract
 
-- Status: `planning`
+- Status: `accepted`
 - Date: 2026-10-31
+- Accepted: 2026-11-01, Stage 1 native SDK/task-engine contract scope
 - Epoch: [Native integration epoch 1](../epochs/epoch-01-native-prefect.md)
 - Owners: Prefect task-engine maintainers, streaming runtime maintainers,
   ETL Architect / HighLoad Principal
@@ -225,36 +226,36 @@ epoch and its later ADRs, consistent with the review responsibility in
 
 ## Acceptance criteria
 
-- [ ] As a developer, I can declare native stream output and input edges in a
+- [x] As a developer, I can declare native stream output and input edges in a
   mixed Prefect flow and inspect their dependency kind without selecting a
   global mode.
-- [ ] As a developer, I can execute real sync and async native task inputs where
+- [x] As a developer, I can execute real sync and async native task inputs where
   one accepted terminal `yield` or `return` completes exactly one durable input
   turn.
-- [ ] As a user, I got the accepted output downstream before the producer
+- [x] As a user, I got the accepted output downstream before the producer
   TaskRun reached `Completed`.
-- [ ] As a user, I got document 200 after failure before durable completion and
+- [x] As a user, I got document 200 after failure before durable completion and
   document 201 after completion committed but its acknowledgement was lost.
-- [ ] As a user, I got Tanya as a retry attempt of Anna's same TaskRun and stable
+- [x] As a user, I got Tanya as a retry attempt of Anna's same TaskRun and stable
   consumer rather than a TaskRun or consumer per document.
-- [ ] As a system, I got output, managed state, completion, and cursor together
+- [x] As a system, I got output, managed state, completion, and cursor together
   or none in the Stage 1 contract fixture after every tested terminal boundary,
   without treating that fixture as native storage atomicity evidence.
-- [ ] As a system, I can reject a stale-owner terminal write, reject a declared
+- [x] As a system, I can reject a stale-owner terminal write, reject a declared
   multi-yield profile before admission, and prevent a duplicate or conflicting
   terminal observation from mutating the already accepted output, state,
   completion, or cursor.
-- [ ] As a developer, I can run existing finite task, future, retry, and ordinary
+- [x] As a developer, I can run existing finite task, future, retry, and ordinary
   generator regression suites without a stream edge changing their behavior.
-- [ ] As a developer, I can connect a stream to a finite task only through an
+- [x] As a developer, I can connect a stream to a finite task only through an
   explicit bounded collection boundary; an unbounded direct dependency fails
   validation.
-- [ ] As a system, I can reject unsupported source, fan-out-output,
+- [x] As a system, I can reject unsupported source, fan-out-output,
   multiple-output, and generalized empty-output profiles before any unsafe
   write.
-- [ ] As a system, I got bounded TaskRun metadata: record count increases do not
+- [x] As a system, I got bounded TaskRun metadata: record count increases do not
   create a TaskRun per record.
-- [ ] As a system, I got TaskRun lifecycle transitions only through Prefect's
+- [x] As a system, I got TaskRun lifecycle transitions only through Prefect's
   native orchestration boundary.
 
 ## Evidence
@@ -269,11 +270,24 @@ adapter experiments in [ADR-0024](ADR-0024-control-plane-authority-and-lifecycle
 and [ADR-0025](ADR-0025-prefect-adapter-and-operational-projections.md) expose
 integration risks but are not evidence that this native Stage 1 exists.
 
-There is no implementation evidence for this ADR yet. All Stage 1 acceptance
-criteria remain unchecked. Documentation establishes the agreement and testable
-boundary; it does not implement it.
+Native implementation began on 2026-11-01. The selected API is an ordinary
+`Task(stream=StreamTaskConfig(input=...))` submitted through its explicitly
+typed `submit_stream()` method. `Task.__call__` and `Task.submit` reject this
+declared stream profile rather than contradict their finite-result overloads.
+Ordinary tasks and generators retain those existing entrypoints.
 
-Evidence required before this ADR can move to `accepted` for Stage 1:
+The [native contracts](../../../src/prefect/streams.py),
+[per-input executor](../../../src/prefect/_internal/stream_engine.py),
+[Task SDK](../../../src/prefect/tasks.py),
+[task engine](../../../src/prefect/task_engine.py),
+[runner](../../../src/prefect/task_runners.py), and
+[dependency resolver](../../../src/prefect/utilities/engine/__init__.py)
+now contain the first implementation. The
+[frozen-source acceptance](../evidence/native-stage1-acceptance-2026-11-01.json)
+passes all Stage 1 criteria. Real PostgreSQL adapter evidence remains an
+integration test of this interface, not proof of native production migrations.
+
+Required Stage 1 acceptance evidence, now supplied by the final gate below:
 
 - reviewed native changes under `src/prefect` for the dependency representation
   and task-engine slice;
@@ -332,7 +346,7 @@ deployments, workers, storage interfaces, and UI. Internal data-plane modules
 may have separate schemas, pools, and capacity controls so per-record traffic
 does not turn ordinary orchestration metadata into the stream log.
 
-## Review record
+## Initial planning review record
 
 On 2026-11-01 the ETL Architect / HighLoad Principal reviewed this planning ADR
 against the repository's existing FlowRun and TaskRun ownership model and the
@@ -342,6 +356,137 @@ the task engine; the one-terminal-event contract does not require inspection of
 unreachable generator code; and fixture atomicity is contract evidence rather
 than native storage evidence. The ADR remains `planning`, and no Stage 1
 acceptance criterion is earned by this review.
+
+## Implementation agreement (2026-11-01)
+
+One `submit_stream()` call allocates one native TaskRun and output edge. The
+existing task engine performs its normal context, retry, event and terminal
+state work; the internal executor invokes the user function once per input.
+It never submits another TaskRun per record. Configurations survive
+`with_options()` and serialization. The context parameter is injected, so it
+is omitted from the call arguments.
+
+```python
+from prefect import task
+from prefect.streams import StreamContext, StreamTaskConfig
+
+
+@task(stream=StreamTaskConfig(input="document"), retries=2)
+def transform(document: int, *, ctx: StreamContext):
+    ctx.managed_state["count"] = ctx.managed_state.get("count", 0) + 1
+    yield document * 2
+
+
+# Inside a flow, with an explicitly attached existing Stream:
+# output = transform.submit_stream(upstream)
+# finite_result = ordinary_task.submit(output.collect(limit=1000))
+# output.wait()
+```
+
+The native `StreamStorage` interface is the production-code boundary; core code
+imports no architecture prototype. The integration tests use a
+[real PostgreSQL adapter](../../../tests/_native_stream_postgres.py) over the
+retained data-plane implementation. This adapter is test infrastructure, not a
+native migration, automatic source connector or deployed storage service.
+
+YIELD persists one output and a frozen managed-state snapshot before invocation
+cleanup; code after that yield is not resumed. RETURN persists completion and
+managed state without an output envelope, following the validated storage
+protocol. An optional returned dictionary supplies final managed state;
+otherwise the context's managed state is used. This is not a general filtering
+or multi-output API. External effects retain client-owned retry safety.
+
+Supported execution is a top-level flow with a ThreadPoolTaskRunner and enough
+slots for its active producer, stream operators and finite work. Nested stream
+submission, process/distributed runners, map, deferred execution, implicit
+finite collection and undeclared output profiles fail before admission.
+An ordinary finite future cannot hide a Stream from dependency validation.
+
+The current executor polls an empty input; high-load notifications, native
+storage migrations, source admission, deployment serialization and infrastructure
+replacement remain later-stage work. A Pause/control signal preserves an open
+stream; this guard does not claim full server suspension/resume integration.
+
+## Review findings and correction history
+
+The implementation review required these additional cases before acceptance:
+
+1. A committed end marker with a lost acknowledgement precedes TaskRun success.
+   Retry reconciles only the same existing binding and fully drained immutable
+   input tail; it never reopens the output or publishes more DATA.
+2. Rejected submission or failure before TaskRun creation closes an allocated
+   output with a failure marker while preserving the original exception.
+3. Recursive side-input validation rejects nested bare streams before output or
+   TaskRun creation. Only the declared input port accepts a Stream.
+4. The public method is explicitly `submit_stream()`, keeping finite entrypoint
+   overloads truthful.
+5. Output failure finalization is limited to terminal Failed/Crashed/Cancelled
+   states; Running/Pending and Prefect control signals preserve their open stream.
+6. Async runner submission creates a coroutine inside the accepted worker job,
+   avoiding an unawaited coroutine when execution is rejected before entry.
+
+The first expanded candidate passed 22 tests before a test setup omitted the
+required `create_task_run` arguments. After that correction, a hostile repeated
+completion was correctly rejected by PostgreSQL but revealed an adapter
+exception-type mismatch; the adapter now translates it without weakening the
+transaction rejection. An async startup fault initially targeted the sync-only
+creation helper; its corrected test targets `Task.create_local_run`. These are
+retained test-harness findings, not passed negative controls. The corrected
+focused startup matrix passed all six sync/async cases before final acceptance.
+
+## Stage 1 acceptance evidence (2026-11-01)
+
+The [acceptance record](../evidence/native-stage1-acceptance-2026-11-01.json)
+binds all six native core files, two native test files and the retained
+PostgreSQL data-plane dependency before and after execution. All nine hashes
+match across both native profiles and the complete regression profile, with
+no source drift.
+
+| Profile | Actual execution and result |
+| --- | --- |
+| [SQLite orchestration](../evidence/native-stage1-sqlite-2026-11-01.json) | Real Uvicorn HTTP API, native Prefect SDK/engines and PostgreSQL 17.11 stream storage: 36/36 tests, no skip; 156.23 pytest seconds. |
+| [PostgreSQL orchestration](../evidence/native-stage1-postgres-2026-11-01.json) | Real Uvicorn HTTP API, PostgreSQL orchestration metadata and PostgreSQL 17.11 stream storage: 36/36 tests, no skip; 153.42 pytest seconds. |
+| [Finite runtime regression](../evidence/native-stage1-regression-2026-11-01.json) | Complete `test_task_engine`, `test_futures`, `test_tasks`, and `test_task_runners`: 718 pass, two existing expected xfails, no failure/error; 156.30 pytest seconds. |
+| [Client wheel](../evidence/native-stage1-client-wheel-2026-11-01.json) and [source audit](../evidence/native-stage1-client-wheel-source-audit-2026-11-01.json) | Actual stripped `prefect-client` build and isolated Python 3.11 import pass. All six packaged core modules match current source byte for byte; server database code is absent. |
+
+The tests are in [test_stream_tasks.py](../../../tests/test_stream_tasks.py).
+They run a separate HTTP server process and real SQL operations, including
+transaction rollback and committed-but-unacknowledged completion. They do not
+replace the task engine or storage transaction with an in-memory simulation.
+Only named rejection/startup failures are injected to exercise those boundaries.
+
+| Acceptance area | Executed evidence |
+| --- | --- |
+| Native declaration, copying and typed edges | `test_stream_task_remains_a_task_and_preserves_options`, explicit Stream/collection kinds, and mixed finite dependencies. |
+| Sync/async YIELD and RETURN | Both modes in terminal-failure, terminal-return and finish-acknowledgement tests. RETURN has no output envelope. |
+| Early delivery | `test_native_early_delivery_and_mixed_finite_dependencies` persists and consumes output while its real producer TaskRun is still running; API dependency linkage is checked. |
+| Input 200/201 and same TaskRun retry | `test_document_200_recovery_uses_its_actual_durable_sequence` starts with records 1 through 201, fails at sequence 200, and checks replay at 200 or continuation at 201 with the same TaskRun/consumer. |
+| Output/state/completion/cursor and closed tail | Real PostgreSQL failure before commit, lost completion acknowledgement, cleanup-state freezing, and lost finish acknowledgement all converge without extra output. |
+| Fencing and conflicting completion | Real storage rejects an old owner, accepts exact completion retry and rejects changed intent without a new mutation. |
+| Finite and unsupported profiles | Explicit bounded collection succeeds; bare streams, nested side streams, hidden finite-Future streams, process runners, map/deferred modes and declared unsupported output profiles reject. |
+| Bounded native metadata | At 1 and 1000 source documents, two operators and one finite task produce exactly three TaskRuns and at most four state records per TaskRun. |
+| Lifecycle and startup | Six sync/async submission/start/executor failures close rejected outputs and preserve errors; Pause safety preserves OPEN rather than declaring native failure. |
+
+The two xfails explicitly cover synchronous sleep inside an async task, which
+the existing async timeout cannot interrupt. The full parallel regression also
+emits Python multiprocessing `resource_tracker` semaphore diagnostics. The
+[baseline comparison](../evidence/native-stage1-baseline-diagnostic-2026-11-01.json)
+reproduces them on unchanged code: 49 serial ProcessPool tests pass without the
+diagnostic, and 49 parallel baseline tests pass with the same diagnostic class.
+It is retained as a separate infrastructure follow-up, not suppressed or
+reported fixed by this implementation. Initial baseline setup errors are also
+retained and excluded from successful baseline evidence.
+
+This accepts only the implemented Stage 1 native contract. The selected
+PostgreSQL adapter remains test infrastructure. Native storage migrations,
+default backend, native source admission, whole-flow/infrastructure restart
+correlation, full suspension/resume and production load remain later-stage
+criteria in [epoch 1](../epochs/epoch-01-native-prefect.md).
+
+The [final Principal acceptance](../evidence/native-stage1-principal-acceptance-2026-11-01.json)
+verifies all gate records and frozen sources, accepts this scoped status and
+closes sprint N1.1 at its planned 10% foundation share. No Stage 1 blocker
+remains; the later-stage scope above remains unaccepted.
 
 ## Links
 

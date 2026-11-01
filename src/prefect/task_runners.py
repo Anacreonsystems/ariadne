@@ -415,10 +415,14 @@ class ThreadPoolTaskRunner(TaskRunner[PrefectConcurrentFuture[R]]):
         if task.isasync:
             # TODO: Explore possibly using a long-lived thread with an event loop
             # for better performance
+            def run_async_task() -> Any:
+                # Construct the coroutine only after the executor accepts and
+                # starts the job. A rejected submission must not leak one.
+                return asyncio.run(run_task_async(**submit_kwargs))
+
             future = self._executor.submit(
                 context.run,
-                asyncio.run,
-                run_task_async(**submit_kwargs),
+                run_async_task,
             )
         else:
             future = self._executor.submit(

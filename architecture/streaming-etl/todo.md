@@ -5,10 +5,10 @@ completion does not make an ADR `accepted`; evidence for every criterion in
 the declared ADR scope must be linked back to it.
 
 Current direction: [Native integration epoch 1](epochs/epoch-01-native-prefect.md)
-is `planning`, with **0% earned native implementation readiness**. Its
-[first-stage contract](adr/ADR-0032-native-task-stream-contract.md) is ready for
-discussion and implementation planning. This cycle creates the epoch and ADR;
-new native tasks and sprint shares will be sliced in the next requested cycle.
+is `progress`, with **10% earned native foundation readiness** after its first gate. Its [first-stage contract](adr/ADR-0032-native-task-stream-contract.md)
+is accepted for its native Task SDK/engine scope with real HTTP/PostgreSQL
+checks. The first sprint earned its planned 10% share after the complete
+[Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json) passed.
 
 The separate DS-052a follow-up is now `done` under
 [ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md): the
@@ -23,6 +23,15 @@ historical short delivery or the new native implementation scale.
 Delivery states are separate from ADR statuses. Sizes assume `S` ≤ 2 engineer
 days, `M` = 3–4 days, and `L` ≈ one engineer week. `H` and `M` denote high and
 medium delivery risk.
+
+## Native epoch 1 — Stage 1 implementation
+
+| ID | State | Depends | Deliverable and acceptance criteria |
+| --- | --- | --- | --- |
+| NI1-001 | `done` | [ADR-0032](adr/ADR-0032-native-task-stream-contract.md) | Native Task configuration, typed Stream/collection dependencies and `submit_stream()`. As a developer, I can inspect the stream edge while ordinary finite entrypoints and copying retain their contracts. |
+| NI1-002 | `done` | NI1-001 | Sync/async per-input execution inside one TaskRun. As a user, I can recover input 200 or 201 on the same TaskRun according to durable terminal acceptance. |
+| NI1-003 | `done` | NI1-001, NI1-002 | Real HTTP/PostgreSQL acceptance, negative cases and full finite-task regression. As a system, I got constant TaskRun/state metadata at 1 and 1000 records and no unsupported admission. |
+| NI1-004 | `done` | NI1-003 | Independent architecture review, client-wheel smoke and evidence/ADR closure. As a developer, I can reproduce the tested source and distinguish Stage 1 from native persistence/deployment readiness. |
 
 ## Protocol epoch 2 — short experimental delivery — target 100%, earned 100%
 

@@ -1,10 +1,23 @@
 # Streaming ETL sprint board
 
 Current product cycle: [Native integration epoch 1](epochs/epoch-01-native-prefect.md),
-`planning`, **0% earned native implementation readiness**. The
-[first-stage ADR](adr/ADR-0032-native-task-stream-contract.md) defines its next
-contract gate. New short sprints, tasks and percentage shares are not allocated
-in this documentation cycle; they follow a separate task-slicing instruction.
+`progress`, **10% earned native foundation readiness** after the first final gate. The
+[first-stage ADR](adr/ADR-0032-native-task-stream-contract.md) is accepted for
+its scoped contract gate. Implementation was requested on 2026-11-01 with frequent tests
+against the actual runtime and storage.
+
+## Native epoch 1 board
+
+| Sprint | State | Planned cumulative target | Share | Tasks | Exit |
+| --- | --- | ---: | ---: | --- | --- |
+| N1.1 — Native task/stream contract | `done` | 10% | +10% | NI1-001…004 | All ADR-0032 criteria, frozen real HTTP/PostgreSQL gates, finite task/runner regressions, client-wheel smoke and Principal review pass. |
+
+The 10% is a planning estimate toward the explicitly bounded native foundation,
+not a measurement of production readiness. The [complete Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json)
+now passes; earned readiness is 10%. Later short sprints are not allocated in
+this cycle.
+
+## Experimental handoff
 
 The separate DS-052a lane is `done` under
 [ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md). The
@@ -20,7 +33,7 @@ Default cadence is one week with parallel owners. A task sized `L` consumes one
 owner for most of the sprint. If staffing cannot satisfy the exit criteria, work
 rolls forward and the cumulative target is not claimed.
 
-The percentage measures cumulative readiness toward protocol epoch 2: yielded
+The historical percentage measures readiness toward protocol epoch 2: yielded
 ObjectRef records flow immediately through a platform-owned durable channel,
 replacement workers redeliver the first input without a durable downstream
 `yield`/`return`, and periodic barriers preserve graph state. Client code owns

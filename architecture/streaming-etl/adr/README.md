@@ -28,9 +28,11 @@ The separate 72-hour campaign completed successfully on 2026-10-31;
 experimental execution and publication scope, and
 [ADR-0031](ADR-0031-validated-durable-stream-theory.md) records the successful
 runtime theory and its limits. [Native integration epoch 1](../epochs/epoch-01-native-prefect.md)
-starts a separate product-delivery scale at **0% earned native implementation**.
-Its [first-stage ADR](ADR-0032-native-task-stream-contract.md) is `planning`.
-The [current graph validation](../evidence/adr-graph-native-epoch-1-2026-11-01.json)
+starts a separate product-delivery scale. Its
+[first-stage ADR](ADR-0032-native-task-stream-contract.md) is now `accepted` for
+the native SDK/task-engine contract, earning **10% of the planned foundation**;
+production storage, source and deployment stages remain open.
+The [current graph validation](../evidence/adr-graph-native-stage1-2026-11-01.json)
 checks retained ADR statuses, required accepted sections and local evidence links.
 
 ## Decision graph
@@ -181,7 +183,7 @@ graph TD
 - [ADR-0029: Short capacity calibration and release scope](ADR-0029-short-capacity-calibration-and-release-scope.md) — `accepted`
 - [ADR-0030: Continuous ARC soak and fresh-job evidence collection](ADR-0030-continuous-arc-soak-and-evidence-collection.md) — `accepted`
 - [ADR-0031: Validated durable-stream theory and native integration handoff](ADR-0031-validated-durable-stream-theory.md) — `accepted`
-- [ADR-0032: Native task and stream dependency contract](ADR-0032-native-task-stream-contract.md) — `planning`
+- [ADR-0032: Native task and stream dependency contract](ADR-0032-native-task-stream-contract.md) — `accepted`
 - [ADR-0090: Use Prefect transactions as the streaming coordinator](ADR-0090-prefect-transactions-as-coordinator.md) — `rejected`
 - [ADR-0091: Idempotency alone provides multi-sink atomicity](ADR-0091-idempotency-alone-is-atomic.md) — `rejected`
 - [ADR-0092: Split lifecycle and progress state machines](ADR-0092-split-safety-state-machines.md) — `rejected`

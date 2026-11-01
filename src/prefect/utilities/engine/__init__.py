@@ -52,6 +52,8 @@ from prefect.logging.loggers import get_logger
 from prefect.results import ResultRecord, should_persist_result
 from prefect.settings import PREFECT_LOGGING_LOG_PRINTS
 from prefect.states import State
+from prefect.streams import Stream, StreamCollection, StreamProtocolError
+from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.tasks import Task
 from prefect.utilities.annotations import allow_failure, opaque, quote
 from prefect.utilities.collections import StopVisiting, visit_collection
@@ -185,7 +187,11 @@ async def collect_task_run_inputs(
     inputs: set[Union[TaskRunResult, FlowRunResult]] = set()
 
     def add_futures_and_states_to_inputs(obj: Any) -> None:
-        if isinstance(obj, PrefectFuture):
+        if isinstance(obj, (Stream, StreamCollection)):
+            stream = obj.stream if isinstance(obj, StreamCollection) else obj
+            if stream.producer_task_run_id is not None:
+                inputs.add(TaskRunResult(id=stream.producer_task_run_id))
+        elif isinstance(obj, PrefectFuture):
             inputs.add(TaskRunResult(id=obj.task_run_id))
         elif isinstance(obj, State):
             if obj.state_details.task_run_id:
@@ -235,7 +241,11 @@ def collect_task_run_inputs_sync(
     inputs: set[Union[TaskRunResult, FlowRunResult]] = set()
 
     def add_futures_and_states_to_inputs(obj: Any) -> None:
-        if isinstance(obj, future_cls) and hasattr(obj, "task_run_id"):
+        if isinstance(obj, (Stream, StreamCollection)):
+            stream = obj.stream if isinstance(obj, StreamCollection) else obj
+            if stream.producer_task_run_id is not None:
+                inputs.add(TaskRunResult(id=stream.producer_task_run_id))
+        elif isinstance(obj, future_cls) and hasattr(obj, "task_run_id"):
             inputs.add(
                 TaskRunResult(
                     id=obj.task_run_id,
@@ -987,6 +997,15 @@ def resolve_to_final_result(expr: Any, context: dict[str, Any]) -> Any:
 
     _raise_on_run_schema_unless_opaque(expr, context)
 
+    if isinstance(expr, StreamCollection):
+        return run_coro_as_sync(expr.resolve())
+    if isinstance(expr, Stream):
+        if not context.get("allow_stream"):
+            raise StreamProtocolError(
+                "A finite dependency requires stream.collect(limit=...), not a bare Stream"
+            )
+        return expr
+
     if isinstance(expr, PrefectFuture):
         upstream_task_run: Optional[TaskRun] = context.get("current_task_run")
         upstream_task: Optional["Task[..., Any]"] = context.get("current_task")
@@ -1031,6 +1050,9 @@ def resolve_to_final_result(expr: Any, context: dict[str, Any]) -> Any:
         return state.data
 
     result: Any = state.result(raise_on_failure=False, _sync=True)  # pyright: ignore[reportCallIssue] _sync messes up type inference and can be removed once async_dispatch is removed
+
+    if isinstance(result, (Stream, StreamCollection)):
+        return resolve_to_final_result(result, context)
 
     # Check the resolved result: if a task returned a FlowRun/TaskRun, the
     # caller (visit_collection) would recurse into its Pydantic fields and
