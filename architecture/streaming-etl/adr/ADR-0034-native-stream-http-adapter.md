@@ -200,6 +200,24 @@ CI now requires the native PostgreSQL 17 HTTP/process/package gate and both
 database capability profiles to execute without native skips. Hosted CI for
 the published change is separate from these completed local gates.
 
+### Hosted CI follow-up — 2026-11-02
+
+[PR #5](https://github.com/Anacreonsystems/ariadne/pull/5), revision `d4451b8`,
+completed 96 successful checks, five conditional skips and one failed test-list
+coverage check. Both native jobs passed, including all 78 HTTP/process/package
+and client-contract cases on PostgreSQL 17. The
+[hosted record and job logs](../evidence/native-stage3-hosted-ci-2026-11-02.json)
+retain the results.
+
+The coverage verifier reads only the general test matrix. Three new top-level
+files were executed by the dedicated native job but absent from that matrix.
+They are now listed in `client-execution` and its matching SQLite exclusion;
+the unchanged verifier covers all 482 files. The dedicated PostgreSQL 17 job
+still requires the native cases to execute without skips. Unsupported general
+database profiles retain their explicit capability skips. This correction
+changes no SDK, engine, API, schema or storage bytes and earns no extra share.
+The successor hosted result remains pending.
+
 ### Executed findings
 
 [The retained negative traces](../evidence/native-stage3-negative-findings-2026-11-02.json)
