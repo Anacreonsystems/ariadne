@@ -212,12 +212,32 @@ SQLite stream concurrency or PostgreSQL HA/throughput claim is made.
 
 ## Evidence
 
-### Current closure gate
+### Storage closure and test-only successor
+
+The [test-only successor](../evidence/native-stage2-refusal-acceptance-2026-11-02.json)
+binds the updated foreign-listener regression to its code revision and verifies
+that the other eleven closure files, including production storage and hosted
+fixture implementation, are unchanged. The storage acceptance below remains
+the authority for runtime, migration and type coverage; it is not represented
+as a fresh execution on changed test code.
+
+Four source-bound fixture profiles pass on Python 3.11.15 and 3.12.14, each
+serially and with `-n4 --dist worksteal`: five passes and one existing
+Windows-only skip per run. The failing hosted lane used Python 3.11.18;
+successor CI repeats its configured interpreter. Current hosted results are
+available in [PR #4 checks](https://github.com/Anacreonsystems/ariadne/pull/4/checks).
+The [independent test-only review](../evidence/native-stage2-refusal-principal-2026-11-02.json)
+verifies the actual child observation, cleanup assertions, all twelve current
+source hashes, the single-file delta and four execution records.
+No extra native-foundation percentage is earned by this test correction.
+
+### Storage closure gate
 
 The [closure record](../evidence/native-stage2-closure-acceptance-2026-11-01.json)
 binds twelve implementation, test and workflow files to `e953e0b`, including
 the first-open lock correction and hosted API ownership fix. All before/after
-hashes match current files and committed source; no source drift occurred.
+hashes matched that committed source at capture; no source drift occurred.
+The test-only successor above accounts for the later single-file difference.
 
 | Gate | Current result |
 | --- | --- |
@@ -391,6 +411,34 @@ closes an untransferred socket on spawn failure. The real concurrent test
 checks that closed generators leave no API listener, while rejection leaves
 the foreign healthy listener intact. Windows process execution is not claimed
 by the Linux gate; its platform-specific case remains an explicit skip.
+
+### CI refusal diagnostic timing
+
+The [published successor failure](../evidence/native-stage2-ci-refusal-failure-2026-11-02.json)
+retains the full Python 3.11 job log: both native streaming profiles passed,
+88 GitHub checks succeeded, six were skipped and one failed. Its single failed
+test required the child-exited diagnostic. The actual Uvicorn child failed to
+bind and entered shutdown, but was still alive when the ownership deadline
+expired. The fixture refused the foreign healthy endpoint with its owned-API
+timeout instead. No URL was yielded; a natural child exit before that deadline
+is not part of the safety contract.
+
+The agreement is to assert observable refusal and cleanup, rather than one
+diagnostic string. The real subprocess is captured by delegating the original
+process context unchanged. The regression requires a `RuntimeError`, an actual
+foreign health request, exactly one captured child with a nonnull return code
+after refusal, a foreign endpoint that still returns HTTP 200, and a joined
+foreign serving thread during cleanup. Both early child exit and owned-endpoint
+timeout satisfy refusal; the positive concurrent-server test still requires
+owned endpoints to become available. No runtime behavior, timeout, worker
+count or test exclusion changed.
+
+- As a developer, I want the ownership regression to remain deterministic
+  when child shutdown timing varies across Python versions and CI load.
+- [x] As a developer, I can prove rejection, child cleanup and surviving
+  foreign-service health on Python 3.11 and 3.12, serially and under xdist.
+- [x] As a system, I got the same production storage and fixture bytes as
+  the accepted closure, with only a stricter observable test contract updated.
 
 ## Consequences
 

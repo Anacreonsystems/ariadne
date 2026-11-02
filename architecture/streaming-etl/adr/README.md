@@ -38,6 +38,12 @@ The [current storage closure](../evidence/native-stage2-closure-acceptance-2026-
 binds the consumer lock-order and hosted test API ownership fixes to the final
 local source. Earlier passing and failed observations remain in ADR-0033;
 hosted successor CI is reported separately.
+The [test-only CI follow-up](../evidence/native-stage2-refusal-acceptance-2026-11-02.json)
+verifies foreign-endpoint refusal and actual child cleanup on Python 3.11/3.12
+without depending on natural process-exit timing; storage and fixture runtime
+bytes are unchanged and no additional foundation share is earned.
+Its [graph validation](../evidence/adr-graph-native-refusal-2026-11-02.json)
+checks the current status and evidence links without replacing earlier graphs.
 The [initial Stage 1 graph validation](../evidence/adr-graph-native-stage1-2026-11-01.json)
 checks retained ADR statuses, required accepted sections and local evidence links.
 The [CI follow-up graph](../evidence/adr-graph-native-stage1-ci-2026-11-01.json)
