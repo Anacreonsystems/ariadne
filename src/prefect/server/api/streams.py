@@ -1,0 +1,233 @@
+"""Authenticated native stream storage routes."""
+
+from collections.abc import Awaitable
+from typing import Annotated, TypeVar
+from uuid import UUID
+
+from fastapi import Depends, HTTPException, Query, status
+
+from prefect.server.database import PrefectDBInterface, provide_database_interface
+from prefect.server.models.streams import NativeStreamError, NativeStreamStore
+from prefect.server.schemas.streams import (
+    ConsumerBinding,
+    SourceBinding,
+    StreamCompletionResult,
+    StreamConsumerCompleteRequest,
+    StreamConsumerFinishRequest,
+    StreamConsumerOpenRequest,
+    StreamConsumerReadRequest,
+    StreamCreateRequest,
+    StreamDelivery,
+    StreamEnvelope,
+    StreamInfo,
+    StreamOutputFailRequest,
+    StreamOutputRejectRequest,
+    StreamOutputReserveRequest,
+    StreamReleaseRequest,
+    StreamReleaseResult,
+    StreamSourceAppendRequest,
+    StreamSourceClaimRequest,
+    StreamSourceFinishRequest,
+)
+from prefect.server.utilities.server import PrefectRouter
+
+T = TypeVar("T")
+Database = Annotated[PrefectDBInterface, Depends(provide_database_interface)]
+
+router: PrefectRouter = PrefectRouter(prefix="/streams/v1", tags=["Streams"])
+
+
+def _stream_http_error(error: NativeStreamError) -> HTTPException:
+    statuses = {
+        "NOT_FOUND": status.HTTP_404_NOT_FOUND,
+        "REPLAY_HORIZON_EXPIRED": status.HTTP_410_GONE,
+        "PAYLOAD_TOO_LARGE": status.HTTP_413_CONTENT_TOO_LARGE,
+        "PROTOCOL_ERROR": status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "UNSUPPORTED_BACKEND": status.HTTP_422_UNPROCESSABLE_CONTENT,
+    }
+    return HTTPException(
+        status_code=statuses.get(error.code, status.HTTP_409_CONFLICT),
+        detail={
+            "code": error.code,
+            "message": str(error),
+            "retryable": error.code == "METADATA_NOT_READY",
+        },
+    )
+
+
+async def _call(operation: Awaitable[T]) -> T:
+    try:
+        return await operation
+    except NativeStreamError as error:
+        raise _stream_http_error(error) from error
+
+
+@router.post("/create")
+async def create_stream(
+    request: StreamCreateRequest,
+    db: Database,
+) -> StreamInfo:
+    return await _call(
+        NativeStreamStore(db).create(
+            request.flow_run_id,
+            request.stream_id,
+            limits=request.limits,
+            protocol_version=request.protocol_version,
+        )
+    )
+
+
+@router.post("/outputs/reserve")
+async def reserve_output(
+    request: StreamOutputReserveRequest,
+    db: Database,
+) -> StreamInfo:
+    return await _call(
+        NativeStreamStore(db).reserve_output(
+            request.flow_run_id,
+            request.stream_id,
+            request.task_run_id,
+            limits=request.limits,
+            protocol_version=request.protocol_version,
+        )
+    )
+
+
+@router.post("/outputs/reject")
+async def reject_output(
+    request: StreamOutputRejectRequest,
+    db: Database,
+) -> StreamInfo:
+    return await _call(
+        NativeStreamStore(db).reject_reserved_output(
+            request.flow_run_id,
+            request.stream_id,
+            request.task_run_id,
+            request.error,
+        )
+    )
+
+
+@router.post("/outputs/fail")
+async def fail_output(
+    request: StreamOutputFailRequest,
+    db: Database,
+) -> StreamInfo:
+    return await _call(
+        NativeStreamStore(db).fail_task_output(
+            request.flow_run_id,
+            request.stream_id,
+            request.task_run_id,
+            request.attempt,
+            request.error,
+        )
+    )
+
+
+@router.post("/consumers/open")
+async def open_consumer(
+    request: StreamConsumerOpenRequest,
+    db: Database,
+) -> ConsumerBinding:
+    return await _call(
+        NativeStreamStore(db).open_consumer(
+            request.input_stream_id,
+            request.output_stream_id,
+            request.task_run_id,
+            request.owner_id,
+            request.attempt,
+            metadata_lag=True,
+            require_reserved_output=True,
+        )
+    )
+
+
+@router.post("/consumers/read")
+async def read_consumer(
+    request: StreamConsumerReadRequest,
+    db: Database,
+) -> StreamDelivery | None:
+    return await _call(NativeStreamStore(db).read(request.binding))
+
+
+@router.post("/consumers/complete")
+async def complete_consumer(
+    request: StreamConsumerCompleteRequest,
+    db: Database,
+) -> StreamCompletionResult:
+    return await _call(
+        NativeStreamStore(db).complete(
+            request.binding,
+            request.token,
+            request.kind,
+            request.value,
+            request.managed_state,
+        )
+    )
+
+
+@router.post("/consumers/finish", status_code=status.HTTP_204_NO_CONTENT)
+async def finish_consumer(
+    request: StreamConsumerFinishRequest,
+    db: Database,
+) -> None:
+    await _call(NativeStreamStore(db).finish_consumer(request.binding, request.error))
+
+
+@router.post("/sources/claim")
+async def claim_source(
+    request: StreamSourceClaimRequest,
+    db: Database,
+) -> SourceBinding:
+    return await _call(
+        NativeStreamStore(db).claim_source(
+            request.stream_id,
+            request.task_run_id,
+            request.owner_id,
+            request.attempt,
+        )
+    )
+
+
+@router.post("/sources/append")
+async def append_source(
+    request: StreamSourceAppendRequest,
+    db: Database,
+) -> StreamEnvelope:
+    return await _call(
+        NativeStreamStore(db).append(request.binding, request.position, request.value)
+    )
+
+
+@router.post("/sources/finish", status_code=status.HTTP_204_NO_CONTENT)
+async def finish_source(
+    request: StreamSourceFinishRequest,
+    db: Database,
+) -> None:
+    await _call(NativeStreamStore(db).finish_source(request.binding, request.error))
+
+
+@router.post("/release")
+async def release_streams(
+    request: StreamReleaseRequest,
+    db: Database,
+) -> StreamReleaseResult:
+    released = await _call(NativeStreamStore(db).release_flow(request.flow_run_id))
+    return StreamReleaseResult(released=released)
+
+
+@router.get("/{stream_id:uuid}")
+async def read_stream(
+    stream_id: UUID,
+    db: Database,
+) -> StreamInfo:
+    return await _call(NativeStreamStore(db).status(stream_id))
+
+
+@router.get("/{stream_id:uuid}/prefix")
+async def read_stream_prefix(
+    stream_id: UUID,
+    limit: Annotated[int, Query(ge=1)],
+    db: Database,
+) -> list[StreamEnvelope]:
+    return await _call(NativeStreamStore(db).read_prefix(stream_id, limit))

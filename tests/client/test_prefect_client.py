@@ -189,16 +189,15 @@ class TestClientProxyAwareness:
         assert pool._retries == 11  # not overridden by get_client() in this case
 
     @pytest.fixture
-    def https_proxy(self) -> Generator[httpcore.URL, None, None]:
-        original = os.environ.get("HTTPS_PROXY")
-        try:
-            os.environ["HTTPS_PROXY"] = "https://127.0.0.1:6666"
-            yield httpcore.URL(os.environ["HTTPS_PROXY"])
-        finally:
-            if original is None:
-                del os.environ["HTTPS_PROXY"]
-            else:
-                os.environ["HTTPS_PROXY"] = original
+    def https_proxy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> Generator[httpcore.URL, None, None]:
+        proxy = "https://127.0.0.1:6666"
+        monkeypatch.setenv("HTTPS_PROXY", proxy)
+        monkeypatch.setenv("https_proxy", proxy)
+        monkeypatch.setenv("NO_PROXY", "")
+        monkeypatch.setenv("no_proxy", "")
+        yield httpcore.URL(proxy)
 
     async def test_client_is_aware_of_https_proxy(
         self, remote_https_api: httpx.URL, https_proxy: httpcore.URL
@@ -221,16 +220,15 @@ class TestClientProxyAwareness:
             yield httpx.URL(api_url)
 
     @pytest.fixture
-    def http_proxy(self) -> Generator[httpcore.URL, None, None]:
-        original = os.environ.get("HTTP_PROXY")
-        try:
-            os.environ["HTTP_PROXY"] = "http://127.0.0.1:6666"
-            yield httpcore.URL(os.environ["HTTP_PROXY"])
-        finally:
-            if original is None:
-                del os.environ["HTTP_PROXY"]
-            else:
-                os.environ["HTTP_PROXY"] = original
+    def http_proxy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> Generator[httpcore.URL, None, None]:
+        proxy = "http://127.0.0.1:6666"
+        monkeypatch.setenv("HTTP_PROXY", proxy)
+        monkeypatch.setenv("http_proxy", proxy)
+        monkeypatch.setenv("NO_PROXY", "")
+        monkeypatch.setenv("no_proxy", "")
+        yield httpcore.URL(proxy)
 
     async def test_client_is_aware_of_http_proxy(
         self, remote_http_api: httpx.URL, http_proxy: httpcore.URL

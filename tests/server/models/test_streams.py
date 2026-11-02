@@ -104,6 +104,13 @@ async def witness(db: PrefectDBInterface, graph: Graph) -> dict:
         }
 
 
+async def require_postgres_17(db: PrefectDBInterface) -> None:
+    engine = await db.engine()
+    version = engine.dialect.server_version_info or ()
+    if db.dialect.name != "postgresql" or not version or version[0] != 17:
+        pytest.skip("Native stream data plane requires PostgreSQL 17")
+
+
 async def test_backend_capability_fails_before_sqlite_writes(db, flow_run):
     store = NativeStreamStore(db)
     stream_id = uuid4()
@@ -1053,3 +1060,203 @@ async def test_terminal_task_admission_precedes_release_horizon_for_old_mutation
         await graph.store.read_prefix(graph.source.stream_id, 1)
     assert error.value.code == "REPLAY_HORIZON_EXPIRED"
     assert (await graph.store.status(graph.source.stream_id)).released
+
+
+async def test_http_admission_distinguishes_metadata_lag_from_stale_attempt(
+    db, session, flow_run, task_run
+):
+    await require_postgres_17(db)
+    store = NativeStreamStore(db)
+    input_id, output_id = uuid4(), uuid4()
+    await store.create(flow_run.id, input_id)
+    await store.reserve_output(flow_run.id, output_id, task_run.id)
+
+    with pytest.raises(NativeStreamError) as pending:
+        await store.open_consumer(
+            input_id,
+            output_id,
+            task_run.id,
+            uuid4(),
+            1,
+            metadata_lag=True,
+            require_reserved_output=True,
+        )
+    assert pending.value.code == "METADATA_NOT_READY"
+
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await session.commit()
+    with pytest.raises(NativeStreamError) as behind:
+        await store.open_consumer(
+            input_id,
+            output_id,
+            task_run.id,
+            uuid4(),
+            2,
+            metadata_lag=True,
+            require_reserved_output=True,
+        )
+    assert behind.value.code == "METADATA_NOT_READY"
+
+    binding = await store.open_consumer(
+        input_id,
+        output_id,
+        task_run.id,
+        uuid4(),
+        1,
+        metadata_lag=True,
+        require_reserved_output=True,
+    )
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await session.commit()
+    with pytest.raises(NativeStreamError) as stale:
+        await store.open_consumer(
+            input_id,
+            output_id,
+            task_run.id,
+            binding.owner_id,
+            1,
+            metadata_lag=True,
+            require_reserved_output=True,
+        )
+    assert stale.value.code == "ATTEMPT_NOT_CURRENT"
+
+    async with db.session_context() as check:
+        output = await check.get(db.StreamPartition, output_id)
+        consumer = await check.get(db.StreamConsumer, task_run.id)
+        assert output.owner_id == binding.owner_id
+        assert output.attempt == consumer.attempt == 1
+
+
+async def test_output_reservation_missing_task_is_retryable_without_mutation(
+    db, flow_run
+):
+    await require_postgres_17(db)
+    store = NativeStreamStore(db)
+    output_id, missing_task_id = uuid4(), uuid4()
+
+    with pytest.raises(NativeStreamError) as error:
+        await store.reserve_output(
+            flow_run.id,
+            output_id,
+            missing_task_id,
+        )
+    assert error.value.code == "METADATA_NOT_READY"
+    async with db.session_context() as session:
+        assert await session.get(db.StreamPartition, output_id) is None
+
+
+async def test_output_reservation_reject_and_open_have_one_winner(
+    db, session, flow_run, task_run
+):
+    await require_postgres_17(db)
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await session.commit()
+    store = NativeStreamStore(db)
+    input_id, output_id = uuid4(), uuid4()
+    await store.create(flow_run.id, input_id)
+    reserved = await store.reserve_output(flow_run.id, output_id, task_run.id)
+    assert (await store.reserve_output(flow_run.id, output_id, task_run.id)) == reserved
+
+    outcomes = await asyncio.gather(
+        store.open_consumer(
+            input_id,
+            output_id,
+            task_run.id,
+            uuid4(),
+            1,
+            metadata_lag=True,
+            require_reserved_output=True,
+        ),
+        store.reject_reserved_output(
+            flow_run.id, output_id, task_run.id, "submission failed"
+        ),
+        return_exceptions=True,
+    )
+    successes = [value for value in outcomes if not isinstance(value, BaseException)]
+    refusals = [value for value in outcomes if isinstance(value, NativeStreamError)]
+    assert len(successes) == len(refusals) == 1
+    assert refusals[0].code in {"STALE_OWNER", "TERMINAL_CONFLICT"}
+
+    async with db.session_context() as check:
+        output = await check.get(db.StreamPartition, output_id)
+        consumer = await check.get(db.StreamConsumer, task_run.id)
+        if output.state == "FAILED":
+            assert output.owner_id is None
+            assert consumer is None
+        else:
+            assert output.state == "OPEN"
+            assert output.owner_id is not None
+            assert consumer.output_stream_id == output_id
+
+
+async def test_terminal_task_failure_closes_older_owner_but_not_from_stale_attempt(
+    db, session, flow_run, task_run
+):
+    await require_postgres_17(db)
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await session.commit()
+    store = NativeStreamStore(db)
+    input_id, output_id = uuid4(), uuid4()
+    await store.create(flow_run.id, input_id)
+    await store.reserve_output(flow_run.id, output_id, task_run.id)
+    binding = await store.open_consumer(
+        input_id,
+        output_id,
+        task_run.id,
+        uuid4(),
+        1,
+        metadata_lag=True,
+        require_reserved_output=True,
+    )
+
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Failed(message="retry failed before admission"),
+        force=True,
+    )
+    await session.commit()
+    with pytest.raises(NativeStreamError) as stale:
+        await store.fail_task_output(
+            flow_run.id, output_id, task_run.id, 1, "retry failed"
+        )
+    assert stale.value.code == "ATTEMPT_NOT_CURRENT"
+    assert (await store.status(output_id)).state == "OPEN"
+
+    failed = await store.fail_task_output(
+        flow_run.id, output_id, task_run.id, 2, "retry failed"
+    )
+    assert failed.state == "FAILED"
+    assert failed.error == "retry failed"
+    assert (
+        await store.fail_task_output(
+            flow_run.id, output_id, task_run.id, 2, "retry failed"
+        )
+    ) == failed
+    assert binding.attempt == 1

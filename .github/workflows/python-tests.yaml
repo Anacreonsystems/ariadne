@@ -299,7 +299,7 @@ jobs:
     if: ${{ github.event_name != 'repository_dispatch' }}
     runs-on: ubuntu-latest
     name: Native stream tasks - python:3.12, ${{ matrix.database }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -330,7 +330,7 @@ jobs:
       - name: Install packages
         run: uv sync --locked
       - *python-test-database-url
-      - name: Run native tasks with real HTTP and PostgreSQL storage
+      - name: Run task-contract regressions with retained PostgreSQL test adapter
         run: uv run pytest tests/test_stream_tasks.py -q --junitxml=native-stream-tests.xml
       - name: Run native storage transactions on PostgreSQL 17
         if: matrix.database == 'postgres:17'
@@ -338,6 +338,27 @@ jobs:
       - name: Require SQLite data-plane refusal before writes
         if: matrix.database == 'sqlite'
         run: uv run pytest tests/server/models/test_streams.py::test_backend_capability_fails_before_sqlite_writes -q --junitxml=native-stream-storage.xml
+      - name: Run native SDK HTTP, process recovery and stripped-client package
+        if: matrix.database == 'postgres:17'
+        run: >-
+          uv run pytest tests/test_native_stream_http.py
+          tests/test_native_stream_recovery_http.py
+          tests/test_native_stream_client_package.py
+          tests/client/test_stream_storage_native.py
+          -q --junitxml=native-stream-http.xml
+      - name: Run native HTTP server contract
+        if: matrix.database == 'postgres:17'
+        run: >-
+          uv run pytest tests/server/api/test_streams.py
+          -k 'not test_backend_capability_error_has_stable_wire_shape'
+          -q --junitxml=native-stream-api.xml
+      - name: Require SQLite HTTP capability and version refusal
+        if: matrix.database == 'sqlite'
+        run: >-
+          uv run pytest
+          tests/server/api/test_streams.py::test_backend_capability_error_has_stable_wire_shape
+          tests/server/api/test_streams.py::test_boolean_protocol_version_is_rejected_before_mutation
+          -q --junitxml=native-stream-api.xml
       - name: Verify native storage migration upgrade and downgrade
         run: uv run pytest tests/server/database/test_stream_storage_migrations.py -q --junitxml=native-stream-migrations.xml
       - name: Require every native case to execute
@@ -345,7 +366,10 @@ jobs:
           uv run python - <<'PY'
           from pathlib import Path
           import xml.etree.ElementTree as ET
-          for path in (Path("native-stream-tests.xml"), Path("native-stream-storage.xml"), Path("native-stream-migrations.xml")):
+          paths = [Path("native-stream-tests.xml"), Path("native-stream-storage.xml"), Path("native-stream-migrations.xml"), Path("native-stream-api.xml")]
+          if "${{ matrix.database }}" == "postgres:17":
+              paths.append(Path("native-stream-http.xml"))
+          for path in paths:
               cases = ET.parse(path).findall(".//testcase")
               assert cases, f"Native cases were not collected: {path}"
               assert not any(case.find("skipped") is not None for case in cases), f"Native cases were skipped: {path}"

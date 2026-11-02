@@ -148,16 +148,39 @@ class NativeStreamStore:
         attempt: int,
         *,
         allow_failed: bool = False,
-    ) -> None:
+        metadata_lag: bool = False,
+    ) -> orm_models.TaskRun:
         task = await session.scalar(
             sa.select(self.db.TaskRun)
             .where(self.db.TaskRun.id == task_id)
             .with_for_update()
         )
-        if task is None or task.flow_run_id != flow_id:
+        if task is None:
+            if metadata_lag:
+                raise NativeStreamError(
+                    "METADATA_NOT_READY", "TaskRun metadata is not recorded yet"
+                )
             raise NativeStreamError(
                 "IDENTITY_CONFLICT", "TaskRun must exist in the stream's FlowRun"
             )
+        if task.flow_run_id != flow_id:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "TaskRun must exist in the stream's FlowRun"
+            )
+        if metadata_lag:
+            if task.state_type in TERMINAL_STATES or task.run_count > attempt:
+                raise NativeStreamError(
+                    "ATTEMPT_NOT_CURRENT",
+                    "Operation requires the current admitted TaskRun attempt/state",
+                )
+            if task.run_count < attempt or task.state_type in {
+                StateType.PENDING,
+                StateType.SCHEDULED,
+            }:
+                raise NativeStreamError(
+                    "METADATA_NOT_READY",
+                    "TaskRun RUNNING metadata is not recorded yet",
+                )
         allowed_states = {StateType.RUNNING}
         if allow_failed:
             allowed_states |= {StateType.FAILED, StateType.CRASHED, StateType.CANCELLED}
@@ -166,6 +189,7 @@ class NativeStreamStore:
                 "ATTEMPT_NOT_CURRENT",
                 "Operation requires the current admitted TaskRun attempt/state",
             )
+        return task
 
     def _claim(
         self,
@@ -341,6 +365,216 @@ class NativeStreamStore:
             result = StreamInfo.model_validate(stream)
         return result
 
+    async def reserve_output(
+        self,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        *,
+        limits: StreamLimits | None = None,
+        protocol_version: int = 1,
+    ) -> StreamInfo:
+        """Create an immutable, unowned output reservation for a TaskRun."""
+        if type(protocol_version) is not int or protocol_version != 1:
+            raise NativeStreamError(
+                "PROTOCOL_ERROR", "Unsupported stream protocol version"
+            )
+        limits = limits or StreamLimits()
+        async with self._session() as session:
+            flow = await session.scalar(
+                sa.select(self.db.FlowRun)
+                .where(self.db.FlowRun.id == flow_run_id)
+                .with_for_update()
+            )
+            if flow is None:
+                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+            task = await session.scalar(
+                sa.select(self.db.TaskRun)
+                .where(self.db.TaskRun.id == task_run_id)
+                .with_for_update()
+            )
+            if task is None:
+                raise NativeStreamError(
+                    "METADATA_NOT_READY", "TaskRun metadata is not recorded yet"
+                )
+            if task.flow_run_id != flow_run_id:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "TaskRun must belong to the output FlowRun"
+                )
+            stream = await session.scalar(
+                sa.select(self.db.StreamPartition)
+                .where(self.db.StreamPartition.id == stream_id)
+                .with_for_update()
+            )
+            if stream is not None:
+                if stream.released:
+                    raise NativeStreamError(
+                        "REPLAY_HORIZON_EXPIRED", "Stream has been released"
+                    )
+                if (
+                    stream.flow_run_id != flow_run_id
+                    or stream.protocol_version != protocol_version
+                    or stream.limits != limits.model_dump()
+                    or stream.producer_kind != "CONSUMER"
+                    or stream.producer_task_run_id != task_run_id
+                ):
+                    raise NativeStreamError(
+                        "IDENTITY_CONFLICT", "Output reservation is immutable"
+                    )
+                return StreamInfo.model_validate(stream)
+            if task.state_type in TERMINAL_STATES:
+                raise NativeStreamError(
+                    "ATTEMPT_NOT_CURRENT",
+                    "Cannot reserve output for a final TaskRun",
+                )
+            if flow.state_type in TERMINAL_STATES:
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT", "Cannot reserve output for a final FlowRun"
+                )
+            count = await session.scalar(
+                sa.select(sa.func.count())
+                .select_from(self.db.StreamPartition)
+                .where(self.db.StreamPartition.flow_run_id == flow_run_id)
+            )
+            if count is not None and count >= MAX_STREAMS_PER_FLOW:
+                raise NativeStreamError(
+                    "CAPACITY", "FlowRun stream capacity is exhausted"
+                )
+            stream = self.db.StreamPartition(
+                id=stream_id,
+                flow_run_id=flow_run_id,
+                protocol_version=protocol_version,
+                producer_kind="CONSUMER",
+                producer_task_run_id=task_run_id,
+                limits=limits.model_dump(),
+            )
+            session.add(stream)
+            await session.flush()
+            result = StreamInfo.model_validate(stream)
+        return result
+
+    async def reject_reserved_output(
+        self,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        error: str,
+    ) -> StreamInfo:
+        """Fail an exact output reservation that has not admitted an owner."""
+        async with self._session() as session:
+            flow = await session.scalar(
+                sa.select(self.db.FlowRun)
+                .where(self.db.FlowRun.id == flow_run_id)
+                .with_for_update()
+            )
+            if flow is None:
+                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+            stream = await session.scalar(
+                sa.select(self.db.StreamPartition)
+                .where(self.db.StreamPartition.id == stream_id)
+                .with_for_update()
+            )
+            if stream is None:
+                raise NativeStreamError("NOT_FOUND", "Unknown stream")
+            if stream.released:
+                raise NativeStreamError(
+                    "REPLAY_HORIZON_EXPIRED", "Stream payload has been released"
+                )
+            if (
+                stream.flow_run_id != flow_run_id
+                or stream.producer_kind != "CONSUMER"
+                or stream.producer_task_run_id != task_run_id
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "Output reservation does not match"
+                )
+            has_consumer = await session.scalar(
+                sa.select(
+                    sa.exists().where(
+                        self.db.StreamConsumer.output_stream_id == stream_id
+                    )
+                )
+            )
+            has_records = await session.scalar(
+                sa.select(
+                    sa.exists().where(self.db.StreamRecord.stream_id == stream_id)
+                )
+            )
+            if (
+                stream.owner_id is not None
+                or stream.attempt != 0
+                or stream.owner_epoch != 0
+                or has_consumer
+                or has_records
+            ):
+                raise NativeStreamError(
+                    "STALE_OWNER", "An admitted output cannot be rejected"
+                )
+            _finish(stream, error)
+            result = StreamInfo.model_validate(stream)
+        return result
+
+    async def fail_task_output(
+        self,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        attempt: int,
+        error: str,
+    ) -> StreamInfo:
+        """Fail an output using the exact terminal TaskRun lifecycle witness."""
+        _attempt(attempt)
+        async with self._session() as session:
+            flow = await session.scalar(
+                sa.select(self.db.FlowRun)
+                .where(self.db.FlowRun.id == flow_run_id)
+                .with_for_update(read=True)
+            )
+            if flow is None:
+                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+            task = await self._task(
+                session,
+                task_run_id,
+                flow_run_id,
+                attempt,
+                allow_failed=True,
+            )
+            if task.state_type not in {
+                StateType.FAILED,
+                StateType.CRASHED,
+                StateType.CANCELLED,
+            }:
+                raise NativeStreamError(
+                    "ATTEMPT_NOT_CURRENT",
+                    "Output failure requires a terminal TaskRun attempt",
+                )
+            stream = await session.scalar(
+                sa.select(self.db.StreamPartition)
+                .where(self.db.StreamPartition.id == stream_id)
+                .with_for_update()
+            )
+            if stream is None:
+                raise NativeStreamError("NOT_FOUND", "Unknown stream")
+            if stream.released:
+                raise NativeStreamError(
+                    "REPLAY_HORIZON_EXPIRED", "Stream payload has been released"
+                )
+            if (
+                stream.flow_run_id != flow_run_id
+                or stream.producer_kind != "CONSUMER"
+                or stream.producer_task_run_id != task_run_id
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "Output producer does not match TaskRun"
+                )
+            if stream.attempt > attempt:
+                raise NativeStreamError(
+                    "STALE_OWNER", "An older attempt cannot fail a newer output owner"
+                )
+            _finish(stream, error)
+            result = StreamInfo.model_validate(stream)
+        return result
+
     async def claim_source(
         self, stream_id: UUID, task_run_id: UUID, owner_id: UUID, attempt: int
     ) -> SourceBinding:
@@ -416,6 +650,9 @@ class NativeStreamStore:
         task_run_id: UUID,
         owner_id: UUID,
         attempt: int,
+        *,
+        metadata_lag: bool = False,
+        require_reserved_output: bool = False,
     ) -> ConsumerBinding:
         _attempt(attempt)
         if input_stream_id == output_stream_id:
@@ -434,7 +671,13 @@ class NativeStreamStore:
             )
             if flow is None:
                 raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
-            await self._task(session, task_run_id, peek.flow_run_id, attempt)
+            await self._task(
+                session,
+                task_run_id,
+                peek.flow_run_id,
+                attempt,
+                metadata_lag=metadata_lag,
+            )
             if flow.state_type in TERMINAL_STATES:
                 raise NativeStreamError(
                     "TERMINAL_CONFLICT", "Cannot open a consumer for a final FlowRun"
@@ -444,6 +687,14 @@ class NativeStreamStore:
             if upstream.flow_run_id != output.flow_run_id:
                 raise NativeStreamError(
                     "IDENTITY_CONFLICT", "Streams must share a FlowRun"
+                )
+            if require_reserved_output and (
+                output.producer_kind != "CONSUMER"
+                or output.producer_task_run_id != task_run_id
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "HTTP consumer admission requires its exact output reservation",
                 )
             consumer = await session.scalar(
                 sa.select(self.db.StreamConsumer)

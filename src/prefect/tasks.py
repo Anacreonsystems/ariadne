@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import inspect
+from contextvars import copy_context
 from copy import copy
 from functools import partial, update_wrapper
 from pathlib import Path
@@ -43,7 +44,11 @@ from typing_extensions import (
 import prefect.states
 from prefect._flow_run_suspension import raise_if_flow_run_suspension_requested
 from prefect._internal.compatibility.async_dispatch import async_dispatch
-from prefect._internal.stream_engine import _StreamRun
+from prefect._internal.stream_engine import (
+    NativeStreamStorage,
+    _StreamRun,
+    reject_stream_submission,
+)
 from prefect._internal.uuid7 import uuid7
 from prefect.assets import Asset
 from prefect.cache_policies import DEFAULT, NO_CACHE, CachePolicy
@@ -72,7 +77,11 @@ from prefect.results import (
 )
 from prefect.settings.context import get_current_settings
 from prefect.states import Pending, Scheduled, State
-from prefect.streams import Stream, StreamProtocolError, StreamTaskConfig
+from prefect.streams import (
+    Stream,
+    StreamProtocolError,
+    StreamTaskConfig,
+)
 from prefect.utilities.annotations import NotSet
 from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.utilities.callables import (
@@ -1487,19 +1496,51 @@ class Task(Generic[P, R]):
             # stream dependency is also present as the input port.
             visit_collection(wait_for, visit_fn=reject_stream, return_data=False)
         raise_if_flow_run_suspension_requested()
-        output = Stream(upstream.storage, "native-" + uuid4().hex)
-        run_coro_as_sync(output.storage.create_stream(output.stream_id))
-        parameters["__prefect_stream_run__"] = _StreamRun(output)
+        native_storage = (
+            upstream.storage
+            if isinstance(upstream.storage, NativeStreamStorage)
+            else None
+        )
+        native = native_storage is not None
+        preallocated_id = uuid4() if native else None
+        if native_storage is not None and (
+            context.flow_run is None
+            or native_storage.flow_run_id != context.flow_run.id
+        ):
+            raise StreamProtocolError("Native stream belongs to another FlowRun")
+        output = Stream(
+            upstream.storage,
+            str(uuid4()) if native else "native-" + uuid4().hex,
+            producer_task_run_id=preallocated_id,
+        )
+        run = _StreamRun(output)
 
         def reject_submission(error: str) -> None:
             try:
-                status = run_coro_as_sync(output.storage.status(output.stream_id))
-                if status.state == "OPEN":
-                    run_coro_as_sync(output.storage.finish(output.stream_id, error))
+                run_coro_as_sync(reject_stream_submission(run, error))
             except Exception:
                 logger.warning("Unable to close a rejected stream submission")
 
         try:
+            if native_storage is not None:
+                run.task_run = run_coro_as_sync(
+                    self.create_local_run(
+                        id=preallocated_id,
+                        parameters=parameters,
+                        flow_run_context=context,
+                        wait_for=wait_for,
+                    )
+                )
+                run.task_run = run_coro_as_sync(
+                    native_storage.register_task_run(self, run.task_run)
+                )
+                run.registration_verified = True
+                run_coro_as_sync(
+                    native_storage.reserve_output(output.stream_id, run.task_run.id)
+                )
+            else:
+                run_coro_as_sync(output.storage.create_stream(output.stream_id))
+            parameters["__prefect_stream_run__"] = run
             future = context.task_runner.submit(self, parameters, wait_for)
             output._bind_completion(future)
         except BaseException as exc:
@@ -1516,7 +1557,13 @@ class Task(Generic[P, R]):
             except BaseException as exc:
                 reject_submission(type(exc).__name__)
 
-        future.add_done_callback(on_completion)
+        # A runner completes its future after leaving the worker's copied
+        # context. Startup compensation still needs the submitting API/profile
+        # and client contexts, including when a worker never enters the engine.
+        completion_context = copy_context()
+        future.add_done_callback(
+            lambda completed: completion_context.copy().run(on_completion, completed)
+        )
         return output
 
     def submit_stream(

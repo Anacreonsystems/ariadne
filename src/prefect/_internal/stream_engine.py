@@ -6,10 +6,11 @@ import asyncio
 import inspect
 import json
 import time
-from typing import TYPE_CHECKING, Any, Literal
-from uuid import uuid4
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+from uuid import UUID, uuid4
 
 from prefect._flow_run_suspension import raise_if_flow_run_suspension_requested
+from prefect.states import Failed
 from prefect.streams import (
     Stream,
     StreamContext,
@@ -23,11 +24,94 @@ if TYPE_CHECKING:
     from prefect.task_engine import AsyncTaskRunEngine, SyncTaskRunEngine
 
 
+@runtime_checkable
+class NativeStreamStorage(Protocol):
+    """Internal lifecycle authority for the platform HTTP backend."""
+
+    @property
+    def flow_run_id(self) -> UUID: ...
+
+    async def register_task_run(self, task: Any, task_run: Any) -> Any: ...
+
+    async def reserve_output(self, stream_id: str, task_run_id: UUID) -> None: ...
+
+    async def reject_output(
+        self, stream_id: str, task_run_id: UUID, error: str
+    ) -> None: ...
+
+    async def finish_consumer(self, binding: Any, error: str | None = None) -> None: ...
+
+    async def fail_task_output(
+        self, stream_id: str, task_run_id: UUID, attempt: int, error: str
+    ) -> None: ...
+
+
 class _StreamRun:
     """Opaque submission metadata; dependency traversal must not inspect it."""
 
-    def __init__(self, output: Stream[Any]) -> None:
+    def __init__(self, output: Stream[Any], task_run: Any = None) -> None:
         self.output = output
+        self.task_run = task_run
+        self.registration_verified = False
+
+
+def _fail_unstarted_run(run: _StreamRun, error: str) -> None:
+    """Compensate a confirmed Pending registration through normal task events."""
+    # utilities.engine imports Task; defer until Task initialization is complete.
+    from prefect.utilities.engine import emit_task_run_state_change_event
+
+    task_run = run.task_run
+    if (
+        not run.registration_verified
+        or task_run is None
+        or task_run.run_count != 0
+        or task_run.state is None
+        or not task_run.state.is_pending()
+    ):
+        return
+    initial = task_run.state
+    failed = Failed(message=f"Stream startup failed: {error}")
+    failed.state_details.task_run_id = task_run.id
+    failed.state_details.flow_run_id = task_run.flow_run_id
+    task_run.state = failed
+    task_run.state_id = failed.id
+    task_run.state_type = failed.type
+    task_run.state_name = failed.name
+    emit_task_run_state_change_event(
+        task_run=task_run, initial_state=initial, validated_state=failed
+    )
+
+
+async def reject_stream_submission(run: _StreamRun, error: str) -> None:
+    storage = run.output.storage
+    if isinstance(storage, NativeStreamStorage):
+        _fail_unstarted_run(run, error)
+    status = await storage.status(run.output.stream_id)
+    if status.state != "OPEN":
+        return
+    if isinstance(storage, NativeStreamStorage):
+        if run.task_run is None:
+            raise StreamProtocolError("Native output has no reserved TaskRun")
+        try:
+            await storage.reject_output(run.output.stream_id, run.task_run.id, error)
+        except Exception as refused:
+            if (
+                getattr(refused, "code", None) != "STALE_OWNER"
+                or run.task_run.run_count < 1
+            ):
+                raise
+            await storage.fail_task_output(
+                run.output.stream_id, run.task_run.id, run.task_run.run_count, error
+            )
+    else:
+        await storage.finish(run.output.stream_id, error)
+
+
+async def _finish_output(storage: Any, binding: Any, stream_id: str) -> None:
+    if isinstance(storage, NativeStreamStorage):
+        await storage.finish_consumer(binding)
+    else:
+        await storage.finish(stream_id)
 
 
 def validate_stream_parameters(task: Any, parameters: dict[str, Any]) -> _StreamRun:
@@ -110,7 +194,9 @@ def execute_stream_sync(engine: SyncTaskRunEngine[Any, Any]) -> StreamRunResult:
                 # so the committed tail preceding EOF cannot be skipped.
                 record = run_coro_as_sync(storage.read(binding))
                 if record is None:
-                    run_coro_as_sync(storage.finish(run.output.stream_id))
+                    run_coro_as_sync(
+                        _finish_output(storage, binding, run.output.stream_id)
+                    )
                     return StreamRunResult(consumer_id, run.output.stream_id)
             else:
                 time.sleep(0.01)
@@ -172,7 +258,7 @@ async def execute_stream_async(
             if await _input_drained(upstream):
                 record = await storage.read(binding)
                 if record is None:
-                    await storage.finish(run.output.stream_id)
+                    await _finish_output(storage, binding, run.output.stream_id)
                     return StreamRunResult(consumer_id, run.output.stream_id)
             else:
                 await asyncio.sleep(0.01)
@@ -214,9 +300,7 @@ async def reject_stream_execution(engine: Any, error: str) -> None:
     if not isinstance(run, _StreamRun):
         return
     try:
-        status = await run.output.storage.status(run.output.stream_id)
-        if status.state == "OPEN":
-            await run.output.storage.finish(run.output.stream_id, error)
+        await reject_stream_submission(run, error)
     except Exception:
         engine.logger.warning("Unable to close a rejected stream execution")
 
