@@ -1,6 +1,20 @@
 from typing import Literal
 
 ServerRoutes = Literal[
+    "/streams/v1/create",
+    "/streams/v1/outputs/reserve",
+    "/streams/v1/outputs/reject",
+    "/streams/v1/outputs/fail",
+    "/streams/v1/consumers/open",
+    "/streams/v1/consumers/read",
+    "/streams/v1/consumers/complete",
+    "/streams/v1/consumers/finish",
+    "/streams/v1/sources/claim",
+    "/streams/v1/sources/append",
+    "/streams/v1/sources/finish",
+    "/streams/v1/release",
+    "/streams/v1/{stream_id}",
+    "/streams/v1/{stream_id}/prefix",
     "/admin/storage",
     "/admin/settings",
     "/admin/version",

@@ -812,6 +812,244 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/streams/v1/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Stream */
+        post: operations["create_stream_streams_v1_create_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/outputs/reserve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reserve Output */
+        post: operations["reserve_output_streams_v1_outputs_reserve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/outputs/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject Output */
+        post: operations["reject_output_streams_v1_outputs_reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/outputs/fail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fail Output */
+        post: operations["fail_output_streams_v1_outputs_fail_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/consumers/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open Consumer */
+        post: operations["open_consumer_streams_v1_consumers_open_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/consumers/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read Consumer */
+        post: operations["read_consumer_streams_v1_consumers_read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/consumers/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete Consumer */
+        post: operations["complete_consumer_streams_v1_consumers_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/consumers/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finish Consumer */
+        post: operations["finish_consumer_streams_v1_consumers_finish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/sources/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Source */
+        post: operations["claim_source_streams_v1_sources_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/sources/append": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Append Source */
+        post: operations["append_source_streams_v1_sources_append_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/sources/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finish Source */
+        post: operations["finish_source_streams_v1_sources_finish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Release Streams */
+        post: operations["release_streams_streams_v1_release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/{stream_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Stream */
+        get: operations["read_stream_streams_v1__stream_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/{stream_id}/prefix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Stream Prefix */
+        get: operations["read_stream_prefix_streams_v1__stream_id__prefix_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/deployments/": {
         parameters: {
             query?: never;
@@ -3158,8 +3396,9 @@ export interface components {
             /**
              * Ssl Cert File
              * @description This configuration settings option specifies the path to an SSL certificate file.
+             * @default /etc/ssl/certs/ca-certificates.crt
              */
-            ssl_cert_file?: string | null;
+            ssl_cert_file: string | null;
             /**
              * Enable Http2
              * @description If true, enable support for HTTP/2 for communicating with an API. If the API does not support HTTP/2, this will have no effect and connections will be made via HTTP/1.1.
@@ -3649,6 +3888,8 @@ export interface components {
              * @default and_
              */
             operator: components["schemas"]["Operator"];
+            /** @description Filter criteria for `Automation.id` */
+            id?: components["schemas"]["AutomationFilterId"] | null;
             /** @description Filter criteria for `Automation.name` */
             name?: components["schemas"]["AutomationFilterName"] | null;
             /** @description Filter criteria for `Automation.created` */
@@ -3666,6 +3907,17 @@ export interface components {
              * @description Only include automations created before this datetime
              */
             before_?: string | null;
+        };
+        /**
+         * AutomationFilterId
+         * @description Filter by `Automation.id`.
+         */
+        AutomationFilterId: {
+            /**
+             * Any
+             * @description A list of automation ids to include
+             */
+            any_?: string[] | null;
         };
         /**
          * AutomationFilterName
@@ -4396,6 +4648,10 @@ export interface components {
             flows?: components["schemas"]["FlowFilter"];
             deployments?: components["schemas"]["DeploymentFilter"];
         };
+        /** Body_count_automations_automations_count_post */
+        Body_count_automations_automations_count_post: {
+            automations?: components["schemas"]["AutomationFilter"] | null;
+        };
         /** Body_count_block_documents_block_documents_count_post */
         Body_count_block_documents_block_documents_count_post: {
             block_documents?: components["schemas"]["BlockDocumentFilter"] | null;
@@ -4555,7 +4811,7 @@ export interface components {
             scheduled_before?: string;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4580,7 +4836,7 @@ export interface components {
             scheduled_after?: string;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4620,7 +4876,7 @@ export interface components {
             sort: components["schemas"]["DeploymentSort"];
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4641,7 +4897,7 @@ export interface components {
             work_pool_queues?: components["schemas"]["WorkQueueFilter"] | null;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4661,7 +4917,7 @@ export interface components {
             sort: components["schemas"]["FlowSort"];
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4680,7 +4936,7 @@ export interface components {
             deployments?: components["schemas"]["DeploymentFilter"] | null;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4693,7 +4949,7 @@ export interface components {
             offset: number;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4713,7 +4969,7 @@ export interface components {
             deployments?: components["schemas"]["DeploymentFilter"];
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4729,7 +4985,7 @@ export interface components {
             automations?: components["schemas"]["AutomationFilter"] | null;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4753,7 +5009,7 @@ export interface components {
             offset: number;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4767,7 +5023,7 @@ export interface components {
             offset: number;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4782,7 +5038,7 @@ export interface components {
             offset: number;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4795,7 +5051,7 @@ export interface components {
             offset: number;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4825,7 +5081,7 @@ export interface components {
             sort: components["schemas"]["DeploymentSort"];
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4877,7 +5133,7 @@ export interface components {
             work_pool_queues?: components["schemas"]["WorkQueueFilter"] | null;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4897,7 +5153,7 @@ export interface components {
             sort: components["schemas"]["FlowSort"];
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4917,7 +5173,7 @@ export interface components {
             deployments?: components["schemas"]["DeploymentFilter"];
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4933,7 +5189,7 @@ export interface components {
             sort: components["schemas"]["LogSort"];
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4946,7 +5202,7 @@ export interface components {
             offset: number;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4972,7 +5228,7 @@ export interface components {
             deployments?: components["schemas"]["DeploymentFilter"] | null;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -4993,7 +5249,7 @@ export interface components {
             sort: components["schemas"]["VariableSort"];
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -5012,7 +5268,7 @@ export interface components {
             flow_run_limit: number;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -5026,7 +5282,7 @@ export interface components {
             offset: number;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -5039,7 +5295,7 @@ export interface components {
             page: number;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -5053,7 +5309,7 @@ export interface components {
             scheduled_before?: string;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -5067,7 +5323,7 @@ export interface components {
             offset: number;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -5081,7 +5337,7 @@ export interface components {
             work_queues?: components["schemas"]["WorkQueueFilter"] | null;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -5095,7 +5351,7 @@ export interface components {
             offset: number;
             /**
              * Limit
-             * @description Defaults to PREFECT_API_DEFAULT_LIMIT if not provided.
+             * @description Defaults to PREFECT_SERVER_API_DEFAULT_LIMIT if not provided.
              */
             limit?: number;
         };
@@ -5702,6 +5958,38 @@ export interface components {
             /** Type */
             type: string;
         };
+        /** ConsumerBinding */
+        ConsumerBinding: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Consumer Id
+             * Format: uuid
+             */
+            consumer_id: string;
+            /**
+             * Input Stream Id
+             * Format: uuid
+             */
+            input_stream_id: string;
+            /**
+             * Output Stream Id
+             * Format: uuid
+             */
+            output_stream_id: string;
+            /**
+             * Owner Id
+             * Format: uuid
+             */
+            owner_id: string;
+            /** Attempt */
+            attempt: number;
+            /** Owner Epoch */
+            owner_epoch: number;
+        };
         /** CountByState */
         CountByState: {
             /**
@@ -5853,6 +6141,50 @@ export interface components {
              * @constant
              */
             type: "delete-flow-run";
+        };
+        /** DeliveryToken */
+        DeliveryToken: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Consumer Id
+             * Format: uuid
+             */
+            consumer_id: string;
+            /**
+             * Input Stream Id
+             * Format: uuid
+             */
+            input_stream_id: string;
+            /**
+             * Output Stream Id
+             * Format: uuid
+             */
+            output_stream_id: string;
+            /**
+             * Owner Id
+             * Format: uuid
+             */
+            owner_id: string;
+            /** Attempt */
+            attempt: number;
+            /** Owner Epoch */
+            owner_epoch: number;
+            /**
+             * Record Id
+             * Format: uuid
+             */
+            record_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * Delivery Id
+             * Format: uuid
+             */
+            delivery_id: string;
         };
         /** DependencyResult */
         DependencyResult: {
@@ -8495,6 +8827,7 @@ export interface components {
              */
             timezone?: string | null;
         };
+        JsonValue: unknown;
         /**
          * Log
          * @description An ORM representation of log data.
@@ -9875,7 +10208,7 @@ export interface components {
             name: string;
             /**
              * Url
-             * @description The URL of the Redis server to use for Docket.
+             * @description The URL of the Redis server to use for Docket. Supports the memory:// (single-server only), redis://, rediss://, redis+sentinel:// and rediss+sentinel:// schemes; the Sentinel schemes discover the current master through the listed Sentinel daemons and follow failover automatically (requires pydocket>=0.23.1).
              * @default memory://
              */
             url: string;
@@ -10085,7 +10418,7 @@ export interface components {
         ServerServicesDBVacuumSettings: {
             /**
              * Enabled
-             * @description Comma-separated set of vacuum types to enable. Valid values: 'events', 'flow_runs'. Defaults to 'events'. For backward compatibility, 'true' maps to 'events,flow_runs' and 'false' maps to 'events'. Event vacuum also requires event_persister.enabled (the default).
+             * @description Comma-separated set of vacuum types to enable. Valid values: 'events', 'flow_runs', 'orphans'. Defaults to 'events'. Enabling 'flow_runs' also enables lower-frequency orphan cleanup; 'orphans' can enable that cleanup independently. For backward compatibility, 'true' maps to all vacuum types and 'false' maps to 'events'. Event vacuum also requires event_persister.enabled (the default).
              * @default [
              *       "events"
              *     ]
@@ -10097,6 +10430,12 @@ export interface components {
              * @default 3600
              */
             loop_seconds: number;
+            /**
+             * Orphan Cleanup Loop Seconds
+             * @description The database vacuum service will scan for orphaned logs and artifacts this often, in seconds. Defaults to `86400` (24 hours).
+             * @default 86400
+             */
+            orphan_cleanup_loop_seconds: number;
             /**
              * Retention Period
              * Format: duration
@@ -10769,6 +11108,33 @@ export interface components {
              */
             next_scheduled_start_time: string;
         };
+        /** SourceBinding */
+        SourceBinding: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /**
+             * Owner Id
+             * Format: uuid
+             */
+            owner_id: string;
+            /** Attempt */
+            attempt: number;
+            /** Owner Epoch */
+            owner_epoch: number;
+        };
         /**
          * State
          * @description Represents the state of a run.
@@ -10951,6 +11317,315 @@ export interface components {
              * @description The reason why the state transition should wait.
              */
             reason?: string | null;
+        };
+        /** StreamCompletionResult */
+        StreamCompletionResult: {
+            /** Input Sequence */
+            input_sequence: number;
+            /** Output Sequence */
+            output_sequence: number | null;
+        };
+        /** StreamConsumerCompleteRequest */
+        StreamConsumerCompleteRequest: {
+            binding: components["schemas"]["ConsumerBinding"];
+            token: components["schemas"]["DeliveryToken"];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "YIELD" | "RETURN";
+            value: components["schemas"]["JsonValue"];
+            /** Managed State */
+            managed_state: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+        };
+        /** StreamConsumerFinishRequest */
+        StreamConsumerFinishRequest: {
+            binding: components["schemas"]["ConsumerBinding"];
+            /** Error */
+            error?: string | null;
+        };
+        /** StreamConsumerOpenRequest */
+        StreamConsumerOpenRequest: {
+            /**
+             * Input Stream Id
+             * Format: uuid
+             */
+            input_stream_id: string;
+            /**
+             * Output Stream Id
+             * Format: uuid
+             */
+            output_stream_id: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /**
+             * Owner Id
+             * Format: uuid
+             */
+            owner_id: string;
+            /** Attempt */
+            attempt: number;
+            /**
+             * Protocol Version
+             * @default 1
+             * @constant
+             */
+            protocol_version: 1;
+            /**
+             * Terminal Protocol
+             * @default yield-v2
+             * @constant
+             */
+            terminal_protocol: "yield-v2";
+        };
+        /** StreamConsumerReadRequest */
+        StreamConsumerReadRequest: {
+            binding: components["schemas"]["ConsumerBinding"];
+        };
+        /** StreamCreateRequest */
+        StreamCreateRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /**
+             * Protocol Version
+             * @default 1
+             * @constant
+             */
+            protocol_version: 1;
+            limits?: components["schemas"]["StreamLimits"] | null;
+        };
+        /** StreamDelivery */
+        StreamDelivery: {
+            token: components["schemas"]["DeliveryToken"];
+            value: components["schemas"]["JsonValue"];
+            /** Managed State */
+            managed_state: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+        };
+        /** StreamEnvelope */
+        StreamEnvelope: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /** Sequence */
+            sequence: number;
+            /** Producer Position */
+            producer_position: number;
+            value: components["schemas"]["JsonValue"];
+            /** Value Digest */
+            value_digest: string;
+            /** Size Bytes */
+            size_bytes: number;
+        };
+        /** StreamInfo */
+        StreamInfo: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Protocol Version
+             * @constant
+             */
+            protocol_version: 1;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "OPEN" | "COMPLETED" | "FAILED";
+            /** Error */
+            error: string | null;
+            /** Last Sequence */
+            last_sequence: number;
+            /** Tail Sequence */
+            tail_sequence: number | null;
+            /** Producer Position */
+            producer_position: number;
+            /** Record Count */
+            record_count: number;
+            /** Byte Count */
+            byte_count: number;
+            limits: components["schemas"]["StreamLimits"];
+            /** Released */
+            released: boolean;
+        };
+        /** StreamLimits */
+        StreamLimits: {
+            /**
+             * Max Records
+             * @default 10000
+             */
+            max_records: number;
+            /**
+             * Max Bytes
+             * @default 67108864
+             */
+            max_bytes: number;
+            /**
+             * Max Record Bytes
+             * @default 16384
+             */
+            max_record_bytes: number;
+            /**
+             * Max State Bytes
+             * @default 16384
+             */
+            max_state_bytes: number;
+            /**
+             * Max Consumers
+             * @default 64
+             */
+            max_consumers: number;
+            /**
+             * Max Prefix Records
+             * @default 1000
+             */
+            max_prefix_records: number;
+            /**
+             * Max Prefix Bytes
+             * @default 1048576
+             */
+            max_prefix_bytes: number;
+        };
+        /** StreamOutputFailRequest */
+        StreamOutputFailRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /** Error */
+            error: string;
+            /** Attempt */
+            attempt: number;
+        };
+        /** StreamOutputRejectRequest */
+        StreamOutputRejectRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /** Error */
+            error: string;
+        };
+        /** StreamOutputReserveRequest */
+        StreamOutputReserveRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /**
+             * Protocol Version
+             * @default 1
+             * @constant
+             */
+            protocol_version: 1;
+            limits?: components["schemas"]["StreamLimits"] | null;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+        };
+        /** StreamReleaseRequest */
+        StreamReleaseRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+        };
+        /** StreamReleaseResult */
+        StreamReleaseResult: {
+            /** Released */
+            released: number;
+        };
+        /** StreamSourceAppendRequest */
+        StreamSourceAppendRequest: {
+            binding: components["schemas"]["SourceBinding"];
+            /** Position */
+            position: number;
+            value: components["schemas"]["JsonValue"];
+        };
+        /** StreamSourceClaimRequest */
+        StreamSourceClaimRequest: {
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /**
+             * Owner Id
+             * Format: uuid
+             */
+            owner_id: string;
+            /** Attempt */
+            attempt: number;
+        };
+        /** StreamSourceFinishRequest */
+        StreamSourceFinishRequest: {
+            binding: components["schemas"]["SourceBinding"];
+            /** Error */
+            error?: string | null;
         };
         /**
          * SuspendFlowRun
@@ -14381,6 +15056,490 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["State"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_stream_streams_v1_create_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reserve_output_streams_v1_outputs_reserve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamOutputReserveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_output_streams_v1_outputs_reject_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamOutputRejectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fail_output_streams_v1_outputs_fail_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamOutputFailRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_consumer_streams_v1_consumers_open_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamConsumerOpenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsumerBinding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_consumer_streams_v1_consumers_read_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamConsumerReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDelivery"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_consumer_streams_v1_consumers_complete_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamConsumerCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamCompletionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finish_consumer_streams_v1_consumers_finish_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamConsumerFinishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_source_streams_v1_sources_claim_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSourceClaimRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceBinding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    append_source_streams_v1_sources_append_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSourceAppendRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finish_source_streams_v1_sources_finish_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSourceFinishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    release_streams_streams_v1_release_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamReleaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamReleaseResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_stream_streams_v1__stream_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                stream_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_stream_prefix_streams_v1__stream_id__prefix_get: {
+        parameters: {
+            query: {
+                limit: number;
+            };
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                stream_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamEnvelope"][];
                 };
             };
             /** @description Validation Error */
@@ -18657,7 +19816,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["Body_count_automations_automations_count_post"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -85,6 +85,8 @@ from prefect.client.orchestration._events.client import (
     EventAsyncClient,
 )
 
+from prefect.client.orchestration._streams.client import StreamAsyncClient, StreamClient
+
 import prefect
 import prefect.exceptions
 from prefect.logging.loggers import get_run_logger
@@ -279,6 +281,7 @@ def get_client(
 
 
 class PrefectClient(
+    StreamAsyncClient,
     ArtifactAsyncClient,
     ArtifactCollectionAsyncClient,
     LogAsyncClient,
@@ -1226,6 +1229,7 @@ class PrefectClient(
 
 
 class SyncPrefectClient(
+    StreamClient,
     ArtifactClient,
     ArtifactCollectionClient,
     LogClient,

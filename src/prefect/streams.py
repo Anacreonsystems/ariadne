@@ -9,7 +9,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Literal,
+    Protocol,
+    TypeVar,
+)
 from uuid import UUID
 
 from prefect.exceptions import PrefectException
@@ -199,6 +206,8 @@ class Stream(Generic[T]):
     def _bind_completion(self, future: PrefectFuture[Any]) -> None:
         if self.completion is not None:
             raise StreamProtocolError("Stream producer identity is already bound")
+        if self._producer_task_run_id not in (None, future.task_run_id):
+            raise StreamProtocolError("Stream future changed its reserved TaskRun id")
         self._producer_task_run_id = future.task_run_id
         self.completion = future
 

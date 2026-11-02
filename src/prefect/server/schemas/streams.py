@@ -3,7 +3,11 @@
 from typing import ClassVar, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+
+
+class _StreamRequest(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
 
 class StreamLimits(BaseModel):
@@ -91,3 +95,92 @@ class StreamCompletionResult(BaseModel):
 
     input_sequence: int
     output_sequence: int | None
+
+
+class StreamCreateRequest(_StreamRequest):
+    flow_run_id: UUID
+    stream_id: UUID
+    protocol_version: Literal[1] = 1
+    limits: StreamLimits | None = None
+
+    @field_validator("protocol_version", mode="before")
+    @classmethod
+    def protocol_version_is_an_integer(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("protocol_version must be the integer 1")
+        return value
+
+
+class StreamOutputReserveRequest(StreamCreateRequest):
+    task_run_id: UUID
+
+
+class StreamOutputRejectRequest(_StreamRequest):
+    flow_run_id: UUID
+    stream_id: UUID
+    task_run_id: UUID
+    error: str = Field(min_length=1, max_length=4096)
+
+
+class StreamOutputFailRequest(StreamOutputRejectRequest):
+    attempt: int = Field(ge=1, strict=True)
+
+
+class StreamConsumerOpenRequest(_StreamRequest):
+    input_stream_id: UUID
+    output_stream_id: UUID
+    task_run_id: UUID
+    owner_id: UUID
+    attempt: int = Field(ge=1, strict=True)
+    protocol_version: Literal[1] = 1
+    terminal_protocol: Literal["yield-v2"] = "yield-v2"
+
+    @field_validator("protocol_version", mode="before")
+    @classmethod
+    def protocol_version_is_an_integer(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("protocol_version must be the integer 1")
+        return value
+
+
+class StreamConsumerReadRequest(_StreamRequest):
+    binding: ConsumerBinding
+
+
+class StreamConsumerCompleteRequest(StreamConsumerReadRequest):
+    token: DeliveryToken
+    kind: Literal["YIELD", "RETURN"]
+    value: JsonValue
+    managed_state: dict[str, JsonValue]
+
+
+class StreamConsumerFinishRequest(StreamConsumerReadRequest):
+    error: str | None = Field(default=None, min_length=1, max_length=4096)
+
+
+class StreamSourceClaimRequest(_StreamRequest):
+    stream_id: UUID
+    task_run_id: UUID
+    owner_id: UUID
+    attempt: int = Field(ge=1, strict=True)
+
+
+class StreamSourceAppendRequest(_StreamRequest):
+    binding: SourceBinding
+    position: int = Field(ge=1, strict=True)
+    value: JsonValue
+
+
+class StreamSourceFinishRequest(_StreamRequest):
+    binding: SourceBinding
+    error: str | None = Field(default=None, min_length=1, max_length=4096)
+
+
+class StreamReleaseRequest(_StreamRequest):
+    flow_run_id: UUID
+
+
+class StreamReleaseResult(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    released: int = Field(ge=0)

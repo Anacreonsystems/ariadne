@@ -101,8 +101,8 @@ as a reference, not silently inherited by this native foundation.
 | Stage | Goal and exit | State / governing decision |
 | --- | --- | --- |
 | 1. Native task and dependency contract | Define stream ports, supported per-input execution, finite dependency boundaries and stable TaskRun retry binding. Native SDK/task-engine tests execute against a real HTTP API and an explicit PostgreSQL test adapter; native migrations and deployment proof follow. | `accepted` for Stage 1 — [ADR-0032](../adr/ADR-0032-native-task-stream-contract.md). |
-| 2. Native durable storage | Add versioned platform models, migrations and an internal storage interface for append, terminal completion, fencing, retention and quotas. Prove atomicity and compatibility on the selected PostgreSQL profile. | `progress`: storage-only N1.2 accepted in [ADR-0033](../adr/ADR-0033-native-durable-stream-storage.md); HTTP/admission N1.3 pending in [ADR-0034](../adr/ADR-0034-native-stream-http-adapter.md). [ADR-0018](../adr/ADR-0018-postgresql-authoritative-data-plane.md) remains prototype input. |
-| 3. Native runtime and source | Connect task execution to real durable storage, persist managed state and source coordinates, and implement supported sync/async execution and same-TaskRun retry. Prove failures before/after terminal acceptance. | Subsequent ADR required; [ADR-0017](../adr/ADR-0017-sync-async-generator-adapter.md) and [ADR-0019](../adr/ADR-0019-production-generator-state-and-replacement.md) are prototype input. |
+| 2. Native durable storage | Add versioned platform models, migrations and an internal storage interface for append, terminal completion, fencing, retention and quotas. Prove atomicity and compatibility on the selected PostgreSQL profile. | `accepted`: storage-only N1.2 in [ADR-0033](../adr/ADR-0033-native-durable-stream-storage.md); HTTP/admission N1.3 in [ADR-0034](../adr/ADR-0034-native-stream-http-adapter.md). [ADR-0018](../adr/ADR-0018-postgresql-authoritative-data-plane.md) remains prototype input. |
+| 3. Native runtime and source | Extend the accepted operator transport with native source-task SDK, persisted source coordinates and durable submission identity/lookup. Reconstruct supported execution after whole-worker/flow loss, including output accepted before final TaskRun reporting. | Subsequent ADR required; same-TaskRun operator retry already executes through the native API in Stage 2. [ADR-0017](../adr/ADR-0017-sync-async-generator-adapter.md) and [ADR-0019](../adr/ADR-0019-production-generator-state-and-replacement.md) remain prototype input. |
 | 4. Mixed-flow execution | Schedule downstream while producers run, support finite side inputs and explicit bounded collection/end-of-stream, and prevent dependency/capacity deadlocks. Register required consumers before source admission. | Subsequent ADR required; Stage 1 defines the contracts. |
 | 5. Server, deployment and operations | Bind native deployment/FlowRun/TaskRun identities, authorization, lifecycle commands, cancellation/drain, worker launch and bounded progress projections. Reject incompatible code/state versions before data admission. | Subsequent ADR required; [ADR-0024](../adr/ADR-0024-control-plane-authority-and-lifecycle.md) and [ADR-0025](../adr/ADR-0025-prefect-adapter-and-operational-projections.md) are transition references. |
 | 6. Native foundation acceptance | Run the selected graph through actual SDK/server/worker deployment, task retry and process-loss cases; prove ordinary-flow regression, resource isolation, completion/cancellation and documented compatibility limits. | Subsequent acceptance ADR required; first native gate cannot be replaced by standalone prototype results. |
@@ -124,8 +124,11 @@ epoch's foundation objective. That is a planning estimate of problem coverage,
 not a throughput or production-readiness measurement. Its Stage 1 criteria and
 frozen-source evidence gate have now passed,
 earning 10% of this bounded foundation. N1.2 is now accepted for storage-only
-scope, reaching 20%. N1.3 is planned to reach 30% after its distinct HTTP gate;
-that contribution is not earned. Later sprint allocation remains open.
+scope, reaching 20%. N1.3's distinct
+[native HTTP/process/package gate](../evidence/native-stage3-acceptance-2026-11-02.json)
+and Principal review have now passed, earning its planned +10% and reaching
+30%. Later sprint allocation remains open; whole-worker reconstruction and
+native source SDK are not included in this transport acceptance.
 
 ## Native ownership and storage boundary
 

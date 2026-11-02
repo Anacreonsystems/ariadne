@@ -389,7 +389,9 @@ class ThreadPoolTaskRunner(TaskRunner[PrefectConcurrentFuture[R]]):
         from prefect.context import FlowRunContext
         from prefect.task_engine import run_task_async, run_task_sync
 
-        task_run_id = uuid7()
+        stream_run = parameters.get("__prefect_stream_run__") if task.stream else None
+        prebuilt_run = getattr(stream_run, "task_run", None)
+        task_run_id = prebuilt_run.id if prebuilt_run is not None else uuid7()
         cancel_event = threading.Event()
         self._cancel_events[task_run_id] = cancel_event
         context = copy_context()
@@ -411,6 +413,8 @@ class ThreadPoolTaskRunner(TaskRunner[PrefectConcurrentFuture[R]]):
             dependencies=dependencies,
             context=dict(cancel_event=cancel_event),
         )
+        if prebuilt_run is not None:
+            submit_kwargs["task_run"] = prebuilt_run
 
         if task.isasync:
             # TODO: Explore possibly using a long-lived thread with an event loop
