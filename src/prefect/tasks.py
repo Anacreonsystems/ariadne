@@ -80,6 +80,7 @@ from prefect.states import Pending, Scheduled, State
 from prefect.streams import (
     Stream,
     StreamProtocolError,
+    StreamSourceConfig,
     StreamTaskConfig,
 )
 from prefect.utilities.annotations import NotSet
@@ -173,7 +174,7 @@ class TaskOptions(TypedDict, total=False):
     retry_condition_fn: Optional[RetryConditionCallable]
     viz_return_value: Any
     asset_deps: Optional[list[Union[Asset, str]]]
-    stream: StreamTaskConfig | None
+    stream: StreamTaskConfig | StreamSourceConfig | None
 
 
 def task_input_hash(
@@ -395,7 +396,7 @@ class Task(Generic[P, R]):
             storage and finite collection boundaries must be supplied explicitly.
     """
 
-    stream: StreamTaskConfig | None = None
+    stream: StreamTaskConfig | StreamSourceConfig | None = None
 
     # NOTE: These parameters (types, defaults, and docstrings) should be duplicated
     #       exactly in the @task decorator
@@ -438,7 +439,7 @@ class Task(Generic[P, R]):
         retry_condition_fn: Optional[RetryConditionCallable] = None,
         viz_return_value: Optional[Any] = None,
         asset_deps: Optional[list[Union[str, Asset]]] = None,
-        stream: StreamTaskConfig | None = None,
+        stream: StreamTaskConfig | StreamSourceConfig | None = None,
     ):
         # Validate if hook passed is list and contains callables
         hook_categories = [on_completion, on_failure, on_running]
@@ -738,7 +739,7 @@ class Task(Generic[P, R]):
         retry_condition_fn: Optional[RetryConditionCallable] = None,
         viz_return_value: Optional[Any] = None,
         asset_deps: Optional[list[Union[str, Asset]]] = None,
-        stream: StreamTaskConfig | None | type[NotSet] = NotSet,
+        stream: StreamTaskConfig | StreamSourceConfig | None | type[NotSet] = NotSet,
     ) -> "Task[P, R]":
         """
         Create a new task from the current object, updating provided options.
@@ -1478,8 +1479,12 @@ class Task(Generic[P, R]):
             raise StreamProtocolError("Streaming needs concurrent task-runner slots")
         assert self.stream is not None
         parameters = self.stream.bind_parameters(self.fn, args, kwargs)
-        upstream = parameters.get(self.stream.input)
-        if not isinstance(upstream, Stream):
+        source = isinstance(self.stream, StreamSourceConfig)
+        input_port = (
+            self.stream.input if isinstance(self.stream, StreamTaskConfig) else None
+        )
+        upstream = parameters.get(input_port) if input_port is not None else None
+        if not source and not isinstance(upstream, Stream):
             raise StreamProtocolError("The declared stream input needs a Stream handle")
 
         def reject_stream(value: Any) -> None:
@@ -1489,18 +1494,25 @@ class Task(Generic[P, R]):
                 )
 
         for name, value in parameters.items():
-            if name != self.stream.input:
+            if name != input_port:
                 visit_collection(value, visit_fn=reject_stream, return_data=False)
         if wait_for is not None:
             # wait_for retains finite completion semantics, including when a
             # stream dependency is also present as the input port.
             visit_collection(wait_for, visit_fn=reject_stream, return_data=False)
         raise_if_flow_run_suspension_requested()
-        native_storage = (
-            upstream.storage
-            if isinstance(upstream.storage, NativeStreamStorage)
-            else None
-        )
+        if source:
+            # The client/backend resolves Task definitions; construct it only
+            # after this Task class and its flow client have been initialized.
+            from prefect.client.stream_storage import PrefectStreamStorage
+
+            if context.flow_run is None:
+                raise StreamProtocolError("A source requires an active FlowRun")
+            storage = PrefectStreamStorage(context.flow_run.id)
+        else:
+            assert isinstance(upstream, Stream)
+            storage = upstream.storage
+        native_storage = storage if isinstance(storage, NativeStreamStorage) else None
         native = native_storage is not None
         preallocated_id = uuid4() if native else None
         if native_storage is not None and (
@@ -1509,11 +1521,11 @@ class Task(Generic[P, R]):
         ):
             raise StreamProtocolError("Native stream belongs to another FlowRun")
         output = Stream(
-            upstream.storage,
+            storage,
             str(uuid4()) if native else "native-" + uuid4().hex,
             producer_task_run_id=preallocated_id,
         )
-        run = _StreamRun(output)
+        run = _StreamRun(output, source=source)
 
         def reject_submission(error: str) -> None:
             try:
@@ -1536,7 +1548,9 @@ class Task(Generic[P, R]):
                 )
                 run.registration_verified = True
                 run_coro_as_sync(
-                    native_storage.reserve_output(output.stream_id, run.task_run.id)
+                    native_storage.reserve_output(
+                        output.stream_id, run.task_run.id, source=source
+                    )
                 )
             else:
                 run_coro_as_sync(output.storage.create_stream(output.stream_id))
@@ -1569,10 +1583,11 @@ class Task(Generic[P, R]):
     def submit_stream(
         self, *args: Any, wait_for: Any = None, **kwargs: Any
     ) -> Stream[Any]:
-        """Submit one stream operator TaskRun and return its native output edge.
+        """Submit one stream source/operator TaskRun and return its output edge.
 
-        Requires an explicit `stream=StreamTaskConfig(...)` declaration and the
-        supported thread-pool profile. The injected context is not a call input.
+        Requires an explicit `StreamTaskConfig` or `StreamSourceConfig` and the
+        supported thread-pool profile. Sources select the platform HTTP backend;
+        operators take a Stream input. The injected context is not a call input.
         Ordinary task submission and finite futures retain their existing API.
         """
         if self.stream is None:
@@ -2077,7 +2092,7 @@ def task(
     retry_condition_fn: Optional[RetryConditionCallable] = None,
     viz_return_value: Any = None,
     asset_deps: Optional[list[Union[str, Asset]]] = None,
-    stream: StreamTaskConfig | None = None,
+    stream: StreamTaskConfig | StreamSourceConfig | None = None,
 ) -> Callable[[Callable[P, R]], Task[P, R]]: ...
 
 
@@ -2115,7 +2130,7 @@ def task(
     retry_condition_fn: Optional[RetryConditionCallable] = None,
     viz_return_value: Any = None,
     asset_deps: Optional[list[Union[str, Asset]]] = None,
-    stream: StreamTaskConfig | None = None,
+    stream: StreamTaskConfig | StreamSourceConfig | None = None,
 ) -> Callable[[Callable[P, R]], Task[P, R]]: ...
 
 
@@ -2154,7 +2169,7 @@ def task(
     retry_condition_fn: Optional[RetryConditionCallable] = None,
     viz_return_value: Any = None,
     asset_deps: Optional[list[Union[str, Asset]]] = None,
-    stream: StreamTaskConfig | None = None,
+    stream: StreamTaskConfig | StreamSourceConfig | None = None,
 ) -> Callable[[Callable[P, R]], Task[P, R]]: ...
 
 
@@ -2190,7 +2205,7 @@ def task(
     retry_condition_fn: Optional[RetryConditionCallable] = None,
     viz_return_value: Any = None,
     asset_deps: Optional[list[Union[str, Asset]]] = None,
-    stream: StreamTaskConfig | None = None,
+    stream: StreamTaskConfig | StreamSourceConfig | None = None,
 ):
     """
     Decorator to designate a function as a task in a Prefect workflow.

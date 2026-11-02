@@ -6,16 +6,21 @@ import asyncio
 import inspect
 import json
 import time
+from contextlib import aclosing
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
 from prefect._flow_run_suspension import raise_if_flow_run_suspension_requested
 from prefect.states import Failed
 from prefect.streams import (
+    SourceContext,
+    SourceRecord,
+    SourceRunResult,
     Stream,
     StreamContext,
     StreamProtocolError,
     StreamRunResult,
+    StreamSourceConfig,
 )
 from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.utilities.callables import call_with_parameters
@@ -33,26 +38,50 @@ class NativeStreamStorage(Protocol):
 
     async def register_task_run(self, task: Any, task_run: Any) -> Any: ...
 
-    async def reserve_output(self, stream_id: str, task_run_id: UUID) -> None: ...
+    async def reserve_output(
+        self, stream_id: str, task_run_id: UUID, *, source: bool = False
+    ) -> None: ...
 
     async def reject_output(
-        self, stream_id: str, task_run_id: UUID, error: str
+        self, stream_id: str, task_run_id: UUID, error: str, *, source: bool = False
     ) -> None: ...
 
     async def finish_consumer(self, binding: Any, error: str | None = None) -> None: ...
 
     async def fail_task_output(
-        self, stream_id: str, task_run_id: UUID, attempt: int, error: str
+        self,
+        stream_id: str,
+        task_run_id: UUID,
+        attempt: int,
+        error: str,
+        *,
+        source: bool = False,
     ) -> None: ...
+
+
+@runtime_checkable
+class NativeSourceStorage(NativeStreamStorage, Protocol):
+    """Positioned source publication for the platform HTTP backend."""
+
+    async def open_source(
+        self, stream_id: str, task_run_id: UUID, owner_id: UUID, attempt: int
+    ) -> Any: ...
+
+    async def append_source(self, binding: Any, position: int, value: Any) -> None: ...
+
+    async def close_source(self, binding: Any, expected_position: int) -> None: ...
 
 
 class _StreamRun:
     """Opaque submission metadata; dependency traversal must not inspect it."""
 
-    def __init__(self, output: Stream[Any], task_run: Any = None) -> None:
+    def __init__(
+        self, output: Stream[Any], task_run: Any = None, *, source: bool = False
+    ) -> None:
         self.output = output
         self.task_run = task_run
         self.registration_verified = False
+        self.source = source
 
 
 def _fail_unstarted_run(run: _StreamRun, error: str) -> None:
@@ -93,7 +122,9 @@ async def reject_stream_submission(run: _StreamRun, error: str) -> None:
         if run.task_run is None:
             raise StreamProtocolError("Native output has no reserved TaskRun")
         try:
-            await storage.reject_output(run.output.stream_id, run.task_run.id, error)
+            await storage.reject_output(
+                run.output.stream_id, run.task_run.id, error, source=run.source
+            )
         except Exception as refused:
             if (
                 getattr(refused, "code", None) != "STALE_OWNER"
@@ -101,7 +132,11 @@ async def reject_stream_submission(run: _StreamRun, error: str) -> None:
             ):
                 raise
             await storage.fail_task_output(
-                run.output.stream_id, run.task_run.id, run.task_run.run_count, error
+                run.output.stream_id,
+                run.task_run.id,
+                run.task_run.run_count,
+                error,
+                source=run.source,
             )
     else:
         await storage.finish(run.output.stream_id, error)
@@ -117,8 +152,9 @@ async def _finish_output(storage: Any, binding: Any, stream_id: str) -> None:
 def validate_stream_parameters(task: Any, parameters: dict[str, Any]) -> _StreamRun:
     config = task.stream
     run = parameters.get("__prefect_stream_run__")
-    if not isinstance(run, _StreamRun) or not isinstance(
-        parameters.get(config.input), Stream
+    if not isinstance(run, _StreamRun) or (
+        not isinstance(config, StreamSourceConfig)
+        and not isinstance(parameters.get(config.input), Stream)
     ):
         raise StreamProtocolError("Stream tasks require native stream submission")
     return run
@@ -164,7 +200,9 @@ async def _input_drained(upstream: Stream[Any]) -> bool:
     return status.state == "COMPLETED"
 
 
-def execute_stream_sync(engine: SyncTaskRunEngine[Any, Any]) -> StreamRunResult:
+def execute_stream_sync(
+    engine: SyncTaskRunEngine[Any, Any],
+) -> StreamRunResult | SourceRunResult:
     config, parameters, task_run = (
         engine.task.stream,
         engine.parameters,
@@ -172,6 +210,8 @@ def execute_stream_sync(engine: SyncTaskRunEngine[Any, Any]) -> StreamRunResult:
     )
     if config is None or parameters is None or task_run is None:
         raise StreamProtocolError("Stream execution requires an initialized TaskRun")
+    if isinstance(config, StreamSourceConfig):
+        return execute_source_sync(engine)
     run = validate_stream_parameters(engine.task, parameters)
     upstream = parameters[config.input]
     storage = upstream.storage
@@ -232,7 +272,7 @@ def execute_stream_sync(engine: SyncTaskRunEngine[Any, Any]) -> StreamRunResult:
 
 async def execute_stream_async(
     engine: AsyncTaskRunEngine[Any, Any],
-) -> StreamRunResult:
+) -> StreamRunResult | SourceRunResult:
     config, parameters, task_run = (
         engine.task.stream,
         engine.parameters,
@@ -240,6 +280,8 @@ async def execute_stream_async(
     )
     if config is None or parameters is None or task_run is None:
         raise StreamProtocolError("Stream execution requires an initialized TaskRun")
+    if isinstance(config, StreamSourceConfig):
+        return await execute_source_async(engine)
     run = validate_stream_parameters(engine.task, parameters)
     upstream = parameters[config.input]
     storage = upstream.storage
@@ -292,6 +334,109 @@ async def execute_stream_async(
         finally:
             if generator is not None:
                 await generator.aclose()
+
+
+def _source_execution(
+    engine: Any,
+) -> tuple[Any, NativeSourceStorage, SourceContext, dict[str, Any]]:
+    run = validate_stream_parameters(engine.task, engine.parameters)
+    storage = run.output.storage
+    if not run.source or not isinstance(storage, NativeSourceStorage):
+        raise StreamProtocolError("A source requires native platform storage")
+    parameters = {
+        key: value
+        for key, value in engine.parameters.items()
+        if key != "__prefect_stream_run__"
+    }
+    context = SourceContext(
+        engine.task_run.id, run.output.stream_id, engine.task_run.run_count, 0
+    )
+    parameters[engine.task.stream.context] = context
+    return run, storage, context, parameters
+
+
+def _source_record(value: Any, accepted_position: int) -> SourceRecord[Any]:
+    if not isinstance(value, SourceRecord) or value.position != accepted_position + 1:
+        raise StreamProtocolError(
+            "Source yields require the next contiguous SourceRecord"
+        )
+    return value
+
+
+def execute_source_sync(engine: SyncTaskRunEngine[Any, Any]) -> SourceRunResult:
+    task_run = engine.task_run
+    if task_run is None:
+        raise StreamProtocolError("Source execution requires an initialized TaskRun")
+    run, storage, context, parameters = _source_execution(engine)
+    _check_execution(engine)
+    admission = run_coro_as_sync(
+        storage.open_source(
+            run.output.stream_id, task_run.id, uuid4(), task_run.run_count
+        )
+    )
+    accepted = admission.accepted_source_position
+    context.accepted_source_position = accepted
+    if admission.state == "COMPLETED":
+        return SourceRunResult(task_run.id, run.output.stream_id, accepted)
+    generator = call_with_parameters(engine.task.fn, parameters)
+    if not inspect.isgenerator(generator):
+        raise StreamProtocolError("A sync source must produce a generator")
+    try:
+        while True:
+            _check_execution(engine)
+            try:
+                value = next(generator)
+            except StopIteration as stopped:
+                if stopped.value is not None:
+                    raise StreamProtocolError(
+                        "A source generator cannot return a value"
+                    )
+                _check_execution(engine)
+                run_coro_as_sync(storage.close_source(admission.binding, accepted))
+                return SourceRunResult(task_run.id, run.output.stream_id, accepted)
+            record = _source_record(value, accepted)
+            _check_execution(engine)
+            run_coro_as_sync(
+                storage.append_source(admission.binding, record.position, record.value)
+            )
+            accepted = record.position
+            context.accepted_source_position = accepted
+    finally:
+        generator.close()
+
+
+async def execute_source_async(engine: AsyncTaskRunEngine[Any, Any]) -> SourceRunResult:
+    task_run = engine.task_run
+    if task_run is None:
+        raise StreamProtocolError("Source execution requires an initialized TaskRun")
+    run, storage, context, parameters = _source_execution(engine)
+    _check_execution(engine)
+    admission = await storage.open_source(
+        run.output.stream_id, task_run.id, uuid4(), task_run.run_count
+    )
+    accepted = admission.accepted_source_position
+    context.accepted_source_position = accepted
+    if admission.state == "COMPLETED":
+        return SourceRunResult(task_run.id, run.output.stream_id, accepted)
+    generator = call_with_parameters(engine.task.fn, parameters)
+    if not inspect.isasyncgen(generator):
+        raise StreamProtocolError("An async source must produce an async generator")
+    async with aclosing(generator):
+        while True:
+            _check_execution(engine)
+            try:
+                value = await anext(generator)
+            except StopAsyncIteration:
+                _check_execution(engine)
+                await storage.close_source(admission.binding, accepted)
+                return SourceRunResult(task_run.id, run.output.stream_id, accepted)
+            record = _source_record(value, accepted)
+            _check_execution(engine)
+            await storage.append_source(
+                admission.binding, record.position, record.value
+            )
+            accepted = record.position
+            context.accepted_source_position = accepted
 
 
 async def reject_stream_execution(engine: Any, error: str) -> None:

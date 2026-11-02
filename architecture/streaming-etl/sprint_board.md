@@ -1,7 +1,7 @@
 # Streaming ETL sprint board
 
 Current product cycle: [Native integration epoch 1](epochs/epoch-01-native-prefect.md),
-`progress`, **30% earned native foundation readiness** after N1.3. The
+`progress`, **40% earned native foundation readiness** after N1.4. The
 [first-stage ADR](adr/ADR-0032-native-task-stream-contract.md) is accepted for
 its scoped contract gate. Implementation was requested on 2026-11-01 with frequent tests
 against the actual runtime and storage.
@@ -13,14 +13,19 @@ against the actual runtime and storage.
 | N1.1 — Native task/stream contract | `done` | 10% | +10% | NI1-001…004 | All ADR-0032 criteria, frozen real HTTP/PostgreSQL gates, finite task/runner regressions, client-wheel smoke and Principal review pass. |
 | N1.2 — Native storage transactions | `done` | 20% | +10% | NI1-010…013 | ADR-0033 storage-only criteria: migrations, atomic fenced operations, quotas, final-flow release and real PostgreSQL hostile gate. |
 | N1.3 — Native storage transport | `done` | 30% | +10% | NI1-020…022 | ADR-0034 accepted: actual HTTP/client/API restart with retained tokens, lifecycle cleanup, DTO/error parity, stripped-client packaging and Principal gate pass. |
+| N1.4 — Native source task runtime | `done` | 40% | +10% | NI1-030…034 | ADR-0035 accepted: sync/async generators publish positioned references; exact reservation/EOF, same-TaskRun retry, process loss, stripped package and Principal gates pass. |
 
-The 30% is a planning estimate toward the explicitly bounded native foundation,
+The 40% is a planning estimate toward the explicitly bounded native foundation,
 not a measurement of production readiness. The [complete Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json)
 and the [N1.2 storage gate](evidence/native-stage2-closure-acceptance-2026-11-01.json)
 now pass. The [N1.3 transport gate](evidence/native-stage3-acceptance-2026-11-02.json)
 and [Principal review](evidence/native-stage3-principal-2026-11-02.json)
-earn its planned +10%, reaching 30%. Later sprints remain unallocated; source
-SDK and whole-worker reconstruction require the next scoped runtime decision.
+earned N1.3's planned +10%, reaching 30%.
+[N1.4's source gate](evidence/native-stage4-acceptance-2026-11-02.json) and
+[Principal review](evidence/native-stage4-principal-2026-11-02.json) now earn the
+next planned +10%, reaching 40%. Whole-worker reconstruction is proposed in
+[pending ADR-0036](adr/ADR-0036-durable-submission-recovery.md); its questions
+remain open and later sprint tasks remain unallocated.
 
 N1.1 follow-up: [final code/CI acceptance](evidence/native-stage1-ci-acceptance-2026-11-01.json)
 records both real PostgreSQL-stream profiles, full finite regression, type

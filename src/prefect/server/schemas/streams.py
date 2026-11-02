@@ -35,6 +35,14 @@ class SourceBinding(BaseModel):
     owner_epoch: int = Field(ge=1, strict=True)
 
 
+class SourceAdmission(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    binding: SourceBinding
+    state: Literal["OPEN", "COMPLETED"]
+    accepted_source_position: int = Field(ge=0, strict=True)
+
+
 class ConsumerBinding(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
 
@@ -165,6 +173,34 @@ class StreamSourceClaimRequest(_StreamRequest):
     attempt: int = Field(ge=1, strict=True)
 
 
+class StreamSourceReserveRequest(StreamCreateRequest):
+    task_run_id: UUID
+    source_protocol: Literal["source-v1"] = "source-v1"
+
+
+class StreamSourceRejectRequest(_StreamRequest):
+    flow_run_id: UUID
+    stream_id: UUID
+    task_run_id: UUID
+    error: str = Field(min_length=1, max_length=4096)
+
+
+class StreamSourceFailRequest(StreamSourceRejectRequest):
+    attempt: int = Field(ge=1, strict=True)
+
+
+class StreamSourceOpenRequest(StreamSourceClaimRequest):
+    protocol_version: Literal[1] = 1
+    source_protocol: Literal["source-v1"] = "source-v1"
+
+    @field_validator("protocol_version", mode="before")
+    @classmethod
+    def protocol_version_is_an_integer(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("protocol_version must be the integer 1")
+        return value
+
+
 class StreamSourceAppendRequest(_StreamRequest):
     binding: SourceBinding
     position: int = Field(ge=1, strict=True)
@@ -174,6 +210,11 @@ class StreamSourceAppendRequest(_StreamRequest):
 class StreamSourceFinishRequest(_StreamRequest):
     binding: SourceBinding
     error: str | None = Field(default=None, min_length=1, max_length=4096)
+
+
+class StreamSourceCloseRequest(_StreamRequest):
+    binding: SourceBinding
+    expected_position: int = Field(ge=0, strict=True)
 
 
 class StreamReleaseRequest(_StreamRequest):

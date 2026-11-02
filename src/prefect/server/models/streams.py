@@ -20,6 +20,7 @@ from prefect.server.schemas.states import TERMINAL_STATES, StateType
 from prefect.server.schemas.streams import (
     ConsumerBinding,
     DeliveryToken,
+    SourceAdmission,
     SourceBinding,
     StreamCompletionResult,
     StreamDelivery,
@@ -365,16 +366,17 @@ class NativeStreamStore:
             result = StreamInfo.model_validate(stream)
         return result
 
-    async def reserve_output(
+    async def _reserve_task_stream(
         self,
         flow_run_id: UUID,
         stream_id: UUID,
         task_run_id: UUID,
         *,
+        producer_kind: Literal["CONSUMER", "SOURCE"],
         limits: StreamLimits | None = None,
         protocol_version: int = 1,
     ) -> StreamInfo:
-        """Create an immutable, unowned output reservation for a TaskRun."""
+        """Create an immutable, unowned stream reservation for a TaskRun."""
         if type(protocol_version) is not int or protocol_version != 1:
             raise NativeStreamError(
                 "PROTOCOL_ERROR", "Unsupported stream protocol version"
@@ -415,11 +417,11 @@ class NativeStreamStore:
                     stream.flow_run_id != flow_run_id
                     or stream.protocol_version != protocol_version
                     or stream.limits != limits.model_dump()
-                    or stream.producer_kind != "CONSUMER"
+                    or stream.producer_kind != producer_kind
                     or stream.producer_task_run_id != task_run_id
                 ):
                     raise NativeStreamError(
-                        "IDENTITY_CONFLICT", "Output reservation is immutable"
+                        "IDENTITY_CONFLICT", "Task stream reservation is immutable"
                     )
                 return StreamInfo.model_validate(stream)
             if task.state_type in TERMINAL_STATES:
@@ -444,7 +446,7 @@ class NativeStreamStore:
                 id=stream_id,
                 flow_run_id=flow_run_id,
                 protocol_version=protocol_version,
-                producer_kind="CONSUMER",
+                producer_kind=producer_kind,
                 producer_task_run_id=task_run_id,
                 limits=limits.model_dump(),
             )
@@ -453,14 +455,57 @@ class NativeStreamStore:
             result = StreamInfo.model_validate(stream)
         return result
 
-    async def reject_reserved_output(
+    async def reserve_output(
+        self,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        *,
+        limits: StreamLimits | None = None,
+        protocol_version: int = 1,
+    ) -> StreamInfo:
+        """Create an immutable, unowned consumer output reservation."""
+        return await self._reserve_task_stream(
+            flow_run_id,
+            stream_id,
+            task_run_id,
+            producer_kind="CONSUMER",
+            limits=limits,
+            protocol_version=protocol_version,
+        )
+
+    async def reserve_source(
+        self,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        *,
+        limits: StreamLimits | None = None,
+        protocol_version: int = 1,
+        source_protocol: str = "source-v1",
+    ) -> StreamInfo:
+        """Create an immutable, unowned native source reservation."""
+        if source_protocol != "source-v1":
+            raise NativeStreamError("PROTOCOL_ERROR", "Unsupported source protocol")
+        return await self._reserve_task_stream(
+            flow_run_id,
+            stream_id,
+            task_run_id,
+            producer_kind="SOURCE",
+            limits=limits,
+            protocol_version=protocol_version,
+        )
+
+    async def _reject_task_reservation(
         self,
         flow_run_id: UUID,
         stream_id: UUID,
         task_run_id: UUID,
         error: str,
+        *,
+        producer_kind: Literal["CONSUMER", "SOURCE"],
     ) -> StreamInfo:
-        """Fail an exact output reservation that has not admitted an owner."""
+        """Fail an exact task stream reservation without an admitted owner."""
         async with self._session() as session:
             flow = await session.scalar(
                 sa.select(self.db.FlowRun)
@@ -482,11 +527,11 @@ class NativeStreamStore:
                 )
             if (
                 stream.flow_run_id != flow_run_id
-                or stream.producer_kind != "CONSUMER"
+                or stream.producer_kind != producer_kind
                 or stream.producer_task_run_id != task_run_id
             ):
                 raise NativeStreamError(
-                    "IDENTITY_CONFLICT", "Output reservation does not match"
+                    "IDENTITY_CONFLICT", "Task stream reservation does not match"
                 )
             has_consumer = await session.scalar(
                 sa.select(
@@ -514,15 +559,49 @@ class NativeStreamStore:
             result = StreamInfo.model_validate(stream)
         return result
 
-    async def fail_task_output(
+    async def reject_reserved_output(
+        self,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        error: str,
+    ) -> StreamInfo:
+        """Fail an exact consumer output reservation before admission."""
+        return await self._reject_task_reservation(
+            flow_run_id,
+            stream_id,
+            task_run_id,
+            error,
+            producer_kind="CONSUMER",
+        )
+
+    async def reject_reserved_source(
+        self,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        error: str,
+    ) -> StreamInfo:
+        """Fail an exact native source reservation before admission."""
+        return await self._reject_task_reservation(
+            flow_run_id,
+            stream_id,
+            task_run_id,
+            error,
+            producer_kind="SOURCE",
+        )
+
+    async def _fail_task_stream(
         self,
         flow_run_id: UUID,
         stream_id: UUID,
         task_run_id: UUID,
         attempt: int,
         error: str,
+        *,
+        producer_kind: Literal["CONSUMER", "SOURCE"],
     ) -> StreamInfo:
-        """Fail an output using the exact terminal TaskRun lifecycle witness."""
+        """Fail a task stream using its exact terminal lifecycle witness."""
         _attempt(attempt)
         async with self._session() as session:
             flow = await session.scalar(
@@ -561,11 +640,11 @@ class NativeStreamStore:
                 )
             if (
                 stream.flow_run_id != flow_run_id
-                or stream.producer_kind != "CONSUMER"
+                or stream.producer_kind != producer_kind
                 or stream.producer_task_run_id != task_run_id
             ):
                 raise NativeStreamError(
-                    "IDENTITY_CONFLICT", "Output producer does not match TaskRun"
+                    "IDENTITY_CONFLICT", "Stream producer does not match TaskRun"
                 )
             if stream.attempt > attempt:
                 raise NativeStreamError(
@@ -574,6 +653,42 @@ class NativeStreamStore:
             _finish(stream, error)
             result = StreamInfo.model_validate(stream)
         return result
+
+    async def fail_task_output(
+        self,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        attempt: int,
+        error: str,
+    ) -> StreamInfo:
+        """Fail a consumer output from an exact terminal TaskRun witness."""
+        return await self._fail_task_stream(
+            flow_run_id,
+            stream_id,
+            task_run_id,
+            attempt,
+            error,
+            producer_kind="CONSUMER",
+        )
+
+    async def fail_task_source(
+        self,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        attempt: int,
+        error: str,
+    ) -> StreamInfo:
+        """Fail a source output from an exact terminal TaskRun witness."""
+        return await self._fail_task_stream(
+            flow_run_id,
+            stream_id,
+            task_run_id,
+            attempt,
+            error,
+            producer_kind="SOURCE",
+        )
 
     async def claim_source(
         self, stream_id: UUID, task_run_id: UUID, owner_id: UUID, attempt: int
@@ -591,6 +706,74 @@ class NativeStreamStore:
                 owner_id=owner_id,
                 attempt=attempt,
                 owner_epoch=stream.owner_epoch,
+            )
+        return result
+
+    async def open_source(
+        self,
+        stream_id: UUID,
+        task_run_id: UUID,
+        owner_id: UUID,
+        attempt: int,
+        *,
+        protocol_version: int = 1,
+        source_protocol: str = "source-v1",
+        metadata_lag: bool = False,
+    ) -> SourceAdmission:
+        """Admit an exact reserved source and return its durable position."""
+        _attempt(attempt)
+        if type(protocol_version) is not int or protocol_version != 1:
+            raise NativeStreamError(
+                "PROTOCOL_ERROR", "Unsupported stream protocol version"
+            )
+        if source_protocol != "source-v1":
+            raise NativeStreamError("PROTOCOL_ERROR", "Unsupported source protocol")
+        async with self._session() as session:
+            peek = await self._peek(session, stream_id)
+            flow = await session.scalar(
+                sa.select(self.db.FlowRun)
+                .where(self.db.FlowRun.id == peek.flow_run_id)
+                .with_for_update(read=True)
+            )
+            if flow is None:
+                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+            await self._task(
+                session,
+                task_run_id,
+                peek.flow_run_id,
+                attempt,
+                metadata_lag=metadata_lag,
+            )
+            if flow.state_type in TERMINAL_STATES:
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT", "Cannot open a source for a final FlowRun"
+                )
+            stream = (await self._streams(session, [stream_id]))[stream_id]
+            if (
+                stream.protocol_version != protocol_version
+                or stream.producer_kind != "SOURCE"
+                or stream.producer_task_run_id != task_run_id
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "Source admission requires its exact reservation",
+                )
+            self._claim(stream, "SOURCE", task_run_id, owner_id, attempt)
+            binding = SourceBinding(
+                flow_run_id=stream.flow_run_id,
+                stream_id=stream_id,
+                task_run_id=task_run_id,
+                owner_id=owner_id,
+                attempt=attempt,
+                owner_epoch=stream.owner_epoch,
+            )
+            admission_state: Literal["OPEN", "COMPLETED"] = (
+                "COMPLETED" if stream.state == "COMPLETED" else "OPEN"
+            )
+            result = SourceAdmission(
+                binding=binding,
+                state=admission_state,
+                accepted_source_position=stream.producer_position,
             )
         return result
 
@@ -937,6 +1120,32 @@ class NativeStreamStore:
             ]
             self._source_owner(stream, binding)
             _finish(stream, error)
+
+    async def close_source(
+        self, binding: SourceBinding, expected_position: int
+    ) -> None:
+        """Commit source EOF only at the caller's exact accepted position."""
+        if type(expected_position) is not int or expected_position < 0:
+            raise NativeStreamError(
+                "PROTOCOL_ERROR", "Source EOF position must be a nonnegative integer"
+            )
+        async with self._session() as session:
+            await self._task(
+                session,
+                binding.task_run_id,
+                binding.flow_run_id,
+                binding.attempt,
+            )
+            stream = (await self._streams(session, [binding.stream_id]))[
+                binding.stream_id
+            ]
+            self._source_owner(stream, binding)
+            if stream.producer_position != expected_position:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "Source EOF position differs from durable progress",
+                )
+            _finish(stream, None)
 
     async def finish_consumer(
         self, binding: ConsumerBinding, error: str | None = None

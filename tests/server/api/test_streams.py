@@ -391,3 +391,252 @@ async def test_http_status_mapping_for_not_found_payload_and_released_horizon(
     expired = await client.get(f"/streams/v1/{stream_id}/prefix", params={"limit": 1})
     assert expired.status_code == 410
     assert expired.json()["detail"]["code"] == "REPLAY_HORIZON_EXPIRED"
+
+
+async def test_http_source_task_roundtrip_checked_eof_and_completed_retry(
+    client, db, session, flow_run, task_run
+):
+    if not await _postgres_17(db):
+        pytest.skip("Native stream data plane requires PostgreSQL 17")
+    stream_id = uuid4()
+    reservation = {
+        "flow_run_id": str(flow_run.id),
+        "stream_id": str(stream_id),
+        "task_run_id": str(task_run.id),
+        "protocol_version": 1,
+        "source_protocol": "source-v1",
+    }
+    first = await client.post("/streams/v1/sources/reserve", json=reservation)
+    second = await client.post("/streams/v1/sources/reserve", json=reservation)
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+
+    owner = uuid4()
+    opened_body = {
+        "stream_id": str(stream_id),
+        "task_run_id": str(task_run.id),
+        "owner_id": str(owner),
+        "attempt": 1,
+        "protocol_version": 1,
+        "source_protocol": "source-v1",
+    }
+    lag = await client.post("/streams/v1/sources/open", json=opened_body)
+    assert lag.status_code == 409
+    assert lag.json()["detail"]["code"] == "METADATA_NOT_READY"
+
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await session.commit()
+    opened = await client.post("/streams/v1/sources/open", json=opened_body)
+    opened.raise_for_status()
+    assert opened.json()["state"] == "OPEN"
+    assert opened.json()["accepted_source_position"] == 0
+    binding = opened.json()["binding"]
+    append = await client.post(
+        "/streams/v1/sources/append",
+        json={"binding": binding, "position": 1, "value": {"ref": "object:1"}},
+    )
+    append.raise_for_status()
+
+    drift = await client.post(
+        "/streams/v1/sources/close",
+        json={"binding": binding, "expected_position": 0},
+    )
+    assert drift.status_code == 409
+    assert drift.json()["detail"]["code"] == "IDENTITY_CONFLICT"
+    exact = {"binding": binding, "expected_position": 1}
+    assert (
+        await client.post("/streams/v1/sources/close", json=exact)
+    ).status_code == 204
+    assert (
+        await client.post("/streams/v1/sources/close", json=exact)
+    ).status_code == 204
+
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await session.commit()
+    recovered = await client.post(
+        "/streams/v1/sources/open",
+        json={**opened_body, "owner_id": str(uuid4()), "attempt": 2},
+    )
+    recovered.raise_for_status()
+    assert recovered.json()["state"] == "COMPLETED"
+    assert recovered.json()["accepted_source_position"] == 1
+    assert recovered.json()["binding"]["owner_epoch"] == 2
+
+
+async def test_http_source_reject_and_final_failure_preserve_authority(
+    client, db, session, flow_run, task_run
+):
+    if not await _postgres_17(db):
+        pytest.skip("Native stream data plane requires PostgreSQL 17")
+    rejected_id = uuid4()
+    rejected_reservation = {
+        "flow_run_id": str(flow_run.id),
+        "stream_id": str(rejected_id),
+        "task_run_id": str(task_run.id),
+        "source_protocol": "source-v1",
+    }
+    (
+        await client.post("/streams/v1/sources/reserve", json=rejected_reservation)
+    ).raise_for_status()
+    rejection = {
+        "flow_run_id": str(flow_run.id),
+        "stream_id": str(rejected_id),
+        "task_run_id": str(task_run.id),
+        "error": "submission failed",
+    }
+    first = await client.post("/streams/v1/sources/reject", json=rejection)
+    second = await client.post("/streams/v1/sources/reject", json=rejection)
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert first.json()["state"] == "FAILED"
+
+    source_id = uuid4()
+    reservation = {**rejected_reservation, "stream_id": str(source_id)}
+    (
+        await client.post("/streams/v1/sources/reserve", json=reservation)
+    ).raise_for_status()
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await session.commit()
+    opened = await client.post(
+        "/streams/v1/sources/open",
+        json={
+            "stream_id": str(source_id),
+            "task_run_id": str(task_run.id),
+            "owner_id": str(uuid4()),
+            "attempt": 1,
+            "source_protocol": "source-v1",
+        },
+    )
+    opened.raise_for_status()
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Failed(message="retry exhausted"),
+        force=True,
+    )
+    await session.commit()
+    failure = {
+        "flow_run_id": str(flow_run.id),
+        "stream_id": str(source_id),
+        "task_run_id": str(task_run.id),
+        "attempt": 2,
+        "error": "retry exhausted",
+    }
+    stale = await client.post(
+        "/streams/v1/sources/fail", json={**failure, "attempt": 1}
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "ATTEMPT_NOT_CURRENT"
+    terminal = await client.post("/streams/v1/sources/fail", json=failure)
+    terminal.raise_for_status()
+    assert terminal.json()["state"] == "FAILED"
+    assert (
+        await client.post("/streams/v1/sources/fail", json=failure)
+    ).json() == terminal.json()
+
+
+async def test_http_source_protocol_position_and_identity_refusals_are_read_only(
+    client, db, session, flow, flow_run, task_run
+):
+    if not await _postgres_17(db):
+        pytest.skip("Native stream data plane requires PostgreSQL 17")
+    stream_id = uuid4()
+    base = {
+        "flow_run_id": str(flow_run.id),
+        "stream_id": str(stream_id),
+        "task_run_id": str(task_run.id),
+    }
+    invalid = await client.post(
+        "/streams/v1/sources/reserve", json={**base, "protocol_version": True}
+    )
+    assert invalid.status_code == 422
+    async with db.session_context() as check:
+        assert await check.get(db.StreamPartition, stream_id) is None
+
+    (
+        await client.post(
+            "/streams/v1/sources/reserve",
+            json={**base, "source_protocol": "source-v1"},
+        )
+    ).raise_for_status()
+    other_flow = await models.flow_runs.create_flow_run(
+        session=session,
+        flow_run=schemas.core.FlowRun(
+            flow_id=flow.id, flow_version="source-http-other"
+        ),
+    )
+    other_task = await _running_task(session, other_flow.id, "source-http-cross")
+    await session.commit()
+    cross = await client.post(
+        "/streams/v1/sources/open",
+        json={
+            "stream_id": str(stream_id),
+            "task_run_id": str(other_task.id),
+            "owner_id": str(uuid4()),
+            "attempt": 1,
+            "source_protocol": "source-v1",
+        },
+    )
+    assert cross.status_code == 409
+    assert cross.json()["detail"]["code"] == "IDENTITY_CONFLICT"
+    future = await client.post(
+        "/streams/v1/sources/open",
+        json={
+            "stream_id": str(stream_id),
+            "task_run_id": str(task_run.id),
+            "owner_id": str(uuid4()),
+            "attempt": 2,
+            "source_protocol": "source-v1",
+        },
+    )
+    assert future.status_code == 409
+    assert future.json()["detail"]["code"] == "METADATA_NOT_READY"
+
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await session.commit()
+    opened = await client.post(
+        "/streams/v1/sources/open",
+        json={
+            "stream_id": str(stream_id),
+            "task_run_id": str(task_run.id),
+            "owner_id": str(uuid4()),
+            "attempt": 1,
+            "source_protocol": "source-v1",
+        },
+    )
+    opened.raise_for_status()
+    bad_position = await client.post(
+        "/streams/v1/sources/close",
+        json={"binding": opened.json()["binding"], "expected_position": True},
+    )
+    assert bad_position.status_code == 422
+    async with db.session_context() as check:
+        stream = await check.get(db.StreamPartition, stream_id)
+        assert stream.state == "OPEN"
+        assert stream.producer_position == 0

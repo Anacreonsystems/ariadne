@@ -10,6 +10,7 @@ from prefect.server.database import PrefectDBInterface, provide_database_interfa
 from prefect.server.models.streams import NativeStreamError, NativeStreamStore
 from prefect.server.schemas.streams import (
     ConsumerBinding,
+    SourceAdmission,
     SourceBinding,
     StreamCompletionResult,
     StreamConsumerCompleteRequest,
@@ -27,7 +28,12 @@ from prefect.server.schemas.streams import (
     StreamReleaseResult,
     StreamSourceAppendRequest,
     StreamSourceClaimRequest,
+    StreamSourceCloseRequest,
+    StreamSourceFailRequest,
     StreamSourceFinishRequest,
+    StreamSourceOpenRequest,
+    StreamSourceRejectRequest,
+    StreamSourceReserveRequest,
 )
 from prefect.server.utilities.server import PrefectRouter
 
@@ -189,6 +195,72 @@ async def claim_source(
     )
 
 
+@router.post("/sources/reserve")
+async def reserve_source(
+    request: StreamSourceReserveRequest,
+    db: Database,
+) -> StreamInfo:
+    return await _call(
+        NativeStreamStore(db).reserve_source(
+            request.flow_run_id,
+            request.stream_id,
+            request.task_run_id,
+            limits=request.limits,
+            protocol_version=request.protocol_version,
+            source_protocol=request.source_protocol,
+        )
+    )
+
+
+@router.post("/sources/reject")
+async def reject_source(
+    request: StreamSourceRejectRequest,
+    db: Database,
+) -> StreamInfo:
+    return await _call(
+        NativeStreamStore(db).reject_reserved_source(
+            request.flow_run_id,
+            request.stream_id,
+            request.task_run_id,
+            request.error,
+        )
+    )
+
+
+@router.post("/sources/fail")
+async def fail_source(
+    request: StreamSourceFailRequest,
+    db: Database,
+) -> StreamInfo:
+    return await _call(
+        NativeStreamStore(db).fail_task_source(
+            request.flow_run_id,
+            request.stream_id,
+            request.task_run_id,
+            request.attempt,
+            request.error,
+        )
+    )
+
+
+@router.post("/sources/open")
+async def open_source(
+    request: StreamSourceOpenRequest,
+    db: Database,
+) -> SourceAdmission:
+    return await _call(
+        NativeStreamStore(db).open_source(
+            request.stream_id,
+            request.task_run_id,
+            request.owner_id,
+            request.attempt,
+            protocol_version=request.protocol_version,
+            source_protocol=request.source_protocol,
+            metadata_lag=True,
+        )
+    )
+
+
 @router.post("/sources/append")
 async def append_source(
     request: StreamSourceAppendRequest,
@@ -205,6 +277,16 @@ async def finish_source(
     db: Database,
 ) -> None:
     await _call(NativeStreamStore(db).finish_source(request.binding, request.error))
+
+
+@router.post("/sources/close", status_code=status.HTTP_204_NO_CONTENT)
+async def close_source(
+    request: StreamSourceCloseRequest,
+    db: Database,
+) -> None:
+    await _call(
+        NativeStreamStore(db).close_source(request.binding, request.expected_position)
+    )
 
 
 @router.post("/release")
