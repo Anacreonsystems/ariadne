@@ -332,20 +332,30 @@ jobs:
       - *python-test-database-url
       - name: Run native tasks with real HTTP and PostgreSQL storage
         run: uv run pytest tests/test_stream_tasks.py -q --junitxml=native-stream-tests.xml
+      - name: Run native storage transactions on PostgreSQL 17
+        if: matrix.database == 'postgres:17'
+        run: uv run pytest tests/server/models/test_streams.py -q --junitxml=native-stream-storage.xml
+      - name: Require SQLite data-plane refusal before writes
+        if: matrix.database == 'sqlite'
+        run: uv run pytest tests/server/models/test_streams.py::test_backend_capability_fails_before_sqlite_writes -q --junitxml=native-stream-storage.xml
+      - name: Verify native storage migration upgrade and downgrade
+        run: uv run pytest tests/server/database/test_stream_storage_migrations.py -q --junitxml=native-stream-migrations.xml
       - name: Require every native case to execute
         run: |
           uv run python - <<'PY'
+          from pathlib import Path
           import xml.etree.ElementTree as ET
-          cases = ET.parse("native-stream-tests.xml").findall(".//testcase")
-          assert cases, "Native stream tests were not collected"
-          assert not any(case.find("skipped") is not None for case in cases), "Native cases were skipped"
+          for path in (Path("native-stream-tests.xml"), Path("native-stream-storage.xml"), Path("native-stream-migrations.xml")):
+              cases = ET.parse(path).findall(".//testcase")
+              assert cases, f"Native cases were not collected: {path}"
+              assert not any(case.find("skipped") is not None for case in cases), f"Native cases were skipped: {path}"
           PY
       - name: Upload native test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: native-stream-tests-${{ strategy.job-index }}
-          path: native-stream-tests.xml
+          path: native-stream*.xml
 
   prepare-canonical-test-durations:
     if: ${{ github.event_name != 'repository_dispatch' }}

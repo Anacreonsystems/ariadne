@@ -1,0 +1,1944 @@
+$ uv run pytest tests/server/database/test_stream_storage_migrations.py -q
+....                                                                     [100%]
+4 passed in 8.86s
+
+$ PREFECT_SERVER_DATABASE_CONNECTION_URL='postgresql+asyncpg://native_stage2:***@127.0.0.1:55436/native_stage2' uv run pytest tests/server/database/test_stream_storage_migrations.py -q
+....                                                                     [100%]
+4 passed in 7.04s
+
+$ uv run ruff check src/prefect/server/database/orm_models.py src/prefect/server/database/_migrations/versions/postgresql/2026_11_01_000000_7f3c2a9e4b11_add_native_stream_storage.py src/prefect/server/database/_migrations/versions/sqlite/2026_11_01_000000_9b6d4e1c8a20_add_native_stream_storage.py tests/server/database/test_stream_storage_migrations.py
+PLR0402 [*] Use `from prefect.server import schemas` in lieu of alias
+  --> src/prefect/server/database/orm_models.py:26:8
+   |
+24 | from sqlalchemy.sql.functions import coalesce
+25 |
+26 | import prefect.server.schemas as schemas
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+27 | from prefect.server.events.actions import ServerActionTypes
+28 | from prefect.server.events.schemas.automations import (
+   |
+help: Replace with `from prefect.server import schemas`
+   |
+25 |
+   - import prefect.server.schemas as schemas
+26 + from prefect.server import schemas
+27 | from prefect.server.events.actions import ServerActionTypes
+   |
+
+RUF012 Mutable default value for class attribute
+   --> src/prefect/server/database/orm_models.py:109:39
+    |
+107 |     #
+108 |     # https://docs.sqlalchemy.org/en/14/orm/extensions/asyncio.html#preventing-implicit-io-when-using-asyncsession
+109 |     __mapper_args__: dict[str, Any] = {"eager_defaults": True}
+    |                                       ^^^^^^^^^^^^^^^^^^^^^^^^
+110 |
+111 |     def __repr__(self) -> str:
+    |
+help: Consider initializing in `__init__` or annotating with `typing.ClassVar`
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:150:20
+    |
+148 |     name: Mapped[str]
+149 |     tags: Mapped[list[str]] = mapped_column(JSON, server_default="[]", default=list)
+150 |     labels: Mapped[Optional[schemas.core.KeyValueLabels]] = mapped_column(JSON)
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+151 |
+152 |     flow_runs: Mapped[list["FlowRun"]] = relationship(
+    |
+help: Convert to `X | None`
+    |
+149 |     tags: Mapped[list[str]] = mapped_column(JSON, server_default="[]", default=list)
+    -     labels: Mapped[Optional[schemas.core.KeyValueLabels]] = mapped_column(JSON)
+150 +     labels: Mapped[schemas.core.KeyValueLabels | None] = mapped_column(JSON)
+151 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:182:21
+    |
+180 |     )
+181 |     name: Mapped[str] = mapped_column(index=True)
+182 |     message: Mapped[Optional[str]]
+    |                     ^^^^^^^^^^^^^
+183 |     state_details: Mapped[schemas.states.StateDetails] = mapped_column(
+184 |         Pydantic(schemas.states.StateDetails),
+    |
+help: Convert to `X | None`
+    |
+181 |     name: Mapped[str] = mapped_column(index=True)
+    -     message: Mapped[Optional[str]]
+182 +     message: Mapped[str | None]
+183 |     state_details: Mapped[schemas.states.StateDetails] = mapped_column(
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:188:19
+    |
+186 |         default=schemas.states.StateDetails,
+187 |     )
+188 |     _data: Mapped[Optional[Any]] = mapped_column(JSON, name="data")
+    |                   ^^^^^^^^^^^^^
+189 |
+190 |     result_artifact_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    |
+help: Convert to `X | None`
+    |
+187 |     )
+    -     _data: Mapped[Optional[Any]] = mapped_column(JSON, name="data")
+188 +     _data: Mapped[Any | None] = mapped_column(JSON, name="data")
+189 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:190:32
+    |
+188 |     _data: Mapped[Optional[Any]] = mapped_column(JSON, name="data")
+189 |
+190 |     result_artifact_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    |                                ^^^^^^^^^^^^^^^^^^^
+191 |         sa.ForeignKey("artifact.id", ondelete="SET NULL", use_alter=True),
+192 |         index=True,
+    |
+help: Convert to `X | None`
+    |
+189 |
+    -     result_artifact_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+190 +     result_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+191 |         sa.ForeignKey("artifact.id", ondelete="SET NULL", use_alter=True),
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:202:23
+    |
+201 |     @hybrid_property
+202 |     def data(self) -> Optional[Any]:
+    |                       ^^^^^^^^^^^^^
+203 |         if self._data:
+204 |             # ensures backwards compatibility for results stored on state objects
+    |
+help: Convert to `X | None`
+    |
+201 |     @hybrid_property
+    -     def data(self) -> Optional[Any]:
+202 +     def data(self) -> Any | None:
+203 |         if self._data:
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:247:21
+    |
+245 |     )
+246 |     name: Mapped[str] = mapped_column(index=True)
+247 |     message: Mapped[Optional[str]]
+    |                     ^^^^^^^^^^^^^
+248 |     state_details: Mapped[schemas.states.StateDetails] = mapped_column(
+249 |         Pydantic(schemas.states.StateDetails),
+    |
+help: Convert to `X | None`
+    |
+246 |     name: Mapped[str] = mapped_column(index=True)
+    -     message: Mapped[Optional[str]]
+247 +     message: Mapped[str | None]
+248 |     state_details: Mapped[schemas.states.StateDetails] = mapped_column(
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:253:19
+    |
+251 |         default=schemas.states.StateDetails,
+252 |     )
+253 |     _data: Mapped[Optional[Any]] = mapped_column(JSON, name="data")
+    |                   ^^^^^^^^^^^^^
+254 |
+255 |     result_artifact_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    |
+help: Convert to `X | None`
+    |
+252 |     )
+    -     _data: Mapped[Optional[Any]] = mapped_column(JSON, name="data")
+253 +     _data: Mapped[Any | None] = mapped_column(JSON, name="data")
+254 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:255:32
+    |
+253 |     _data: Mapped[Optional[Any]] = mapped_column(JSON, name="data")
+254 |
+255 |     result_artifact_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    |                                ^^^^^^^^^^^^^^^^^^^
+256 |         sa.ForeignKey("artifact.id", ondelete="SET NULL", use_alter=True), index=True
+257 |     )
+    |
+help: Convert to `X | None`
+    |
+254 |
+    -     result_artifact_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+255 +     result_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+256 |         sa.ForeignKey("artifact.id", ondelete="SET NULL", use_alter=True), index=True
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:266:23
+    |
+265 |     @hybrid_property
+266 |     def data(self) -> Optional[Any]:
+    |                       ^^^^^^^^^^^^^
+267 |         if self._data:
+268 |             # ensures backwards compatibility for results stored on state objects
+    |
+help: Convert to `X | None`
+    |
+265 |     @hybrid_property
+    -     def data(self) -> Optional[Any]:
+266 +     def data(self) -> Any | None:
+267 |         if self._data:
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:300:17
+    |
+298 |     """
+299 |
+300 |     key: Mapped[Optional[str]] = mapped_column(index=True)
+    |                 ^^^^^^^^^^^^^
+301 |
+302 |     task_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+    |
+help: Convert to `X | None`
+    |
+299 |
+    -     key: Mapped[Optional[str]] = mapped_column(index=True)
+300 +     key: Mapped[str | None] = mapped_column(index=True)
+301 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:302:25
+    |
+300 |     key: Mapped[Optional[str]] = mapped_column(index=True)
+301 |
+302 |     task_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+    |                         ^^^^^^^^^^^^^^^^^^^
+303 |
+304 |     flow_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+    |
+help: Convert to `X | None`
+    |
+301 |
+    -     task_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+302 +     task_run_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+303 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:304:25
+    |
+302 |     task_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+303 |
+304 |     flow_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+    |                         ^^^^^^^^^^^^^^^^^^^
+305 |
+306 |     type: Mapped[Optional[str]]
+    |
+help: Convert to `X | None`
+    |
+303 |
+    -     flow_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+304 +     flow_run_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+305 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:306:18
+    |
+304 |     flow_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+305 |
+306 |     type: Mapped[Optional[str]]
+    |                  ^^^^^^^^^^^^^
+307 |     data: Mapped[Optional[Any]] = mapped_column(sa_JSON)
+308 |     description: Mapped[Optional[str]]
+    |
+help: Convert to `X | None`
+    |
+305 |
+    -     type: Mapped[Optional[str]]
+306 +     type: Mapped[str | None]
+307 |     data: Mapped[Optional[Any]] = mapped_column(sa_JSON)
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:307:18
+    |
+306 |     type: Mapped[Optional[str]]
+307 |     data: Mapped[Optional[Any]] = mapped_column(sa_JSON)
+    |                  ^^^^^^^^^^^^^
+308 |     description: Mapped[Optional[str]]
+    |
+help: Convert to `X | None`
+    |
+306 |     type: Mapped[Optional[str]]
+    -     data: Mapped[Optional[Any]] = mapped_column(sa_JSON)
+307 +     data: Mapped[Any | None] = mapped_column(sa_JSON)
+308 |     description: Mapped[Optional[str]]
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:308:25
+    |
+306 |     type: Mapped[Optional[str]]
+307 |     data: Mapped[Optional[Any]] = mapped_column(sa_JSON)
+308 |     description: Mapped[Optional[str]]
+    |                         ^^^^^^^^^^^^^
+309 |
+310 |     # Suffixed with underscore as attribute name 'metadata' is reserved for the MetaData instance when using a declarative base class.
+    |
+help: Convert to `X | None`
+    |
+307 |     data: Mapped[Optional[Any]] = mapped_column(sa_JSON)
+    -     description: Mapped[Optional[str]]
+308 +     description: Mapped[str | None]
+309 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:311:23
+    |
+310 |     # Suffixed with underscore as attribute name 'metadata' is reserved for the MetaData instance when using a declarative base class.
+311 |     metadata_: Mapped[Optional[dict[str, str]]] = mapped_column(sa_JSON)
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^
+312 |
+313 |     @declared_attr.directive
+    |
+help: Convert to `X | None`
+    |
+310 |     # Suffixed with underscore as attribute name 'metadata' is reserved for the MetaData instance when using a declarative base class.
+    -     metadata_: Mapped[Optional[dict[str, str]]] = mapped_column(sa_JSON)
+311 +     metadata_: Mapped[dict[str, str] | None] = mapped_column(sa_JSON)
+312 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:341:25
+    |
+339 |     latest_id: Mapped[uuid.UUID]
+340 |
+341 |     task_run_id: Mapped[Optional[uuid.UUID]]
+    |                         ^^^^^^^^^^^^^^^^^^^
+342 |
+343 |     flow_run_id: Mapped[Optional[uuid.UUID]]
+    |
+help: Convert to `X | None`
+    |
+340 |
+    -     task_run_id: Mapped[Optional[uuid.UUID]]
+341 +     task_run_id: Mapped[uuid.UUID | None]
+342 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:343:25
+    |
+341 |     task_run_id: Mapped[Optional[uuid.UUID]]
+342 |
+343 |     flow_run_id: Mapped[Optional[uuid.UUID]]
+    |                         ^^^^^^^^^^^^^^^^^^^
+344 |
+345 |     type: Mapped[Optional[str]]
+    |
+help: Convert to `X | None`
+    |
+342 |
+    -     flow_run_id: Mapped[Optional[uuid.UUID]]
+343 +     flow_run_id: Mapped[uuid.UUID | None]
+344 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:345:18
+    |
+343 |     flow_run_id: Mapped[Optional[uuid.UUID]]
+344 |
+345 |     type: Mapped[Optional[str]]
+    |                  ^^^^^^^^^^^^^
+346 |     data: Mapped[Optional[Any]] = mapped_column(sa_JSON)
+347 |     description: Mapped[Optional[str]]
+    |
+help: Convert to `X | None`
+    |
+344 |
+    -     type: Mapped[Optional[str]]
+345 +     type: Mapped[str | None]
+346 |     data: Mapped[Optional[Any]] = mapped_column(sa_JSON)
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:346:18
+    |
+345 |     type: Mapped[Optional[str]]
+346 |     data: Mapped[Optional[Any]] = mapped_column(sa_JSON)
+    |                  ^^^^^^^^^^^^^
+347 |     description: Mapped[Optional[str]]
+348 |     metadata_: Mapped[Optional[dict[str, str]]] = mapped_column(sa_JSON)
+    |
+help: Convert to `X | None`
+    |
+345 |     type: Mapped[Optional[str]]
+    -     data: Mapped[Optional[Any]] = mapped_column(sa_JSON)
+346 +     data: Mapped[Any | None] = mapped_column(sa_JSON)
+347 |     description: Mapped[Optional[str]]
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:347:25
+    |
+345 |     type: Mapped[Optional[str]]
+346 |     data: Mapped[Optional[Any]] = mapped_column(sa_JSON)
+347 |     description: Mapped[Optional[str]]
+    |                         ^^^^^^^^^^^^^
+348 |     metadata_: Mapped[Optional[dict[str, str]]] = mapped_column(sa_JSON)
+    |
+help: Convert to `X | None`
+    |
+346 |     data: Mapped[Optional[Any]] = mapped_column(sa_JSON)
+    -     description: Mapped[Optional[str]]
+347 +     description: Mapped[str | None]
+348 |     metadata_: Mapped[Optional[dict[str, str]]] = mapped_column(sa_JSON)
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:348:23
+    |
+346 |     data: Mapped[Optional[Any]] = mapped_column(sa_JSON)
+347 |     description: Mapped[Optional[str]]
+348 |     metadata_: Mapped[Optional[dict[str, str]]] = mapped_column(sa_JSON)
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^
+349 |
+350 |     __table_args__: Any = (
+    |
+help: Convert to `X | None`
+    |
+347 |     description: Mapped[Optional[str]]
+    -     metadata_: Mapped[Optional[dict[str, str]]] = mapped_column(sa_JSON)
+348 +     metadata_: Mapped[dict[str, str] | None] = mapped_column(sa_JSON)
+349 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:366:30
+    |
+365 |     cache_key: Mapped[str] = mapped_column()
+366 |     cache_expiration: Mapped[Optional[DateTime]]
+    |                              ^^^^^^^^^^^^^^^^^^
+367 |     task_run_state_id: Mapped[uuid.UUID]
+    |
+help: Convert to `X | None`
+    |
+365 |     cache_key: Mapped[str] = mapped_column()
+    -     cache_expiration: Mapped[Optional[DateTime]]
+366 +     cache_expiration: Mapped[DateTime | None]
+367 |     task_run_state_id: Mapped[uuid.UUID]
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:389:24
+    |
+388 |     name: Mapped[str] = mapped_column(default=lambda: generate_slug(2), index=True)
+389 |     state_type: Mapped[Optional[schemas.states.StateType]] = mapped_column(
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+390 |         sa.Enum(schemas.states.StateType, name="state_type")
+391 |     )
+    |
+help: Convert to `X | None`
+    |
+388 |     name: Mapped[str] = mapped_column(default=lambda: generate_slug(2), index=True)
+    -     state_type: Mapped[Optional[schemas.states.StateType]] = mapped_column(
+389 +     state_type: Mapped[schemas.states.StateType | None] = mapped_column(
+390 |         sa.Enum(schemas.states.StateType, name="state_type")
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:392:24
+    |
+390 |         sa.Enum(schemas.states.StateType, name="state_type")
+391 |     )
+392 |     state_name: Mapped[Optional[str]]
+    |                        ^^^^^^^^^^^^^
+393 |     state_timestamp: Mapped[Optional[DateTime]]
+394 |     run_count: Mapped[int] = mapped_column(server_default="0", default=0)
+    |
+help: Convert to `X | None`
+    |
+391 |     )
+    -     state_name: Mapped[Optional[str]]
+392 +     state_name: Mapped[str | None]
+393 |     state_timestamp: Mapped[Optional[DateTime]]
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:393:29
+    |
+391 |     )
+392 |     state_name: Mapped[Optional[str]]
+393 |     state_timestamp: Mapped[Optional[DateTime]]
+    |                             ^^^^^^^^^^^^^^^^^^
+394 |     run_count: Mapped[int] = mapped_column(server_default="0", default=0)
+395 |     expected_start_time: Mapped[Optional[DateTime]]
+    |
+help: Convert to `X | None`
+    |
+392 |     state_name: Mapped[Optional[str]]
+    -     state_timestamp: Mapped[Optional[DateTime]]
+393 +     state_timestamp: Mapped[DateTime | None]
+394 |     run_count: Mapped[int] = mapped_column(server_default="0", default=0)
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:395:33
+    |
+393 |     state_timestamp: Mapped[Optional[DateTime]]
+394 |     run_count: Mapped[int] = mapped_column(server_default="0", default=0)
+395 |     expected_start_time: Mapped[Optional[DateTime]]
+    |                                 ^^^^^^^^^^^^^^^^^^
+396 |     next_scheduled_start_time: Mapped[Optional[DateTime]]
+397 |     start_time: Mapped[Optional[DateTime]]
+    |
+help: Convert to `X | None`
+    |
+394 |     run_count: Mapped[int] = mapped_column(server_default="0", default=0)
+    -     expected_start_time: Mapped[Optional[DateTime]]
+395 +     expected_start_time: Mapped[DateTime | None]
+396 |     next_scheduled_start_time: Mapped[Optional[DateTime]]
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:396:39
+    |
+394 |     run_count: Mapped[int] = mapped_column(server_default="0", default=0)
+395 |     expected_start_time: Mapped[Optional[DateTime]]
+396 |     next_scheduled_start_time: Mapped[Optional[DateTime]]
+    |                                       ^^^^^^^^^^^^^^^^^^
+397 |     start_time: Mapped[Optional[DateTime]]
+398 |     end_time: Mapped[Optional[DateTime]]
+    |
+help: Convert to `X | None`
+    |
+395 |     expected_start_time: Mapped[Optional[DateTime]]
+    -     next_scheduled_start_time: Mapped[Optional[DateTime]]
+396 +     next_scheduled_start_time: Mapped[DateTime | None]
+397 |     start_time: Mapped[Optional[DateTime]]
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:397:24
+    |
+395 |     expected_start_time: Mapped[Optional[DateTime]]
+396 |     next_scheduled_start_time: Mapped[Optional[DateTime]]
+397 |     start_time: Mapped[Optional[DateTime]]
+    |                        ^^^^^^^^^^^^^^^^^^
+398 |     end_time: Mapped[Optional[DateTime]]
+399 |     total_run_time: Mapped[datetime.timedelta] = mapped_column(
+    |
+help: Convert to `X | None`
+    |
+396 |     next_scheduled_start_time: Mapped[Optional[DateTime]]
+    -     start_time: Mapped[Optional[DateTime]]
+397 +     start_time: Mapped[DateTime | None]
+398 |     end_time: Mapped[Optional[DateTime]]
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:398:22
+    |
+396 |     next_scheduled_start_time: Mapped[Optional[DateTime]]
+397 |     start_time: Mapped[Optional[DateTime]]
+398 |     end_time: Mapped[Optional[DateTime]]
+    |                      ^^^^^^^^^^^^^^^^^^
+399 |     total_run_time: Mapped[datetime.timedelta] = mapped_column(
+400 |         server_default="0", default=datetime.timedelta(0)
+    |
+help: Convert to `X | None`
+    |
+397 |     start_time: Mapped[Optional[DateTime]]
+    -     end_time: Mapped[Optional[DateTime]]
+398 +     end_time: Mapped[DateTime | None]
+399 |     total_run_time: Mapped[datetime.timedelta] = mapped_column(
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:489:27
+    |
+487 |     )
+488 |
+489 |     deployment_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+    |                           ^^^^^^^^^^^^^^^^^^^
+490 |     work_queue_name: Mapped[Optional[str]] = mapped_column(index=True)
+491 |     flow_version: Mapped[Optional[str]] = mapped_column(index=True)
+    |
+help: Convert to `X | None`
+    |
+488 |
+    -     deployment_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+489 +     deployment_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+490 |     work_queue_name: Mapped[Optional[str]] = mapped_column(index=True)
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:490:29
+    |
+489 |     deployment_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+490 |     work_queue_name: Mapped[Optional[str]] = mapped_column(index=True)
+    |                             ^^^^^^^^^^^^^
+491 |     flow_version: Mapped[Optional[str]] = mapped_column(index=True)
+492 |     deployment_version: Mapped[Optional[str]] = mapped_column(index=True)
+    |
+help: Convert to `X | None`
+    |
+489 |     deployment_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+    -     work_queue_name: Mapped[Optional[str]] = mapped_column(index=True)
+490 +     work_queue_name: Mapped[str | None] = mapped_column(index=True)
+491 |     flow_version: Mapped[Optional[str]] = mapped_column(index=True)
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:491:26
+    |
+489 |     deployment_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+490 |     work_queue_name: Mapped[Optional[str]] = mapped_column(index=True)
+491 |     flow_version: Mapped[Optional[str]] = mapped_column(index=True)
+    |                          ^^^^^^^^^^^^^
+492 |     deployment_version: Mapped[Optional[str]] = mapped_column(index=True)
+493 |     parameters: Mapped[dict[str, Any]] = mapped_column(
+    |
+help: Convert to `X | None`
+    |
+490 |     work_queue_name: Mapped[Optional[str]] = mapped_column(index=True)
+    -     flow_version: Mapped[Optional[str]] = mapped_column(index=True)
+491 +     flow_version: Mapped[str | None] = mapped_column(index=True)
+492 |     deployment_version: Mapped[Optional[str]] = mapped_column(index=True)
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:492:32
+    |
+490 |     work_queue_name: Mapped[Optional[str]] = mapped_column(index=True)
+491 |     flow_version: Mapped[Optional[str]] = mapped_column(index=True)
+492 |     deployment_version: Mapped[Optional[str]] = mapped_column(index=True)
+    |                                ^^^^^^^^^^^^^
+493 |     parameters: Mapped[dict[str, Any]] = mapped_column(
+494 |         JSON, server_default="{}", default=dict
+    |
+help: Convert to `X | None`
+    |
+491 |     flow_version: Mapped[Optional[str]] = mapped_column(index=True)
+    -     deployment_version: Mapped[Optional[str]] = mapped_column(index=True)
+492 +     deployment_version: Mapped[str | None] = mapped_column(index=True)
+493 |     parameters: Mapped[dict[str, Any]] = mapped_column(
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:496:29
+    |
+494 |         JSON, server_default="{}", default=dict
+495 |     )
+496 |     idempotency_key: Mapped[Optional[str]] = mapped_column()
+    |                             ^^^^^^^^^^^^^
+497 |     context: Mapped[dict[str, Any]] = mapped_column(
+498 |         JSON, server_default="{}", default=dict
+    |
+help: Convert to `X | None`
+    |
+495 |     )
+    -     idempotency_key: Mapped[Optional[str]] = mapped_column()
+496 +     idempotency_key: Mapped[str | None] = mapped_column()
+497 |     context: Mapped[dict[str, Any]] = mapped_column(
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:506:20
+    |
+504 |     )
+505 |     tags: Mapped[list[str]] = mapped_column(JSON, server_default="[]", default=list)
+506 |     labels: Mapped[Optional[schemas.core.KeyValueLabels]] = mapped_column(JSON)
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+507 |
+508 |     created_by: Mapped[Optional[schemas.core.CreatedBy]] = mapped_column(
+    |
+help: Convert to `X | None`
+    |
+505 |     tags: Mapped[list[str]] = mapped_column(JSON, server_default="[]", default=list)
+    -     labels: Mapped[Optional[schemas.core.KeyValueLabels]] = mapped_column(JSON)
+506 +     labels: Mapped[schemas.core.KeyValueLabels | None] = mapped_column(JSON)
+507 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:508:24
+    |
+506 |     labels: Mapped[Optional[schemas.core.KeyValueLabels]] = mapped_column(JSON)
+507 |
+508 |     created_by: Mapped[Optional[schemas.core.CreatedBy]] = mapped_column(
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+509 |         Pydantic(schemas.core.CreatedBy)
+510 |     )
+    |
+help: Convert to `X | None`
+    |
+507 |
+    -     created_by: Mapped[Optional[schemas.core.CreatedBy]] = mapped_column(
+508 +     created_by: Mapped[schemas.core.CreatedBy | None] = mapped_column(
+509 |         Pydantic(schemas.core.CreatedBy)
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:512:32
+    |
+510 |     )
+511 |
+512 |     infrastructure_pid: Mapped[Optional[str]]
+    |                                ^^^^^^^^^^^^^
+513 |     job_variables: Mapped[Optional[dict[str, Any]]] = mapped_column(
+514 |         JSON, server_default="{}", default=dict
+    |
+help: Convert to `X | None`
+    |
+511 |
+    -     infrastructure_pid: Mapped[Optional[str]]
+512 +     infrastructure_pid: Mapped[str | None]
+513 |     job_variables: Mapped[Optional[dict[str, Any]]] = mapped_column(
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:513:27
+    |
+512 |     infrastructure_pid: Mapped[Optional[str]]
+513 |     job_variables: Mapped[Optional[dict[str, Any]]] = mapped_column(
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^
+514 |         JSON, server_default="{}", default=dict
+515 |     )
+    |
+help: Convert to `X | None`
+    |
+512 |     infrastructure_pid: Mapped[Optional[str]]
+    -     job_variables: Mapped[Optional[dict[str, Any]]] = mapped_column(
+513 +     job_variables: Mapped[dict[str, Any] | None] = mapped_column(
+514 |         JSON, server_default="{}", default=dict
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:517:40
+    |
+515 |     )
+516 |
+517 |     infrastructure_document_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    |                                        ^^^^^^^^^^^^^^^^^^^
+518 |         sa.ForeignKey("block_document.id", ondelete="CASCADE"), index=True
+519 |     )
+    |
+help: Convert to `X | None`
+    |
+516 |
+    -     infrastructure_document_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+517 +     infrastructure_document_id: Mapped[uuid.UUID | None] = mapped_column(
+518 |         sa.ForeignKey("block_document.id", ondelete="CASCADE"), index=True
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:521:32
+    |
+519 |     )
+520 |
+521 |     parent_task_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    |                                ^^^^^^^^^^^^^^^^^^^
+522 |         sa.ForeignKey("task_run.id", ondelete="SET NULL", use_alter=True), index=True
+523 |     )
+    |
+help: Convert to `X | None`
+    |
+520 |
+    -     parent_task_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+521 +     parent_task_run_id: Mapped[uuid.UUID | None] = mapped_column(
+522 |         sa.ForeignKey("task_run.id", ondelete="SET NULL", use_alter=True), index=True
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:528:22
+    |
+527 |     # TODO remove this foreign key for significant delete performance gains
+528 |     state_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    |                      ^^^^^^^^^^^^^^^^^^^
+529 |         sa.ForeignKey("flow_run_state.id", ondelete="SET NULL", use_alter=True),
+530 |         index=True,
+    |
+help: Convert to `X | None`
+    |
+527 |     # TODO remove this foreign key for significant delete performance gains
+    -     state_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+528 +     state_id: Mapped[uuid.UUID | None] = mapped_column(
+529 |         sa.ForeignKey("flow_run_state.id", ondelete="SET NULL", use_alter=True),
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:533:27
+    |
+531 |     )
+532 |
+533 |     work_queue_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    |                           ^^^^^^^^^^^^^^^^^^^
+534 |         sa.ForeignKey("work_queue.id", ondelete="SET NULL"), index=True
+535 |     )
+    |
+help: Convert to `X | None`
+    |
+532 |
+    -     work_queue_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+533 +     work_queue_id: Mapped[uuid.UUID | None] = mapped_column(
+534 |         sa.ForeignKey("work_queue.id", ondelete="SET NULL"), index=True
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:547:24
+    |
+546 |     @hybrid_property
+547 |     def state(self) -> Optional[FlowRunState]:
+    |                        ^^^^^^^^^^^^^^^^^^^^^^
+548 |         return self._state
+    |
+help: Convert to `X | None`
+    |
+546 |     @hybrid_property
+    -     def state(self) -> Optional[FlowRunState]:
+547 +     def state(self) -> FlowRunState | None:
+548 |         return self._state
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:551:33
+    |
+550 |     @state.inplace.setter
+551 |     def _set_state(self, value: Optional[FlowRunState]) -> None:
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^
+552 |         # because this is a slightly non-standard SQLAlchemy relationship, we
+553 |         # prefer an explicit setter method to a setter property, because
+    |
+help: Convert to `X | None`
+    |
+550 |     @state.inplace.setter
+    -     def _set_state(self, value: Optional[FlowRunState]) -> None:
+551 +     def _set_state(self, value: FlowRunState | None) -> None:
+552 |         # because this is a slightly non-standard SQLAlchemy relationship, we
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:560:32
+    |
+558 |         return self.set_state(value)
+559 |
+560 |     def set_state(self, state: Optional[FlowRunState]) -> None:
+    |                                ^^^^^^^^^^^^^^^^^^^^^^
+561 |         """
+562 |         If a state is assigned to this run, populate its run id.
+    |
+help: Convert to `X | None`
+    |
+559 |
+    -     def set_state(self, state: Optional[FlowRunState]) -> None:
+560 +     def set_state(self, state: FlowRunState | None) -> None:
+561 |         """
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:665:19
+    |
+663 |     protocol_version: Mapped[int] = mapped_column(server_default="1", default=1)
+664 |     state: Mapped[str] = mapped_column(server_default="OPEN", default="OPEN")
+665 |     error: Mapped[Optional[str]] = mapped_column(sa.Text)
+    |                   ^^^^^^^^^^^^^
+666 |     tail_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+667 |     last_sequence: Mapped[int] = mapped_column(
+    |
+help: Convert to `X | None`
+    |
+664 |     state: Mapped[str] = mapped_column(server_default="OPEN", default="OPEN")
+    -     error: Mapped[Optional[str]] = mapped_column(sa.Text)
+665 +     error: Mapped[str | None] = mapped_column(sa.Text)
+666 |     tail_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:666:27
+    |
+664 |     state: Mapped[str] = mapped_column(server_default="OPEN", default="OPEN")
+665 |     error: Mapped[Optional[str]] = mapped_column(sa.Text)
+666 |     tail_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    |                           ^^^^^^^^^^^^^
+667 |     last_sequence: Mapped[int] = mapped_column(
+668 |         sa.BigInteger, server_default="0", default=0
+    |
+help: Convert to `X | None`
+    |
+665 |     error: Mapped[Optional[str]] = mapped_column(sa.Text)
+    -     tail_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+666 +     tail_sequence: Mapped[int | None] = mapped_column(sa.BigInteger)
+667 |     last_sequence: Mapped[int] = mapped_column(
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:673:27
+    |
+671 |         sa.BigInteger, server_default="0", default=0
+672 |     )
+673 |     producer_kind: Mapped[Optional[str]]
+    |                           ^^^^^^^^^^^^^
+674 |     producer_task_run_id: Mapped[Optional[uuid.UUID]]
+675 |     owner_id: Mapped[Optional[uuid.UUID]]
+    |
+help: Convert to `X | None`
+    |
+672 |     )
+    -     producer_kind: Mapped[Optional[str]]
+673 +     producer_kind: Mapped[str | None]
+674 |     producer_task_run_id: Mapped[Optional[uuid.UUID]]
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:674:34
+    |
+672 |     )
+673 |     producer_kind: Mapped[Optional[str]]
+674 |     producer_task_run_id: Mapped[Optional[uuid.UUID]]
+    |                                  ^^^^^^^^^^^^^^^^^^^
+675 |     owner_id: Mapped[Optional[uuid.UUID]]
+676 |     attempt: Mapped[int] = mapped_column(server_default="0", default=0)
+    |
+help: Convert to `X | None`
+    |
+673 |     producer_kind: Mapped[Optional[str]]
+    -     producer_task_run_id: Mapped[Optional[uuid.UUID]]
+674 +     producer_task_run_id: Mapped[uuid.UUID | None]
+675 |     owner_id: Mapped[Optional[uuid.UUID]]
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:675:22
+    |
+673 |     producer_kind: Mapped[Optional[str]]
+674 |     producer_task_run_id: Mapped[Optional[uuid.UUID]]
+675 |     owner_id: Mapped[Optional[uuid.UUID]]
+    |                      ^^^^^^^^^^^^^^^^^^^
+676 |     attempt: Mapped[int] = mapped_column(server_default="0", default=0)
+677 |     owner_epoch: Mapped[int] = mapped_column(server_default="0", default=0)
+    |
+help: Convert to `X | None`
+    |
+674 |     producer_task_run_id: Mapped[Optional[uuid.UUID]]
+    -     owner_id: Mapped[Optional[uuid.UUID]]
+675 +     owner_id: Mapped[uuid.UUID | None]
+676 |     attempt: Mapped[int] = mapped_column(server_default="0", default=0)
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:771:31
+    |
+769 |         stream_value_JSON, server_default="{}", default=dict
+770 |     )
+771 |     inflight_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    |                               ^^^^^^^^^^^^^
+772 |     delivery_id: Mapped[Optional[uuid.UUID]]
+    |
+help: Convert to `X | None`
+    |
+770 |     )
+    -     inflight_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+771 +     inflight_sequence: Mapped[int | None] = mapped_column(sa.BigInteger)
+772 |     delivery_id: Mapped[Optional[uuid.UUID]]
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:772:25
+    |
+770 |     )
+771 |     inflight_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+772 |     delivery_id: Mapped[Optional[uuid.UUID]]
+    |                         ^^^^^^^^^^^^^^^^^^^
+773 |
+774 |     __table_args__: Any = (
+    |
+help: Convert to `X | None`
+    |
+771 |     inflight_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    -     delivery_id: Mapped[Optional[uuid.UUID]]
+772 +     delivery_id: Mapped[uuid.UUID | None]
+773 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:817:29
+    |
+815 |     kind: Mapped[str]
+816 |     intent_digest: Mapped[str] = mapped_column(sa.String(64))
+817 |     output_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    |                             ^^^^^^^^^^^^^
+818 |
+819 |     __table_args__: Any = (
+    |
+help: Convert to `X | None`
+    |
+816 |     intent_digest: Mapped[str] = mapped_column(sa.String(64))
+    -     output_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+817 +     output_sequence: Mapped[int | None] = mapped_column(sa.BigInteger)
+818 |
+    |
+
+UP007 Use `X | Y` for type annotations
+   --> src/prefect/server/database/orm_models.py:838:14
+    |
+838 |   _TaskInput = Union[
+    |  ______________^
+839 | |     schemas.core.TaskRunResult,
+840 | |     schemas.core.FlowRunResult,
+841 | |     schemas.core.Parameter,
+842 | |     schemas.core.Constant,
+843 | | ]
+    | |_^
+844 |   _TaskInputs = dict[str, list[_TaskInput]]
+    |
+help: Convert to `X | Y`
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:850:25
+    |
+848 |     """SQLAlchemy model of a task run."""
+849 |
+850 |     flow_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    |                         ^^^^^^^^^^^^^^^^^^^
+851 |         sa.ForeignKey("flow_run.id", ondelete="cascade"), index=True
+852 |     )
+    |
+help: Convert to `X | None`
+    |
+849 |
+    -     flow_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+850 +     flow_run_id: Mapped[uuid.UUID | None] = mapped_column(
+851 |         sa.ForeignKey("flow_run.id", ondelete="cascade"), index=True
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:856:23
+    |
+854 |     task_key: Mapped[str] = mapped_column()
+855 |     dynamic_key: Mapped[str] = mapped_column()
+856 |     cache_key: Mapped[Optional[str]]
+    |                       ^^^^^^^^^^^^^
+857 |     cache_expiration: Mapped[Optional[DateTime]]
+858 |     task_version: Mapped[Optional[str]]
+    |
+help: Convert to `X | None`
+    |
+855 |     dynamic_key: Mapped[str] = mapped_column()
+    -     cache_key: Mapped[Optional[str]]
+856 +     cache_key: Mapped[str | None]
+857 |     cache_expiration: Mapped[Optional[DateTime]]
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:857:30
+    |
+855 |     dynamic_key: Mapped[str] = mapped_column()
+856 |     cache_key: Mapped[Optional[str]]
+857 |     cache_expiration: Mapped[Optional[DateTime]]
+    |                              ^^^^^^^^^^^^^^^^^^
+858 |     task_version: Mapped[Optional[str]]
+859 |     flow_run_run_count: Mapped[int] = mapped_column(server_default="0", default=0)
+    |
+help: Convert to `X | None`
+    |
+856 |     cache_key: Mapped[Optional[str]]
+    -     cache_expiration: Mapped[Optional[DateTime]]
+857 +     cache_expiration: Mapped[DateTime | None]
+858 |     task_version: Mapped[Optional[str]]
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:858:26
+    |
+856 |     cache_key: Mapped[Optional[str]]
+857 |     cache_expiration: Mapped[Optional[DateTime]]
+858 |     task_version: Mapped[Optional[str]]
+    |                          ^^^^^^^^^^^^^
+859 |     flow_run_run_count: Mapped[int] = mapped_column(server_default="0", default=0)
+860 |     empirical_policy: Mapped[schemas.core.TaskRunPolicy] = mapped_column(
+    |
+help: Convert to `X | None`
+    |
+857 |     cache_expiration: Mapped[Optional[DateTime]]
+    -     task_version: Mapped[Optional[str]]
+858 +     task_version: Mapped[str | None]
+859 |     flow_run_run_count: Mapped[int] = mapped_column(server_default="0", default=0)
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:869:20
+    |
+867 |     )
+868 |     tags: Mapped[list[str]] = mapped_column(JSON, server_default="[]", default=list)
+869 |     labels: Mapped[Optional[schemas.core.KeyValueLabels]] = mapped_column(JSON)
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+870 |
+871 |     state_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    |
+help: Convert to `X | None`
+    |
+868 |     tags: Mapped[list[str]] = mapped_column(JSON, server_default="[]", default=list)
+    -     labels: Mapped[Optional[schemas.core.KeyValueLabels]] = mapped_column(JSON)
+869 +     labels: Mapped[schemas.core.KeyValueLabels | None] = mapped_column(JSON)
+870 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:871:22
+    |
+869 |     labels: Mapped[Optional[schemas.core.KeyValueLabels]] = mapped_column(JSON)
+870 |
+871 |     state_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    |                      ^^^^^^^^^^^^^^^^^^^
+872 |         UUID,
+873 |         index=True,
+    |
+help: Convert to `X | None`
+    |
+870 |
+    -     state_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+871 +     state_id: Mapped[uuid.UUID | None] = mapped_column(
+872 |         UUID,
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:879:20
+    |
+878 |     # current states are eagerly loaded unless otherwise specified
+879 |     _state: Mapped[Optional[TaskRunState]] = relationship(
+    |                    ^^^^^^^^^^^^^^^^^^^^^^
+880 |         lazy="selectin",
+881 |         foreign_keys=[state_id],
+    |
+help: Convert to `X | None`
+    |
+878 |     # current states are eagerly loaded unless otherwise specified
+    -     _state: Mapped[Optional[TaskRunState]] = relationship(
+879 +     _state: Mapped[TaskRunState | None] = relationship(
+880 |         lazy="selectin",
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:886:24
+    |
+885 |     @hybrid_property
+886 |     def state(self) -> Optional[TaskRunState]:
+    |                        ^^^^^^^^^^^^^^^^^^^^^^
+887 |         return self._state
+    |
+help: Convert to `X | None`
+    |
+885 |     @hybrid_property
+    -     def state(self) -> Optional[TaskRunState]:
+886 +     def state(self) -> TaskRunState | None:
+887 |         return self._state
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:890:33
+    |
+889 |     @state.inplace.setter
+890 |     def _set_state(self, value: Optional[TaskRunState]) -> None:
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^
+891 |         # because this is a slightly non-standard SQLAlchemy relationship, we
+892 |         # prefer an explicit setter method to a setter property, because
+    |
+help: Convert to `X | None`
+    |
+889 |     @state.inplace.setter
+    -     def _set_state(self, value: Optional[TaskRunState]) -> None:
+890 +     def _set_state(self, value: TaskRunState | None) -> None:
+891 |         # because this is a slightly non-standard SQLAlchemy relationship, we
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:899:32
+    |
+897 |         return self.set_state(value)
+898 |
+899 |     def set_state(self, state: Optional[TaskRunState]) -> None:
+    |                                ^^^^^^^^^^^^^^^^^^^^^^
+900 |         """
+901 |         If a state is assigned to this run, populate its run id.
+    |
+help: Convert to `X | None`
+    |
+898 |
+    -     def set_state(self, state: Optional[TaskRunState]) -> None:
+899 +     def set_state(self, state: TaskRunState | None) -> None:
+900 |         """
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:984:32
+    |
+982 |     )
+983 |     active: Mapped[bool] = mapped_column(default=True)
+984 |     max_scheduled_runs: Mapped[Optional[int]]
+    |                                ^^^^^^^^^^^^^
+985 |     parameters: Mapped[dict[str, Any]] = mapped_column(
+986 |         JSON, server_default="{}", default=dict, nullable=False
+    |
+help: Convert to `X | None`
+    |
+983 |     active: Mapped[bool] = mapped_column(default=True)
+    -     max_scheduled_runs: Mapped[Optional[int]]
+984 +     max_scheduled_runs: Mapped[int | None]
+985 |     parameters: Mapped[dict[str, Any]] = mapped_column(
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> src/prefect/server/database/orm_models.py:988:18
+    |
+986 |         JSON, server_default="{}", default=dict, nullable=False
+987 |     )
+988 |     slug: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+    |                  ^^^^^^^^^^^^^
+989 |
+990 |     @declared_attr.directive
+    |
+help: Convert to `X | None`
+    |
+987 |     )
+    -     slug: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+988 +     slug: Mapped[str | None] = mapped_column(sa.String, nullable=True)
+989 |
+    |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1012:21
+     |
+1011 |     name: Mapped[str]
+1012 |     version: Mapped[Optional[str]]
+     |                     ^^^^^^^^^^^^^
+1013 |     description: Mapped[Optional[str]] = mapped_column(sa.Text())
+1014 |     work_queue_name: Mapped[Optional[str]] = mapped_column(index=True)
+     |
+help: Convert to `X | None`
+     |
+1011 |     name: Mapped[str]
+     -     version: Mapped[Optional[str]]
+1012 +     version: Mapped[str | None]
+1013 |     description: Mapped[Optional[str]] = mapped_column(sa.Text())
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1013:25
+     |
+1011 |     name: Mapped[str]
+1012 |     version: Mapped[Optional[str]]
+1013 |     description: Mapped[Optional[str]] = mapped_column(sa.Text())
+     |                         ^^^^^^^^^^^^^
+1014 |     work_queue_name: Mapped[Optional[str]] = mapped_column(index=True)
+1015 |     infra_overrides: Mapped[dict[str, Any]] = mapped_column(
+     |
+help: Convert to `X | None`
+     |
+1012 |     version: Mapped[Optional[str]]
+     -     description: Mapped[Optional[str]] = mapped_column(sa.Text())
+1013 +     description: Mapped[str | None] = mapped_column(sa.Text())
+1014 |     work_queue_name: Mapped[Optional[str]] = mapped_column(index=True)
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1014:29
+     |
+1012 |     version: Mapped[Optional[str]]
+1013 |     description: Mapped[Optional[str]] = mapped_column(sa.Text())
+1014 |     work_queue_name: Mapped[Optional[str]] = mapped_column(index=True)
+     |                             ^^^^^^^^^^^^^
+1015 |     infra_overrides: Mapped[dict[str, Any]] = mapped_column(
+1016 |         JSON, server_default="{}", default=dict
+     |
+help: Convert to `X | None`
+     |
+1013 |     description: Mapped[Optional[str]] = mapped_column(sa.Text())
+     -     work_queue_name: Mapped[Optional[str]] = mapped_column(index=True)
+1014 +     work_queue_name: Mapped[str | None] = mapped_column(index=True)
+1015 |     infra_overrides: Mapped[dict[str, Any]] = mapped_column(
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1018:18
+     |
+1016 |         JSON, server_default="{}", default=dict
+1017 |     )
+1018 |     path: Mapped[Optional[str]]
+     |                  ^^^^^^^^^^^^^
+1019 |     entrypoint: Mapped[Optional[str]]
+     |
+help: Convert to `X | None`
+     |
+1017 |     )
+     -     path: Mapped[Optional[str]]
+1018 +     path: Mapped[str | None]
+1019 |     entrypoint: Mapped[Optional[str]]
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1019:24
+     |
+1017 |     )
+1018 |     path: Mapped[Optional[str]]
+1019 |     entrypoint: Mapped[Optional[str]]
+     |                        ^^^^^^^^^^^^^
+1020 |
+1021 |     last_polled: Mapped[Optional[DateTime]]
+     |
+help: Convert to `X | None`
+     |
+1018 |     path: Mapped[Optional[str]]
+     -     entrypoint: Mapped[Optional[str]]
+1019 +     entrypoint: Mapped[str | None]
+1020 |
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1021:25
+     |
+1019 |     entrypoint: Mapped[Optional[str]]
+1020 |
+1021 |     last_polled: Mapped[Optional[DateTime]]
+     |                         ^^^^^^^^^^^^^^^^^^
+1022 |     status: Mapped[DeploymentStatus] = mapped_column(
+1023 |         sa.Enum(DeploymentStatus, name="deployment_status"),
+     |
+help: Convert to `X | None`
+     |
+1020 |
+     -     last_polled: Mapped[Optional[DateTime]]
+1021 +     last_polled: Mapped[DateTime | None]
+1022 |     status: Mapped[DeploymentStatus] = mapped_column(
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1036:27
+     |
+1034 |     )
+1035 |
+1036 |     work_queue_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+     |                           ^^^^^^^^^^^^^^^^^^^
+1037 |         sa.ForeignKey("work_queue.id", ondelete="SET NULL"), index=True
+1038 |     )
+     |
+help: Convert to `X | None`
+     |
+1035 |
+     -     work_queue_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+1036 +     work_queue_id: Mapped[uuid.UUID | None] = mapped_column(
+1037 |         sa.ForeignKey("work_queue.id", ondelete="SET NULL"), index=True
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1046:32
+     |
+1045 |     # deprecated in favor of `concurrency_limit_id` FK
+1046 |     _concurrency_limit: Mapped[Optional[int]] = mapped_column(name="concurrency_limit")
+     |                                ^^^^^^^^^^^^^
+1047 |     concurrency_limit_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+1048 |         sa.ForeignKey("concurrency_limit_v2.id", ondelete="SET NULL"),
+     |
+help: Convert to `X | None`
+     |
+1045 |     # deprecated in favor of `concurrency_limit_id` FK
+     -     _concurrency_limit: Mapped[Optional[int]] = mapped_column(name="concurrency_limit")
+1046 +     _concurrency_limit: Mapped[int | None] = mapped_column(name="concurrency_limit")
+1047 |     concurrency_limit_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1047:34
+     |
+1045 |     # deprecated in favor of `concurrency_limit_id` FK
+1046 |     _concurrency_limit: Mapped[Optional[int]] = mapped_column(name="concurrency_limit")
+1047 |     concurrency_limit_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+     |                                  ^^^^^^^^^^^^^^^^^^^
+1048 |         sa.ForeignKey("concurrency_limit_v2.id", ondelete="SET NULL"),
+1049 |     )
+     |
+help: Convert to `X | None`
+     |
+1046 |     _concurrency_limit: Mapped[Optional[int]] = mapped_column(name="concurrency_limit")
+     -     concurrency_limit_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+1047 +     concurrency_limit_id: Mapped[uuid.UUID | None] = mapped_column(
+1048 |         sa.ForeignKey("concurrency_limit_v2.id", ondelete="SET NULL"),
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1053:33
+     |
+1051 |         lazy="selectin",
+1052 |     )
+1053 |     concurrency_options: Mapped[Optional[schemas.core.ConcurrencyOptions]] = (
+     |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1054 |         mapped_column(
+1055 |             Pydantic(schemas.core.ConcurrencyOptions),
+     |
+help: Convert to `X | None`
+     |
+1052 |     )
+     -     concurrency_options: Mapped[Optional[schemas.core.ConcurrencyOptions]] = (
+1053 +     concurrency_options: Mapped[schemas.core.ConcurrencyOptions | None] = (
+1054 |         mapped_column(
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1063:20
+     |
+1062 |     tags: Mapped[list[str]] = mapped_column(JSON, server_default="[]", default=list)
+1063 |     labels: Mapped[Optional[schemas.core.KeyValueLabels]] = mapped_column(JSON)
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1064 |     parameters: Mapped[dict[str, Any]] = mapped_column(
+1065 |         JSON, server_default="{}", default=dict
+     |
+help: Convert to `X | None`
+     |
+1062 |     tags: Mapped[list[str]] = mapped_column(JSON, server_default="[]", default=list)
+     -     labels: Mapped[Optional[schemas.core.KeyValueLabels]] = mapped_column(JSON)
+1063 +     labels: Mapped[schemas.core.KeyValueLabels | None] = mapped_column(JSON)
+1064 |     parameters: Mapped[dict[str, Any]] = mapped_column(
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1067:24
+     |
+1065 |         JSON, server_default="{}", default=dict
+1066 |     )
+1067 |     pull_steps: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(
+     |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1068 |         JSON, default=list
+1069 |     )
+     |
+help: Convert to `X | None`
+     |
+1066 |     )
+     -     pull_steps: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(
+1067 +     pull_steps: Mapped[list[dict[str, Any]] | None] = mapped_column(
+1068 |         JSON, default=list
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1070:38
+     |
+1068 |         JSON, default=list
+1069 |     )
+1070 |     parameter_openapi_schema: Mapped[Optional[dict[str, Any]]] = mapped_column(
+     |                                      ^^^^^^^^^^^^^^^^^^^^^^^^
+1071 |         JSON, default=dict
+1072 |     )
+     |
+help: Convert to `X | None`
+     |
+1069 |     )
+     -     parameter_openapi_schema: Mapped[Optional[dict[str, Any]]] = mapped_column(
+1070 +     parameter_openapi_schema: Mapped[dict[str, Any] | None] = mapped_column(
+1071 |         JSON, default=dict
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1076:24
+     |
+1074 |         default=True, server_default="0"
+1075 |     )
+1076 |     created_by: Mapped[Optional[schemas.core.CreatedBy]] = mapped_column(
+     |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1077 |         Pydantic(schemas.core.CreatedBy)
+1078 |     )
+     |
+help: Convert to `X | None`
+     |
+1075 |     )
+     -     created_by: Mapped[Optional[schemas.core.CreatedBy]] = mapped_column(
+1076 +     created_by: Mapped[schemas.core.CreatedBy | None] = mapped_column(
+1077 |         Pydantic(schemas.core.CreatedBy)
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1079:24
+     |
+1077 |         Pydantic(schemas.core.CreatedBy)
+1078 |     )
+1079 |     updated_by: Mapped[Optional[schemas.core.UpdatedBy]] = mapped_column(
+     |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1080 |         Pydantic(schemas.core.UpdatedBy)
+1081 |     )
+     |
+help: Convert to `X | None`
+     |
+1078 |     )
+     -     updated_by: Mapped[Optional[schemas.core.UpdatedBy]] = mapped_column(
+1079 +     updated_by: Mapped[schemas.core.UpdatedBy | None] = mapped_column(
+1080 |         Pydantic(schemas.core.UpdatedBy)
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1083:40
+     |
+1081 |     )
+1082 |
+1083 |     infrastructure_document_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+     |                                        ^^^^^^^^^^^^^^^^^^^
+1084 |         sa.ForeignKey("block_document.id", ondelete="CASCADE"), index=False
+1085 |     )
+     |
+help: Convert to `X | None`
+     |
+1082 |
+     -     infrastructure_document_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+1083 +     infrastructure_document_id: Mapped[uuid.UUID | None] = mapped_column(
+1084 |         sa.ForeignKey("block_document.id", ondelete="CASCADE"), index=False
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1087:33
+     |
+1085 |     )
+1086 |
+1087 |     storage_document_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+     |                                 ^^^^^^^^^^^^^^^^^^^
+1088 |         sa.ForeignKey("block_document.id", ondelete="CASCADE"),
+1089 |         index=False,
+     |
+help: Convert to `X | None`
+     |
+1086 |
+     -     storage_document_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+1087 +     storage_document_id: Mapped[uuid.UUID | None] = mapped_column(
+1088 |         sa.ForeignKey("block_document.id", ondelete="CASCADE"),
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1124:25
+     |
+1122 |     name: Mapped[str]
+1123 |     level: Mapped[int] = mapped_column(sa.SmallInteger, index=True)
+1124 |     flow_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+     |                         ^^^^^^^^^^^^^^^^^^^
+1125 |     task_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+1126 |     message: Mapped[str] = mapped_column(sa.Text)
+     |
+help: Convert to `X | None`
+     |
+1123 |     level: Mapped[int] = mapped_column(sa.SmallInteger, index=True)
+     -     flow_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+1124 +     flow_run_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+1125 |     task_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1125:25
+     |
+1123 |     level: Mapped[int] = mapped_column(sa.SmallInteger, index=True)
+1124 |     flow_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+1125 |     task_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+     |                         ^^^^^^^^^^^^^^^^^^^
+1126 |     message: Mapped[str] = mapped_column(sa.Text)
+     |
+help: Convert to `X | None`
+     |
+1124 |     flow_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+     -     task_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(index=True)
+1125 +     task_run_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+1126 |     message: Mapped[str] = mapped_column(sa.Text)
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1166:22
+     |
+1164 |     name: Mapped[str]
+1165 |     slug: Mapped[str]
+1166 |     logo_url: Mapped[Optional[str]]
+     |                      ^^^^^^^^^^^^^
+1167 |     documentation_url: Mapped[Optional[str]]
+1168 |     description: Mapped[Optional[str]]
+     |
+help: Convert to `X | None`
+     |
+1165 |     slug: Mapped[str]
+     -     logo_url: Mapped[Optional[str]]
+1166 +     logo_url: Mapped[str | None]
+1167 |     documentation_url: Mapped[Optional[str]]
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1167:31
+     |
+1165 |     slug: Mapped[str]
+1166 |     logo_url: Mapped[Optional[str]]
+1167 |     documentation_url: Mapped[Optional[str]]
+     |                               ^^^^^^^^^^^^^
+1168 |     description: Mapped[Optional[str]]
+1169 |     code_example: Mapped[Optional[str]]
+     |
+help: Convert to `X | None`
+     |
+1166 |     logo_url: Mapped[Optional[str]]
+     -     documentation_url: Mapped[Optional[str]]
+1167 +     documentation_url: Mapped[str | None]
+1168 |     description: Mapped[Optional[str]]
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1168:25
+     |
+1166 |     logo_url: Mapped[Optional[str]]
+1167 |     documentation_url: Mapped[Optional[str]]
+1168 |     description: Mapped[Optional[str]]
+     |                         ^^^^^^^^^^^^^
+1169 |     code_example: Mapped[Optional[str]]
+1170 |     is_protected: Mapped[bool] = mapped_column(server_default="0", default=False)
+     |
+help: Convert to `X | None`
+     |
+1167 |     documentation_url: Mapped[Optional[str]]
+     -     description: Mapped[Optional[str]]
+1168 +     description: Mapped[str | None]
+1169 |     code_example: Mapped[Optional[str]]
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1169:26
+     |
+1167 |     documentation_url: Mapped[Optional[str]]
+1168 |     description: Mapped[Optional[str]]
+1169 |     code_example: Mapped[Optional[str]]
+     |                          ^^^^^^^^^^^^^
+1170 |     is_protected: Mapped[bool] = mapped_column(server_default="0", default=False)
+     |
+help: Convert to `X | None`
+     |
+1168 |     description: Mapped[Optional[str]]
+     -     code_example: Mapped[Optional[str]]
+1169 +     code_example: Mapped[str | None]
+1170 |     is_protected: Mapped[bool] = mapped_column(server_default="0", default=False)
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1233:29
+     |
+1231 |     is_anonymous: Mapped[bool] = mapped_column(server_default="0", index=True)
+1232 |
+1233 |     block_type_name: Mapped[Optional[str]]
+     |                             ^^^^^^^^^^^^^
+1234 |
+1235 |     block_type_id: Mapped[uuid.UUID] = mapped_column(
+     |
+help: Convert to `X | None`
+     |
+1232 |
+     -     block_type_name: Mapped[Optional[str]]
+1233 +     block_type_name: Mapped[str | None]
+1234 |
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1319:20
+     |
+1317 |     name: Mapped[str]
+1318 |
+1319 |     filter: Mapped[Optional[schemas.core.QueueFilter]] = mapped_column(
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1320 |         Pydantic(schemas.core.QueueFilter)
+1321 |     )
+     |
+help: Convert to `X | None`
+     |
+1318 |
+     -     filter: Mapped[Optional[schemas.core.QueueFilter]] = mapped_column(
+1319 +     filter: Mapped[schemas.core.QueueFilter | None] = mapped_column(
+1320 |         Pydantic(schemas.core.QueueFilter)
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1324:31
+     |
+1322 |     description: Mapped[str] = mapped_column(default="", server_default="")
+1323 |     is_paused: Mapped[bool] = mapped_column(server_default="0", default=False)
+1324 |     concurrency_limit: Mapped[Optional[int]]
+     |                               ^^^^^^^^^^^^^
+1325 |     priority: Mapped[int]
+     |
+help: Convert to `X | None`
+     |
+1323 |     is_paused: Mapped[bool] = mapped_column(server_default="0", default=False)
+     -     concurrency_limit: Mapped[Optional[int]]
+1324 +     concurrency_limit: Mapped[int | None]
+1325 |     priority: Mapped[int]
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1327:25
+     |
+1325 |     priority: Mapped[int]
+1326 |
+1327 |     last_polled: Mapped[Optional[DateTime]]
+     |                         ^^^^^^^^^^^^^^^^^^
+1328 |     status: Mapped[WorkQueueStatus] = mapped_column(
+1329 |         sa.Enum(WorkQueueStatus, name="work_queue_status"),
+     |
+help: Convert to `X | None`
+     |
+1326 |
+     -     last_polled: Mapped[Optional[DateTime]]
+1327 +     last_polled: Mapped[DateTime | None]
+1328 |     status: Mapped[WorkQueueStatus] = mapped_column(
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1355:25
+     |
+1354 |     name: Mapped[str]
+1355 |     description: Mapped[Optional[str]]
+     |                         ^^^^^^^^^^^^^
+1356 |     type: Mapped[str] = mapped_column(index=True)
+1357 |     base_job_template: Mapped[dict[str, Any]] = mapped_column(
+     |
+help: Convert to `X | None`
+     |
+1354 |     name: Mapped[str]
+     -     description: Mapped[Optional[str]]
+1355 +     description: Mapped[str | None]
+1356 |     type: Mapped[str] = mapped_column(index=True)
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1361:30
+     |
+1359 |     )
+1360 |     is_paused: Mapped[bool] = mapped_column(server_default="0", default=False)
+1361 |     default_queue_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+     |                              ^^^^^^^^^^^^^^^^^^^
+1362 |         UUID,
+1363 |         sa.ForeignKey("work_queue.id", ondelete="RESTRICT", use_alter=True),
+     |
+help: Convert to `X | None`
+     |
+1360 |     is_paused: Mapped[bool] = mapped_column(server_default="0", default=False)
+     -     default_queue_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+1361 +     default_queue_id: Mapped[uuid.UUID | None] = mapped_column(
+1362 |         UUID,
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1366:31
+     |
+1364 |         nullable=True,
+1365 |     )
+1366 |     concurrency_limit: Mapped[Optional[int]]
+     |                               ^^^^^^^^^^^^^
+1367 |
+1368 |     status: Mapped[WorkPoolStatus] = mapped_column(
+     |
+help: Convert to `X | None`
+     |
+1365 |     )
+     -     concurrency_limit: Mapped[Optional[int]]
+1366 +     concurrency_limit: Mapped[int | None]
+1367 |
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1373:41
+     |
+1371 |         server_default=WorkPoolStatus.NOT_READY,
+1372 |     )
+1373 |     last_transitioned_status_at: Mapped[Optional[DateTime]]
+     |                                         ^^^^^^^^^^^^^^^^^^
+1374 |     last_status_event_id: Mapped[Optional[uuid.UUID]]
+     |
+help: Convert to `X | None`
+     |
+1372 |     )
+     -     last_transitioned_status_at: Mapped[Optional[DateTime]]
+1373 +     last_transitioned_status_at: Mapped[DateTime | None]
+1374 |     last_status_event_id: Mapped[Optional[uuid.UUID]]
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1374:34
+     |
+1372 |     )
+1373 |     last_transitioned_status_at: Mapped[Optional[DateTime]]
+1374 |     last_status_event_id: Mapped[Optional[uuid.UUID]]
+     |                                  ^^^^^^^^^^^^^^^^^^^
+1375 |
+1376 |     storage_configuration: Mapped[schemas.core.WorkPoolStorageConfiguration] = (
+     |
+help: Convert to `X | None`
+     |
+1373 |     last_transitioned_status_at: Mapped[Optional[DateTime]]
+     -     last_status_event_id: Mapped[Optional[uuid.UUID]]
+1374 +     last_status_event_id: Mapped[uuid.UUID | None]
+1375 |
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1399:40
+     |
+1397 |         server_default=sa.func.now(), default=lambda: now("UTC")
+1398 |     )
+1399 |     heartbeat_interval_seconds: Mapped[Optional[int]]
+     |                                        ^^^^^^^^^^^^^
+1400 |
+1401 |     status: Mapped[WorkerStatus] = mapped_column(
+     |
+help: Convert to `X | None`
+     |
+1398 |     )
+     -     heartbeat_interval_seconds: Mapped[Optional[int]]
+1399 +     heartbeat_interval_seconds: Mapped[int | None]
+1400 |
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1435:19
+     |
+1433 | class Variable(Base):
+1434 |     name: Mapped[str]
+1435 |     value: Mapped[Optional[Any]] = mapped_column(JSON)
+     |                   ^^^^^^^^^^^^^
+1436 |     tags: Mapped[list[str]] = mapped_column(JSON, server_default="[]", default=list)
+     |
+help: Convert to `X | None`
+     |
+1434 |     name: Mapped[str]
+     -     value: Mapped[Optional[Any]] = mapped_column(JSON)
+1435 +     value: Mapped[Any | None] = mapped_column(JSON)
+1436 |     tags: Mapped[list[str]] = mapped_column(JSON, server_default="[]", default=list)
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1448:20
+     |
+1446 |     key: Mapped[str]
+1447 |     value: Mapped[str] = mapped_column(sa.Text())
+1448 |     sender: Mapped[Optional[str]]
+     |                    ^^^^^^^^^^^^^
+1449 |
+1450 |     __table_args__: Any = (sa.UniqueConstraint("flow_run_id", "key"),)
+     |
+help: Convert to `X | None`
+     |
+1447 |     value: Mapped[str] = mapped_column(sa.Text())
+     -     sender: Mapped[Optional[str]]
+1448 +     sender: Mapped[str | None]
+1449 |
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1520:24
+     |
+1518 |     )
+1519 |
+1520 |     last_event: Mapped[Optional[ReceivedEvent]] = mapped_column(Pydantic(ReceivedEvent))
+     |                        ^^^^^^^^^^^^^^^^^^^^^^^
+1521 |
+1522 |     start: Mapped[DateTime]
+     |
+help: Convert to `X | None`
+     |
+1519 |
+     -     last_event: Mapped[Optional[ReceivedEvent]] = mapped_column(Pydantic(ReceivedEvent))
+1520 +     last_event: Mapped[ReceivedEvent | None] = mapped_column(Pydantic(ReceivedEvent))
+1521 |
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1527:28
+     |
+1525 |     count: Mapped[int]
+1526 |
+1527 |     last_operation: Mapped[Optional[str]]
+     |                            ^^^^^^^^^^^^^
+1528 |
+1529 |     triggered_at: Mapped[Optional[DateTime]]
+     |
+help: Convert to `X | None`
+     |
+1526 |
+     -     last_operation: Mapped[Optional[str]]
+1527 +     last_operation: Mapped[str | None]
+1528 |
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1529:26
+     |
+1527 |     last_operation: Mapped[Optional[str]]
+1528 |
+1529 |     triggered_at: Mapped[Optional[DateTime]]
+     |                          ^^^^^^^^^^^^^^^^^^
+help: Convert to `X | None`
+     |
+1528 |
+     -     triggered_at: Mapped[Optional[DateTime]]
+1529 +     triggered_at: Mapped[DateTime | None]
+1530 |
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1546:25
+     |
+1544 |     )
+1545 |
+1546 |     resource_id: Mapped[Optional[str]] = mapped_column(index=True)
+     |                         ^^^^^^^^^^^^^
+1547 |     automation_owned_by_resource: Mapped[bool] = mapped_column(
+1548 |         default=False, server_default="0"
+     |
+help: Convert to `X | None`
+     |
+1545 |
+     -     resource_id: Mapped[Optional[str]] = mapped_column(index=True)
+1546 +     resource_id: Mapped[str | None] = mapped_column(index=True)
+1547 |     automation_owned_by_resource: Mapped[bool] = mapped_column(
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1575:28
+     |
+1573 |     child_trigger_id: Mapped[uuid.UUID]
+1574 |     child_firing_id: Mapped[uuid.UUID]
+1575 |     child_fired_at: Mapped[Optional[DateTime]]
+     |                            ^^^^^^^^^^^^^^^^^^
+1576 |     child_firing: Mapped[Firing] = mapped_column(Pydantic(Firing))
+     |
+help: Convert to `X | None`
+     |
+1574 |     child_firing_id: Mapped[uuid.UUID]
+     -     child_fired_at: Mapped[Optional[DateTime]]
+1575 +     child_fired_at: Mapped[DateTime | None]
+1576 |     child_firing: Mapped[Firing] = mapped_column(Pydantic(Firing))
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> src/prefect/server/database/orm_models.py:1647:21
+     |
+1645 |     received: Mapped[DateTime]
+1646 |     recorded: Mapped[DateTime]
+1647 |     follows: Mapped[Optional[uuid.UUID]]
+     |                     ^^^^^^^^^^^^^^^^^^^
+help: Convert to `X | None`
+     |
+1646 |     recorded: Mapped[DateTime]
+     -     follows: Mapped[Optional[uuid.UUID]]
+1647 +     follows: Mapped[uuid.UUID | None]
+1648 |
+     |
+
+Found 110 errors.
+[*] 108 fixable with the `--fix` option.

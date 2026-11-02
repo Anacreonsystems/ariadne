@@ -1,0 +1,17 @@
+Probe: release FlowRun FOR UPDATE -> headers versus open TaskRun -> headers -> StreamConsumer INSERT FK.
+PostgreSQL: 17-alpine; isolated localhost port 55437; deadlock_timeout=100ms.
+open_consumer_insert DeadlockDetectedError deadlock detected
+release_flow_headers list [<Record id=UUID('00000000-0000-0000-0000-000000000003')>, <Record id=UUID('00000000-0000-0000-0000-000000000004')>]
+deadlock_reproduced True
+deadlock_victims 1
+
+PostgreSQL deadlock detail:
+2026-11-01 16:20:21.298 UTC [83] ERROR:  deadlock detected
+2026-11-01 16:20:21.298 UTC [83] DETAIL:  Process 83 waits for ShareLock on transaction 752; blocked by process 82.
+	Process 82 waits for ShareLock on transaction 753; blocked by process 83.
+	Process 83: INSERT INTO stream_consumer(id,flow_run_id,input_stream_id,output_stream_id) VALUES ('00000000-0000-0000-0000-000000000005','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000004')
+	Process 82: SELECT id FROM stream_partition WHERE flow_run_id='00000000-0000-0000-0000-000000000001' ORDER BY id FOR UPDATE
+2026-11-01 16:20:21.298 UTC [83] HINT:  See server log for query details.
+2026-11-01 16:20:21.298 UTC [83] CONTEXT:  while locking tuple (0,1) in relation "flow_run"
+	SQL statement "SELECT 1 FROM ONLY "public"."flow_run" x WHERE "id" OPERATOR(pg_catalog.=) $1 FOR KEY SHARE OF x"
+2026-11-01 16:20:21.298 UTC [83] STATEMENT:  INSERT INTO stream_consumer(id,flow_run_id,input_stream_id,output_stream_id) VALUES ('00000000-0000-0000-0000-000000000005','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000004')

@@ -1,0 +1,116 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_native_stream_shape_constraints_reject_null_bypasses ___________
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f2a5d3cd490>
+flow_run = FlowRun(id=780d3586-7e7c-4415-a08d-5448cb5e317a)
+
+    async def test_native_stream_shape_constraints_reject_null_bypasses(
+        db: PrefectDBInterface,
+        flow_run,
+    ):
+        input_stream_id = uuid.uuid4()
+        output_stream_id = uuid.uuid4()
+        invalid_output_stream_id = uuid.uuid4()
+        consumer_id = uuid.uuid4()
+        async with db.session_context(begin_transaction=True) as session:
+            session.add_all(
+                [
+                    db.StreamPartition(
+                        id=stream_id,
+                        flow_run_id=flow_run.id,
+                        limits={},
+                    )
+                    for stream_id in (
+                        input_stream_id,
+                        output_stream_id,
+                        invalid_output_stream_id,
+                    )
+                ]
+            )
+            await session.flush()
+            session.add(
+                db.StreamConsumer(
+                    id=consumer_id,
+                    flow_run_id=flow_run.id,
+                    input_stream_id=input_stream_id,
+                    output_stream_id=output_stream_id,
+                    owner_id=uuid.uuid4(),
+                    attempt=1,
+                    owner_epoch=1,
+                )
+            )
+    
+        statements = [
+            sa.insert(db.StreamPartition).values(
+                id=uuid.uuid4(),
+                flow_run_id=flow_run.id,
+                limits={},
+                state="COMPLETED",
+                tail_sequence=None,
+                last_sequence=0,
+                error=None,
+            ),
+            sa.insert(db.StreamConsumer).values(
+                id=uuid.uuid4(),
+                flow_run_id=flow_run.id,
+                input_stream_id=input_stream_id,
+                output_stream_id=invalid_output_stream_id,
+                owner_id=uuid.uuid4(),
+                attempt=1,
+                owner_epoch=1,
+                inflight_sequence=None,
+                delivery_id=uuid.uuid4(),
+            ),
+            sa.insert(db.StreamCompletion).values(
+                consumer_id=consumer_id,
+                input_sequence=1,
+                delivery_id=uuid.uuid4(),
+                owner_epoch=1,
+                kind="YIELD",
+                intent_digest="0" * 64,
+                output_sequence=None,
+            ),
+        ]
+        for statement in statements:
+>           with pytest.raises(IntegrityError):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE IntegrityError
+
+tests/server/database/test_stream_storage_migrations.py:256: Failed
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'sqlite+aiosqlite:////tmp/tmp5ypnu642/prefect.db'
+Running hosted API server on port 33887
+---------------------------- Captured stderr setup -----------------------------
+15:42:53.266 | INFO    | uvicorn.error - Started server process [12879]
+15:42:53.270 | INFO    | uvicorn.error - Waiting for application startup.
+15:42:53.474 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+15:42:53.479 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+15:42:53.479 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+15:42:53.480 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+15:42:53.480 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+15:42:53.480 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+15:42:53.480 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+15:42:53.480 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+15:42:53.480 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+15:42:53.481 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+15:42:53.481 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+15:42:53.481 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+15:42:53.481 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+15:42:53.481 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+15:42:53.482 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+15:42:53.482 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+15:42:53.482 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+15:42:53.484 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+15:42:53.485 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+15:42:53.487 | INFO    | uvicorn.error - Application startup complete.
+15:42:53.488 | INFO    | uvicorn.error - Uvicorn running on http://127.0.0.1:33887 (Press CTRL+C to quit)
+15:42:53.532 | INFO    | uvicorn.access - 127.0.0.1:42580 - "GET /api/health HTTP/1.1" 200
+--------------------------- Captured stderr teardown ---------------------------
+15:42:53.892 | INFO    | uvicorn.error - Shutting down
+15:42:53.994 | INFO    | uvicorn.error - Waiting for application shutdown.
+15:42:53.996 | INFO    | uvicorn.error - Application shutdown complete.
+15:42:53.996 | INFO    | uvicorn.error - Finished server process [12879]
+=========================== short test summary info ============================
+FAILED tests/server/database/test_stream_storage_migrations.py::test_native_stream_shape_constraints_reject_null_bypasses
+1 failed in 7.96s

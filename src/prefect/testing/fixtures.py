@@ -10,7 +10,7 @@ from datetime import timedelta
 from typing import Any, AsyncGenerator, Callable, Generator, List, Optional, Union
 from unittest import mock
 from unittest.mock import AsyncMock
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import anyio
 import httpx
@@ -65,6 +65,22 @@ def is_port_in_use(port: int) -> bool:
         return s.connect_ex(("localhost", port)) == 0
 
 
+def _reserve_hosted_api_socket(
+    unused_tcp_port_factory: Callable[[], int],
+) -> tuple[int, socket.socket | None]:
+    """Reserve a test API port until Uvicorn inherits it."""
+    if sys.platform == "win32":
+        return unused_tcp_port_factory(), None
+
+    reserved_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        reserved_socket.bind(("127.0.0.1", 0))
+    except BaseException:
+        reserved_socket.close()
+        raise
+    return reserved_socket.getsockname()[1], reserved_socket
+
+
 @pytest.fixture(scope="session")
 async def hosted_api_server(
     unused_tcp_port_factory: Callable[[], int],
@@ -82,7 +98,8 @@ async def hosted_api_server(
     # Ensure the per-worker database URL override is applied before we start the server
     _ = test_database_connection_url
 
-    port = unused_tcp_port_factory()
+    port, reserved_socket = _reserve_hosted_api_socket(unused_tcp_port_factory)
+    server_id = str(uuid4())
     print(f"Running hosted API server on port {port}")
 
     # Will connect to the same database as normal test clients
@@ -95,72 +112,104 @@ async def hosted_api_server(
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
 
-    async with open_process(
-        command=[
-            "uvicorn",
-            "--factory",
-            "prefect.server.api.server:create_app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "--log-level",
-            "info",
-        ],
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-        env={
-            **os.environ,
-            **settings,
-        },
-        **kwargs,
-    ) as process:
-        api_url = f"http://localhost:{port}/api"
+    if reserved_socket is not None:
+        kwargs["pass_fds"] = (reserved_socket.fileno(),)
 
-        # Wait for the server to be ready
-        async with httpx.AsyncClient() as client:
-            response = None
-            with anyio.move_on_after(20):
-                while True:
+    address_arguments = (
+        ["--fd", str(reserved_socket.fileno())]
+        if reserved_socket is not None
+        else ["--host", "127.0.0.1", "--port", str(port)]
+    )
+
+    try:
+        async with open_process(
+            command=[
+                "uvicorn",
+                "--factory",
+                "prefect.server.api.server:create_app",
+                *address_arguments,
+                "--header",
+                f"X-Prefect-Test-Server-ID:{server_id}",
+                "--log-level",
+                "info",
+            ],
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            env={
+                **os.environ,
+                **settings,
+            },
+            **kwargs,
+        ) as process:
+            if reserved_socket is not None:
+                reserved_socket.close()
+                reserved_socket = None
+
+            api_url = f"http://localhost:{port}/api"
+            try:
+                # Wait for the server we started to be ready. A successful response
+                # from another test server on the same port is not sufficient.
+                response = None
+                async with httpx.AsyncClient() as client:
+                    with anyio.move_on_after(20):
+                        while True:
+                            if process.returncode is not None:
+                                raise RuntimeError(
+                                    "Hosted test Prefect API process exited before "
+                                    f"readiness with code {process.returncode}."
+                                )
+                            try:
+                                response = await client.get(api_url + "/health")
+                            except httpx.ConnectError:
+                                pass
+                            else:
+                                if (
+                                    response.status_code == 200
+                                    and response.headers.get("X-Prefect-Test-Server-ID")
+                                    == server_id
+                                ):
+                                    break
+                            await anyio.sleep(0.1)
+
+                    if process.returncode is not None:
+                        raise RuntimeError(
+                            "Hosted test Prefect API process exited before readiness "
+                            f"with code {process.returncode}."
+                        )
+                    if (
+                        response is None
+                        or response.status_code != 200
+                        or response.headers.get("X-Prefect-Test-Server-ID") != server_id
+                    ):
+                        raise RuntimeError(
+                            "Timed out while attempting to connect to the owned "
+                            "hosted test Prefect API."
+                        )
+
+                yield api_url
+            finally:
+                # Terminate before leaving open_process: its process context waits for
+                # exit and generator cancellation skips statements after a bare yield.
+                with anyio.CancelScope(shield=True):
                     try:
-                        response = await client.get(api_url + "/health")
-                    except httpx.ConnectError:
+                        if process.returncode is None:
+                            # In Windows SIGTERM is ineffective for process groups.
+                            if sys.platform == "win32":
+                                os.kill(process.pid, signal.CTRL_BREAK_EVENT)
+                            else:
+                                process.terminate()
+
+                            for _ in range(10):
+                                if process.returncode is not None:
+                                    break
+                                await anyio.sleep(1)
+                            else:
+                                process.kill()
+                    except ProcessLookupError:
                         pass
-                    else:
-                        if response.status_code == 200:
-                            break
-                    await anyio.sleep(0.1)
-            if response:
-                response.raise_for_status()
-            if not response:
-                raise RuntimeError(
-                    "Timed out while attempting to connect to hosted test Prefect API."
-                )
-
-        # Yield to the consuming tests
-        yield api_url
-
-        # Then shutdown the process
-        try:
-            # In a non-windows environment first send a SIGTERM via terminate().
-            # In Windows we use CTRL_BREAK_EVENT as SIGTERM is useless:
-            # https://bugs.python.org/issue26350
-            if sys.platform == "win32":
-                os.kill(process.pid, signal.CTRL_BREAK_EVENT)
-            else:
-                process.terminate()
-
-            # Give the process a 10 second grace period to shutdown
-            for _ in range(10):
-                if process.returncode is not None:
-                    break
-                await anyio.sleep(1)
-            else:
-                # Kill the process if it is not shutdown in time
-                process.kill()
-
-        except ProcessLookupError:
-            pass
+    finally:
+        if reserved_socket is not None:
+            reserved_socket.close()
 
 
 @pytest.fixture(autouse=True)

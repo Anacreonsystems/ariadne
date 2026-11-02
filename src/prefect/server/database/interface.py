@@ -192,6 +192,26 @@ class PrefectDBInterface(metaclass=DBSingleton):
         return orm_models.FlowRunState
 
     @property
+    def StreamPartition(self) -> type[orm_models.StreamPartition]:
+        """A durable stream partition orm model"""
+        return orm_models.StreamPartition
+
+    @property
+    def StreamRecord(self) -> type[orm_models.StreamRecord]:
+        """A durable stream record orm model"""
+        return orm_models.StreamRecord
+
+    @property
+    def StreamConsumer(self) -> type[orm_models.StreamConsumer]:
+        """A durable stream consumer orm model"""
+        return orm_models.StreamConsumer
+
+    @property
+    def StreamCompletion(self) -> type[orm_models.StreamCompletion]:
+        """A durable stream completion orm model"""
+        return orm_models.StreamCompletion
+
+    @property
     def TaskRun(self) -> type[orm_models.TaskRun]:
         """A task run orm model"""
         return orm_models.TaskRun

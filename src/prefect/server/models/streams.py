@@ -1,0 +1,792 @@
+"""Native durable stream transactions; no prototype or TaskRun state writes.
+
+This internal store owns each transaction. HTTP transport and runtime admission
+are separate layers. Reclamation is explicitly limited to final FlowRuns.
+"""
+
+import hashlib
+import json
+from collections.abc import AsyncGenerator, Iterable
+from contextlib import asynccontextmanager
+from typing import Any, Literal
+from uuid import UUID, uuid4
+
+import sqlalchemy as sa
+from pydantic import JsonValue, TypeAdapter, ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from prefect.server.database import PrefectDBInterface, orm_models
+from prefect.server.schemas.states import TERMINAL_STATES, StateType
+from prefect.server.schemas.streams import (
+    ConsumerBinding,
+    DeliveryToken,
+    SourceBinding,
+    StreamCompletionResult,
+    StreamDelivery,
+    StreamEnvelope,
+    StreamInfo,
+    StreamLimits,
+)
+
+MAX_STREAMS_PER_FLOW = 128
+_JSON_VALUE = TypeAdapter(JsonValue)
+
+
+class NativeStreamError(RuntimeError):
+    """A named storage refusal; HTTP mapping belongs to the transport layer."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(message)
+
+
+def _canonical(value: Any, maximum: int = 65_536) -> tuple[JsonValue, bytes, str]:
+    try:
+        validated = _JSON_VALUE.validate_python(value, strict=True)
+        encoded = json.dumps(
+            validated,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (
+        ValidationError,
+        ValueError,
+        TypeError,
+        UnicodeError,
+        RecursionError,
+    ) as exc:
+        raise NativeStreamError(
+            "PROTOCOL_ERROR", "A finite canonical JSON value is required"
+        ) from exc
+    if len(encoded) > maximum:
+        raise NativeStreamError(
+            "PAYLOAD_TOO_LARGE", "Stream JSON exceeds its byte limit"
+        )
+    return json.loads(encoded), encoded, hashlib.sha256(encoded).hexdigest()
+
+
+def _attempt(attempt: int) -> None:
+    if type(attempt) is not int or attempt < 1:
+        raise NativeStreamError(
+            "PROTOCOL_ERROR", "A positive integer attempt is required"
+        )
+
+
+def _finish(stream: orm_models.StreamPartition, error: str | None) -> None:
+    if error is not None and (not error or len(error.encode("utf-8")) > 4096):
+        raise NativeStreamError(
+            "PROTOCOL_ERROR", "A failure needs a bounded nonempty error"
+        )
+    state = "COMPLETED" if error is None else "FAILED"
+    if stream.state != "OPEN":
+        if stream.state != state or stream.error != error:
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "The stream terminal marker is immutable"
+            )
+        return
+    stream.state, stream.error = state, error
+    stream.tail_sequence = stream.last_sequence
+
+
+class NativeStreamStore:
+    """PostgreSQL 17 storage authority, reconstructed from native platform tables."""
+
+    def __init__(self, db: PrefectDBInterface) -> None:
+        self.db = db
+
+    @asynccontextmanager
+    async def _session(self) -> AsyncGenerator[AsyncSession, None]:
+        if self.db.dialect.name != "postgresql":
+            raise NativeStreamError(
+                "UNSUPPORTED_BACKEND", "Native streams require PostgreSQL 17"
+            )
+        async with self.db.session_context(begin_transaction=True) as session:
+            connection = await session.connection()
+            version = connection.dialect.server_version_info
+            if not version or version[0] != 17:
+                raise NativeStreamError(
+                    "UNSUPPORTED_BACKEND", "Native streams require PostgreSQL 17"
+                )
+            yield session
+
+    async def _peek(
+        self, session: AsyncSession, stream_id: UUID
+    ) -> orm_models.StreamPartition:
+        stream = await session.get(self.db.StreamPartition, stream_id)
+        if stream is None:
+            raise NativeStreamError("NOT_FOUND", "Unknown stream")
+        return stream
+
+    async def _streams(
+        self, session: AsyncSession, stream_ids: Iterable[UUID]
+    ) -> dict[UUID, orm_models.StreamPartition]:
+        ids = set(stream_ids)
+        rows = (
+            await session.scalars(
+                sa.select(self.db.StreamPartition)
+                .where(self.db.StreamPartition.id.in_(ids))
+                .order_by(self.db.StreamPartition.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+        if len(rows) != len(ids):
+            raise NativeStreamError("NOT_FOUND", "Unknown stream")
+        if any(row.released for row in rows):
+            raise NativeStreamError(
+                "REPLAY_HORIZON_EXPIRED", "Stream payload has been released"
+            )
+        return {row.id: row for row in rows}
+
+    async def _task(
+        self,
+        session: AsyncSession,
+        task_id: UUID,
+        flow_id: UUID,
+        attempt: int,
+        *,
+        allow_failed: bool = False,
+    ) -> None:
+        task = await session.scalar(
+            sa.select(self.db.TaskRun)
+            .where(self.db.TaskRun.id == task_id)
+            .with_for_update()
+        )
+        if task is None or task.flow_run_id != flow_id:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "TaskRun must exist in the stream's FlowRun"
+            )
+        allowed_states = {StateType.RUNNING}
+        if allow_failed:
+            allowed_states |= {StateType.FAILED, StateType.CRASHED, StateType.CANCELLED}
+        if task.run_count != attempt or task.state_type not in allowed_states:
+            raise NativeStreamError(
+                "ATTEMPT_NOT_CURRENT",
+                "Operation requires the current admitted TaskRun attempt/state",
+            )
+
+    def _claim(
+        self,
+        stream: orm_models.StreamPartition,
+        kind: str,
+        task_id: UUID,
+        owner_id: UUID,
+        attempt: int,
+    ) -> None:
+        if stream.producer_kind is None:
+            if stream.state != "OPEN":
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT", "Cannot claim a closed stream"
+                )
+            stream.producer_kind = kind
+            stream.producer_task_run_id = task_id
+        elif stream.producer_kind != kind or stream.producer_task_run_id != task_id:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Stream producer binding is immutable"
+            )
+        if stream.state == "FAILED":
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "Cannot reopen a failed output"
+            )
+        if stream.owner_id == owner_id and stream.attempt == attempt:
+            return
+        if attempt <= stream.attempt:
+            raise NativeStreamError(
+                "STALE_OWNER", "Only a newer task attempt can replace the owner"
+            )
+        stream.owner_id, stream.attempt = owner_id, attempt
+        stream.owner_epoch += 1
+
+    def _source_owner(
+        self, stream: orm_models.StreamPartition, binding: SourceBinding
+    ) -> None:
+        if (
+            stream.flow_run_id != binding.flow_run_id
+            or stream.producer_kind != "SOURCE"
+            or stream.producer_task_run_id != binding.task_run_id
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Source binding does not match"
+            )
+        if (stream.owner_id, stream.attempt, stream.owner_epoch) != (
+            binding.owner_id,
+            binding.attempt,
+            binding.owner_epoch,
+        ):
+            raise NativeStreamError("STALE_OWNER", "Source owner is fenced")
+
+    async def _bound(
+        self,
+        session: AsyncSession,
+        binding: ConsumerBinding,
+        *,
+        allow_failed: bool = False,
+    ) -> tuple[
+        orm_models.StreamPartition,
+        orm_models.StreamPartition,
+        orm_models.StreamConsumer,
+    ]:
+        await self._task(
+            session,
+            binding.consumer_id,
+            binding.flow_run_id,
+            binding.attempt,
+            allow_failed=allow_failed,
+        )
+        streams = await self._streams(
+            session, [binding.input_stream_id, binding.output_stream_id]
+        )
+        consumer = await session.scalar(
+            sa.select(self.db.StreamConsumer)
+            .where(self.db.StreamConsumer.id == binding.consumer_id)
+            .with_for_update()
+        )
+        if consumer is None:
+            raise NativeStreamError("NOT_FOUND", "Unknown consumer")
+        upstream, output = (
+            streams[binding.input_stream_id],
+            streams[binding.output_stream_id],
+        )
+        if (
+            consumer.flow_run_id,
+            consumer.input_stream_id,
+            consumer.output_stream_id,
+        ) != (binding.flow_run_id, binding.input_stream_id, binding.output_stream_id):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Consumer binding is immutable"
+            )
+        expected = (binding.owner_id, binding.attempt, binding.owner_epoch)
+        if (consumer.owner_id, consumer.attempt, consumer.owner_epoch) != expected or (
+            output.owner_id,
+            output.attempt,
+            output.owner_epoch,
+        ) != expected:
+            raise NativeStreamError("STALE_OWNER", "Consumer owner is fenced")
+        if (
+            output.producer_kind != "CONSUMER"
+            or output.producer_task_run_id != consumer.id
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Output producer does not match consumer"
+            )
+        return upstream, output, consumer
+
+    def _capacity(self, stream: orm_models.StreamPartition, size: int) -> None:
+        limits = StreamLimits.model_validate(stream.limits)
+        if size > limits.max_record_bytes:
+            raise NativeStreamError(
+                "PAYLOAD_TOO_LARGE", "Record exceeds frozen stream limit"
+            )
+        if (
+            stream.record_count + 1 > limits.max_records
+            or stream.byte_count + size > limits.max_bytes
+        ):
+            raise NativeStreamError("CAPACITY", "Frozen stream capacity is exhausted")
+
+    async def create(
+        self,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        *,
+        limits: StreamLimits | None = None,
+        protocol_version: int = 1,
+    ) -> StreamInfo:
+        if type(protocol_version) is not int or protocol_version != 1:
+            raise NativeStreamError(
+                "PROTOCOL_ERROR", "Unsupported stream protocol version"
+            )
+        limits = limits or StreamLimits()
+        async with self._session() as session:
+            flow = await session.scalar(
+                sa.select(self.db.FlowRun)
+                .where(self.db.FlowRun.id == flow_run_id)
+                .with_for_update()
+            )
+            if flow is None:
+                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+            stream = await session.get(self.db.StreamPartition, stream_id)
+            if stream is not None:
+                if stream.released:
+                    raise NativeStreamError(
+                        "REPLAY_HORIZON_EXPIRED", "Stream has been released"
+                    )
+                if (
+                    stream.flow_run_id != flow_run_id
+                    or stream.limits != limits.model_dump()
+                ):
+                    raise NativeStreamError(
+                        "IDENTITY_CONFLICT", "Stream scope and limits are immutable"
+                    )
+                return StreamInfo.model_validate(stream)
+            if flow.state_type in TERMINAL_STATES:
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT", "Cannot create a stream for a final FlowRun"
+                )
+            count = await session.scalar(
+                sa.select(sa.func.count())
+                .select_from(self.db.StreamPartition)
+                .where(self.db.StreamPartition.flow_run_id == flow_run_id)
+            )
+            if count is not None and count >= MAX_STREAMS_PER_FLOW:
+                raise NativeStreamError(
+                    "CAPACITY", "FlowRun stream capacity is exhausted"
+                )
+            stream = self.db.StreamPartition(
+                id=stream_id, flow_run_id=flow_run_id, limits=limits.model_dump()
+            )
+            session.add(stream)
+            await session.flush()
+            result = StreamInfo.model_validate(stream)
+        return result
+
+    async def claim_source(
+        self, stream_id: UUID, task_run_id: UUID, owner_id: UUID, attempt: int
+    ) -> SourceBinding:
+        _attempt(attempt)
+        async with self._session() as session:
+            peek = await self._peek(session, stream_id)
+            await self._task(session, task_run_id, peek.flow_run_id, attempt)
+            stream = (await self._streams(session, [stream_id]))[stream_id]
+            self._claim(stream, "SOURCE", task_run_id, owner_id, attempt)
+            result = SourceBinding(
+                flow_run_id=stream.flow_run_id,
+                stream_id=stream_id,
+                task_run_id=task_run_id,
+                owner_id=owner_id,
+                attempt=attempt,
+                owner_epoch=stream.owner_epoch,
+            )
+        return result
+
+    async def append(
+        self, binding: SourceBinding, position: int, value: JsonValue
+    ) -> StreamEnvelope:
+        _attempt(position)
+        snapshot, encoded, digest = _canonical(value)
+        async with self._session() as session:
+            await self._task(
+                session, binding.task_run_id, binding.flow_run_id, binding.attempt
+            )
+            stream = (await self._streams(session, [binding.stream_id]))[
+                binding.stream_id
+            ]
+            self._source_owner(stream, binding)
+            existing = await session.scalar(
+                sa.select(self.db.StreamRecord).where(
+                    self.db.StreamRecord.stream_id == stream.id,
+                    self.db.StreamRecord.producer_position == position,
+                )
+            )
+            if existing is not None:
+                if existing.value_digest != digest:
+                    raise NativeStreamError(
+                        "IDENTITY_CONFLICT", "Source position has different content"
+                    )
+                return StreamEnvelope.model_validate(existing)
+            if stream.state != "OPEN":
+                raise NativeStreamError("TERMINAL_CONFLICT", "Cannot append after EOF")
+            if position != stream.producer_position + 1:
+                raise NativeStreamError(
+                    "PROTOCOL_ERROR", "Source positions must be contiguous"
+                )
+            self._capacity(stream, len(encoded))
+            stream.last_sequence += 1
+            stream.producer_position = position
+            stream.record_count += 1
+            stream.byte_count += len(encoded)
+            row = self.db.StreamRecord(
+                stream_id=stream.id,
+                sequence=stream.last_sequence,
+                producer_position=position,
+                value=snapshot,
+                value_digest=digest,
+                size_bytes=len(encoded),
+            )
+            session.add(row)
+            await session.flush()
+            result = StreamEnvelope.model_validate(row)
+        return result
+
+    async def open_consumer(
+        self,
+        input_stream_id: UUID,
+        output_stream_id: UUID,
+        task_run_id: UUID,
+        owner_id: UUID,
+        attempt: int,
+    ) -> ConsumerBinding:
+        _attempt(attempt)
+        if input_stream_id == output_stream_id:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "A task cannot consume its own output"
+            )
+        async with self._session() as session:
+            peek = await self._peek(session, input_stream_id)
+            # An inserted consumer takes an implicit FK lock on its FlowRun.
+            # Acquire the parent before children to avoid reversing release's
+            # FlowRun -> stream order; SHARE also fences terminal transitions.
+            flow = await session.scalar(
+                sa.select(self.db.FlowRun)
+                .where(self.db.FlowRun.id == peek.flow_run_id)
+                .with_for_update(read=True)
+            )
+            if flow is None:
+                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+            await self._task(session, task_run_id, peek.flow_run_id, attempt)
+            if flow.state_type in TERMINAL_STATES:
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT", "Cannot open a consumer for a final FlowRun"
+                )
+            streams = await self._streams(session, [input_stream_id, output_stream_id])
+            upstream, output = streams[input_stream_id], streams[output_stream_id]
+            if upstream.flow_run_id != output.flow_run_id:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "Streams must share a FlowRun"
+                )
+            consumer = await session.scalar(
+                sa.select(self.db.StreamConsumer)
+                .where(self.db.StreamConsumer.id == task_run_id)
+                .with_for_update()
+            )
+            if consumer is not None and (
+                consumer.input_stream_id,
+                consumer.output_stream_id,
+            ) != (input_stream_id, output_stream_id):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "Consumer ports are immutable"
+                )
+            if output.state == "COMPLETED" and (
+                consumer is None
+                or upstream.state != "COMPLETED"
+                or consumer.completed_through != upstream.tail_sequence
+                or consumer.inflight_sequence is not None
+                or consumer.delivery_id is not None
+            ):
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT",
+                    "Closed output requires its exact drained binding",
+                )
+            if consumer is None:
+                count = await session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(self.db.StreamConsumer)
+                    .where(self.db.StreamConsumer.input_stream_id == input_stream_id)
+                )
+                if (
+                    count is not None
+                    and count
+                    >= StreamLimits.model_validate(upstream.limits).max_consumers
+                ):
+                    raise NativeStreamError(
+                        "CAPACITY", "Stream consumer capacity is exhausted"
+                    )
+            self._claim(output, "CONSUMER", task_run_id, owner_id, attempt)
+            if consumer is None:
+                consumer = self.db.StreamConsumer(
+                    id=task_run_id,
+                    flow_run_id=upstream.flow_run_id,
+                    input_stream_id=input_stream_id,
+                    output_stream_id=output_stream_id,
+                    owner_id=owner_id,
+                    attempt=attempt,
+                    owner_epoch=output.owner_epoch,
+                )
+                session.add(consumer)
+            elif consumer.owner_epoch != output.owner_epoch:
+                consumer.owner_id, consumer.attempt, consumer.owner_epoch = (
+                    owner_id,
+                    attempt,
+                    output.owner_epoch,
+                )
+                consumer.inflight_sequence, consumer.delivery_id = None, None
+            result = ConsumerBinding(
+                flow_run_id=upstream.flow_run_id,
+                consumer_id=task_run_id,
+                input_stream_id=input_stream_id,
+                output_stream_id=output_stream_id,
+                owner_id=owner_id,
+                attempt=attempt,
+                owner_epoch=output.owner_epoch,
+            )
+        return result
+
+    async def read(self, binding: ConsumerBinding) -> StreamDelivery | None:
+        async with self._session() as session:
+            upstream, output, consumer = await self._bound(session, binding)
+            if output.state == "FAILED":
+                raise NativeStreamError("TERMINAL_CONFLICT", "Output is failed")
+            row = await session.scalar(
+                sa.select(self.db.StreamRecord).where(
+                    self.db.StreamRecord.stream_id == upstream.id,
+                    self.db.StreamRecord.sequence == consumer.completed_through + 1,
+                )
+            )
+            if row is None:
+                if consumer.inflight_sequence is not None:
+                    raise NativeStreamError(
+                        "PROTOCOL_ERROR", "In-flight record is missing"
+                    )
+                return None
+            if output.state != "OPEN":
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT", "Closed output cannot consume input"
+                )
+            if consumer.inflight_sequence is None:
+                consumer.inflight_sequence, consumer.delivery_id = row.sequence, uuid4()
+            delivery_id = consumer.delivery_id
+            if delivery_id is None:
+                raise NativeStreamError(
+                    "PROTOCOL_ERROR", "In-flight delivery identity is missing"
+                )
+            token = DeliveryToken(
+                **binding.model_dump(),
+                record_id=row.id,
+                sequence=row.sequence,
+                delivery_id=delivery_id,
+            )
+            result = StreamDelivery(
+                token=token, value=row.value, managed_state=consumer.managed_state
+            )
+        return result
+
+    async def complete(
+        self,
+        binding: ConsumerBinding,
+        token: DeliveryToken,
+        kind: Literal["YIELD", "RETURN"],
+        value: JsonValue,
+        managed_state: dict[str, JsonValue],
+    ) -> StreamCompletionResult:
+        if any(
+            getattr(token, field) != getattr(binding, field)
+            for field in ConsumerBinding.model_fields
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Delivery belongs to another binding"
+            )
+        if kind not in ("YIELD", "RETURN") or (kind == "RETURN" and value is not None):
+            raise NativeStreamError(
+                "PROTOCOL_ERROR", "Terminal event must be YIELD or output-free RETURN"
+            )
+        snapshot, encoded, value_digest = _canonical(value)
+        state, state_bytes, _ = _canonical(managed_state)
+        if not isinstance(state, dict):
+            raise NativeStreamError(
+                "PROTOCOL_ERROR", "Managed state must be a JSON object"
+            )
+        _, intent, _ = _canonical(
+            {
+                "token": token.model_dump(mode="json"),
+                "kind": kind,
+                "value": snapshot,
+                "state": state,
+            },
+            maximum=150_000,
+        )
+        intent_digest = hashlib.sha256(intent).hexdigest()
+        async with self._session() as session:
+            upstream, output, consumer = await self._bound(session, binding)
+            receipt = await session.scalar(
+                sa.select(self.db.StreamCompletion).where(
+                    self.db.StreamCompletion.consumer_id == consumer.id,
+                    self.db.StreamCompletion.input_sequence == token.sequence,
+                )
+            )
+            if receipt is not None:
+                if receipt.intent_digest != intent_digest:
+                    raise NativeStreamError(
+                        "IDENTITY_CONFLICT", "Accepted terminal intent is immutable"
+                    )
+                return StreamCompletionResult(
+                    input_sequence=token.sequence,
+                    output_sequence=receipt.output_sequence,
+                )
+            if output.state != "OPEN":
+                raise NativeStreamError("TERMINAL_CONFLICT", "Output is closed")
+            if (
+                consumer.inflight_sequence != token.sequence
+                or consumer.delivery_id != token.delivery_id
+                or consumer.completed_through + 1 != token.sequence
+                or output.producer_position != consumer.completed_through
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "Delivery does not match durable progress"
+                )
+            row = await session.scalar(
+                sa.select(self.db.StreamRecord).where(
+                    self.db.StreamRecord.stream_id == upstream.id,
+                    self.db.StreamRecord.sequence == token.sequence,
+                )
+            )
+            if row is None or row.id != token.record_id:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "Input record identity differs"
+                )
+            if (
+                len(state_bytes)
+                > StreamLimits.model_validate(upstream.limits).max_state_bytes
+            ):
+                raise NativeStreamError(
+                    "PAYLOAD_TOO_LARGE", "Managed state exceeds its frozen limit"
+                )
+            output_sequence = None
+            if kind == "YIELD":
+                self._capacity(output, len(encoded))
+                output.last_sequence += 1
+                output_sequence = output.last_sequence
+                output.record_count += 1
+                output.byte_count += len(encoded)
+                session.add(
+                    self.db.StreamRecord(
+                        stream_id=output.id,
+                        sequence=output_sequence,
+                        producer_position=token.sequence,
+                        value=snapshot,
+                        value_digest=value_digest,
+                        size_bytes=len(encoded),
+                    )
+                )
+            output.producer_position = token.sequence
+            session.add(
+                self.db.StreamCompletion(
+                    consumer_id=consumer.id,
+                    input_sequence=token.sequence,
+                    delivery_id=token.delivery_id,
+                    owner_epoch=binding.owner_epoch,
+                    kind=kind,
+                    intent_digest=intent_digest,
+                    output_sequence=output_sequence,
+                )
+            )
+            await session.flush()
+            consumer.managed_state = state
+            consumer.completed_through = token.sequence
+            consumer.inflight_sequence, consumer.delivery_id = None, None
+            await session.flush()
+            result = StreamCompletionResult(
+                input_sequence=token.sequence, output_sequence=output_sequence
+            )
+        return result
+
+    async def finish_source(
+        self, binding: SourceBinding, error: str | None = None
+    ) -> None:
+        async with self._session() as session:
+            await self._task(
+                session,
+                binding.task_run_id,
+                binding.flow_run_id,
+                binding.attempt,
+                allow_failed=error is not None,
+            )
+            stream = (await self._streams(session, [binding.stream_id]))[
+                binding.stream_id
+            ]
+            self._source_owner(stream, binding)
+            _finish(stream, error)
+
+    async def finish_consumer(
+        self, binding: ConsumerBinding, error: str | None = None
+    ) -> None:
+        async with self._session() as session:
+            upstream, output, consumer = await self._bound(
+                session, binding, allow_failed=error is not None
+            )
+            if error is None and (
+                upstream.state != "COMPLETED"
+                or consumer.completed_through != upstream.tail_sequence
+                or consumer.inflight_sequence is not None
+            ):
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT", "Input must be completed and fully drained"
+                )
+            _finish(output, error)
+
+    async def status(self, stream_id: UUID) -> StreamInfo:
+        async with self._session() as session:
+            return StreamInfo.model_validate(await self._peek(session, stream_id))
+
+    async def read_prefix(self, stream_id: UUID, limit: int) -> list[StreamEnvelope]:
+        _attempt(limit)
+        async with self._session() as session:
+            stream = (await self._streams(session, [stream_id]))[stream_id]
+            limits = StreamLimits.model_validate(stream.limits)
+            if limit > limits.max_prefix_records:
+                raise NativeStreamError(
+                    "CAPACITY", "Prefix read exceeds its frozen bound"
+                )
+            sizes = (
+                sa.select(self.db.StreamRecord.size_bytes)
+                .where(self.db.StreamRecord.stream_id == stream_id)
+                .order_by(self.db.StreamRecord.sequence)
+                .limit(limit)
+                .subquery()
+            )
+            total = await session.scalar(sa.select(sa.func.sum(sizes.c.size_bytes)))
+            if total is not None and total > limits.max_prefix_bytes:
+                raise NativeStreamError(
+                    "CAPACITY", "Prefix payload exceeds its frozen byte bound"
+                )
+            rows = (
+                await session.scalars(
+                    sa.select(self.db.StreamRecord)
+                    .where(self.db.StreamRecord.stream_id == stream_id)
+                    .order_by(self.db.StreamRecord.sequence)
+                    .limit(limit)
+                )
+            ).all()
+            return [StreamEnvelope.model_validate(row) for row in rows]
+
+    async def release_flow(self, flow_run_id: UUID) -> int:
+        async with self._session() as session:
+            flow = await session.scalar(
+                sa.select(self.db.FlowRun)
+                .where(self.db.FlowRun.id == flow_run_id)
+                .with_for_update()
+            )
+            if flow is None:
+                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+            if flow.state_type not in TERMINAL_STATES:
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT", "Only a final FlowRun can release payloads"
+                )
+            streams = (
+                await session.scalars(
+                    sa.select(self.db.StreamPartition)
+                    .where(self.db.StreamPartition.flow_run_id == flow_run_id)
+                    .order_by(self.db.StreamPartition.id)
+                    .with_for_update()
+                )
+            ).all()
+            ids = [stream.id for stream in streams]
+            consumers = sa.select(self.db.StreamConsumer.id).where(
+                self.db.StreamConsumer.flow_run_id == flow_run_id
+            )
+            await session.execute(
+                sa.delete(self.db.StreamCompletion).where(
+                    self.db.StreamCompletion.consumer_id.in_(consumers)
+                )
+            )
+            await session.execute(
+                sa.delete(self.db.StreamConsumer).where(
+                    self.db.StreamConsumer.flow_run_id == flow_run_id
+                )
+            )
+            await session.execute(
+                sa.delete(self.db.StreamRecord).where(
+                    self.db.StreamRecord.stream_id.in_(ids)
+                )
+            )
+            count = 0
+            for stream in streams:
+                if not stream.released:
+                    count += 1
+                    if stream.state == "OPEN":
+                        _finish(
+                            stream, "FlowRun payload released after final lifecycle"
+                        )
+                    stream.released = True
+                    stream.record_count, stream.byte_count = 0, 0
+        return count

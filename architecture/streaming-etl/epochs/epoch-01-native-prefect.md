@@ -3,7 +3,7 @@
 - Status: `progress`
 - Date: 2026-10-31
 - Owners: ETL Architect / HighLoad Principal, SDK/server/runtime maintainers
-- Earned native foundation implementation readiness: **10%**
+- Earned native foundation implementation readiness: **20%**
 - Target: **100% of the native foundation scope defined here**
 - Basis: [validated prototype theory](../adr/ADR-0031-validated-durable-stream-theory.md)
 - First stage: [ADR-0032](../adr/ADR-0032-native-task-stream-contract.md)
@@ -15,7 +15,8 @@ The durable-stream prototype and its separate Prefect adapter have passed their
 selected experimental gates, including the real 72-hour campaign. At this
 epoch's definition, Prefect core lacked native durable stream dependencies and
 per-input recovery. Stage 1 now implements the selected SDK/task-engine
-contract; native persistence and deployment integration remain open. An
+contract. N1.2 now adds bounded native storage and migrations; HTTP admission,
+source and deployment integration remain open. An
 adapter connecting two execution models is not the final product requested by
 the user.
 
@@ -100,7 +101,7 @@ as a reference, not silently inherited by this native foundation.
 | Stage | Goal and exit | State / governing decision |
 | --- | --- | --- |
 | 1. Native task and dependency contract | Define stream ports, supported per-input execution, finite dependency boundaries and stable TaskRun retry binding. Native SDK/task-engine tests execute against a real HTTP API and an explicit PostgreSQL test adapter; native migrations and deployment proof follow. | `accepted` for Stage 1 — [ADR-0032](../adr/ADR-0032-native-task-stream-contract.md). |
-| 2. Native durable storage | Add versioned platform models, migrations and an internal storage interface for append, terminal completion, fencing, retention and quotas. Prove atomicity and compatibility on the selected PostgreSQL profile. | Subsequent ADR required; [ADR-0018](../adr/ADR-0018-postgresql-authoritative-data-plane.md) is prototype input. |
+| 2. Native durable storage | Add versioned platform models, migrations and an internal storage interface for append, terminal completion, fencing, retention and quotas. Prove atomicity and compatibility on the selected PostgreSQL profile. | `progress`: storage-only N1.2 accepted in [ADR-0033](../adr/ADR-0033-native-durable-stream-storage.md); HTTP/admission N1.3 pending in [ADR-0034](../adr/ADR-0034-native-stream-http-adapter.md). [ADR-0018](../adr/ADR-0018-postgresql-authoritative-data-plane.md) remains prototype input. |
 | 3. Native runtime and source | Connect task execution to real durable storage, persist managed state and source coordinates, and implement supported sync/async execution and same-TaskRun retry. Prove failures before/after terminal acceptance. | Subsequent ADR required; [ADR-0017](../adr/ADR-0017-sync-async-generator-adapter.md) and [ADR-0019](../adr/ADR-0019-production-generator-state-and-replacement.md) are prototype input. |
 | 4. Mixed-flow execution | Schedule downstream while producers run, support finite side inputs and explicit bounded collection/end-of-stream, and prevent dependency/capacity deadlocks. Register required consumers before source admission. | Subsequent ADR required; Stage 1 defines the contracts. |
 | 5. Server, deployment and operations | Bind native deployment/FlowRun/TaskRun identities, authorization, lifecycle commands, cancellation/drain, worker launch and bounded progress projections. Reject incompatible code/state versions before data admission. | Subsequent ADR required; [ADR-0024](../adr/ADR-0024-control-plane-authority-and-lifecycle.md) and [ADR-0025](../adr/ADR-0025-prefect-adapter-and-operational-projections.md) are transition references. |
@@ -111,7 +112,9 @@ and an explicit real PostgreSQL test adapter. They do not substitute this
 adapter for Stage 2 native production-storage atomicity/migrations or Stage 6
 real deployment acceptance. Stage exits earn readiness
 only after code and their acceptance criteria pass; documentation work alone
-does not earn readiness; the current 10% comes from Stage 1 code and evidence.
+does not earn readiness. Stage 1 earned 10%; the accepted
+[N1.2 storage gate](../evidence/native-stage2-closure-acceptance-2026-11-01.json) adds
+the next planned 10%, reaching 20% of this bounded foundation.
 
 The initial document cycle did not allocate tasks or sprint shares. On
 2026-11-01 the user directed implementation and frequent real-system testing.
@@ -120,7 +123,9 @@ The first short implementation sprint is now tracked in [todo](../todo.md) and
 epoch's foundation objective. That is a planning estimate of problem coverage,
 not a throughput or production-readiness measurement. Its Stage 1 criteria and
 frozen-source evidence gate have now passed,
-earning 10% of this bounded foundation. Later sprint allocation remains open.
+earning 10% of this bounded foundation. N1.2 is now accepted for storage-only
+scope, reaching 20%. N1.3 is planned to reach 30% after its distinct HTTP gate;
+that contribution is not earned. Later sprint allocation remains open.
 
 ## Native ownership and storage boundary
 
@@ -190,11 +195,16 @@ future stages. No full-epoch acceptance criterion is checked by this document.
 The [initial Principal review](../evidence/native-epoch-1-principal-review-2026-11-01.json)
 passed the planning scope and Stage 1 boundary at 0% earned implementation
 readiness. Its observation remains unchanged; the implementation gate above
-supports the current 10% foundation share.
+supports the first 10% foundation share.
 
 The [final Stage 1 Principal acceptance](../evidence/native-stage1-principal-acceptance-2026-11-01.json)
 reviews both real-system profiles, finite regressions, wheel, source hashes and
 scope limits. It accepts N1.1 as done with the planned 10% foundation share.
+The [N1.2 acceptance](../evidence/native-stage2-closure-acceptance-2026-11-01.json) and
+[Principal verdict](../evidence/native-stage2-closure-principal-2026-11-01.json)
+accept native migrations, fenced atomic storage, quotas and final-flow row
+release. Earned foundation readiness reaches 20%; Stage 2 remains open for
+N1.3 HTTP transport. No full-epoch criterion is checked by this storage slice.
 The [CI integration successor](../evidence/native-stage1-ci-acceptance-2026-11-01.json)
 retains initial hosted/static failures and verifies the final committed source
 with both real-storage profiles, finite regression, type checks and client

@@ -1,0 +1,1620 @@
+﻿2026-11-01T20:31:43.9584428Z Current runner version: '2.338.2'
+2026-11-01T20:31:43.9603320Z ##[group]Runner Image Provisioner
+2026-11-01T20:31:43.9603951Z Hosted Compute Agent
+2026-11-01T20:31:43.9604313Z Version: 20261021.618
+2026-11-01T20:31:43.9604688Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-11-01T20:31:43.9605178Z Build Date: 2026-10-21T00:45:21Z
+2026-11-01T20:31:43.9605656Z Worker ID: {900c102c-02ac-4f10-9e61-719c27a88eea}
+2026-11-01T20:31:43.9606116Z Region: westus3
+2026-11-01T20:31:43.9606460Z Cloud: Azure
+2026-11-01T20:31:43.9606786Z ##[endgroup]
+2026-11-01T20:31:43.9607625Z ##[group]Operating System
+2026-11-01T20:31:43.9608026Z Ubuntu
+2026-11-01T20:31:43.9608377Z 24.04.5
+2026-11-01T20:31:43.9608715Z LTS
+2026-11-01T20:31:43.9609041Z ##[endgroup]
+2026-11-01T20:31:43.9609416Z ##[group]Runner Image
+2026-11-01T20:31:43.9610037Z Image: ubuntu-24.04
+2026-11-01T20:31:43.9610410Z Version: 20261025.353.1
+2026-11-01T20:31:43.9611214Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261025.353/images/ubuntu/Ubuntu2404-Readme.md
+2026-11-01T20:31:43.9612108Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261025.353
+2026-11-01T20:31:43.9612732Z ##[endgroup]
+2026-11-01T20:31:43.9613471Z ##[group]GITHUB_TOKEN Permissions
+2026-11-01T20:31:43.9614730Z Actions: write
+2026-11-01T20:31:43.9615127Z Contents: read
+2026-11-01T20:31:43.9615524Z Metadata: read
+2026-11-01T20:31:43.9615867Z ##[endgroup]
+2026-11-01T20:31:43.9617283Z Secret source: Actions
+2026-11-01T20:31:43.9617845Z Cache mode: write
+2026-11-01T20:31:43.9618337Z Prepare workflow directory
+2026-11-01T20:31:43.9986625Z Prepare all required actions
+2026-11-01T20:31:44.0019968Z Getting action download info
+2026-11-01T20:31:44.3127327Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-11-01T20:31:44.4152308Z Download action repository 'astral-sh/setup-uv@v10.0.1' (SHA:20cfd1bf945f4377ade1205e4dbc17946fc9a30d)
+2026-11-01T20:31:45.1474364Z Complete job name: Client Tests: Modules - python:3.11, postgres:14
+2026-11-01T20:31:45.1830014Z ##[group]Checking docker version
+2026-11-01T20:31:45.1838297Z ##[command]/usr/bin/docker version --format '{{.Server.APIVersion}}'
+2026-11-01T20:31:45.2562283Z '1.48'
+2026-11-01T20:31:45.2578605Z Docker daemon API version: '1.48'
+2026-11-01T20:31:45.2579052Z ##[command]/usr/bin/docker version --format '{{.Client.APIVersion}}'
+2026-11-01T20:31:45.2719408Z '1.48'
+2026-11-01T20:31:45.2734625Z Docker client API version: '1.48'
+2026-11-01T20:31:45.2739492Z ##[endgroup]
+2026-11-01T20:31:45.2741330Z ##[group]Clean up resources from previous jobs
+2026-11-01T20:31:45.2745570Z ##[command]/usr/bin/docker ps --all --quiet --no-trunc --filter "label=1bdb25"
+2026-11-01T20:31:45.2878246Z ##[command]/usr/bin/docker network prune --force --filter "label=1bdb25"
+2026-11-01T20:31:45.3002909Z ##[endgroup]
+2026-11-01T20:31:45.3003231Z ##[group]Create local container network
+2026-11-01T20:31:45.3010075Z ##[command]/usr/bin/docker network create --label 1bdb25 github_network_495dc5b58ba44fa189749996759b6c17
+2026-11-01T20:31:45.3421606Z 91770d4c9af1047f381e8d3a27764120c273d7a82e57bcdf699d5e321607b06d
+2026-11-01T20:31:45.3441274Z ##[endgroup]
+2026-11-01T20:31:45.3460350Z ##[group]Starting redis service container
+2026-11-01T20:31:45.3476705Z ##[command]/usr/bin/docker pull redis:latest
+2026-11-01T20:31:46.2022375Z latest: Pulling from library/redis
+2026-11-01T20:31:46.4288661Z 6fc242d221a6: Pulling fs layer
+2026-11-01T20:31:46.4289853Z b8720a38ca9f: Pulling fs layer
+2026-11-01T20:31:46.4290588Z bc7279d6ce3b: Pulling fs layer
+2026-11-01T20:31:46.4291295Z 19e360b01586: Pulling fs layer
+2026-11-01T20:31:46.4291942Z d6fa8912a888: Pulling fs layer
+2026-11-01T20:31:46.4292570Z 4f4fb700ef54: Pulling fs layer
+2026-11-01T20:31:46.4293181Z 551d0d9b4145: Pulling fs layer
+2026-11-01T20:31:46.4293810Z 19e360b01586: Waiting
+2026-11-01T20:31:46.4294618Z 4f4fb700ef54: Waiting
+2026-11-01T20:31:46.4295115Z d6fa8912a888: Waiting
+2026-11-01T20:31:46.4295604Z 551d0d9b4145: Waiting
+2026-11-01T20:31:46.6375014Z b8720a38ca9f: Download complete
+2026-11-01T20:31:46.6484144Z bc7279d6ce3b: Verifying Checksum
+2026-11-01T20:31:46.6485673Z bc7279d6ce3b: Download complete
+2026-11-01T20:31:46.7010194Z 6fc242d221a6: Verifying Checksum
+2026-11-01T20:31:46.7011173Z 6fc242d221a6: Download complete
+2026-11-01T20:31:46.8379925Z d6fa8912a888: Download complete
+2026-11-01T20:31:46.8799250Z 4f4fb700ef54: Verifying Checksum
+2026-11-01T20:31:46.8800980Z 4f4fb700ef54: Download complete
+2026-11-01T20:31:46.8940630Z 19e360b01586: Verifying Checksum
+2026-11-01T20:31:46.8942946Z 19e360b01586: Download complete
+2026-11-01T20:31:47.0525186Z 551d0d9b4145: Verifying Checksum
+2026-11-01T20:31:47.0525757Z 551d0d9b4145: Download complete
+2026-11-01T20:31:47.3181160Z 6fc242d221a6: Pull complete
+2026-11-01T20:31:47.9683587Z b8720a38ca9f: Pull complete
+2026-11-01T20:31:47.9778019Z bc7279d6ce3b: Pull complete
+2026-11-01T20:31:48.5098846Z 19e360b01586: Pull complete
+2026-11-01T20:31:48.5205817Z d6fa8912a888: Pull complete
+2026-11-01T20:31:48.5297641Z 4f4fb700ef54: Pull complete
+2026-11-01T20:31:48.5370036Z 551d0d9b4145: Pull complete
+2026-11-01T20:31:48.5404036Z Digest: sha256:de1068af6f552240dfab67bcc9bfef99bfc60f776bb4580ef077ea4c8c97e848
+2026-11-01T20:31:48.5416242Z Status: Downloaded newer image for redis:latest
+2026-11-01T20:31:48.5423519Z docker.io/library/redis:latest
+2026-11-01T20:31:48.5458309Z ##[command]/usr/bin/docker create --name e7db41a514fa409d87747bc898cd9501_redislatest_88969a --label 1bdb25 --network github_network_495dc5b58ba44fa189749996759b6c17 --network-alias redis -p 6379:6379 --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5 -e GITHUB_ACTIONS=true -e CI=true redis:latest
+2026-11-01T20:31:48.5654011Z caf864b1e7aa05bcc379290afff22a4b4eef5fb1780b02d1f2bd473955790094
+2026-11-01T20:31:48.5677814Z ##[command]/usr/bin/docker start caf864b1e7aa05bcc379290afff22a4b4eef5fb1780b02d1f2bd473955790094
+2026-11-01T20:31:48.8486541Z caf864b1e7aa05bcc379290afff22a4b4eef5fb1780b02d1f2bd473955790094
+2026-11-01T20:31:48.8520867Z ##[command]/usr/bin/docker ps --all --filter id=caf864b1e7aa05bcc379290afff22a4b4eef5fb1780b02d1f2bd473955790094 --filter status=running --no-trunc --format "{{.ID}} {{.Status}}"
+2026-11-01T20:31:48.8641163Z caf864b1e7aa05bcc379290afff22a4b4eef5fb1780b02d1f2bd473955790094 Up Less than a second (health: starting)
+2026-11-01T20:31:48.8662418Z ##[command]/usr/bin/docker port caf864b1e7aa05bcc379290afff22a4b4eef5fb1780b02d1f2bd473955790094
+2026-11-01T20:31:48.8782652Z 6379/tcp -> 0.0.0.0:6379
+2026-11-01T20:31:48.8783252Z 6379/tcp -> [::]:6379
+2026-11-01T20:31:48.8825105Z ##[endgroup]
+2026-11-01T20:31:48.8826121Z ##[group]Starting postgres service container
+2026-11-01T20:31:48.8827125Z ##[command]/usr/bin/docker pull postgres:14
+2026-11-01T20:31:49.6667552Z 14: Pulling from library/postgres
+2026-11-01T20:31:49.9040156Z 6fc242d221a6: Already exists
+2026-11-01T20:31:49.9053968Z f2d9f3c89b3e: Pulling fs layer
+2026-11-01T20:31:49.9054953Z d89d6434da4d: Pulling fs layer
+2026-11-01T20:31:49.9056082Z 654c8c1e6c0f: Pulling fs layer
+2026-11-01T20:31:49.9056401Z 5b3a40e6f9bd: Pulling fs layer
+2026-11-01T20:31:49.9056607Z 206f0269b087: Pulling fs layer
+2026-11-01T20:31:49.9056812Z 53954b30841e: Pulling fs layer
+2026-11-01T20:31:49.9057029Z 9260dc02f30c: Pulling fs layer
+2026-11-01T20:31:49.9057202Z 9c8c5658ea37: Pulling fs layer
+2026-11-01T20:31:49.9057495Z 750078bcd965: Pulling fs layer
+2026-11-01T20:31:49.9057694Z c72692bb033c: Pulling fs layer
+2026-11-01T20:31:49.9057903Z 7747f52a8147: Pulling fs layer
+2026-11-01T20:31:49.9058130Z 6bfc0d2eba1b: Pulling fs layer
+2026-11-01T20:31:49.9058354Z 4a0e921cbcd8: Pulling fs layer
+2026-11-01T20:31:49.9058492Z 53954b30841e: Waiting
+2026-11-01T20:31:49.9058612Z 9260dc02f30c: Waiting
+2026-11-01T20:31:49.9058735Z 5b3a40e6f9bd: Waiting
+2026-11-01T20:31:49.9058860Z 206f0269b087: Waiting
+2026-11-01T20:31:49.9058976Z 9c8c5658ea37: Waiting
+2026-11-01T20:31:49.9059100Z 6bfc0d2eba1b: Waiting
+2026-11-01T20:31:49.9059214Z 750078bcd965: Waiting
+2026-11-01T20:31:49.9059327Z 4a0e921cbcd8: Waiting
+2026-11-01T20:31:49.9059880Z 7747f52a8147: Waiting
+2026-11-01T20:31:49.9064644Z c72692bb033c: Waiting
+2026-11-01T20:31:50.1077140Z f2d9f3c89b3e: Verifying Checksum
+2026-11-01T20:31:50.1078692Z f2d9f3c89b3e: Download complete
+2026-11-01T20:31:50.1133531Z 654c8c1e6c0f: Verifying Checksum
+2026-11-01T20:31:50.1134175Z 654c8c1e6c0f: Download complete
+2026-11-01T20:31:50.1448475Z d89d6434da4d: Verifying Checksum
+2026-11-01T20:31:50.1448805Z d89d6434da4d: Download complete
+2026-11-01T20:31:50.1465089Z f2d9f3c89b3e: Pull complete
+2026-11-01T20:31:50.3216113Z 206f0269b087: Verifying Checksum
+2026-11-01T20:31:50.3216439Z 206f0269b087: Download complete
+2026-11-01T20:31:50.3291755Z 53954b30841e: Verifying Checksum
+2026-11-01T20:31:50.3292067Z 53954b30841e: Download complete
+2026-11-01T20:31:50.3474511Z 5b3a40e6f9bd: Verifying Checksum
+2026-11-01T20:31:50.3862053Z 5b3a40e6f9bd: Download complete
+2026-11-01T20:31:50.3862244Z d89d6434da4d: Pull complete
+2026-11-01T20:31:50.4292285Z 654c8c1e6c0f: Pull complete
+2026-11-01T20:31:50.4986948Z 9260dc02f30c: Verifying Checksum
+2026-11-01T20:31:50.4987171Z 9260dc02f30c: Download complete
+2026-11-01T20:31:50.5405003Z 750078bcd965: Verifying Checksum
+2026-11-01T20:31:50.5405325Z 750078bcd965: Download complete
+2026-11-01T20:31:50.6789368Z c72692bb033c: Verifying Checksum
+2026-11-01T20:31:50.6789815Z c72692bb033c: Download complete
+2026-11-01T20:31:50.7455747Z 7747f52a8147: Verifying Checksum
+2026-11-01T20:31:50.7456051Z 7747f52a8147: Download complete
+2026-11-01T20:31:50.8009406Z 9c8c5658ea37: Download complete
+2026-11-01T20:31:50.8738784Z 6bfc0d2eba1b: Verifying Checksum
+2026-11-01T20:31:50.8739041Z 6bfc0d2eba1b: Download complete
+2026-11-01T20:31:50.9623468Z 4a0e921cbcd8: Verifying Checksum
+2026-11-01T20:31:50.9623738Z 4a0e921cbcd8: Download complete
+2026-11-01T20:31:51.3149145Z 5b3a40e6f9bd: Pull complete
+2026-11-01T20:31:51.3720204Z 206f0269b087: Pull complete
+2026-11-01T20:31:51.3782538Z 53954b30841e: Pull complete
+2026-11-01T20:31:51.3868206Z 9260dc02f30c: Pull complete
+2026-11-01T20:31:54.4995470Z 9c8c5658ea37: Pull complete
+2026-11-01T20:31:54.5091253Z 750078bcd965: Pull complete
+2026-11-01T20:31:54.5180012Z c72692bb033c: Pull complete
+2026-11-01T20:31:54.5259909Z 7747f52a8147: Pull complete
+2026-11-01T20:31:54.5329862Z 6bfc0d2eba1b: Pull complete
+2026-11-01T20:31:54.5391750Z 4a0e921cbcd8: Pull complete
+2026-11-01T20:31:54.5421691Z Digest: sha256:a26d06e6878f114ab53aace021fd9c599b498cca4c5ba2c18b34aee472f20148
+2026-11-01T20:31:54.5437631Z Status: Downloaded newer image for postgres:14
+2026-11-01T20:31:54.5443856Z docker.io/library/postgres:14
+2026-11-01T20:31:54.5485596Z ##[command]/usr/bin/docker create --name 6d1eb68e425d403da0757f7181652773_postgres14_c0ec9e --label 1bdb25 --network github_network_495dc5b58ba44fa189749996759b6c17 --network-alias postgres -p 5432:5432 --health-cmd "pg_isready" --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data -e "POSTGRES_USER=prefect" -e "POSTGRES_PASSWORD=prefect" -e "POSTGRES_DB=prefect" -e "LANG=C.UTF-8" -e "LANGUAGE=C.UTF-8" -e "LC_ALL=C.UTF-8" -e "LC_COLLATE=C.UTF-8" -e "LC_CTYPE=C.UTF-8" -e GITHUB_ACTIONS=true -e CI=true postgres:14
+2026-11-01T20:31:54.5662475Z 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501
+2026-11-01T20:31:54.5677318Z ##[command]/usr/bin/docker start 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501
+2026-11-01T20:31:54.6755347Z 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501
+2026-11-01T20:31:54.6785630Z ##[command]/usr/bin/docker ps --all --filter id=093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501 --filter status=running --no-trunc --format "{{.ID}} {{.Status}}"
+2026-11-01T20:31:54.6994566Z 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501 Up Less than a second (health: starting)
+2026-11-01T20:31:54.7012527Z ##[command]/usr/bin/docker port 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501
+2026-11-01T20:31:54.7220343Z 5432/tcp -> 0.0.0.0:5432
+2026-11-01T20:31:54.7230439Z 5432/tcp -> [::]:5432
+2026-11-01T20:31:54.7244057Z ##[endgroup]
+2026-11-01T20:31:54.7255197Z ##[group]Waiting for all services to be ready
+2026-11-01T20:31:54.7267533Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" caf864b1e7aa05bcc379290afff22a4b4eef5fb1780b02d1f2bd473955790094
+2026-11-01T20:31:54.7386633Z starting
+2026-11-01T20:31:54.7406976Z redis service is starting, waiting 2 seconds before checking again.
+2026-11-01T20:31:56.7402757Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" caf864b1e7aa05bcc379290afff22a4b4eef5fb1780b02d1f2bd473955790094
+2026-11-01T20:31:56.7511232Z starting
+2026-11-01T20:31:56.7525374Z redis service is starting, waiting 3 seconds before checking again.
+2026-11-01T20:32:00.5466794Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" caf864b1e7aa05bcc379290afff22a4b4eef5fb1780b02d1f2bd473955790094
+2026-11-01T20:32:00.5574167Z healthy
+2026-11-01T20:32:00.5592398Z redis service is healthy.
+2026-11-01T20:32:00.5592921Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501
+2026-11-01T20:32:00.5690628Z starting
+2026-11-01T20:32:00.5704094Z postgres service is starting, waiting 2 seconds before checking again.
+2026-11-01T20:32:02.5710025Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501
+2026-11-01T20:32:02.5823137Z starting
+2026-11-01T20:32:02.5838482Z postgres service is starting, waiting 4 seconds before checking again.
+2026-11-01T20:32:06.6091054Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501
+2026-11-01T20:32:06.6204510Z healthy
+2026-11-01T20:32:06.6224401Z postgres service is healthy.
+2026-11-01T20:32:06.6224875Z ##[endgroup]
+2026-11-01T20:32:06.6371268Z ##[group]Run echo '{
+2026-11-01T20:32:06.6371470Z [36;1mecho '{[0m
+2026-11-01T20:32:06.6371597Z [36;1m  "test-type": {[0m
+2026-11-01T20:32:06.6371743Z [36;1m    "id": "client-modules",[0m
+2026-11-01T20:32:06.6371912Z [36;1m    "name": "Client Tests: Modules",[0m
+2026-11-01T20:32:06.6372551Z [36;1m    "modules": "tests/ --ignore=tests/typesafety --ignore=tests/server/ --ignore=tests/events/server --ignore=tests/test_task_runners.py --ignore=tests/runner --ignore=tests/workers --ignore=tests/cli/ --ignore=tests/test_settings.py --ignore=tests/input/ --ignore-glob=\"tests/test_*.py\""[0m
+2026-11-01T20:32:06.6373138Z [36;1m  },[0m
+2026-11-01T20:32:06.6373259Z [36;1m  "database": "postgres:14",[0m
+2026-11-01T20:32:06.6373417Z [36;1m  "python-version": "3.11"[0m
+2026-11-01T20:32:06.6373558Z [36;1m}'[0m
+2026-11-01T20:32:06.6392415Z shell: /usr/bin/bash -e {0}
+2026-11-01T20:32:06.6392666Z env:
+2026-11-01T20:32:06.6392776Z   PY_COLORS: 1
+2026-11-01T20:32:06.6392919Z ##[endgroup]
+2026-11-01T20:32:06.6467388Z {
+2026-11-01T20:32:06.6467524Z   "test-type": {
+2026-11-01T20:32:06.6467664Z     "id": "client-modules",
+2026-11-01T20:32:06.6467817Z     "name": "Client Tests: Modules",
+2026-11-01T20:32:06.6468490Z     "modules": "tests/ --ignore=tests/typesafety --ignore=tests/server/ --ignore=tests/events/server --ignore=tests/test_task_runners.py --ignore=tests/runner --ignore=tests/workers --ignore=tests/cli/ --ignore=tests/test_settings.py --ignore=tests/input/ --ignore-glob=\"tests/test_*.py\""
+2026-11-01T20:32:06.6469143Z   },
+2026-11-01T20:32:06.6469276Z   "database": "postgres:14",
+2026-11-01T20:32:06.6469421Z   "python-version": "3.11"
+2026-11-01T20:32:06.6469722Z }
+2026-11-01T20:32:06.6566656Z ##[group]Run actions/checkout@v7
+2026-11-01T20:32:06.6566815Z with:
+2026-11-01T20:32:06.6566940Z   persist-credentials: false
+2026-11-01T20:32:06.6567078Z   fetch-depth: 0
+2026-11-01T20:32:06.6567339Z   filter: blob:none
+2026-11-01T20:32:06.6567466Z   repository: Anacreonsystems/ariadne
+2026-11-01T20:32:06.6569053Z   token: ***
+2026-11-01T20:32:06.6569187Z   ssh-strict: true
+2026-11-01T20:32:06.6569305Z   ssh-user: git
+2026-11-01T20:32:06.6569414Z   clean: true
+2026-11-01T20:32:06.6569755Z   sparse-checkout-cone-mode: true
+2026-11-01T20:32:06.6569904Z   fetch-tags: false
+2026-11-01T20:32:06.6570025Z   show-progress: true
+2026-11-01T20:32:06.6570141Z   lfs: false
+2026-11-01T20:32:06.6570248Z   submodules: false
+2026-11-01T20:32:06.6570372Z   set-safe-directory: true
+2026-11-01T20:32:06.6570512Z   allow-unsafe-pr-checkout: false
+2026-11-01T20:32:06.6570651Z env:
+2026-11-01T20:32:06.6570752Z   PY_COLORS: 1
+2026-11-01T20:32:06.6570864Z ##[endgroup]
+2026-11-01T20:32:06.8424968Z Syncing repository: Anacreonsystems/ariadne
+2026-11-01T20:32:06.8425978Z ##[group]Getting Git version info
+2026-11-01T20:32:06.8426275Z Working directory is '/home/runner/work/ariadne/ariadne'
+2026-11-01T20:32:06.8426697Z [command]/usr/bin/git version
+2026-11-01T20:32:06.8459223Z git version 2.56.0
+2026-11-01T20:32:06.8471493Z ##[endgroup]
+2026-11-01T20:32:06.8479373Z Temporarily overriding HOME='/home/runner/work/_temp/6cf22ed6-0e44-4fc6-85e8-0029a5b7ff52' before making global git config changes
+2026-11-01T20:32:06.8480175Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-01T20:32:06.8484013Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ariadne/ariadne
+2026-11-01T20:32:06.8523175Z Deleting the contents of '/home/runner/work/ariadne/ariadne'
+2026-11-01T20:32:06.8527995Z ##[group]Determining repository object format
+2026-11-01T20:32:06.8528454Z ##[endgroup]
+2026-11-01T20:32:06.8552553Z ##[group]Initializing the repository
+2026-11-01T20:32:06.8552980Z [command]/usr/bin/git init /home/runner/work/ariadne/ariadne
+2026-11-01T20:32:06.8606123Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-01T20:32:06.8606573Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-11-01T20:32:06.8606928Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-11-01T20:32:06.8607135Z hint: call:
+2026-11-01T20:32:06.8607257Z hint:
+2026-11-01T20:32:06.8607420Z hint: 	git config --global init.defaultBranch <name>
+2026-11-01T20:32:06.8607586Z hint:
+2026-11-01T20:32:06.8607752Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-01T20:32:06.8608014Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-01T20:32:06.8608215Z hint:
+2026-11-01T20:32:06.8608339Z hint: 	git branch -m <name>
+2026-11-01T20:32:06.8608464Z hint:
+2026-11-01T20:32:06.8608748Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-11-01T20:32:06.8612369Z Initialized empty Git repository in /home/runner/work/ariadne/ariadne/.git/
+2026-11-01T20:32:06.8621687Z [command]/usr/bin/git remote add origin https://github.com/Anacreonsystems/ariadne
+2026-11-01T20:32:06.8661165Z ##[endgroup]
+2026-11-01T20:32:06.8661399Z ##[group]Disabling automatic garbage collection
+2026-11-01T20:32:06.8664664Z [command]/usr/bin/git config --local gc.auto 0
+2026-11-01T20:32:06.8693504Z ##[endgroup]
+2026-11-01T20:32:06.8693812Z ##[group]Setting up auth
+2026-11-01T20:32:06.8694130Z Removing SSH command configuration
+2026-11-01T20:32:06.8698483Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-01T20:32:06.8732296Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-01T20:32:06.9016344Z Removing HTTP extra header
+2026-11-01T20:32:06.9021288Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-01T20:32:06.9061001Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-01T20:32:06.9243575Z Removing includeIf entries pointing to credentials config files
+2026-11-01T20:32:06.9247827Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-01T20:32:06.9283692Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-01T20:32:06.9468705Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-eb60e14b-aa31-4fa2-ae76-14918e1dfd91.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-01T20:32:06.9508406Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/ariadne/ariadne/.git.path /home/runner/work/_temp/git-credentials-eb60e14b-aa31-4fa2-ae76-14918e1dfd91.config
+2026-11-01T20:32:06.9543700Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/ariadne/ariadne/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-eb60e14b-aa31-4fa2-ae76-14918e1dfd91.config
+2026-11-01T20:32:06.9579452Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-eb60e14b-aa31-4fa2-ae76-14918e1dfd91.config
+2026-11-01T20:32:06.9615833Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-eb60e14b-aa31-4fa2-ae76-14918e1dfd91.config
+2026-11-01T20:32:06.9650020Z ##[endgroup]
+2026-11-01T20:32:06.9650311Z ##[group]Fetching the repository
+2026-11-01T20:32:06.9654619Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --filter=blob:none origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +98047de582af60f51428c8df7d5ec3a8c7b716ec:refs/remotes/pull/4/merge
+2026-11-01T20:32:08.6279264Z From https://github.com/Anacreonsystems/ariadne
+2026-11-01T20:32:08.6279875Z  * [new branch]          main                                     -> origin/main
+2026-11-01T20:32:08.6281758Z  * [new branch]          native-prefect-epoch-1                   -> origin/native-prefect-epoch-1
+2026-11-01T20:32:08.6282289Z  * [new branch]          native-stream-storage                    -> origin/native-stream-storage
+2026-11-01T20:32:08.6282843Z  * [new branch]          native-stream-task-contract              -> origin/native-stream-task-contract
+2026-11-01T20:32:08.6283409Z  * [new branch]          streaming-etl-adrs                       -> origin/streaming-etl-adrs
+2026-11-01T20:32:08.6283911Z  * [new branch]          streaming-soak-arc                       -> origin/streaming-soak-arc
+2026-11-01T20:32:08.6284428Z  * [new branch]          streaming-soak-execution                 -> origin/streaming-soak-execution
+2026-11-01T20:32:08.6284926Z  * [new ref]             98047de582af60f51428c8df7d5ec3a8c7b716ec -> pull/4/merge
+2026-11-01T20:32:08.6286186Z ##[endgroup]
+2026-11-01T20:32:08.6286433Z ##[group]Determining the checkout info
+2026-11-01T20:32:08.6307525Z ##[endgroup]
+2026-11-01T20:32:08.6307794Z [command]/usr/bin/git sparse-checkout disable
+2026-11-01T20:32:08.6350057Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-01T20:32:08.6387666Z ##[group]Checking out the ref
+2026-11-01T20:32:08.6390524Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/4/merge
+2026-11-01T20:32:11.0209493Z Updating files:   0% (1/6099)
+2026-11-01T20:32:11.0240289Z Updating files:   1% (61/6099)
+2026-11-01T20:32:11.0328248Z Updating files:   2% (122/6099)
+2026-11-01T20:32:11.0354605Z Updating files:   3% (183/6099)
+2026-11-01T20:32:11.0394671Z Updating files:   4% (244/6099)
+2026-11-01T20:32:11.0417558Z Updating files:   5% (305/6099)
+2026-11-01T20:32:11.0478142Z Updating files:   6% (366/6099)
+2026-11-01T20:32:11.0511167Z Updating files:   7% (427/6099)
+2026-11-01T20:32:11.0549412Z Updating files:   8% (488/6099)
+2026-11-01T20:32:11.0584582Z Updating files:   9% (549/6099)
+2026-11-01T20:32:11.0637306Z Updating files:  10% (610/6099)
+2026-11-01T20:32:11.0692138Z Updating files:  11% (671/6099)
+2026-11-01T20:32:11.0776491Z Updating files:  12% (732/6099)
+2026-11-01T20:32:11.1013387Z Updating files:  13% (793/6099)
+2026-11-01T20:32:11.1229327Z Updating files:  14% (854/6099)
+2026-11-01T20:32:11.1255944Z Updating files:  15% (915/6099)
+2026-11-01T20:32:11.1290358Z Updating files:  16% (976/6099)
+2026-11-01T20:32:11.1313863Z Updating files:  17% (1037/6099)
+2026-11-01T20:32:11.1341672Z Updating files:  18% (1098/6099)
+2026-11-01T20:32:11.1363824Z Updating files:  19% (1159/6099)
+2026-11-01T20:32:11.1387781Z Updating files:  20% (1220/6099)
+2026-11-01T20:32:11.1415332Z Updating files:  21% (1281/6099)
+2026-11-01T20:32:11.1439812Z Updating files:  22% (1342/6099)
+2026-11-01T20:32:11.1463360Z Updating files:  23% (1403/6099)
+2026-11-01T20:32:11.1482311Z Updating files:  24% (1464/6099)
+2026-11-01T20:32:11.1504993Z Updating files:  25% (1525/6099)
+2026-11-01T20:32:11.1518841Z Updating files:  26% (1586/6099)
+2026-11-01T20:32:11.1532354Z Updating files:  27% (1647/6099)
+2026-11-01T20:32:11.1568878Z Updating files:  28% (1708/6099)
+2026-11-01T20:32:11.1598521Z Updating files:  29% (1769/6099)
+2026-11-01T20:32:11.1647539Z Updating files:  30% (1830/6099)
+2026-11-01T20:32:11.1748441Z Updating files:  31% (1891/6099)
+2026-11-01T20:32:11.2093346Z Updating files:  32% (1952/6099)
+2026-11-01T20:32:11.2257487Z Updating files:  33% (2013/6099)
+2026-11-01T20:32:11.2283951Z Updating files:  34% (2074/6099)
+2026-11-01T20:32:11.2322143Z Updating files:  35% (2135/6099)
+2026-11-01T20:32:11.2354539Z Updating files:  36% (2196/6099)
+2026-11-01T20:32:11.2381792Z Updating files:  37% (2257/6099)
+2026-11-01T20:32:11.2420265Z Updating files:  38% (2318/6099)
+2026-11-01T20:32:11.2460812Z Updating files:  39% (2379/6099)
+2026-11-01T20:32:11.2487125Z Updating files:  40% (2440/6099)
+2026-11-01T20:32:11.2514157Z Updating files:  41% (2501/6099)
+2026-11-01T20:32:11.2619097Z Updating files:  42% (2562/6099)
+2026-11-01T20:32:11.2649601Z Updating files:  43% (2623/6099)
+2026-11-01T20:32:11.2677818Z Updating files:  44% (2684/6099)
+2026-11-01T20:32:11.2700708Z Updating files:  45% (2745/6099)
+2026-11-01T20:32:11.2726925Z Updating files:  46% (2806/6099)
+2026-11-01T20:32:11.2759785Z Updating files:  47% (2867/6099)
+2026-11-01T20:32:11.2790843Z Updating files:  48% (2928/6099)
+2026-11-01T20:32:11.2822517Z Updating files:  49% (2989/6099)
+2026-11-01T20:32:11.2859801Z Updating files:  50% (3050/6099)
+2026-11-01T20:32:11.2895011Z Updating files:  51% (3111/6099)
+2026-11-01T20:32:11.2920898Z Updating files:  52% (3172/6099)
+2026-11-01T20:32:11.2939453Z Updating files:  53% (3233/6099)
+2026-11-01T20:32:11.2955917Z Updating files:  54% (3294/6099)
+2026-11-01T20:32:11.2973051Z Updating files:  55% (3355/6099)
+2026-11-01T20:32:11.3004066Z Updating files:  56% (3416/6099)
+2026-11-01T20:32:11.3035272Z Updating files:  57% (3477/6099)
+2026-11-01T20:32:11.3062518Z Updating files:  58% (3538/6099)
+2026-11-01T20:32:11.3094175Z Updating files:  59% (3599/6099)
+2026-11-01T20:32:11.3122876Z Updating files:  60% (3660/6099)
+2026-11-01T20:32:11.3167236Z Updating files:  61% (3721/6099)
+2026-11-01T20:32:11.3199330Z Updating files:  62% (3782/6099)
+2026-11-01T20:32:11.3229091Z Updating files:  63% (3843/6099)
+2026-11-01T20:32:11.3261291Z Updating files:  64% (3904/6099)
+2026-11-01T20:32:11.3296440Z Updating files:  65% (3965/6099)
+2026-11-01T20:32:11.3338174Z Updating files:  66% (4026/6099)
+2026-11-01T20:32:11.3375229Z Updating files:  67% (4087/6099)
+2026-11-01T20:32:11.3420907Z Updating files:  68% (4148/6099)
+2026-11-01T20:32:11.3452279Z Updating files:  69% (4209/6099)
+2026-11-01T20:32:11.3496578Z Updating files:  70% (4270/6099)
+2026-11-01T20:32:11.3524846Z Updating files:  71% (4331/6099)
+2026-11-01T20:32:11.3556523Z Updating files:  72% (4392/6099)
+2026-11-01T20:32:11.3575711Z Updating files:  73% (4453/6099)
+2026-11-01T20:32:11.3597096Z Updating files:  74% (4514/6099)
+2026-11-01T20:32:11.3617465Z Updating files:  75% (4575/6099)
+2026-11-01T20:32:11.3637170Z Updating files:  76% (4636/6099)
+2026-11-01T20:32:11.3660057Z Updating files:  77% (4697/6099)
+2026-11-01T20:32:11.3678032Z Updating files:  78% (4758/6099)
+2026-11-01T20:32:11.3696812Z Updating files:  79% (4819/6099)
+2026-11-01T20:32:11.3716383Z Updating files:  80% (4880/6099)
+2026-11-01T20:32:11.3737324Z Updating files:  81% (4941/6099)
+2026-11-01T20:32:11.3758187Z Updating files:  82% (5002/6099)
+2026-11-01T20:32:11.3778772Z Updating files:  83% (5063/6099)
+2026-11-01T20:32:11.3801040Z Updating files:  84% (5124/6099)
+2026-11-01T20:32:11.3822943Z Updating files:  85% (5185/6099)
+2026-11-01T20:32:11.3842484Z Updating files:  86% (5246/6099)
+2026-11-01T20:32:11.3863846Z Updating files:  87% (5307/6099)
+2026-11-01T20:32:11.3883518Z Updating files:  88% (5368/6099)
+2026-11-01T20:32:11.3904918Z Updating files:  89% (5429/6099)
+2026-11-01T20:32:11.3924265Z Updating files:  90% (5490/6099)
+2026-11-01T20:32:11.3944448Z Updating files:  91% (5551/6099)
+2026-11-01T20:32:11.3964485Z Updating files:  92% (5612/6099)
+2026-11-01T20:32:11.3985019Z Updating files:  93% (5673/6099)
+2026-11-01T20:32:11.4002044Z Updating files:  94% (5734/6099)
+2026-11-01T20:32:11.4028385Z Updating files:  95% (5795/6099)
+2026-11-01T20:32:11.4051984Z Updating files:  96% (5856/6099)
+2026-11-01T20:32:11.4090630Z Updating files:  97% (5917/6099)
+2026-11-01T20:32:11.4112259Z Updating files:  98% (5978/6099)
+2026-11-01T20:32:11.4161034Z Updating files:  99% (6039/6099)
+2026-11-01T20:32:11.4161301Z Updating files: 100% (6099/6099)
+2026-11-01T20:32:11.4161601Z Updating files: 100% (6099/6099), done.
+2026-11-01T20:32:11.4212474Z Note: switching to 'refs/remotes/pull/4/merge'.
+2026-11-01T20:32:11.4212691Z 
+2026-11-01T20:32:11.4212854Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-11-01T20:32:11.4213272Z changes and commit them, and you can discard any commits you make in this
+2026-11-01T20:32:11.4213602Z state without impacting any branches by switching back to a branch.
+2026-11-01T20:32:11.4213753Z 
+2026-11-01T20:32:11.4213860Z If you want to create a new branch to retain commits you create, you may
+2026-11-01T20:32:11.4214117Z do so (now or later) by using -c with the switch command. Example:
+2026-11-01T20:32:11.4214347Z 
+2026-11-01T20:32:11.4214445Z   git switch -c <new-branch-name>
+2026-11-01T20:32:11.4214596Z 
+2026-11-01T20:32:11.4214684Z Or undo this operation with:
+2026-11-01T20:32:11.4214822Z 
+2026-11-01T20:32:11.4214895Z   git switch -
+2026-11-01T20:32:11.4215000Z 
+2026-11-01T20:32:11.4215182Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-11-01T20:32:11.4215444Z 
+2026-11-01T20:32:11.4215761Z HEAD is now at 98047de58 Merge 30d9c6a9af3212c5a662da89ac058bb6d7e3ec8d into 8a14eebfaed65a28c0dbec81d91ccbff4c9ae7d2
+2026-11-01T20:32:11.4238831Z ##[endgroup]
+2026-11-01T20:32:11.4291502Z [command]/usr/bin/git log -1 --format=%H
+2026-11-01T20:32:11.4326212Z 98047de582af60f51428c8df7d5ec3a8c7b716ec
+2026-11-01T20:32:11.4334509Z ##[group]Removing auth
+2026-11-01T20:32:11.4334750Z Removing SSH command configuration
+2026-11-01T20:32:11.4337316Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-01T20:32:11.4376420Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-01T20:32:11.4577957Z Removing HTTP extra header
+2026-11-01T20:32:11.4581385Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-01T20:32:11.4619047Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-01T20:32:11.4814709Z Removing includeIf entries pointing to credentials config files
+2026-11-01T20:32:11.4817279Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-01T20:32:11.4851479Z includeif.gitdir:/home/runner/work/ariadne/ariadne/.git.path
+2026-11-01T20:32:11.4852129Z includeif.gitdir:/home/runner/work/ariadne/ariadne/.git/worktrees/*.path
+2026-11-01T20:32:11.4852493Z includeif.gitdir:/github/workspace/.git.path
+2026-11-01T20:32:11.4852781Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-01T20:32:11.4865495Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/ariadne/ariadne/.git.path
+2026-11-01T20:32:11.4896491Z /home/runner/work/_temp/git-credentials-eb60e14b-aa31-4fa2-ae76-14918e1dfd91.config
+2026-11-01T20:32:11.4904263Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/ariadne/ariadne/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-eb60e14b\-aa31\-4fa2\-ae76\-14918e1dfd91\.config
+2026-11-01T20:32:11.4951155Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/ariadne/ariadne/.git/worktrees/*.path
+2026-11-01T20:32:11.4981713Z /home/runner/work/_temp/git-credentials-eb60e14b-aa31-4fa2-ae76-14918e1dfd91.config
+2026-11-01T20:32:11.4988123Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/ariadne/ariadne/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-eb60e14b\-aa31\-4fa2\-ae76\-14918e1dfd91\.config
+2026-11-01T20:32:11.5029698Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-11-01T20:32:11.5065579Z /github/runner_temp/git-credentials-eb60e14b-aa31-4fa2-ae76-14918e1dfd91.config
+2026-11-01T20:32:11.5069862Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-eb60e14b\-aa31\-4fa2\-ae76\-14918e1dfd91\.config
+2026-11-01T20:32:11.5110895Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-01T20:32:11.5141789Z /github/runner_temp/git-credentials-eb60e14b-aa31-4fa2-ae76-14918e1dfd91.config
+2026-11-01T20:32:11.5146849Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-eb60e14b\-aa31\-4fa2\-ae76\-14918e1dfd91\.config
+2026-11-01T20:32:11.5187216Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-01T20:32:11.5385372Z Removing credentials config '/home/runner/work/_temp/git-credentials-eb60e14b-aa31-4fa2-ae76-14918e1dfd91.config'
+2026-11-01T20:32:11.5392568Z ##[endgroup]
+2026-11-01T20:32:11.5555881Z ##[group]Run astral-sh/setup-uv@v10.0.1
+2026-11-01T20:32:11.5556043Z with:
+2026-11-01T20:32:11.5556155Z   enable-cache: true
+2026-11-01T20:32:11.5556279Z   python-version: 3.11
+2026-11-01T20:32:11.5556417Z   cache-dependency-glob: pyproject.toml
+2026-11-01T20:32:11.5556582Z   activate-environment: false
+2026-11-01T20:32:11.5556721Z   no-project: false
+2026-11-01T20:32:11.5556869Z   working-directory: /home/runner/work/ariadne/ariadne
+2026-11-01T20:32:11.5558354Z   github-token: ***
+2026-11-01T20:32:11.5558471Z   restore-cache: true
+2026-11-01T20:32:11.5558604Z   save-cache: true
+2026-11-01T20:32:11.5558718Z   prune-cache: false
+2026-11-01T20:32:11.5558837Z   cache-python: false
+2026-11-01T20:32:11.5558967Z   ignore-nothing-to-cache: false
+2026-11-01T20:32:11.5559118Z   ignore-empty-workdir: false
+2026-11-01T20:32:11.5559271Z   download-from-astral-mirror: true
+2026-11-01T20:32:11.5559427Z   add-problem-matchers: true
+2026-11-01T20:32:11.5559742Z   quiet: false
+2026-11-01T20:32:11.5559917Z   resolution-strategy: highest
+2026-11-01T20:32:11.5560058Z env:
+2026-11-01T20:32:11.5560163Z   PY_COLORS: 1
+2026-11-01T20:32:11.5560278Z ##[endgroup]
+2026-11-01T20:32:11.6726268Z Trying to find version for uv in: /home/runner/work/ariadne/ariadne/uv.toml
+2026-11-01T20:32:11.6726842Z Could not find file: /home/runner/work/ariadne/ariadne/uv.toml
+2026-11-01T20:32:11.6727308Z Trying to find version for uv in: /home/runner/work/ariadne/ariadne/pyproject.toml
+2026-11-01T20:32:11.6733010Z Found version for uv in /home/runner/work/ariadne/ariadne/pyproject.toml: >=0.6.15
+2026-11-01T20:32:11.6736191Z Found minimum version specifier, using latest version
+2026-11-01T20:32:11.6738133Z Fetching manifest data from https://raw.githubusercontent.com/astral-sh/versions/main/v1/uv.ndjson ...
+2026-11-01T20:32:11.7708194Z Downloading uv from "https://releases.astral.sh/github/uv/releases/download/0.13.6/uv-x86_64-unknown-linux-gnu.tar.gz" ...
+2026-11-01T20:32:11.9414231Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/a694404f-409f-4db1-8c45-60211d8ec37e -f /home/runner/work/_temp/c3300cfd-cacc-415e-981b-bd1e67bfc50e
+2026-11-01T20:32:12.2485462Z Added /home/runner/.local/bin to the path
+2026-11-01T20:32:12.2487273Z Added /opt/hostedtoolcache/uv/0.13.6/x86_64 to the path
+2026-11-01T20:32:12.2488835Z Set UV_PYTHON_INSTALL_DIR to /home/runner/work/_temp/uv-python-dir
+2026-11-01T20:32:12.2489270Z Added /home/runner/work/_temp/uv-python-dir to the path
+2026-11-01T20:32:12.2489702Z Set UV_PYTHON to 3.11
+2026-11-01T20:32:12.2512036Z Set UV_CACHE_DIR to /home/runner/work/_temp/setup-uv-cache
+2026-11-01T20:32:12.2512379Z Successfully installed uv version 0.13.6
+2026-11-01T20:32:12.2512809Z Searching files using cache dependency glob: /home/runner/work/ariadne/ariadne/pyproject.toml
+2026-11-01T20:32:12.2531853Z /home/runner/work/ariadne/ariadne/pyproject.toml
+2026-11-01T20:32:12.2542123Z Found 1 files to hash.
+2026-11-01T20:32:12.2604601Z Trying to restore cache from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.11-4b92b3d0ef08b2fd53b54a11544ac32afa28330005d3e5b1100eda6d6752009d
+2026-11-01T20:32:12.4533372Z Cache hit for: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.11-4b92b3d0ef08b2fd53b54a11544ac32afa28330005d3e5b1100eda6d6752009d
+2026-11-01T20:32:13.6846335Z Received 71303168 of 438482844 (16.3%), 68.0 MBs/sec
+2026-11-01T20:32:14.6841568Z Received 264241152 of 438482844 (60.3%), 126.1 MBs/sec
+2026-11-01T20:32:15.6916389Z Received 434288540 of 438482844 (99.0%), 138.0 MBs/sec
+2026-11-01T20:32:15.6967312Z Received 438482844 of 438482844 (100.0%), 138.8 MBs/sec
+2026-11-01T20:32:15.6969167Z Cache Size: ~418 MB (438482844 B)
+2026-11-01T20:32:15.7017281Z [command]/usr/bin/tar -xf /home/runner/work/_temp/3a3e8dbf-cc49-49f4-98ad-ad8edbb296bc/cache.tzst -P -C /home/runner/work/ariadne/ariadne --use-compress-program unzstd
+2026-11-01T20:32:19.8617956Z Cache restored successfully
+2026-11-01T20:32:19.8800233Z cache restored from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.11-4b92b3d0ef08b2fd53b54a11544ac32afa28330005d3e5b1100eda6d6752009d
+2026-11-01T20:32:20.0471484Z ##[group]Run uv sync --locked
+2026-11-01T20:32:20.0471714Z [36;1muv sync --locked[0m
+2026-11-01T20:32:20.0492765Z shell: /usr/bin/bash -e {0}
+2026-11-01T20:32:20.0492921Z env:
+2026-11-01T20:32:20.0493042Z   PY_COLORS: 1
+2026-11-01T20:32:20.0493214Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-11-01T20:32:20.0493413Z   UV_PYTHON: 3.11
+2026-11-01T20:32:20.0493562Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-11-01T20:32:20.0493756Z ##[endgroup]
+2026-11-01T20:32:20.2612851Z Downloading cpython-3.11.18-linux-x86_64-gnu (download) (29.2MiB)
+2026-11-01T20:32:20.6694725Z  Downloaded cpython-3.11.18-linux-x86_64-gnu (download)
+2026-11-01T20:32:20.8331104Z Using CPython 3.11.18
+2026-11-01T20:32:20.8331419Z Creating virtual environment at: .venv
+2026-11-01T20:32:20.8384019Z Resolved 358 packages in 1ms
+2026-11-01T20:32:20.8479613Z    Building prefect @ file:///home/runner/work/ariadne/ariadne
+2026-11-01T20:32:21.8292301Z       Built prefect @ file:///home/runner/work/ariadne/ariadne
+2026-11-01T20:32:21.9279777Z Prepared 1 package in 1.08s
+2026-11-01T20:32:22.3939362Z Installed 222 packages in 465ms
+2026-11-01T20:32:22.3940110Z  + aiosqlite==0.22.1
+2026-11-01T20:32:22.3940366Z  + alembic==1.18.5
+2026-11-01T20:32:22.3940582Z  + amplitude-analytics==1.2.3
+2026-11-01T20:32:22.3940817Z  + annotated-doc==0.0.4
+2026-11-01T20:32:22.3941026Z  + annotated-types==0.7.0
+2026-11-01T20:32:22.3941484Z  + anyio==4.14.2
+2026-11-01T20:32:22.3941667Z  + apprise==1.13.0
+2026-11-01T20:32:22.3941891Z  + asgi-lifespan==2.1.0
+2026-11-01T20:32:22.3942082Z  + asgiref==3.11.0
+2026-11-01T20:32:22.3942266Z  + ast-serialize==0.6.0
+2026-11-01T20:32:22.3942460Z  + asttokens==3.0.1
+2026-11-01T20:32:22.3942646Z  + asyncpg==0.31.0
+2026-11-01T20:32:22.3942928Z  + attrs==25.4.0
+2026-11-01T20:32:22.3943098Z  + babel==2.17.0
+2026-11-01T20:32:22.3943427Z  + backrefs==6.1
+2026-11-01T20:32:22.3943724Z  + beartype==0.22.9
+2026-11-01T20:32:22.3943896Z  + boto3==1.42.19
+2026-11-01T20:32:22.3944081Z  + botocore==1.42.19
+2026-11-01T20:32:22.3944266Z  + burner-redis==0.1.7
+2026-11-01T20:32:22.3944454Z  + cachetools==7.1.6
+2026-11-01T20:32:22.3944641Z  + cairocffi==1.7.1
+2026-11-01T20:32:22.3944820Z  + cairosvg==2.9.1
+2026-11-01T20:32:22.3945025Z  + certifi==2026.1.4
+2026-11-01T20:32:22.3945325Z  + cffi==2.0.0
+2026-11-01T20:32:22.3945664Z  + cfgv==3.5.0
+2026-11-01T20:32:22.3946020Z  + charset-normalizer==3.4.4
+2026-11-01T20:32:22.3946333Z  + click==8.4.2
+2026-11-01T20:32:22.3946771Z  + cloudpickle==3.1.2
+2026-11-01T20:32:22.3947100Z  + codespell==2.4.3
+2026-11-01T20:32:22.3947443Z  + colorama==0.4.6
+2026-11-01T20:32:22.3947771Z  + coolname==5.0.0
+2026-11-01T20:32:22.3948166Z  + coverage==7.13.1
+2026-11-01T20:32:22.3948398Z  + cronsim==2.7
+2026-11-01T20:32:22.3948752Z  + cryptography==50.0.0
+2026-11-01T20:32:22.3949096Z  + cssselect2==0.8.0
+2026-11-01T20:32:22.3949450Z  + cyclopts==4.22.2
+2026-11-01T20:32:22.3949858Z  + dataclasses-json==0.5.7
+2026-11-01T20:32:22.3950183Z  + dateparser==1.4.1
+2026-11-01T20:32:22.3950469Z  + decorator==5.2.1
+2026-11-01T20:32:22.3950806Z  + defusedxml==0.7.1
+2026-11-01T20:32:22.3951087Z  + distlib==0.4.0
+2026-11-01T20:32:22.3951473Z  + docker==7.2.0
+2026-11-01T20:32:22.3951793Z  + docstring-parser==0.17.0
+2026-11-01T20:32:22.3952171Z  + docutils==0.22.4
+2026-11-01T20:32:22.3952386Z  + exceptiongroup==1.3.1
+2026-11-01T20:32:22.3952709Z  + execnet==2.1.2
+2026-11-01T20:32:22.3953092Z  + executing==2.2.1
+2026-11-01T20:32:22.3953372Z  + fastapi==0.141.1
+2026-11-01T20:32:22.3953694Z  + filelock==3.25.2
+2026-11-01T20:32:22.3954041Z  + fsspec==2026.7.0
+2026-11-01T20:32:22.3954411Z  + ghp-import==2.1.0
+2026-11-01T20:32:22.3954761Z  + googleapis-common-protos==1.72.0
+2026-11-01T20:32:22.3955054Z  + graphviz==0.21
+2026-11-01T20:32:22.3955383Z  + greenlet==3.3.0
+2026-11-01T20:32:22.3955664Z  + griffe==2.1.0
+2026-11-01T20:32:22.3955996Z  + griffecli==2.1.0
+2026-11-01T20:32:22.3956292Z  + griffelib==2.1.0
+2026-11-01T20:32:22.3956571Z  + grpcio==1.76.0
+2026-11-01T20:32:22.3957048Z  + h11==0.16.0
+2026-11-01T20:32:22.3957221Z  + h2==4.4.1
+2026-11-01T20:32:22.3957393Z  + hpack==4.2.0
+2026-11-01T20:32:22.3957570Z  + httpcore==1.0.9
+2026-11-01T20:32:22.3957754Z  + httpx==0.28.1
+2026-11-01T20:32:22.3957966Z  + humanize==4.16.0
+2026-11-01T20:32:22.3958163Z  + hyperframe==6.1.0
+2026-11-01T20:32:22.3958418Z  + identify==2.6.16
+2026-11-01T20:32:22.3958621Z  + idna==3.15
+2026-11-01T20:32:22.3958855Z  + iniconfig==2.3.0
+2026-11-01T20:32:22.3959105Z  + ipython==8.39.0
+2026-11-01T20:32:22.3959355Z  + jedi==0.19.2
+2026-11-01T20:32:22.3959707Z  + jinja2==3.1.6
+2026-11-01T20:32:22.3960080Z  + jinja2-humanize-extension==0.4.0
+2026-11-01T20:32:22.3960448Z  + jmespath==1.0.1
+2026-11-01T20:32:22.3960629Z  + jsonpatch==1.33
+2026-11-01T20:32:22.3964618Z  + jsonpointer==3.0.0
+2026-11-01T20:32:22.3964814Z  + jsonschema==4.26.0
+2026-11-01T20:32:22.3965028Z  + jsonschema-specifications==2025.9.1
+2026-11-01T20:32:22.3965271Z  + libcst==1.8.6
+2026-11-01T20:32:22.3965449Z  + librt==0.13.0
+2026-11-01T20:32:22.3965631Z  + mako==1.4.2
+2026-11-01T20:32:22.3965802Z  + markdown==3.10
+2026-11-01T20:32:22.3965996Z  + markdown-it-py==3.0.0
+2026-11-01T20:32:22.3966207Z  + markupsafe==3.0.3
+2026-11-01T20:32:22.3966397Z  + marshmallow==3.26.2
+2026-11-01T20:32:22.3966602Z  + marshmallow-enum==1.5.1
+2026-11-01T20:32:22.3966824Z  + matplotlib-inline==0.2.1
+2026-11-01T20:32:22.3967036Z  + mdurl==0.1.2
+2026-11-01T20:32:22.3967215Z  + mergedeep==1.3.4
+2026-11-01T20:32:22.3967553Z  + mkdocs==1.6.1
+2026-11-01T20:32:22.3967739Z  + mkdocs-autorefs==1.4.3
+2026-11-01T20:32:22.3967947Z  + mkdocs-gen-files==0.6.1
+2026-11-01T20:32:22.3968168Z  + mkdocs-get-deps==0.2.0
+2026-11-01T20:32:22.3968375Z  + mkdocs-material==9.7.7
+2026-11-01T20:32:22.3968598Z  + mkdocs-material-extensions==1.3.1
+2026-11-01T20:32:22.3968840Z  + mkdocstrings==1.0.0
+2026-11-01T20:32:22.3969055Z  + mkdocstrings-python==2.0.1
+2026-11-01T20:32:22.3969264Z  + moto==5.2.2
+2026-11-01T20:32:22.3969441Z  + mypy==2.3.0
+2026-11-01T20:32:22.3969750Z  + mypy-extensions==1.1.0
+2026-11-01T20:32:22.3969962Z  + nodeenv==1.10.0
+2026-11-01T20:32:22.3970137Z  + numpy==2.4.1
+2026-11-01T20:32:22.3970315Z  + oauthlib==4.0.0
+2026-11-01T20:32:22.3970512Z  + opentelemetry-api==1.44.0
+2026-11-01T20:32:22.3970744Z  + opentelemetry-distro==0.65b0
+2026-11-01T20:32:22.3970986Z  + opentelemetry-exporter-otlp==1.44.0
+2026-11-01T20:32:22.3971280Z  + opentelemetry-exporter-otlp-proto-common==1.44.0
+2026-11-01T20:32:22.3971608Z  + opentelemetry-exporter-otlp-proto-grpc==1.44.0
+2026-11-01T20:32:22.3971936Z  + opentelemetry-exporter-otlp-proto-http==1.44.0
+2026-11-01T20:32:22.3972230Z  + opentelemetry-instrumentation==0.65b0
+2026-11-01T20:32:22.3972520Z  + opentelemetry-instrumentation-logging==0.65b0
+2026-11-01T20:32:22.3972855Z  + opentelemetry-instrumentation-system-metrics==0.65b0
+2026-11-01T20:32:22.3973171Z  + opentelemetry-proto==1.44.0
+2026-11-01T20:32:22.3973397Z  + opentelemetry-sdk==1.44.0
+2026-11-01T20:32:22.3973655Z  + opentelemetry-semantic-conventions==0.65b0
+2026-11-01T20:32:22.3973929Z  + opentelemetry-test-utils==0.65b0
+2026-11-01T20:32:22.3974167Z  + orjson==3.11.9
+2026-11-01T20:32:22.3974344Z  + packaging==26.3
+2026-11-01T20:32:22.3974523Z  + paginate==0.5.7
+2026-11-01T20:32:22.3974707Z  + parso==0.8.5
+2026-11-01T20:32:22.3974888Z  + pathspec==1.0.4
+2026-11-01T20:32:22.3975067Z  + pendulum==3.1.0
+2026-11-01T20:32:22.3975243Z  + pexpect==4.9.0
+2026-11-01T20:32:22.3975423Z  + pillow==12.3.0
+2026-11-01T20:32:22.3975604Z  + platformdirs==4.5.1
+2026-11-01T20:32:22.3975807Z  + pluggy==1.6.0
+2026-11-01T20:32:22.3975987Z  + pre-commit==4.6.1
+2026-11-01T20:32:22.3976292Z  + prefect==3.6.24+22223.g98047de58 (from file:///home/runner/work/ariadne/ariadne)
+2026-11-01T20:32:22.3976649Z  + prometheus-client==0.26.0
+2026-11-01T20:32:22.3976925Z  + prompt-toolkit==3.0.52
+2026-11-01T20:32:22.3977135Z  + properdocs==1.6.7
+2026-11-01T20:32:22.3977335Z  + protobuf==6.33.5
+2026-11-01T20:32:22.3977514Z  + psutil==7.2.1
+2026-11-01T20:32:22.3977696Z  + ptyprocess==0.7.0
+2026-11-01T20:32:22.3977887Z  + pure-eval==0.2.3
+2026-11-01T20:32:22.3978231Z  + py-key-value-aio==0.3.0
+2026-11-01T20:32:22.3978445Z  + py-key-value-shared==0.3.0
+2026-11-01T20:32:22.3978656Z  + pycparser==2.23
+2026-11-01T20:32:22.3978842Z  + pydantic==2.13.4
+2026-11-01T20:32:22.3979030Z  + pydantic-core==2.46.4
+2026-11-01T20:32:22.3979245Z  + pydantic-extra-types==2.11.1
+2026-11-01T20:32:22.3979469Z  + pydantic-settings==2.14.2
+2026-11-01T20:32:22.3979778Z  + pydocket==0.23.1
+2026-11-01T20:32:22.3979966Z  + pygments==2.20.0
+2026-11-01T20:32:22.3980176Z  + pymdown-extensions==11.0.1
+2026-11-01T20:32:22.3980389Z  + pyre-check==0.9.23
+2026-11-01T20:32:22.3980583Z  + pyre-extensions==0.0.32
+2026-11-01T20:32:22.3980786Z  + pyright==1.1.411
+2026-11-01T20:32:22.3980966Z  + pytest==9.1.1
+2026-11-01T20:32:22.3981150Z  + pytest-asyncio==1.4.0
+2026-11-01T20:32:22.3981350Z  + pytest-cov==7.1.0
+2026-11-01T20:32:22.3981531Z  + pytest-env==1.6.0
+2026-11-01T20:32:22.3981730Z  + pytest-flakefinder==1.1.0
+2026-11-01T20:32:22.3981948Z  + pytest-split==0.11.0
+2026-11-01T20:32:22.3982149Z  + pytest-timeout==2.4.0
+2026-11-01T20:32:22.3982344Z  + pytest-xdist==3.8.0
+2026-11-01T20:32:22.3982548Z  + python-dateutil==2.9.0.post0
+2026-11-01T20:32:22.3982776Z  + python-discovery==1.6.1
+2026-11-01T20:32:22.3982981Z  + python-dotenv==1.2.2
+2026-11-01T20:32:22.3983186Z  + python-json-logger==4.0.0
+2026-11-01T20:32:22.3983393Z  + python-slugify==9.0.0
+2026-11-01T20:32:22.3983590Z  + pytz==2026.3.post1
+2026-11-01T20:32:22.3983772Z  + pyyaml==6.0.3
+2026-11-01T20:32:22.3984075Z  + pyyaml-env-tag==1.1
+2026-11-01T20:32:22.3984269Z  + readchar==4.2.2
+2026-11-01T20:32:22.3984439Z  + redis==8.1.0
+2026-11-01T20:32:22.3984611Z  + referencing==0.37.0
+2026-11-01T20:32:22.3984793Z  + regex==2025.11.3
+2026-11-01T20:32:22.3984964Z  + requests==2.33.0
+2026-11-01T20:32:22.3985150Z  + requests-oauthlib==2.0.0
+2026-11-01T20:32:22.3985354Z  + responses==0.25.8
+2026-11-01T20:32:22.3985533Z  + respx==0.23.1
+2026-11-01T20:32:22.3985711Z  + rfc3339-validator==0.1.4
+2026-11-01T20:32:22.3985907Z  + rich==15.0.0
+2026-11-01T20:32:22.3986088Z  + rich-rst==1.3.2
+2026-11-01T20:32:22.3986263Z  + rpds-py==0.30.0
+2026-11-01T20:32:22.3986440Z  + ruamel-yaml==0.19.1
+2026-11-01T20:32:22.3986631Z  + ruamel-yaml-clib==0.2.15
+2026-11-01T20:32:22.3986831Z  + ruff==0.16.2
+2026-11-01T20:32:22.3987000Z  + s3transfer==0.16.0
+2026-11-01T20:32:22.3987181Z  + semver==3.0.4
+2026-11-01T20:32:22.3987358Z  + setuptools==83.0.0
+2026-11-01T20:32:22.3987547Z  + shellingham==1.5.4
+2026-11-01T20:32:22.3987731Z  + six==1.17.0
+2026-11-01T20:32:22.3987898Z  + sniffio==1.3.1
+2026-11-01T20:32:22.3988074Z  + sqlalchemy==2.0.45
+2026-11-01T20:32:22.3988258Z  + stack-data==0.6.3
+2026-11-01T20:32:22.3988444Z  + starlette==1.3.1
+2026-11-01T20:32:22.3988620Z  + tabulate==0.9.0
+2026-11-01T20:32:22.3988906Z  + testslide==2.7.1
+2026-11-01T20:32:22.3989105Z  + text-unidecode==1.3
+2026-11-01T20:32:22.3989318Z  + time-machine==3.2.0
+2026-11-01T20:32:22.3989657Z  + tinycss2==1.5.1
+2026-11-01T20:32:22.3990043Z  + toml==0.10.2
+2026-11-01T20:32:22.3992117Z  + traitlets==5.14.3
+2026-11-01T20:32:22.3992304Z  + ty==0.0.10
+2026-11-01T20:32:22.3992474Z  + typeguard==2.13.3
+2026-11-01T20:32:22.3992653Z  + typer==0.20.1
+2026-11-01T20:32:22.3992844Z  + types-cachetools==7.0.0.20260713
+2026-11-01T20:32:22.3993074Z  + types-dateparser==1.4.1.20260617
+2026-11-01T20:32:22.3993305Z  + types-pyyaml==6.0.12.20260724
+2026-11-01T20:32:22.3993533Z  + typing-extensions==4.16.0
+2026-11-01T20:32:22.3993747Z  + typing-inspect==0.9.0
+2026-11-01T20:32:22.3993956Z  + typing-inspection==0.4.2
+2026-11-01T20:32:22.3994161Z  + typsht==0.0.1a5
+2026-11-01T20:32:22.3994339Z  + tzdata==2025.3
+2026-11-01T20:32:22.3994517Z  + tzlocal==5.3.1
+2026-11-01T20:32:22.3994698Z  + uncalled-for==0.3.2
+2026-11-01T20:32:22.3994884Z  + urllib3==2.8.0
+2026-11-01T20:32:22.3995055Z  + uv==0.12.0
+2026-11-01T20:32:22.3995225Z  + uvicorn==0.52.0
+2026-11-01T20:32:22.3995395Z  + vale==3.13.0.0
+2026-11-01T20:32:22.3995567Z  + virtualenv==21.7.13
+2026-11-01T20:32:22.3995755Z  + watchdog==6.0.0
+2026-11-01T20:32:22.3995932Z  + watchfiles==1.2.0
+2026-11-01T20:32:22.3996241Z  + wcwidth==0.2.14
+2026-11-01T20:32:22.3996421Z  + webencodings==0.5.1
+2026-11-01T20:32:22.3996606Z  + websockets==16.1.1
+2026-11-01T20:32:22.3996788Z  + werkzeug==3.1.9
+2026-11-01T20:32:22.3996960Z  + whenever==0.10.3
+2026-11-01T20:32:22.3997113Z  + wrapt==1.17.3
+2026-11-01T20:32:22.3997227Z  + xmltodict==1.0.2
+2026-11-01T20:32:22.3997341Z  + yamllint==1.38.0
+2026-11-01T20:32:22.4134771Z ##[group]Run echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=***localhost/prefect" >> $GITHUB_ENV
+2026-11-01T20:32:22.4135272Z [36;1mecho "PREFECT_SERVER_DATABASE_CONNECTION_URL=***localhost/prefect" >> $GITHUB_ENV[0m
+2026-11-01T20:32:22.4151641Z shell: /usr/bin/bash -e {0}
+2026-11-01T20:32:22.4151785Z env:
+2026-11-01T20:32:22.4151902Z   PY_COLORS: 1
+2026-11-01T20:32:22.4152068Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-11-01T20:32:22.4152256Z   UV_PYTHON: 3.11
+2026-11-01T20:32:22.4152399Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-11-01T20:32:22.4152574Z ##[endgroup]
+2026-11-01T20:32:22.4206839Z ##[group]Run uv run pytest tests/ --ignore=tests/typesafety --ignore=tests/server/ --ignore=tests/events/server --ignore=tests/test_task_runners.py --ignore=tests/runner --ignore=tests/workers --ignore=tests/cli/ --ignore=tests/test_settings.py --ignore=tests/input/ --ignore-glob="tests/test_*.py" \
+2026-11-01T20:32:22.4207883Z [36;1muv run pytest tests/ --ignore=tests/typesafety --ignore=tests/server/ --ignore=tests/events/server --ignore=tests/test_task_runners.py --ignore=tests/runner --ignore=tests/workers --ignore=tests/cli/ --ignore=tests/test_settings.py --ignore=tests/input/ --ignore-glob="tests/test_*.py" \[0m
+2026-11-01T20:32:22.4208581Z [36;1m-m "not windows" \[0m
+2026-11-01T20:32:22.4208729Z [36;1m--numprocesses auto \[0m
+2026-11-01T20:32:22.4208873Z [36;1m--maxprocesses 6 \[0m
+2026-11-01T20:32:22.4209008Z [36;1m--dist worksteal \[0m
+2026-11-01T20:32:22.4209159Z [36;1m--disable-docker-image-builds \[0m
+2026-11-01T20:32:22.4209349Z [36;1m--exclude-service kubernetes \[0m
+2026-11-01T20:32:22.4209701Z [36;1m--exclude-service docker \[0m
+2026-11-01T20:32:22.4209850Z [36;1m--durations 26 \[0m
+2026-11-01T20:32:22.4236475Z shell: /usr/bin/bash -e {0}
+2026-11-01T20:32:22.4236713Z env:
+2026-11-01T20:32:22.4236889Z   PY_COLORS: 1
+2026-11-01T20:32:22.4237153Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-11-01T20:32:22.4237463Z   UV_PYTHON: 3.11
+2026-11-01T20:32:22.4237712Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-11-01T20:32:22.4238325Z   PREFECT_SERVER_DATABASE_CONNECTION_URL: ***localhost/prefect
+2026-11-01T20:32:22.4238638Z ##[endgroup]
+2026-11-01T20:32:39.4761233Z [1m============================= test session starts ==============================[0m
+2026-11-01T20:32:39.4761743Z platform linux -- Python 3.11.18, pytest-9.1.1, pluggy-1.6.0
+2026-11-01T20:32:39.4762080Z rootdir: /home/runner/work/ariadne/ariadne
+2026-11-01T20:32:39.4762344Z configfile: pyproject.toml
+2026-11-01T20:32:39.4762977Z plugins: xdist-3.8.0, timeout-2.4.0, split-0.11.0, env-1.6.0, cov-7.1.0, respx-0.23.1, asyncio-1.4.0, typsht-0.0.1a5, anyio-4.14.2, flakefinder-1.1.0, time-machine-3.2.0, typeguard-2.13.3
+2026-11-01T20:32:39.4763597Z timeout: 90.0s
+2026-11-01T20:32:39.4763787Z timeout method: signal
+2026-11-01T20:32:39.4764000Z timeout func_only: False
+2026-11-01T20:32:39.4764459Z asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=session, asyncio_default_test_loop_scope=function
+2026-11-01T20:32:39.4764961Z created: 2/2 workers
+2026-11-01T20:32:39.4765154Z 2 workers [4857 items]
+2026-11-01T20:32:39.4765283Z 
+2026-11-01T20:32:42.9735431Z [32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [  1%]
+2026-11-01T20:32:45.3731314Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [  2%]
+2026-11-01T20:32:46.7212900Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [  4%]
+2026-11-01T20:32:47.5444470Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [  5%]
+2026-11-01T20:32:49.2633165Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[32m.[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [  7%]
+2026-11-01T20:32:52.4123406Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [  8%]
+2026-11-01T20:32:55.0599649Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 10%]
+2026-11-01T20:32:56.7416869Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 11%]
+2026-11-01T20:32:59.1975724Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 13%]
+2026-11-01T20:33:03.4043640Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 14%]
+2026-11-01T20:33:07.6384344Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33mx[0m[32m.[0m[32m.[0m[33mx[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 16%]
+2026-11-01T20:33:13.3771327Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 17%]
+2026-11-01T20:33:21.6549473Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 19%]
+2026-11-01T20:33:25.7569941Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 20%]
+2026-11-01T20:33:28.8676147Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 22%]
+2026-11-01T20:33:35.9743404Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 23%]
+2026-11-01T20:33:41.7177250Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 25%]
+2026-11-01T20:33:45.1020205Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 26%]
+2026-11-01T20:33:48.2901648Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 28%]
+2026-11-01T20:33:51.0307233Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 29%]
+2026-11-01T20:33:53.7282399Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 31%]
+2026-11-01T20:33:56.5987673Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 32%]
+2026-11-01T20:33:59.3430317Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 34%]
+2026-11-01T20:34:06.3308973Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 35%]
+2026-11-01T20:34:11.4135118Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 37%]
+2026-11-01T20:34:19.4387650Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 38%]
+2026-11-01T20:34:22.2513785Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 40%]
+2026-11-01T20:34:25.9905356Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 41%]
+2026-11-01T20:34:46.1732463Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 42%]
+2026-11-01T20:34:52.5271879Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 44%]
+2026-11-01T20:35:03.0473113Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 45%]
+2026-11-01T20:35:13.5160308Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 47%]
+2026-11-01T20:35:19.8921488Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 48%]
+2026-11-01T20:35:26.7030998Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 50%]
+2026-11-01T20:35:29.7237584Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 51%]
+2026-11-01T20:35:36.2003800Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 53%]
+2026-11-01T20:35:43.4742395Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33mX[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 54%]
+2026-11-01T20:35:52.7222089Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 56%]
+2026-11-01T20:36:07.9130932Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[33ms[0m[33m [ 57%]
+2026-11-01T20:36:24.8571587Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 59%]
+2026-11-01T20:36:41.7766138Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 60%]
+2026-11-01T20:36:47.9739951Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 62%]
+2026-11-01T20:36:57.3268927Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 63%]
+2026-11-01T20:37:07.9169835Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 65%]
+2026-11-01T20:37:26.5920734Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 66%]
+2026-11-01T20:37:30.9670241Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 68%]
+2026-11-01T20:37:34.4544522Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[33ms[0m[33ms[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 69%]
+2026-11-01T20:37:37.3310900Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 71%]
+2026-11-01T20:37:40.2540235Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 72%]
+2026-11-01T20:37:43.7367511Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 74%]
+2026-11-01T20:37:46.5225810Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 75%]
+2026-11-01T20:37:50.5940399Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 77%]
+2026-11-01T20:37:52.9552501Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 78%]
+2026-11-01T20:37:55.6716261Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 80%]
+2026-11-01T20:38:02.0752255Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 81%]
+2026-11-01T20:38:07.3501383Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 83%]
+2026-11-01T20:38:09.7093751Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 84%]
+2026-11-01T20:38:12.4146792Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 85%]
+2026-11-01T20:38:15.5625523Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33mX[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 87%]
+2026-11-01T20:38:22.8238360Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 88%]
+2026-11-01T20:38:50.5175077Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 90%]
+2026-11-01T20:39:21.2922122Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[31mF[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[31m [ 91%]
+2026-11-01T20:39:37.4083257Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[31m [ 93%]
+2026-11-01T20:39:54.8843835Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[31m [ 94%]
+2026-11-01T20:40:03.7241369Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[31m [ 96%]
+2026-11-01T20:40:06.8645929Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[31m [ 97%]
+2026-11-01T20:40:09.3355585Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[31m [ 99%]
+2026-11-01T20:40:23.6447101Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[31m                                        [100%][0m
+2026-11-01T20:40:23.6448015Z =================================== FAILURES ===================================
+2026-11-01T20:40:23.6448526Z [31m[1m______ TestHostedApiServerOwnership.test_rejects_healthy_foreign_listener ______[0m
+2026-11-01T20:40:23.6448998Z [gw0] linux -- Python 3.11.18 /home/runner/work/ariadne/ariadne/.venv/bin/python
+2026-11-01T20:40:23.6449274Z 
+2026-11-01T20:40:23.6449462Z self = <test_fixtures.TestHostedApiServerOwnership object at 0x7f65894603d0>
+2026-11-01T20:40:23.6450040Z monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f6558102650>
+2026-11-01T20:40:23.6451129Z test_database_connection_url = '***localhost/prefect_tests_gw0'
+2026-11-01T20:40:23.6451447Z disable_hosted_api_server = None
+2026-11-01T20:40:23.6451599Z 
+2026-11-01T20:40:23.6451780Z     [0m[37m@pytest[39;49;00m.mark.unix[90m[39;49;00m
+2026-11-01T20:40:23.6452335Z     [94masync[39;49;00m [94mdef[39;49;00m[90m [39;49;00m[92mtest_rejects_healthy_foreign_listener[39;49;00m([90m[39;49;00m
+2026-11-01T20:40:23.6452810Z         [96mself[39;49;00m,[90m[39;49;00m
+2026-11-01T20:40:23.6453130Z         monkeypatch: pytest.MonkeyPatch,[90m[39;49;00m
+2026-11-01T20:40:23.6453572Z         test_database_connection_url: [96mstr[39;49;00m | [94mNone[39;49;00m,[90m[39;49;00m
+2026-11-01T20:40:23.6454007Z         disable_hosted_api_server: [94mNone[39;49;00m,[90m[39;49;00m
+2026-11-01T20:40:23.6454224Z     ):[90m[39;49;00m
+2026-11-01T20:40:23.6454545Z         [94mclass[39;49;00m[90m [39;49;00m[04m[92mForeignHealthHandler[39;49;00m(BaseHTTPRequestHandler):[90m[39;49;00m
+2026-11-01T20:40:23.6454873Z             requests = [94m0[39;49;00m[90m[39;49;00m
+2026-11-01T20:40:23.6455048Z     [90m[39;49;00m
+2026-11-01T20:40:23.6455303Z             [94mdef[39;49;00m[90m [39;49;00m[92mdo_GET[39;49;00m([96mself[39;49;00m):[90m[39;49;00m
+2026-11-01T20:40:23.6455659Z                 [96mtype[39;49;00m([96mself[39;49;00m).requests += [94m1[39;49;00m[90m[39;49;00m
+2026-11-01T20:40:23.6455966Z                 [96mself[39;49;00m.send_response([94m200[39;49;00m)[90m[39;49;00m
+2026-11-01T20:40:23.6456226Z                 [96mself[39;49;00m.end_headers()[90m[39;49;00m
+2026-11-01T20:40:23.6456598Z                 [96mself[39;49;00m.wfile.write([33mb[39;49;00m[33m"[39;49;00m[33mtrue[39;49;00m[33m"[39;49;00m)[90m[39;49;00m
+2026-11-01T20:40:23.6456879Z     [90m[39;49;00m
+2026-11-01T20:40:23.6457273Z             [94mdef[39;49;00m[90m [39;49;00m[92mlog_message[39;49;00m([96mself[39;49;00m, [96mformat[39;49;00m: [96mstr[39;49;00m, *args: [96mobject[39;49;00m):[90m[39;49;00m
+2026-11-01T20:40:23.6457652Z                 [94mpass[39;49;00m[90m[39;49;00m
+2026-11-01T20:40:23.6457819Z     [90m[39;49;00m
+2026-11-01T20:40:23.6458443Z         foreign_server = ThreadingHTTPServer(([33m"[39;49;00m[33m127.0.0.1[39;49;00m[33m"[39;49;00m, [94m0[39;49;00m), ForeignHealthHandler)[90m[39;49;00m
+2026-11-01T20:40:23.6458822Z         foreign_thread = threading.Thread([90m[39;49;00m
+2026-11-01T20:40:23.6459118Z             target=foreign_server.serve_forever, daemon=[94mTrue[39;49;00m[90m[39;49;00m
+2026-11-01T20:40:23.6459361Z         )[90m[39;49;00m
+2026-11-01T20:40:23.6459756Z         foreign_thread.start()[90m[39;49;00m
+2026-11-01T20:40:23.6460061Z         port = foreign_server.server_address[[94m1[39;49;00m][90m[39;49;00m
+2026-11-01T20:40:23.6460431Z         monkeypatch.setattr([90m[39;49;00m
+2026-11-01T20:40:23.6460616Z             fixtures,[90m[39;49;00m
+2026-11-01T20:40:23.6460895Z             [33m"[39;49;00m[33m_reserve_hosted_api_socket[39;49;00m[33m"[39;49;00m,[90m[39;49;00m
+2026-11-01T20:40:23.6461211Z             [94mlambda[39;49;00m _: (port, [94mNone[39;49;00m),[90m[39;49;00m
+2026-11-01T20:40:23.6461430Z         )[90m[39;49;00m
+2026-11-01T20:40:23.6461572Z     [90m[39;49;00m
+2026-11-01T20:40:23.6461771Z         gen = fixtures.hosted_api_server.__wrapped__([90m[39;49;00m
+2026-11-01T20:40:23.6462047Z             unused_tcp_port_factory=[94mlambda[39;49;00m: port,[90m[39;49;00m
+2026-11-01T20:40:23.6462352Z             test_database_connection_url=test_database_connection_url,[90m[39;49;00m
+2026-11-01T20:40:23.6462582Z         )[90m[39;49;00m
+2026-11-01T20:40:23.6462739Z         [94mtry[39;49;00m:[90m[39;49;00m
+2026-11-01T20:40:23.6462950Z >           [94mwith[39;49;00m pytest.raises([90m[39;49;00m
+2026-11-01T20:40:23.6463173Z                 [96mRuntimeError[39;49;00m,[90m[39;49;00m
+2026-11-01T20:40:23.6463547Z                 match=[33m"[39;49;00m[33mHosted test Prefect API process exited before readiness[39;49;00m[33m"[39;49;00m,[90m[39;49;00m
+2026-11-01T20:40:23.6463856Z             ):[90m[39;49;00m
+2026-11-01T20:40:23.6464063Z [1m[31mE           AssertionError: Regex pattern did not match.[0m
+2026-11-01T20:40:23.6464381Z [1m[31mE             Expected regex: 'Hosted test Prefect API process exited before readiness'[0m
+2026-11-01T20:40:23.6464781Z [1m[31mE             Actual message: 'Timed out while attempting to connect to the owned hosted test Prefect API.'[0m
+2026-11-01T20:40:23.6464999Z 
+2026-11-01T20:40:23.6465120Z [1m[31mtests/testing/test_fixtures.py[0m:257: AssertionError
+2026-11-01T20:40:23.6465369Z ----------------------------- Captured stdout call -----------------------------
+2026-11-01T20:40:23.6465588Z Running hosted API server on port 36889
+2026-11-01T20:40:23.6465791Z ----------------------------- Captured stderr call -----------------------------
+2026-11-01T20:40:23.6466038Z 20:38:34.705 | INFO    | uvicorn.error - Started server process [6326]
+2026-11-01T20:40:23.6466276Z 20:38:34.708 | INFO    | uvicorn.error - Waiting for application startup.
+2026-11-01T20:40:23.6466874Z 20:38:34.790 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+2026-11-01T20:40:23.6467592Z 20:38:34.795 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+2026-11-01T20:40:23.6468071Z 20:38:34.795 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+2026-11-01T20:40:23.6468529Z 20:38:34.796 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+2026-11-01T20:40:23.6468983Z 20:38:34.796 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+2026-11-01T20:40:23.6469440Z 20:38:34.796 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+2026-11-01T20:40:23.6470157Z 20:38:34.796 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+2026-11-01T20:40:23.6470616Z 20:38:34.796 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+2026-11-01T20:40:23.6471054Z 20:38:34.796 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+2026-11-01T20:40:23.6471497Z 20:38:34.796 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+2026-11-01T20:40:23.6472026Z 20:38:34.797 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+2026-11-01T20:40:23.6472483Z 20:38:34.797 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+2026-11-01T20:40:23.6472943Z 20:38:34.797 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+2026-11-01T20:40:23.6473424Z 20:38:34.797 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+2026-11-01T20:40:23.6473888Z 20:38:34.797 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+2026-11-01T20:40:23.6474326Z 20:38:34.798 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+2026-11-01T20:40:23.6474759Z 20:38:34.798 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+2026-11-01T20:40:23.6475185Z 20:38:34.799 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+2026-11-01T20:40:23.6475612Z 20:38:34.800 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+2026-11-01T20:40:23.6475937Z 20:38:34.801 | INFO    | uvicorn.error - Application startup complete.
+2026-11-01T20:40:23.6476280Z 20:38:34.802 | ERROR   | uvicorn.error - [Errno 98] error while attempting to bind on address ('127.0.0.1', 36889): address already in use
+2026-11-01T20:40:23.6476623Z 20:38:34.802 | INFO    | uvicorn.error - Waiting for application shutdown.
+2026-11-01T20:40:23.6477763Z Executing <Task finished name='Task-32862' coro=<TestHostedApiServerOwnership.test_rejects_healthy_foreign_listener() done, defined at /home/runner/work/ariadne/ariadne/tests/testing/test_fixtures.py:221> exception=AssertionError("Regex pattern did not match.\n  Expected regex: 'Hosted test Prefect API process exited before readiness'\n  Actual message: 'Timed out while attempting to connect to the owned hosted test Prefect API.'") created at /home/runner/work/_temp/uv-python-dir/cpython-3.11.18-linux-x86_64-gnu/lib/python3.11/asyncio/runners.py:100> took 0.474 seconds
+2026-11-01T20:40:24.1216162Z 20:39:03.266 | WARNING | asyncio - Executing <Task finished name='Task-32862' coro=<TestHostedApiServerOwnership.test_rejects_healthy_foreign_listener() done, defined at /home/runner/work/ariadne/ariadne/tests/testing/test_fixtures.py:221> exception=AssertionError("Regex pattern did not match.\n  Expected regex: 'Hosted test Prefect API process exited before readiness'\n  Actual message: 'Timed out while attempting to connect to the owned hosted test Prefect API.'") created at /home/runner/work/_temp/uv-python-dir/cpython-3.11.18-linux-x86_64-gnu/lib/python3.11/asyncio/runners.py:100> took 0.474 seconds
+2026-11-01T20:40:24.1218200Z ------------------------------ Captured log call -------------------------------
+2026-11-01T20:40:24.1221774Z [33mWARNING [0m asyncio:base_events.py:1931 Executing <Task finished name='Task-32862' coro=<TestHostedApiServerOwnership.test_rejects_healthy_foreign_listener() done, defined at /home/runner/work/ariadne/ariadne/tests/testing/test_fixtures.py:221> exception=AssertionError("Regex pattern did not match.\n  Expected regex: 'Hosted test Prefect API process exited before readiness'\n  Actual message: 'Timed out while attempting to connect to the owned hosted test Prefect API.'") created at /home/runner/work/_temp/uv-python-dir/cpython-3.11.18-linux-x86_64-gnu/lib/python3.11/asyncio/runners.py:100> took 0.474 seconds
+2026-11-01T20:40:24.1223728Z ============================= slowest 26 durations =============================
+2026-11-01T20:40:24.1224299Z 30.53s call     tests/testing/test_fixtures.py::TestHostedApiServerOwnership::test_rejects_healthy_foreign_listener
+2026-11-01T20:40:24.1225034Z 11.17s call     tests/testing/test_utilites.py::test_prefect_test_harness_multiple_runs
+2026-11-01T20:40:24.1225578Z 10.19s call     tests/testing/test_utilites.py::test_prefect_test_harness_nested_restores_outer_settings_context
+2026-11-01T20:40:24.1226345Z 9.46s call     tests/_internal/schemas/test_validation.py::TestNormalizeRRuleString::test_normalized_rule_preserves_forward_occurrence_set[FREQ=SECONDLY;INTERVAL=30]
+2026-11-01T20:40:24.1227154Z 7.63s call     tests/testing/test_utilites.py::test_prefect_test_harness_uses_fresh_server_when_default_server_is_running
+2026-11-01T20:40:24.1227784Z 7.04s teardown tests/events/client/test_events_worker.py::test_worker_instance_server_client_non_cloud_api_url
+2026-11-01T20:40:24.1228417Z 7.04s teardown tests/events/client/test_events_worker.py::test_worker_instance_client_non_cloud_api_url_events_enabled
+2026-11-01T20:40:24.1229034Z 7.03s call     tests/events/client/test_events_client.py::test_events_client_aexit_handles_failed_connection
+2026-11-01T20:40:24.1229753Z 5.98s call     tests/testing/test_utilites.py::test_prefect_test_harness_async_cleanup
+2026-11-01T20:40:24.1230261Z 5.55s call     tests/testing/test_utilites.py::test_prefect_test_harness_does_not_spawn_second_server
+2026-11-01T20:40:24.1230747Z 5.54s call     tests/engine/reliability/test_deadlocks.py::test_sleep_wait_for
+2026-11-01T20:40:24.1231191Z 5.50s call     tests/testing/test_utilites.py::test_multiprocessing_after_test_harness
+2026-11-01T20:40:24.1231744Z 5.38s call     tests/blocks/test_core.py::TestRegisterBlockTypeAndSchema::test_register_nested_block_sequence_sync
+2026-11-01T20:40:24.1232268Z 5.28s call     tests/testing/test_utilites.py::test_prefect_test_harness
+2026-11-01T20:40:24.1232778Z 4.91s call     tests/testing/test_utilites.py::test_prefect_test_harness_settings_visible_in_isolated_asyncio_test_case
+2026-11-01T20:40:24.1233384Z 4.87s call     tests/testing/test_utilites.py::test_prefect_test_harness_restores_global_settings_context
+2026-11-01T20:40:24.1234149Z 4.47s call     tests/logging/test_logs_subscriber.py::test_subscriber_gives_up_after_so_many_attempts[PrefectLogsSubscriber-/accounts/A/workspaces/W/logs/out-None]
+2026-11-01T20:40:24.1235072Z 4.00s setup    tests/infrastructure/provisioners/test_ecs.py::TestElasticContainerServicePushProvisioner::test_provision_interactive_with_default_names
+2026-11-01T20:40:24.1235919Z 3.49s setup    tests/deployment/test_steps.py::TestRunStep::test_requirement_installation_uses_prefect_extras[prefect-azure-prefect[azure]]
+2026-11-01T20:40:24.1236690Z 3.37s call     tests/testing/test_fixtures.py::TestHostedApiServerOwnership::test_concurrent_servers_own_distinct_reserved_ports
+2026-11-01T20:40:24.1237439Z 3.36s setup    tests/_experimental/bundles/test_bundles.py::TestSerializedBundleFilesKey::test_serialized_bundle_accepts_files_key_none
+2026-11-01T20:40:24.1238246Z 3.34s call     tests/infrastructure/provisioners/test_ecs.py::TestElasticContainerServicePushProvisioner::test_raises_runtime_error_on_failure
+2026-11-01T20:40:24.1238920Z 3.31s call     tests/public/tasks/test_task_timeouts.py::test_sync_task_timeout_in_sync_flow
+2026-11-01T20:40:24.1239887Z 3.30s teardown tests/utilities/schema_tools/test_hydration.py::TestHydrateWithWorkspaceVariablePrefectKind::test_hydrate_with_null_prefect_kind[input_object1-expected_output1-ctx1]
+2026-11-01T20:40:24.1240685Z 3.28s call     tests/public/tasks/test_task_timeouts.py::test_sync_task_timeout_in_async_flow
+2026-11-01T20:40:24.1241697Z 3.08s call     tests/infrastructure/provisioners/test_ecs.py::TestElasticContainerServicePushProvisioner::test_provision_boto3_not_installed_interactive
+2026-11-01T20:40:24.1242494Z [36m[1m=========================== short test summary info ============================[0m
+2026-11-01T20:40:24.1244107Z [31mFAILED[0m tests/testing/test_fixtures.py::[1mTestHostedApiServerOwnership::test_rejects_healthy_foreign_listener[0m - AssertionError: Regex pattern did not match.
+2026-11-01T20:40:24.1244802Z   Expected regex: 'Hosted test Prefect API process exited before readiness'
+2026-11-01T20:40:24.1245441Z   Actual message: 'Timed out while attempting to connect to the owned hosted test Prefect API.'
+2026-11-01T20:40:24.1246118Z [33mSKIPPED[0m [1] tests/deployment/test_steps.py:1490: _open_anyio_process errors when mocking OS in test context
+2026-11-01T20:40:24.1246762Z [33mSKIPPED[0m [27] tests/docker/test_image_builds.py: Excluding tests for service(s): 'docker'.
+2026-11-01T20:40:24.1247359Z [33mSKIPPED[0m [3] tests/docker/test_image_builds.py:124: Excluding tests for service(s): 'docker'.
+2026-11-01T20:40:24.1247951Z [33mSKIPPED[0m [8] tests/docker/test_registry_pushes.py: Excluding tests for service(s): 'docker'.
+2026-11-01T20:40:24.1248552Z [33mSKIPPED[0m [1] tests/engine/reliability/test_deadlocks.py:13: This test takes multiple minutes
+2026-11-01T20:40:24.1249156Z [33mSKIPPED[0m [1] tests/engine/reliability/test_deadlocks.py:25: This test takes multiple minutes
+2026-11-01T20:40:24.1250066Z [33mSKIPPED[0m [1] tests/_experimental/bundles/test_include_files_integration.py:286: could not import 'prefect_aws': No module named 'prefect_aws'
+2026-11-01T20:40:24.1250954Z [33mSKIPPED[0m [1] tests/_experimental/bundles/test_include_files_integration.py:302: could not import 'prefect_aws': No module named 'prefect_aws'
+2026-11-01T20:40:24.1251834Z [33mSKIPPED[0m [1] tests/_experimental/bundles/test_include_files_integration.py:321: could not import 'prefect_aws': No module named 'prefect_aws'
+2026-11-01T20:40:24.1252728Z [33mSKIPPED[0m [1] tests/_experimental/bundles/test_include_files_integration.py:336: could not import 'prefect_aws': No module named 'prefect_aws'
+2026-11-01T20:40:24.1253441Z [33mSKIPPED[0m [1] tests/_experimental/bundles/test_path_resolver.py:229: Windows-only test
+2026-11-01T20:40:24.1254076Z [33mSKIPPED[0m [1] tests/_internal/compatibility/test_backports.py:29: Test requires Python version less than 3.11
+2026-11-01T20:40:24.1254764Z [33mSKIPPED[0m [1] tests/_internal/concurrency/test_waiters.py:137: This test is flaky and should be rewritten
+2026-11-01T20:40:24.1255445Z [33mSKIPPED[0m [1] tests/_internal/concurrency/test_waiters.py:204: This test hangs and should be rewritten
+2026-11-01T20:40:24.1256196Z [33mSKIPPED[0m [1] tests/client/test_prefect_client.py:1795: This test is no longer compatible with the current API version checking logic
+2026-11-01T20:40:24.1257008Z [33mSKIPPED[0m [1] tests/client/test_prefect_client.py:1818: This test is no longer compatible with the current API version checking logic
+2026-11-01T20:40:24.1257689Z [33mSKIPPED[0m [4] tests/utilities/test_asyncutils.py:208: Not supported with new engine
+2026-11-01T20:40:24.1258240Z [33mSKIPPED[0m [4] tests/utilities/test_asyncutils.py:253: Not supported with new engine
+2026-11-01T20:40:24.1258798Z [33mSKIPPED[0m [1] tests/utilities/test_filesystem.py:257: This is a Windows-specific test
+2026-11-01T20:40:24.1259703Z [33mSKIPPED[0m [1] tests/public/flows/test_flow_crashes.py:58: Not able to support in the new engine. This was only possible with the internal concurrency utils.
+2026-11-01T20:40:24.1260672Z [33mSKIPPED[0m [1] tests/public/flows/test_flow_crashes.py:260: Relies explicitly on the old engine's subprocess handling. Consider rewriting for the new engine.
+2026-11-01T20:40:24.1261405Z [33mSKIPPED[0m [1] tests/public/flows/test_flow_timeouts.py:110: Not supported by new engine
+2026-11-01T20:40:24.1261978Z [33mSKIPPED[0m [1] tests/public/tasks/test_task_timeouts.py:44: Not supported by new engine
+2026-11-01T20:40:24.1262856Z [31m= [31m[1m1 failed[0m, [32m4788 passed[0m, [33m64 skipped[0m, [33m2 xfailed[0m, [33m2 xpassed[0m[31m in 476.31s (0:07:56)[0m[31m =[0m
+2026-11-01T20:40:25.0320594Z ##[error]Process completed with exit code 1.
+2026-11-01T20:40:25.0360372Z ##[group]Run docker container inspect 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501 \
+2026-11-01T20:40:25.0360813Z [36;1mdocker container inspect 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501 \[0m
+2026-11-01T20:40:25.0361359Z [36;1m&& docker container logs 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501 \[0m
+2026-11-01T20:40:25.0361630Z [36;1m|| echo "Ignoring bad exit code"[0m
+2026-11-01T20:40:25.0378095Z shell: /usr/bin/bash -e {0}
+2026-11-01T20:40:25.0378239Z env:
+2026-11-01T20:40:25.0378351Z   PY_COLORS: 1
+2026-11-01T20:40:25.0378518Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-11-01T20:40:25.0378704Z   UV_PYTHON: 3.11
+2026-11-01T20:40:25.0378851Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-11-01T20:40:25.0379310Z   PREFECT_SERVER_DATABASE_CONNECTION_URL: ***localhost/prefect
+2026-11-01T20:40:25.0379904Z ##[endgroup]
+2026-11-01T20:40:25.0519447Z [
+2026-11-01T20:40:25.0520092Z     {
+2026-11-01T20:40:25.0520593Z         "Id": "093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501",
+2026-11-01T20:40:25.0521027Z         "Created": "2026-11-01T20:31:54.559495923Z",
+2026-11-01T20:40:25.0521304Z         "Path": "docker-entrypoint.sh",
+2026-11-01T20:40:25.0521560Z         "Args": [
+2026-11-01T20:40:25.0521745Z             "postgres"
+2026-11-01T20:40:25.0521930Z         ],
+2026-11-01T20:40:25.0522093Z         "State": {
+2026-11-01T20:40:25.0522285Z             "Status": "running",
+2026-11-01T20:40:25.0522502Z             "Running": true,
+2026-11-01T20:40:25.0522712Z             "Paused": false,
+2026-11-01T20:40:25.0522918Z             "Restarting": false,
+2026-11-01T20:40:25.0523137Z             "OOMKilled": false,
+2026-11-01T20:40:25.0523348Z             "Dead": false,
+2026-11-01T20:40:25.0523545Z             "Pid": 2403,
+2026-11-01T20:40:25.0523741Z             "ExitCode": 0,
+2026-11-01T20:40:25.0523930Z             "Error": "",
+2026-11-01T20:40:25.0524084Z             "StartedAt": "2026-11-01T20:31:54.581401555Z",
+2026-11-01T20:40:25.0524264Z             "FinishedAt": "0001-01-01T00:00:00Z",
+2026-11-01T20:40:25.0524421Z             "Health": {
+2026-11-01T20:40:25.0524553Z                 "Status": "healthy",
+2026-11-01T20:40:25.0524709Z                 "FailingStreak": 0,
+2026-11-01T20:40:25.0524849Z                 "Log": [
+2026-11-01T20:40:25.0524973Z                     {
+2026-11-01T20:40:25.0525119Z                         "Start": "2026-11-01T20:39:36.965463624Z",
+2026-11-01T20:40:25.0525309Z                         "End": "2026-11-01T20:39:37.017136429Z",
+2026-11-01T20:40:25.0525475Z                         "ExitCode": 0,
+2026-11-01T20:40:25.0525675Z                         "Output": "/var/run/postgresql:5432 - accepting connections\n"
+2026-11-01T20:40:25.0525876Z                     },
+2026-11-01T20:40:25.0525995Z                     {
+2026-11-01T20:40:25.0526135Z                         "Start": "2026-11-01T20:39:47.017724593Z",
+2026-11-01T20:40:25.0526319Z                         "End": "2026-11-01T20:39:47.070232656Z",
+2026-11-01T20:40:25.0526481Z                         "ExitCode": 0,
+2026-11-01T20:40:25.0526673Z                         "Output": "/var/run/postgresql:5432 - accepting connections\n"
+2026-11-01T20:40:25.0526872Z                     },
+2026-11-01T20:40:25.0526989Z                     {
+2026-11-01T20:40:25.0527126Z                         "Start": "2026-11-01T20:39:57.070661951Z",
+2026-11-01T20:40:25.0527304Z                         "End": "2026-11-01T20:39:57.117050735Z",
+2026-11-01T20:40:25.0527465Z                         "ExitCode": 0,
+2026-11-01T20:40:25.0527652Z                         "Output": "/var/run/postgresql:5432 - accepting connections\n"
+2026-11-01T20:40:25.0527842Z                     },
+2026-11-01T20:40:25.0528006Z                     {
+2026-11-01T20:40:25.0528143Z                         "Start": "2026-11-01T20:40:07.117986841Z",
+2026-11-01T20:40:25.0528323Z                         "End": "2026-11-01T20:40:07.180986114Z",
+2026-11-01T20:40:25.0528728Z                         "ExitCode": 0,
+2026-11-01T20:40:25.0528925Z                         "Output": "/var/run/postgresql:5432 - accepting connections\n"
+2026-11-01T20:40:25.0529118Z                     },
+2026-11-01T20:40:25.0529238Z                     {
+2026-11-01T20:40:25.0529486Z                         "Start": "2026-11-01T20:40:17.182220941Z",
+2026-11-01T20:40:25.0529879Z                         "End": "2026-11-01T20:40:17.226204411Z",
+2026-11-01T20:40:25.0530046Z                         "ExitCode": 0,
+2026-11-01T20:40:25.0530237Z                         "Output": "/var/run/postgresql:5432 - accepting connections\n"
+2026-11-01T20:40:25.0530427Z                     }
+2026-11-01T20:40:25.0530542Z                 ]
+2026-11-01T20:40:25.0530654Z             }
+2026-11-01T20:40:25.0530765Z         },
+2026-11-01T20:40:25.0530968Z         "Image": "sha256:bba45ff25c7494631b579ef011c26c99758e8ae7ef8fbc0c69775188e303a860",
+2026-11-01T20:40:25.0531379Z         "ResolvConfPath": "/var/lib/docker/containers/093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501/resolv.conf",
+2026-11-01T20:40:25.0531839Z         "HostnamePath": "/var/lib/docker/containers/093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501/hostname",
+2026-11-01T20:40:25.0532282Z         "HostsPath": "/var/lib/docker/containers/093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501/hosts",
+2026-11-01T20:40:25.0532831Z         "LogPath": "/var/lib/docker/containers/093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501/093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501-json.log",
+2026-11-01T20:40:25.0533329Z         "Name": "/6d1eb68e425d403da0757f7181652773_postgres14_c0ec9e",
+2026-11-01T20:40:25.0533634Z         "RestartCount": 0,
+2026-11-01T20:40:25.0533787Z         "Driver": "overlay2",
+2026-11-01T20:40:25.0533929Z         "Platform": "linux",
+2026-11-01T20:40:25.0534067Z         "MountLabel": "",
+2026-11-01T20:40:25.0534205Z         "ProcessLabel": "",
+2026-11-01T20:40:25.0534362Z         "AppArmorProfile": "docker-default",
+2026-11-01T20:40:25.0534524Z         "ExecIDs": null,
+2026-11-01T20:40:25.0534655Z         "HostConfig": {
+2026-11-01T20:40:25.0534784Z             "Binds": null,
+2026-11-01T20:40:25.0534922Z             "ContainerIDFile": "",
+2026-11-01T20:40:25.0535073Z             "LogConfig": {
+2026-11-01T20:40:25.0535211Z                 "Type": "json-file",
+2026-11-01T20:40:25.0535357Z                 "Config": {}
+2026-11-01T20:40:25.0535488Z             },
+2026-11-01T20:40:25.0535656Z             "NetworkMode": "github_network_495dc5b58ba44fa189749996759b6c17",
+2026-11-01T20:40:25.0535862Z             "PortBindings": {
+2026-11-01T20:40:25.0535998Z                 "5432/tcp": [
+2026-11-01T20:40:25.0536130Z                     {
+2026-11-01T20:40:25.0536257Z                         "HostIp": "",
+2026-11-01T20:40:25.0536408Z                         "HostPort": "5432"
+2026-11-01T20:40:25.0536552Z                     }
+2026-11-01T20:40:25.0536673Z                 ]
+2026-11-01T20:40:25.0536785Z             },
+2026-11-01T20:40:25.0536904Z             "RestartPolicy": {
+2026-11-01T20:40:25.0537044Z                 "Name": "no",
+2026-11-01T20:40:25.0537185Z                 "MaximumRetryCount": 0
+2026-11-01T20:40:25.0537324Z             },
+2026-11-01T20:40:25.0537446Z             "AutoRemove": false,
+2026-11-01T20:40:25.0537588Z             "VolumeDriver": "",
+2026-11-01T20:40:25.0537728Z             "VolumesFrom": null,
+2026-11-01T20:40:25.0537869Z             "ConsoleSize": [
+2026-11-01T20:40:25.0537997Z                 0,
+2026-11-01T20:40:25.0538106Z                 0
+2026-11-01T20:40:25.0538214Z             ],
+2026-11-01T20:40:25.0538332Z             "CapAdd": null,
+2026-11-01T20:40:25.0538468Z             "CapDrop": null,
+2026-11-01T20:40:25.0538610Z             "CgroupnsMode": "private",
+2026-11-01T20:40:25.0538753Z             "Dns": [],
+2026-11-01T20:40:25.0538880Z             "DnsOptions": [],
+2026-11-01T20:40:25.0539014Z             "DnsSearch": [],
+2026-11-01T20:40:25.0539265Z             "ExtraHosts": null,
+2026-11-01T20:40:25.0539404Z             "GroupAdd": null,
+2026-11-01T20:40:25.0539711Z             "IpcMode": "private",
+2026-11-01T20:40:25.0539857Z             "Cgroup": "",
+2026-11-01T20:40:25.0539988Z             "Links": null,
+2026-11-01T20:40:25.0540217Z             "OomScoreAdj": 0,
+2026-11-01T20:40:25.0540353Z             "PidMode": "",
+2026-11-01T20:40:25.0540490Z             "Privileged": false,
+2026-11-01T20:40:25.0540636Z             "PublishAllPorts": false,
+2026-11-01T20:40:25.0540790Z             "ReadonlyRootfs": false,
+2026-11-01T20:40:25.0540938Z             "SecurityOpt": null,
+2026-11-01T20:40:25.0541076Z             "Tmpfs": {
+2026-11-01T20:40:25.0541213Z                 "/var/lib/postgresql/data": ""
+2026-11-01T20:40:25.0541364Z             },
+2026-11-01T20:40:25.0541476Z             "UTSMode": "",
+2026-11-01T20:40:25.0541608Z             "UsernsMode": "",
+2026-11-01T20:40:25.0541741Z             "ShmSize": 67108864,
+2026-11-01T20:40:25.0541886Z             "Runtime": "runc",
+2026-11-01T20:40:25.0542020Z             "Isolation": "",
+2026-11-01T20:40:25.0542153Z             "CpuShares": 0,
+2026-11-01T20:40:25.0542288Z             "Memory": 0,
+2026-11-01T20:40:25.0542436Z             "NanoCpus": 0,
+2026-11-01T20:40:25.0542577Z             "CgroupParent": "",
+2026-11-01T20:40:25.0542716Z             "BlkioWeight": 0,
+2026-11-01T20:40:25.0542864Z             "BlkioWeightDevice": [],
+2026-11-01T20:40:25.0543023Z             "BlkioDeviceReadBps": [],
+2026-11-01T20:40:25.0543179Z             "BlkioDeviceWriteBps": [],
+2026-11-01T20:40:25.0543335Z             "BlkioDeviceReadIOps": [],
+2026-11-01T20:40:25.0543494Z             "BlkioDeviceWriteIOps": [],
+2026-11-01T20:40:25.0543649Z             "CpuPeriod": 0,
+2026-11-01T20:40:25.0543784Z             "CpuQuota": 0,
+2026-11-01T20:40:25.0543923Z             "CpuRealtimePeriod": 0,
+2026-11-01T20:40:25.0544078Z             "CpuRealtimeRuntime": 0,
+2026-11-01T20:40:25.0544229Z             "CpusetCpus": "",
+2026-11-01T20:40:25.0544369Z             "CpusetMems": "",
+2026-11-01T20:40:25.0544505Z             "Devices": [],
+2026-11-01T20:40:25.0544647Z             "DeviceCgroupRules": null,
+2026-11-01T20:40:25.0544800Z             "DeviceRequests": null,
+2026-11-01T20:40:25.0544952Z             "MemoryReservation": 0,
+2026-11-01T20:40:25.0545103Z             "MemorySwap": 0,
+2026-11-01T20:40:25.0545246Z             "MemorySwappiness": null,
+2026-11-01T20:40:25.0545399Z             "OomKillDisable": null,
+2026-11-01T20:40:25.0545545Z             "PidsLimit": null,
+2026-11-01T20:40:25.0545684Z             "Ulimits": [],
+2026-11-01T20:40:25.0545812Z             "CpuCount": 0,
+2026-11-01T20:40:25.0545945Z             "CpuPercent": 0,
+2026-11-01T20:40:25.0546081Z             "IOMaximumIOps": 0,
+2026-11-01T20:40:25.0546224Z             "IOMaximumBandwidth": 0,
+2026-11-01T20:40:25.0546377Z             "MaskedPaths": [
+2026-11-01T20:40:25.0546515Z                 "/proc/asound",
+2026-11-01T20:40:25.0546651Z                 "/proc/acpi",
+2026-11-01T20:40:25.0546790Z                 "/proc/interrupts",
+2026-11-01T20:40:25.0546934Z                 "/proc/kcore",
+2026-11-01T20:40:25.0547069Z                 "/proc/keys",
+2026-11-01T20:40:25.0547205Z                 "/proc/latency_stats",
+2026-11-01T20:40:25.0547360Z                 "/proc/timer_list",
+2026-11-01T20:40:25.0547506Z                 "/proc/timer_stats",
+2026-11-01T20:40:25.0547653Z                 "/proc/sched_debug",
+2026-11-01T20:40:25.0547793Z                 "/proc/scsi",
+2026-11-01T20:40:25.0547927Z                 "/sys/firmware",
+2026-11-01T20:40:25.0548078Z                 "/sys/devices/virtual/powercap"
+2026-11-01T20:40:25.0548233Z             ],
+2026-11-01T20:40:25.0548354Z             "ReadonlyPaths": [
+2026-11-01T20:40:25.0548491Z                 "/proc/bus",
+2026-11-01T20:40:25.0548622Z                 "/proc/fs",
+2026-11-01T20:40:25.0548751Z                 "/proc/irq",
+2026-11-01T20:40:25.0548885Z                 "/proc/sys",
+2026-11-01T20:40:25.0549141Z                 "/proc/sysrq-trigger"
+2026-11-01T20:40:25.0549283Z             ]
+2026-11-01T20:40:25.0549391Z         },
+2026-11-01T20:40:25.0549623Z         "GraphDriver": {
+2026-11-01T20:40:25.0549816Z             "Data": {
+2026-11-01T20:40:25.0550014Z                 "ID": "093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501",
+2026-11-01T20:40:25.0552986Z                 "LowerDir": "/var/lib/docker/overlay2/f7f21243fd789e45bd401e261d798114e97eccabb4efc11de37f49f9e3f505ce-init/diff:/var/lib/docker/overlay2/25237160a621fa285990341cb0f87c1ce426db9eeb9c7291c53f02e155980fd3/diff:/var/lib/docker/overlay2/39b69723f000bef84a190acc20802ba431728cb0daaf19751a66c6231c3e4974/diff:/var/lib/docker/overlay2/3c539520591b3ab30b602640290728220389c7d2e156c1a4336060d441eb414d/diff:/var/lib/docker/overlay2/6ac655ec7352e6e3db5090e6486159431645645018f81aeb059c5b1baef64cf1/diff:/var/lib/docker/overlay2/89c99d4ff74e187b1140183210dacd6adb060027e948483c4a262bcbd78320bc/diff:/var/lib/docker/overlay2/78ec3c15962200a3676968fc3e7a6a5a11a73c67d666668c7f8f6d22b3c676e9/diff:/var/lib/docker/overlay2/e2ade5f7f5dbbe6c8dde5aa4fa0ad927d9df0e9c18e1c3900b6386247495c514/diff:/var/lib/docker/overlay2/25af090f27590ec3e8c55cd0741dfd9016908a408ab64e0f5a3bb1accf8f1832/diff:/var/lib/docker/overlay2/64b643d7e365eeb7e274484bab258862e975487ee49d57e685cf8f612f3b5535/diff:/var/lib/docker/overlay2/2bd2923224acbc967d23d01c0333883a1573da06cbf81d3c0189561deb7df5ba/diff:/var/lib/docker/overlay2/e19ee4f2487c5c86f008df47c2815f47aee1b021f163c5c2c57b7232812f7f49/diff:/var/lib/docker/overlay2/5a5166dba14f05b8e14269bd9b147644635e2cdd95752c1d0086e5903eabbdab/diff:/var/lib/docker/overlay2/5a2203d2795ed60d07f1012636db717fcc3fdb082f5751b306acfa29aec02a3d/diff:/var/lib/docker/overlay2/06564bd643caf6bae0f8c6d06e72ac2efcf8e93bedd02378341424b02d65f9fc/diff",
+2026-11-01T20:40:25.0556216Z                 "MergedDir": "/var/lib/docker/overlay2/f7f21243fd789e45bd401e261d798114e97eccabb4efc11de37f49f9e3f505ce/merged",
+2026-11-01T20:40:25.0556719Z                 "UpperDir": "/var/lib/docker/overlay2/f7f21243fd789e45bd401e261d798114e97eccabb4efc11de37f49f9e3f505ce/diff",
+2026-11-01T20:40:25.0557155Z                 "WorkDir": "/var/lib/docker/overlay2/f7f21243fd789e45bd401e261d798114e97eccabb4efc11de37f49f9e3f505ce/work"
+2026-11-01T20:40:25.0557443Z             },
+2026-11-01T20:40:25.0557563Z             "Name": "overlay2"
+2026-11-01T20:40:25.0557697Z         },
+2026-11-01T20:40:25.0557807Z         "Mounts": [],
+2026-11-01T20:40:25.0557930Z         "Config": {
+2026-11-01T20:40:25.0558055Z             "Hostname": "093355424b58",
+2026-11-01T20:40:25.0558206Z             "Domainname": "",
+2026-11-01T20:40:25.0558343Z             "User": "",
+2026-11-01T20:40:25.0558474Z             "AttachStdin": false,
+2026-11-01T20:40:25.0558621Z             "AttachStdout": true,
+2026-11-01T20:40:25.0558765Z             "AttachStderr": true,
+2026-11-01T20:40:25.0558908Z             "ExposedPorts": {
+2026-11-01T20:40:25.0559045Z                 "5432/tcp": {}
+2026-11-01T20:40:25.0559173Z             },
+2026-11-01T20:40:25.0559290Z             "Tty": false,
+2026-11-01T20:40:25.0559426Z             "OpenStdin": false,
+2026-11-01T20:40:25.0559751Z             "StdinOnce": false,
+2026-11-01T20:40:25.0559891Z             "Env": [
+2026-11-01T20:40:25.0560021Z                 "GITHUB_ACTIONS=true",
+2026-11-01T20:40:25.0560174Z                 "CI=true",
+2026-11-01T20:40:25.0560311Z                 "POSTGRES_DB=prefect",
+2026-11-01T20:40:25.0560466Z                 "LANGUAGE=C.UTF-8",
+2026-11-01T20:40:25.0560614Z                 "LC_CTYPE=C.UTF-8",
+2026-11-01T20:40:25.0560759Z                 "LC_ALL=C.UTF-8",
+2026-11-01T20:40:25.0560907Z                 "LC_COLLATE=C.UTF-8",
+2026-11-01T20:40:25.0561061Z                 "POSTGRES_USER=prefect",
+2026-11-01T20:40:25.0561222Z                 "POSTGRES_PASSWORD=prefect",
+2026-11-01T20:40:25.0561379Z                 "LANG=C.UTF-8",
+2026-11-01T20:40:25.0561673Z                 "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/postgresql/14/bin",
+2026-11-01T20:40:25.0562200Z                 "GOSU_VERSION=1.19",
+2026-11-01T20:40:25.0562402Z                 "PG_MAJOR=14",
+2026-11-01T20:40:25.0562555Z                 "PG_VERSION=14.24-1.pgdg13+2",
+2026-11-01T20:40:25.0562730Z                 "PGDATA=/var/lib/postgresql/data"
+2026-11-01T20:40:25.0562976Z             ],
+2026-11-01T20:40:25.0563089Z             "Cmd": [
+2026-11-01T20:40:25.0563212Z                 "postgres"
+2026-11-01T20:40:25.0563340Z             ],
+2026-11-01T20:40:25.0563458Z             "Healthcheck": {
+2026-11-01T20:40:25.0563592Z                 "Test": [
+2026-11-01T20:40:25.0563724Z                     "CMD-SHELL",
+2026-11-01T20:40:25.0563868Z                     "pg_isready"
+2026-11-01T20:40:25.0564001Z                 ],
+2026-11-01T20:40:25.0564125Z                 "Interval": 10000000000,
+2026-11-01T20:40:25.0564278Z                 "Timeout": 5000000000,
+2026-11-01T20:40:25.0564422Z                 "Retries": 5
+2026-11-01T20:40:25.0564552Z             },
+2026-11-01T20:40:25.0564677Z             "Image": "postgres:14",
+2026-11-01T20:40:25.0564821Z             "Volumes": {
+2026-11-01T20:40:25.0565028Z                 "/var/lib/postgresql/data": {}
+2026-11-01T20:40:25.0565203Z             },
+2026-11-01T20:40:25.0565318Z             "WorkingDir": "",
+2026-11-01T20:40:25.0565462Z             "Entrypoint": [
+2026-11-01T20:40:25.0565681Z                 "docker-entrypoint.sh"
+2026-11-01T20:40:25.0565934Z             ],
+2026-11-01T20:40:25.0566049Z             "OnBuild": null,
+2026-11-01T20:40:25.0566181Z             "Labels": {
+2026-11-01T20:40:25.0566307Z                 "1bdb25": ""
+2026-11-01T20:40:25.0566432Z             },
+2026-11-01T20:40:25.0566555Z             "StopSignal": "SIGINT"
+2026-11-01T20:40:25.0566773Z         },
+2026-11-01T20:40:25.0566887Z         "NetworkSettings": {
+2026-11-01T20:40:25.0567024Z             "Bridge": "",
+2026-11-01T20:40:25.0567253Z             "SandboxID": "a52c2207074c2ce04843ee3b32f93a98a2caec29abfda2a55df6cb4057aad912",
+2026-11-01T20:40:25.0567614Z             "SandboxKey": "/var/run/docker/netns/a52c2207074c",
+2026-11-01T20:40:25.0567820Z             "Ports": {
+2026-11-01T20:40:25.0567951Z                 "5432/tcp": [
+2026-11-01T20:40:25.0568087Z                     {
+2026-11-01T20:40:25.0568286Z                         "HostIp": "0.0.0.0",
+2026-11-01T20:40:25.0568458Z                         "HostPort": "5432"
+2026-11-01T20:40:25.0568606Z                     },
+2026-11-01T20:40:25.0568730Z                     {
+2026-11-01T20:40:25.0568888Z                         "HostIp": "::",
+2026-11-01T20:40:25.0569115Z                         "HostPort": "5432"
+2026-11-01T20:40:25.0569262Z                     }
+2026-11-01T20:40:25.0569383Z                 ]
+2026-11-01T20:40:25.0569496Z             },
+2026-11-01T20:40:25.0569869Z             "HairpinMode": false,
+2026-11-01T20:40:25.0570022Z             "LinkLocalIPv6Address": "",
+2026-11-01T20:40:25.0570192Z             "LinkLocalIPv6PrefixLen": 0,
+2026-11-01T20:40:25.0570397Z             "SecondaryIPAddresses": null,
+2026-11-01T20:40:25.0570614Z             "SecondaryIPv6Addresses": null,
+2026-11-01T20:40:25.0570777Z             "EndpointID": "",
+2026-11-01T20:40:25.0570916Z             "Gateway": "",
+2026-11-01T20:40:25.0571060Z             "GlobalIPv6Address": "",
+2026-11-01T20:40:25.0571299Z             "GlobalIPv6PrefixLen": 0,
+2026-11-01T20:40:25.0571455Z             "IPAddress": "",
+2026-11-01T20:40:25.0571593Z             "IPPrefixLen": 0,
+2026-11-01T20:40:25.0571737Z             "IPv6Gateway": "",
+2026-11-01T20:40:25.0571875Z             "MacAddress": "",
+2026-11-01T20:40:25.0572089Z             "Networks": {
+2026-11-01T20:40:25.0572255Z                 "github_network_495dc5b58ba44fa189749996759b6c17": {
+2026-11-01T20:40:25.0572448Z                     "IPAMConfig": null,
+2026-11-01T20:40:25.0572601Z                     "Links": null,
+2026-11-01T20:40:25.0572784Z                     "Aliases": [
+2026-11-01T20:40:25.0572966Z                         "postgres"
+2026-11-01T20:40:25.0573108Z                     ],
+2026-11-01T20:40:25.0573352Z                     "MacAddress": "86:bf:ba:40:d4:2a",
+2026-11-01T20:40:25.0573554Z                     "DriverOpts": null,
+2026-11-01T20:40:25.0573755Z                     "GwPriority": 0,
+2026-11-01T20:40:25.0573996Z                     "NetworkID": "91770d4c9af1047f381e8d3a27764120c273d7a82e57bcdf699d5e321607b06d",
+2026-11-01T20:40:25.0574505Z                     "EndpointID": "f28332fd4ad7266d9f923beff1f6c0cc8ea993e649480986ce3a846a94a5bad8",
+2026-11-01T20:40:25.0574758Z                     "Gateway": "172.18.0.1",
+2026-11-01T20:40:25.0574921Z                     "IPAddress": "172.18.0.3",
+2026-11-01T20:40:25.0575084Z                     "IPPrefixLen": 16,
+2026-11-01T20:40:25.0575327Z                     "IPv6Gateway": "",
+2026-11-01T20:40:25.0575481Z                     "GlobalIPv6Address": "",
+2026-11-01T20:40:25.0575650Z                     "GlobalIPv6PrefixLen": 0,
+2026-11-01T20:40:25.0575813Z                     "DNSNames": [
+2026-11-01T20:40:25.0576085Z                         "6d1eb68e425d403da0757f7181652773_postgres14_c0ec9e",
+2026-11-01T20:40:25.0576288Z                         "postgres",
+2026-11-01T20:40:25.0576434Z                         "093355424b58"
+2026-11-01T20:40:25.0576577Z                     ]
+2026-11-01T20:40:25.0576732Z                 }
+2026-11-01T20:40:25.0576892Z             }
+2026-11-01T20:40:25.0577003Z         }
+2026-11-01T20:40:25.0577108Z     }
+2026-11-01T20:40:25.0577263Z ]
+2026-11-01T20:40:25.0638090Z The files belonging to this database system will be owned by user "postgres".
+2026-11-01T20:40:25.0654649Z initdb: warning: enabling "trust" authentication for local connections
+2026-11-01T20:40:25.0655187Z You can change this by editing pg_hba.conf or using the option -A, or
+2026-11-01T20:40:25.0655576Z --auth-local and --auth-host, the next time you run initdb.
+2026-11-01T20:40:25.0656196Z 2026-11-01 20:31:55.363 UTC [1] LOG:  starting PostgreSQL 14.24 (Debian 14.24-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-01T20:40:25.0656849Z 2026-11-01 20:31:55.363 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+2026-11-01T20:40:25.0657285Z 2026-11-01 20:31:55.363 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+2026-11-01T20:40:25.0657744Z 2026-11-01 20:31:55.364 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-11-01T20:40:25.0658246Z 2026-11-01 20:31:55.365 UTC [64] LOG:  database system was shut down at 2026-11-01 20:31:55 UTC
+2026-11-01T20:40:25.0658702Z 2026-11-01 20:31:55.368 UTC [1] LOG:  database system is ready to accept connections
+2026-11-01T20:40:25.0659098Z 2026-11-01 20:32:04.717 UTC [78] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0659448Z 2026-11-01 20:32:14.768 UTC [85] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0659977Z 2026-11-01 20:32:24.816 UTC [93] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0660331Z 2026-11-01 20:32:34.872 UTC [101] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0660690Z 2026-11-01 20:32:44.932 UTC [117] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0661033Z 2026-11-01 20:32:54.976 UTC [125] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0661381Z 2026-11-01 20:33:05.027 UTC [136] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0661732Z 2026-11-01 20:33:15.072 UTC [160] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0662082Z 2026-11-01 20:33:25.116 UTC [170] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0662426Z 2026-11-01 20:33:35.160 UTC [177] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0662772Z 2026-11-01 20:33:45.204 UTC [186] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0663116Z 2026-11-01 20:33:55.249 UTC [194] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0663461Z 2026-11-01 20:34:05.297 UTC [203] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0663804Z 2026-11-01 20:34:15.347 UTC [215] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0664337Z 2026-11-01 20:34:25.404 UTC [225] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0664683Z 2026-11-01 20:34:35.461 UTC [233] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0665017Z 2026-11-01 20:34:45.514 UTC [241] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0665348Z 2026-11-01 20:34:55.571 UTC [250] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0665809Z 2026-11-01 20:35:05.621 UTC [259] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0666153Z 2026-11-01 20:35:15.684 UTC [267] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0666500Z 2026-11-01 20:35:25.738 UTC [275] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0666848Z 2026-11-01 20:35:35.794 UTC [284] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0667194Z 2026-11-01 20:35:45.850 UTC [292] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0667553Z 2026-11-01 20:35:55.900 UTC [301] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0668469Z 2026-11-01 20:36:05.948 UTC [310] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0668696Z 2026-11-01 20:36:16.005 UTC [322] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0668992Z 2026-11-01 20:36:16.693 UTC [251] ERROR:  duplicate key value violates unique constraint "uq_work_pool__name"
+2026-11-01T20:40:25.0669397Z 2026-11-01 20:36:16.693 UTC [251] DETAIL:  Key (name)=(test-work-pool-a0db61f7-1119-4b61-ad5a-7f29850ea51b) already exists.
+2026-11-01T20:40:25.0670619Z 2026-11-01 20:36:16.693 UTC [251] STATEMENT:  INSERT INTO work_pool (name, description, type, base_job_template, is_paused, default_queue_id, concurrency_limit, status, last_transitioned_status_at, last_status_event_id, storage_configuration, id, created, updated) VALUES ($1::VARCHAR, $2::VARCHAR, $3::VARCHAR, $4::JSONB, $5::BOOLEAN, $6::UUID, $7::INTEGER, $8::work_pool_status, $9::TIMESTAMP WITH TIME ZONE, $10::UUID, $11, $12::UUID, $13::TIMESTAMP WITH TIME ZONE, $14::TIMESTAMP WITH TIME ZONE)
+2026-11-01T20:40:25.0671599Z 2026-11-01 20:36:16.976 UTC [251] ERROR:  duplicate key value violates unique constraint "uq_work_pool__name"
+2026-11-01T20:40:25.0671995Z 2026-11-01 20:36:16.976 UTC [251] DETAIL:  Key (name)=(test-work-pool-a0901fc3-14b7-4c72-8591-dd0c7c3996e5) already exists.
+2026-11-01T20:40:25.0673005Z 2026-11-01 20:36:16.976 UTC [251] STATEMENT:  INSERT INTO work_pool (name, description, type, base_job_template, is_paused, default_queue_id, concurrency_limit, status, last_transitioned_status_at, last_status_event_id, storage_configuration, id, created, updated) VALUES ($1::VARCHAR, $2::VARCHAR, $3::VARCHAR, $4::JSONB, $5::BOOLEAN, $6::UUID, $7::INTEGER, $8::work_pool_status, $9::TIMESTAMP WITH TIME ZONE, $10::UUID, $11, $12::UUID, $13::TIMESTAMP WITH TIME ZONE, $14::TIMESTAMP WITH TIME ZONE)
+2026-11-01T20:40:25.0673907Z 2026-11-01 20:36:26.060 UTC [331] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0674133Z 2026-11-01 20:36:36.108 UTC [342] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0674360Z 2026-11-01 20:36:46.166 UTC [350] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0674580Z 2026-11-01 20:36:56.221 UTC [358] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0674795Z 2026-11-01 20:37:06.278 UTC [365] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0675010Z 2026-11-01 20:37:16.331 UTC [374] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0675231Z 2026-11-01 20:37:26.382 UTC [383] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0675445Z 2026-11-01 20:37:36.445 UTC [392] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0675658Z 2026-11-01 20:37:46.502 UTC [400] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0675871Z 2026-11-01 20:37:56.549 UTC [410] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0676088Z 2026-11-01 20:38:06.592 UTC [418] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0676300Z 2026-11-01 20:38:16.642 UTC [427] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0676517Z 2026-11-01 20:38:26.686 UTC [435] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0676737Z 2026-11-01 20:38:36.732 UTC [445] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0677065Z 2026-11-01 20:38:46.776 UTC [453] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0677283Z 2026-11-01 20:38:56.823 UTC [462] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0677499Z 2026-11-01 20:39:06.869 UTC [472] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0677801Z 2026-11-01 20:39:16.917 UTC [481] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0678016Z 2026-11-01 20:39:26.962 UTC [489] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0678230Z 2026-11-01 20:39:37.015 UTC [499] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0678445Z 2026-11-01 20:39:47.068 UTC [507] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0678662Z 2026-11-01 20:39:57.114 UTC [516] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0678874Z 2026-11-01 20:40:07.177 UTC [523] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0679090Z 2026-11-01 20:40:17.224 UTC [533] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.0679302Z This user must also own the server process.
+2026-11-01T20:40:25.0679420Z 
+2026-11-01T20:40:25.0679675Z The database cluster will be initialized with locale "C.UTF-8".
+2026-11-01T20:40:25.0679921Z The default database encoding has accordingly been set to "UTF8".
+2026-11-01T20:40:25.0680164Z The default text search configuration will be set to "english".
+2026-11-01T20:40:25.0680310Z 
+2026-11-01T20:40:25.0680376Z Data page checksums are disabled.
+2026-11-01T20:40:25.0680473Z 
+2026-11-01T20:40:25.0680590Z fixing permissions on existing directory /var/lib/postgresql/data ... ok
+2026-11-01T20:40:25.0680814Z creating subdirectories ... ok
+2026-11-01T20:40:25.0680996Z selecting dynamic shared memory implementation ... posix
+2026-11-01T20:40:25.0681197Z selecting default max_connections ... 100
+2026-11-01T20:40:25.0681366Z selecting default shared_buffers ... 128MB
+2026-11-01T20:40:25.0681531Z selecting default time zone ... Etc/UTC
+2026-11-01T20:40:25.0681694Z creating configuration files ... ok
+2026-11-01T20:40:25.0681856Z running bootstrap script ... ok
+2026-11-01T20:40:25.0682023Z performing post-bootstrap initialization ... ok
+2026-11-01T20:40:25.0682198Z syncing data to disk ... ok
+2026-11-01T20:40:25.0682286Z 
+2026-11-01T20:40:25.0682289Z 
+2026-11-01T20:40:25.0682369Z Success. You can now start the database server using:
+2026-11-01T20:40:25.0682500Z 
+2026-11-01T20:40:25.0682585Z     pg_ctl -D /var/lib/postgresql/data -l logfile start
+2026-11-01T20:40:25.0682709Z 
+2026-11-01T20:40:25.0683017Z waiting for server to start....2026-11-01 20:31:55.119 UTC [49] LOG:  starting PostgreSQL 14.24 (Debian 14.24-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-01T20:40:25.0683497Z 2026-11-01 20:31:55.120 UTC [49] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-11-01T20:40:25.0683815Z 2026-11-01 20:31:55.122 UTC [50] LOG:  database system was shut down at 2026-11-01 20:31:55 UTC
+2026-11-01T20:40:25.0684102Z 2026-11-01 20:31:55.125 UTC [49] LOG:  database system is ready to accept connections
+2026-11-01T20:40:25.0684314Z  done
+2026-11-01T20:40:25.0684424Z server started
+2026-11-01T20:40:25.0684544Z CREATE DATABASE
+2026-11-01T20:40:25.0684612Z 
+2026-11-01T20:40:25.0684615Z 
+2026-11-01T20:40:25.0684748Z /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+2026-11-01T20:40:25.0684931Z 
+2026-11-01T20:40:25.0685079Z waiting for server to shut down....2026-11-01 20:31:55.247 UTC [49] LOG:  received fast shutdown request
+2026-11-01T20:40:25.0685374Z 2026-11-01 20:31:55.247 UTC [49] LOG:  aborting any active transactions
+2026-11-01T20:40:25.0685691Z 2026-11-01 20:31:55.249 UTC [49] LOG:  background worker "logical replication launcher" (PID 56) exited with exit code 1
+2026-11-01T20:40:25.0685985Z 2026-11-01 20:31:55.249 UTC [51] LOG:  shutting down
+2026-11-01T20:40:25.0686189Z 2026-11-01 20:31:55.254 UTC [49] LOG:  database system is shut down
+2026-11-01T20:40:25.0686368Z  done
+2026-11-01T20:40:25.0686474Z server stopped
+2026-11-01T20:40:25.0686542Z 
+2026-11-01T20:40:25.0686731Z PostgreSQL init process complete; ready for start up.
+2026-11-01T20:40:25.0686858Z 
+2026-11-01T20:40:25.0750872Z Post job cleanup.
+2026-11-01T20:40:25.1330520Z [command]/usr/bin/git version
+2026-11-01T20:40:25.1394606Z git version 2.56.0
+2026-11-01T20:40:25.1418048Z Temporarily overriding HOME='/home/runner/work/_temp/24eb08d1-2b5c-4dbc-a0a2-59e6aa16ce52' before making global git config changes
+2026-11-01T20:40:25.1418996Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-01T20:40:25.1421312Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ariadne/ariadne
+2026-11-01T20:40:25.1454793Z Removing SSH command configuration
+2026-11-01T20:40:25.1459160Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-01T20:40:25.1491512Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-01T20:40:25.1709751Z Removing HTTP extra header
+2026-11-01T20:40:25.1710359Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-01T20:40:25.1744213Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-01T20:40:25.1970733Z Removing includeIf entries pointing to credentials config files
+2026-11-01T20:40:25.1976592Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-01T20:40:25.2018274Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-01T20:40:25.2325546Z Print service container logs: e7db41a514fa409d87747bc898cd9501_redislatest_88969a
+2026-11-01T20:40:25.2328548Z ##[command]/usr/bin/docker logs --details caf864b1e7aa05bcc379290afff22a4b4eef5fb1780b02d1f2bd473955790094
+2026-11-01T20:40:25.2435888Z  Starting Redis Server
+2026-11-01T20:40:25.2439172Z  1:C 01 Nov 2026 20:31:48.868 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+2026-11-01T20:40:25.2440229Z  1:C 01 Nov 2026 20:31:48.868 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+2026-11-01T20:40:25.2440562Z  1:C 01 Nov 2026 20:31:48.868 * Redis version=8.10.3, bits=64, commit=00000000, modified=1, pid=1, just started
+2026-11-01T20:40:25.2440881Z  1:C 01 Nov 2026 20:31:48.868 * Configuration loaded
+2026-11-01T20:40:25.2441085Z  1:M 01 Nov 2026 20:31:48.869 * monotonic clock: POSIX clock_gettime
+2026-11-01T20:40:25.2441306Z  1:M 01 Nov 2026 20:31:48.869 * Running mode=standalone, port=6379.
+2026-11-01T20:40:25.2441533Z  1:M 01 Nov 2026 20:31:48.870 * <bf> RedisBloom version 8.10.1 (Git=unknown)
+2026-11-01T20:40:25.2441767Z  1:M 01 Nov 2026 20:31:48.870 * <bf> Registering configuration options: [
+2026-11-01T20:40:25.2441998Z  1:M 01 Nov 2026 20:31:48.870 * <bf> 	{ bf-error-rate       :      0.01 }
+2026-11-01T20:40:25.2442220Z  1:M 01 Nov 2026 20:31:48.870 * <bf> 	{ bf-initial-size     :       100 }
+2026-11-01T20:40:25.2442439Z  1:M 01 Nov 2026 20:31:48.870 * <bf> 	{ bf-expansion-factor :         2 }
+2026-11-01T20:40:25.2442653Z  1:M 01 Nov 2026 20:31:48.870 * <bf> 	{ cf-bucket-size      :         2 }
+2026-11-01T20:40:25.2442870Z  1:M 01 Nov 2026 20:31:48.870 * <bf> 	{ cf-initial-size     :      1024 }
+2026-11-01T20:40:25.2443087Z  1:M 01 Nov 2026 20:31:48.870 * <bf> 	{ cf-max-iterations   :        20 }
+2026-11-01T20:40:25.2443304Z  1:M 01 Nov 2026 20:31:48.870 * <bf> 	{ cf-expansion-factor :         1 }
+2026-11-01T20:40:25.2443522Z  1:M 01 Nov 2026 20:31:48.870 * <bf> 	{ cf-max-expansions   :        32 }
+2026-11-01T20:40:25.2443708Z  1:M 01 Nov 2026 20:31:48.870 * <bf> ]
+2026-11-01T20:40:25.2443931Z  1:M 01 Nov 2026 20:31:48.870 * Module 'bf' loaded from /usr/local/lib/redis/modules//redisbloom.so
+2026-11-01T20:40:25.2444494Z  1:M 01 Nov 2026 20:31:48.872 * <search> search-workers default: 4 (min of MAX_WORKER_THREADS=16 and CPU cores)
+2026-11-01T20:40:25.2444811Z  1:M 01 Nov 2026 20:31:48.872 * <search> Redis version found by RedisSearch : 8.10.3 - oss
+2026-11-01T20:40:25.2445059Z  1:M 01 Nov 2026 20:31:48.872 * <search> RediSearch version 8.10.1 (Git=)
+2026-11-01T20:40:25.2445703Z  1:M 01 Nov 2026 20:31:48.872 * <search> gc: ON, prefix min length: 2, min word length to stem: 4, prefix max expansions: 200, query timeout (ms): 500, timeout policy: return, oom policy: return, cursor read size: 1000, cursor max idle (ms): 300000, max doctable size: 1000000, max number of search results:  1000000, default scorer: BM25STD, 
+2026-11-01T20:40:25.2446338Z  1:M 01 Nov 2026 20:31:48.872 * <search> Initialized thread pools!
+2026-11-01T20:40:25.2446565Z  1:M 01 Nov 2026 20:31:48.873 * <search> Enabled workers threadpool of size 4
+2026-11-01T20:40:25.2446795Z  1:M 01 Nov 2026 20:31:48.873 * <search> Subscribe to config changes
+2026-11-01T20:40:25.2447032Z  1:M 01 Nov 2026 20:31:48.873 * <search> Subscribe to cluster slot migration events
+2026-11-01T20:40:25.2447352Z  1:M 01 Nov 2026 20:31:48.873 * <search> Subscribe to cluster topology change events
+2026-11-01T20:40:25.2447594Z  1:M 01 Nov 2026 20:31:48.873 * <search> Enabled role change notification
+2026-11-01T20:40:25.2447891Z  1:M 01 Nov 2026 20:31:48.873 * <search> Cluster configuration: AUTO partitions, type: 0, coordinator timeout: 0ms
+2026-11-01T20:40:25.2448440Z  1:M 01 Nov 2026 20:31:48.873 * Module 'search' loaded from /usr/local/lib/redis/modules//redisearch.so
+2026-11-01T20:40:25.2448736Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> RedisTimeSeries version 81001, git_sha=
+2026-11-01T20:40:25.2449019Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> Redis version found by RedisTimeSeries : 8.10.3 - oss
+2026-11-01T20:40:25.2449303Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> Registering configuration options: [
+2026-11-01T20:40:25.2449689Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> 	{ ts-compaction-policy   :              }
+2026-11-01T20:40:25.2449955Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> 	{ ts-num-threads         :            3 }
+2026-11-01T20:40:25.2450211Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> 	{ ts-libmr-protocol      :     INTERNAL }
+2026-11-01T20:40:25.2450471Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> 	{ ts-retention-policy    :            0 }
+2026-11-01T20:40:25.2450730Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> 	{ ts-duplicate-policy    :        block }
+2026-11-01T20:40:25.2450991Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> 	{ ts-chunk-size-bytes    :         4096 }
+2026-11-01T20:40:25.2451247Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> 	{ ts-encoding            :   compressed }
+2026-11-01T20:40:25.2451504Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> 	{ ts-ignore-max-time-diff:            0 }
+2026-11-01T20:40:25.2451762Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> 	{ ts-ignore-max-val-diff :     0.000000 }
+2026-11-01T20:40:25.2452026Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> 	{ ts-topology-events     :         true }
+2026-11-01T20:40:25.2452242Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> ]
+2026-11-01T20:40:25.2452453Z  1:M 01 Nov 2026 20:31:48.873 * <timeseries> Detected redis oss (cluster-enabled=no)
+2026-11-01T20:40:25.2452692Z  1:M 01 Nov 2026 20:31:48.874 * <timeseries> Subscribe to ASM events
+2026-11-01T20:40:25.2452924Z  1:M 01 Nov 2026 20:31:48.874 * <timeseries> Subscribe to topology changes events
+2026-11-01T20:40:25.2453166Z  1:M 01 Nov 2026 20:31:48.874 * <timeseries> Enabled diskless replication
+2026-11-01T20:40:25.2453461Z  1:M 01 Nov 2026 20:31:48.874 * Module 'timeseries' loaded from /usr/local/lib/redis/modules//redistimeseries.so
+2026-11-01T20:40:25.2453754Z  1:M 01 Nov 2026 20:31:48.874 * <ReJSON> Created new data type 'ReJSON-RL'
+2026-11-01T20:40:25.2454001Z  1:M 01 Nov 2026 20:31:48.874 * <ReJSON> version: 81000 git sha: unknown branch: unknown
+2026-11-01T20:40:25.2454246Z  1:M 01 Nov 2026 20:31:48.874 * <ReJSON> Exported RedisJSON_V1 API
+2026-11-01T20:40:25.2454605Z  1:M 01 Nov 2026 20:31:48.874 * <ReJSON> Exported RedisJSON_V2 API
+2026-11-01T20:40:25.2454815Z  1:M 01 Nov 2026 20:31:48.874 * <ReJSON> Exported RedisJSON_V3 API
+2026-11-01T20:40:25.2455028Z  1:M 01 Nov 2026 20:31:48.874 * <ReJSON> Exported RedisJSON_V4 API
+2026-11-01T20:40:25.2455234Z  1:M 01 Nov 2026 20:31:48.874 * <ReJSON> Exported RedisJSON_V5 API
+2026-11-01T20:40:25.2455442Z  1:M 01 Nov 2026 20:31:48.874 * <ReJSON> Exported RedisJSON_V6 API
+2026-11-01T20:40:25.2455656Z  1:M 01 Nov 2026 20:31:48.874 * <ReJSON> Exported RedisJSON_V7 API
+2026-11-01T20:40:25.2455863Z  1:M 01 Nov 2026 20:31:48.874 * <ReJSON> Exported RedisJSON_V8 API
+2026-11-01T20:40:25.2456077Z  1:M 01 Nov 2026 20:31:48.874 * <ReJSON> Enabled diskless replication
+2026-11-01T20:40:25.2456333Z  1:M 01 Nov 2026 20:31:48.874 * <ReJSON> Initialized shared string cache, thread safe: true.
+2026-11-01T20:40:25.2456627Z  1:M 01 Nov 2026 20:31:48.874 * Module 'ReJSON' loaded from /usr/local/lib/redis/modules//rejson.so
+2026-11-01T20:40:25.2456892Z  1:M 01 Nov 2026 20:31:48.874 * <search> Acquired RedisJSON_V8 API
+2026-11-01T20:40:25.2457088Z  1:M 01 Nov 2026 20:31:48.875 * Server initialized
+2026-11-01T20:40:25.2457280Z  1:M 01 Nov 2026 20:31:48.875 * Ready to accept connections tcp
+2026-11-01T20:40:25.2457719Z  1:M 01 Nov 2026 20:31:48.875 # WARNING: Redis does not require authentication and is not protected by network restrictions. Redis will accept connections from any IP address on any network interface.
+2026-11-01T20:40:25.2476196Z Stop and remove container: e7db41a514fa409d87747bc898cd9501_redislatest_88969a
+2026-11-01T20:40:25.2479206Z ##[command]/usr/bin/docker rm --force caf864b1e7aa05bcc379290afff22a4b4eef5fb1780b02d1f2bd473955790094
+2026-11-01T20:40:25.3618899Z caf864b1e7aa05bcc379290afff22a4b4eef5fb1780b02d1f2bd473955790094
+2026-11-01T20:40:25.3644296Z Print service container logs: 6d1eb68e425d403da0757f7181652773_postgres14_c0ec9e
+2026-11-01T20:40:25.3645088Z ##[command]/usr/bin/docker logs --details 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501
+2026-11-01T20:40:25.3753663Z  initdb: warning: enabling "trust" authentication for local connections
+2026-11-01T20:40:25.3754109Z  The files belonging to this database system will be owned by user "postgres".
+2026-11-01T20:40:25.3754448Z  This user must also own the server process.
+2026-11-01T20:40:25.3754612Z  
+2026-11-01T20:40:25.3754803Z  The database cluster will be initialized with locale "C.UTF-8".
+2026-11-01T20:40:25.3755201Z  The default database encoding has accordingly been set to "UTF8".
+2026-11-01T20:40:25.3755589Z  The default text search configuration will be set to "english".
+2026-11-01T20:40:25.3755867Z  
+2026-11-01T20:40:25.3756171Z  You can change this by editing pg_hba.conf or using the option -A, or
+2026-11-01T20:40:25.3756543Z  --auth-local and --auth-host, the next time you run initdb.
+2026-11-01T20:40:25.3757028Z  2026-11-01 20:31:55.363 UTC [1] LOG:  starting PostgreSQL 14.24 (Debian 14.24-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-01T20:40:25.3757440Z  2026-11-01 20:31:55.363 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+2026-11-01T20:40:25.3757706Z  2026-11-01 20:31:55.363 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+2026-11-01T20:40:25.3757993Z  2026-11-01 20:31:55.364 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-11-01T20:40:25.3758307Z  2026-11-01 20:31:55.365 UTC [64] LOG:  database system was shut down at 2026-11-01 20:31:55 UTC
+2026-11-01T20:40:25.3758590Z  2026-11-01 20:31:55.368 UTC [1] LOG:  database system is ready to accept connections
+2026-11-01T20:40:25.3758838Z  2026-11-01 20:32:04.717 UTC [78] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3759061Z  2026-11-01 20:32:14.768 UTC [85] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3759280Z  2026-11-01 20:32:24.816 UTC [93] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3759497Z  2026-11-01 20:32:34.872 UTC [101] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3760106Z  2026-11-01 20:32:44.932 UTC [117] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3760325Z  2026-11-01 20:32:54.976 UTC [125] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3760541Z  2026-11-01 20:33:05.027 UTC [136] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3760756Z  2026-11-01 20:33:15.072 UTC [160] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3760975Z  2026-11-01 20:33:25.116 UTC [170] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3761191Z  2026-11-01 20:33:35.160 UTC [177] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3761404Z  2026-11-01 20:33:45.204 UTC [186] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3761619Z  2026-11-01 20:33:55.249 UTC [194] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3761834Z  2026-11-01 20:34:05.297 UTC [203] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3762048Z  2026-11-01 20:34:15.347 UTC [215] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3762319Z  2026-11-01 20:34:25.404 UTC [225] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3762581Z  2026-11-01 20:34:35.461 UTC [233] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3762794Z  2026-11-01 20:34:45.514 UTC [241] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3763006Z  2026-11-01 20:34:55.571 UTC [250] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3763222Z  2026-11-01 20:35:05.621 UTC [259] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3763553Z  2026-11-01 20:35:15.684 UTC [267] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3763768Z  2026-11-01 20:35:25.738 UTC [275] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3763984Z  2026-11-01 20:35:35.794 UTC [284] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3764197Z  2026-11-01 20:35:45.850 UTC [292] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3764441Z  2026-11-01 20:35:55.900 UTC [301] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3764662Z  2026-11-01 20:36:05.948 UTC [310] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3764877Z  2026-11-01 20:36:16.005 UTC [322] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3765167Z  2026-11-01 20:36:16.693 UTC [251] ERROR:  duplicate key value violates unique constraint "uq_work_pool__name"
+2026-11-01T20:40:25.3765570Z  2026-11-01 20:36:16.693 UTC [251] DETAIL:  Key (name)=(test-work-pool-a0db61f7-1119-4b61-ad5a-7f29850ea51b) already exists.
+2026-11-01T20:40:25.3766586Z  2026-11-01 20:36:16.693 UTC [251] STATEMENT:  INSERT INTO work_pool (name, description, type, base_job_template, is_paused, default_queue_id, concurrency_limit, status, last_transitioned_status_at, last_status_event_id, storage_configuration, id, created, updated) VALUES ($1::VARCHAR, $2::VARCHAR, $3::VARCHAR, $4::JSONB, $5::BOOLEAN, $6::UUID, $7::INTEGER, $8::work_pool_status, $9::TIMESTAMP WITH TIME ZONE, $10::UUID, $11, $12::UUID, $13::TIMESTAMP WITH TIME ZONE, $14::TIMESTAMP WITH TIME ZONE)
+2026-11-01T20:40:25.3767595Z  2026-11-01 20:36:16.976 UTC [251] ERROR:  duplicate key value violates unique constraint "uq_work_pool__name"
+2026-11-01T20:40:25.3767987Z  2026-11-01 20:36:16.976 UTC [251] DETAIL:  Key (name)=(test-work-pool-a0901fc3-14b7-4c72-8591-dd0c7c3996e5) already exists.
+2026-11-01T20:40:25.3768994Z  2026-11-01 20:36:16.976 UTC [251] STATEMENT:  INSERT INTO work_pool (name, description, type, base_job_template, is_paused, default_queue_id, concurrency_limit, status, last_transitioned_status_at, last_status_event_id, storage_configuration, id, created, updated) VALUES ($1::VARCHAR, $2::VARCHAR, $3::VARCHAR, $4::JSONB, $5::BOOLEAN, $6::UUID, $7::INTEGER, $8::work_pool_status, $9::TIMESTAMP WITH TIME ZONE, $10::UUID, $11, $12::UUID, $13::TIMESTAMP WITH TIME ZONE, $14::TIMESTAMP WITH TIME ZONE)
+2026-11-01T20:40:25.3770091Z  2026-11-01 20:36:26.060 UTC [331] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3770313Z  2026-11-01 20:36:36.108 UTC [342] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3770704Z  2026-11-01 20:36:46.166 UTC [350] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3771167Z  2026-11-01 20:36:56.221 UTC [358] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3771501Z  2026-11-01 20:37:06.278 UTC [365] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3771786Z  2026-11-01 20:37:16.331 UTC [374] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3772002Z  2026-11-01 20:37:26.382 UTC [383] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3772220Z  2026-11-01 20:37:36.445 UTC [392] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3772491Z  2026-11-01 20:37:46.502 UTC [400] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3772825Z  2026-11-01 20:37:56.549 UTC [410] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3773160Z  2026-11-01 20:38:06.592 UTC [418] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3773487Z  2026-11-01 20:38:16.642 UTC [427] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3773704Z  2026-11-01 20:38:26.686 UTC [435] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3773928Z  2026-11-01 20:38:36.732 UTC [445] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3774146Z  2026-11-01 20:38:46.776 UTC [453] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3774361Z  2026-11-01 20:38:56.823 UTC [462] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3774577Z  2026-11-01 20:39:06.869 UTC [472] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3774795Z  2026-11-01 20:39:16.917 UTC [481] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3775113Z  2026-11-01 20:39:26.962 UTC [489] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3775330Z  2026-11-01 20:39:37.015 UTC [499] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3775545Z  2026-11-01 20:39:47.068 UTC [507] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3775760Z  2026-11-01 20:39:57.114 UTC [516] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3775976Z  2026-11-01 20:40:07.177 UTC [523] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3776195Z  2026-11-01 20:40:17.224 UTC [533] FATAL:  role "root" does not exist
+2026-11-01T20:40:25.3776394Z  Data page checksums are disabled.
+2026-11-01T20:40:25.3776536Z  
+2026-11-01T20:40:25.3776710Z  fixing permissions on existing directory /var/lib/postgresql/data ... ok
+2026-11-01T20:40:25.3776935Z  creating subdirectories ... ok
+2026-11-01T20:40:25.3777120Z  selecting dynamic shared memory implementation ... posix
+2026-11-01T20:40:25.3777318Z  selecting default max_connections ... 100
+2026-11-01T20:40:25.3777495Z  selecting default shared_buffers ... 128MB
+2026-11-01T20:40:25.3777660Z  selecting default time zone ... Etc/UTC
+2026-11-01T20:40:25.3777823Z  creating configuration files ... ok
+2026-11-01T20:40:25.3777982Z  running bootstrap script ... ok
+2026-11-01T20:40:25.3778155Z  performing post-bootstrap initialization ... ok
+2026-11-01T20:40:25.3778332Z  syncing data to disk ... ok
+2026-11-01T20:40:25.3778465Z  
+2026-11-01T20:40:25.3778568Z  
+2026-11-01T20:40:25.3778701Z  Success. You can now start the database server using:
+2026-11-01T20:40:25.3778872Z  
+2026-11-01T20:40:25.3779012Z      pg_ctl -D /var/lib/postgresql/data -l logfile start
+2026-11-01T20:40:25.3779182Z  
+2026-11-01T20:40:25.3779755Z  waiting for server to start....2026-11-01 20:31:55.119 UTC [49] LOG:  starting PostgreSQL 14.24 (Debian 14.24-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-01T20:40:25.3780261Z  2026-11-01 20:31:55.120 UTC [49] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-11-01T20:40:25.3780570Z  2026-11-01 20:31:55.122 UTC [50] LOG:  database system was shut down at 2026-11-01 20:31:55 UTC
+2026-11-01T20:40:25.3780852Z  2026-11-01 20:31:55.125 UTC [49] LOG:  database system is ready to accept connections
+2026-11-01T20:40:25.3781063Z   done
+2026-11-01T20:40:25.3781171Z  server started
+2026-11-01T20:40:25.3781288Z  CREATE DATABASE
+2026-11-01T20:40:25.3781400Z  
+2026-11-01T20:40:25.3781502Z  
+2026-11-01T20:40:25.3781684Z  /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+2026-11-01T20:40:25.3782006Z  
+2026-11-01T20:40:25.3782211Z  waiting for server to shut down....2026-11-01 20:31:55.247 UTC [49] LOG:  received fast shutdown request
+2026-11-01T20:40:25.3782498Z  2026-11-01 20:31:55.247 UTC [49] LOG:  aborting any active transactions
+2026-11-01T20:40:25.3782815Z  2026-11-01 20:31:55.249 UTC [49] LOG:  background worker "logical replication launcher" (PID 56) exited with exit code 1
+2026-11-01T20:40:25.3783114Z  2026-11-01 20:31:55.249 UTC [51] LOG:  shutting down
+2026-11-01T20:40:25.3783316Z  2026-11-01 20:31:55.254 UTC [49] LOG:  database system is shut down
+2026-11-01T20:40:25.3783495Z   done
+2026-11-01T20:40:25.3783601Z  server stopped
+2026-11-01T20:40:25.3783719Z  
+2026-11-01T20:40:25.3783854Z  PostgreSQL init process complete; ready for start up.
+2026-11-01T20:40:25.3784022Z  
+2026-11-01T20:40:25.3784636Z Stop and remove container: 6d1eb68e425d403da0757f7181652773_postgres14_c0ec9e
+2026-11-01T20:40:25.3785108Z ##[command]/usr/bin/docker rm --force 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501
+2026-11-01T20:40:25.5021419Z 093355424b5838e00e7417193a6b7b1bcb44c4e16b362af9dc42a06c08a47501
+2026-11-01T20:40:25.5048426Z Remove container network: github_network_495dc5b58ba44fa189749996759b6c17
+2026-11-01T20:40:25.5052085Z ##[command]/usr/bin/docker network rm github_network_495dc5b58ba44fa189749996759b6c17
+2026-11-01T20:40:25.5747879Z github_network_495dc5b58ba44fa189749996759b6c17
+2026-11-01T20:40:25.5827053Z Cleaning up orphan processes

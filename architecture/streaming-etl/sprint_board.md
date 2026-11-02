@@ -1,7 +1,7 @@
 # Streaming ETL sprint board
 
 Current product cycle: [Native integration epoch 1](epochs/epoch-01-native-prefect.md),
-`progress`, **10% earned native foundation readiness** after the first final gate. The
+`progress`, **20% earned native foundation readiness** after N1.2. The
 [first-stage ADR](adr/ADR-0032-native-task-stream-contract.md) is accepted for
 its scoped contract gate. Implementation was requested on 2026-11-01 with frequent tests
 against the actual runtime and storage.
@@ -11,11 +11,14 @@ against the actual runtime and storage.
 | Sprint | State | Planned cumulative target | Share | Tasks | Exit |
 | --- | --- | ---: | ---: | --- | --- |
 | N1.1 — Native task/stream contract | `done` | 10% | +10% | NI1-001…004 | All ADR-0032 criteria, frozen real HTTP/PostgreSQL gates, finite task/runner regressions, client-wheel smoke and Principal review pass. |
+| N1.2 — Native storage transactions | `done` | 20% | +10% | NI1-010…013 | ADR-0033 storage-only criteria: migrations, atomic fenced operations, quotas, final-flow release and real PostgreSQL hostile gate. |
+| N1.3 — Native storage transport | `planning` | 30% | +10% | NI1-020…022 | ADR-0034 reviewed/implemented; actual HTTP/client/server recovery, error/DTO parity and client packaging pass. |
 
-The 10% is a planning estimate toward the explicitly bounded native foundation,
+The 20% is a planning estimate toward the explicitly bounded native foundation,
 not a measurement of production readiness. The [complete Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json)
-now passes; earned readiness is 10%. Later short sprints are not allocated in
-this cycle.
+and the [N1.2 storage gate](evidence/native-stage2-closure-acceptance-2026-11-01.json)
+now pass; earned readiness is 20%. N1.3 remains a planned +10% contribution,
+not earned. Later sprints remain unallocated.
 
 N1.1 follow-up: [final code/CI acceptance](evidence/native-stage1-ci-acceptance-2026-11-01.json)
 records both real PostgreSQL-stream profiles, full finite regression, type
