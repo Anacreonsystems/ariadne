@@ -43,6 +43,7 @@ from typing_extensions import (
 import prefect.states
 from prefect._flow_run_suspension import raise_if_flow_run_suspension_requested
 from prefect._internal.compatibility.async_dispatch import async_dispatch
+from prefect._internal.stream_engine import _StreamRun
 from prefect._internal.uuid7 import uuid7
 from prefect.assets import Asset
 from prefect.cache_policies import DEFAULT, NO_CACHE, CachePolicy
@@ -60,6 +61,7 @@ from prefect.context import (
     TaskRunContext,
     serialize_context,
 )
+from prefect.exceptions import PrefectSignal
 from prefect.futures import PrefectDistributedFuture, PrefectFuture, PrefectFutureList
 from prefect.logging.loggers import get_logger
 from prefect.results import (
@@ -70,6 +72,7 @@ from prefect.results import (
 )
 from prefect.settings.context import get_current_settings
 from prefect.states import Pending, Scheduled, State
+from prefect.streams import Stream, StreamProtocolError, StreamTaskConfig
 from prefect.utilities.annotations import NotSet
 from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.utilities.callables import (
@@ -77,6 +80,7 @@ from prefect.utilities.callables import (
     get_call_parameters,
     raise_for_reserved_arguments,
 )
+from prefect.utilities.collections import visit_collection
 from prefect.utilities.hashing import hash_objects
 from prefect.utilities.importtools import to_qualified_name
 from prefect.utilities.urls import url_for
@@ -160,6 +164,7 @@ class TaskOptions(TypedDict, total=False):
     retry_condition_fn: Optional[RetryConditionCallable]
     viz_return_value: Any
     asset_deps: Optional[list[Union[Asset, str]]]
+    stream: StreamTaskConfig | None
 
 
 def task_input_hash(
@@ -377,7 +382,11 @@ class Task(Generic[P, R]):
             to its retry policy.
         viz_return_value: An optional value to return when the task dependency tree is visualized.
         asset_deps: An optional list of upstream assets that this task depends on.
+        stream: An explicit native stream contract. Submit with `submit_stream()`;
+            storage and finite collection boundaries must be supplied explicitly.
     """
+
+    stream: StreamTaskConfig | None = None
 
     # NOTE: These parameters (types, defaults, and docstrings) should be duplicated
     #       exactly in the @task decorator
@@ -420,6 +429,7 @@ class Task(Generic[P, R]):
         retry_condition_fn: Optional[RetryConditionCallable] = None,
         viz_return_value: Optional[Any] = None,
         asset_deps: Optional[list[Union[str, Asset]]] = None,
+        stream: StreamTaskConfig | None = None,
     ):
         # Validate if hook passed is list and contains callables
         hook_categories = [on_completion, on_failure, on_running]
@@ -461,6 +471,22 @@ class Task(Generic[P, R]):
         self.description: str | None = description or inspect.getdoc(fn)
         update_wrapper(self, fn)
         self.fn = fn
+        self.stream = stream
+        if stream is not None:
+            stream.validate_function(fn)
+            if (
+                cache_key_fn is not None
+                or cache_policy not in (NotSet, NO_CACHE, None)
+                or persist_result is True
+                or result_storage is not None
+                or result_storage_key is not None
+                or result_serializer is not None
+            ):
+                raise StreamProtocolError(
+                    "Stream tasks use stream storage, not finite result caching"
+                )
+            cache_policy = NO_CACHE
+            persist_result = False
 
         # Capture source code for cache key computation
         # This is stored on the task so it survives cloudpickle serialization
@@ -703,6 +729,7 @@ class Task(Generic[P, R]):
         retry_condition_fn: Optional[RetryConditionCallable] = None,
         viz_return_value: Optional[Any] = None,
         asset_deps: Optional[list[Union[str, Asset]]] = None,
+        stream: StreamTaskConfig | None | type[NotSet] = NotSet,
     ) -> "Task[P, R]":
         """
         Create a new task from the current object, updating provided options.
@@ -850,6 +877,7 @@ class Task(Generic[P, R]):
             retry_condition_fn=retry_condition_fn or self.retry_condition_fn,
             viz_return_value=viz_return_value or self.viz_return_value,
             asset_deps=asset_deps or self.asset_deps,
+            stream=self.stream if stream is NotSet else stream,
         )
 
     def on_completion(self, fn: StateHookCallable) -> StateHookCallable:
@@ -1214,6 +1242,9 @@ class Task(Generic[P, R]):
             track_viz_task,
         )
 
+        if self.stream is not None:
+            raise StreamProtocolError("Use submit_stream() for a native stream task")
+
         # Convert the call args/kwargs to a parameter dict
         parameters = get_call_parameters(self.fn, args, kwargs)
 
@@ -1391,6 +1422,9 @@ class Task(Generic[P, R]):
             get_task_viz_tracker,
         )
 
+        if self.stream is not None:
+            raise StreamProtocolError("Use submit_stream() for a native stream task")
+
         # Convert the call args/kwargs to a parameter dict
         parameters = get_call_parameters(self.fn, args, kwargs)
         flow_run_context = FlowRunContext.get()
@@ -1417,6 +1451,88 @@ class Task(Generic[P, R]):
             return future.state
         else:
             return future
+
+    def _submit_stream(
+        self, args: tuple[Any, ...], kwargs: dict[str, Any], wait_for: Any
+    ) -> Stream[Any]:
+        # Import after Task initialization: runners refer back to task execution.
+        from prefect.task_runners import ThreadPoolTaskRunner
+
+        context = FlowRunContext.get()
+        if TaskRunContext.get() is not None:
+            raise StreamProtocolError("Nested stream submission is not supported")
+        if context is None or not isinstance(context.task_runner, ThreadPoolTaskRunner):
+            raise StreamProtocolError(
+                "Native stream submission currently requires a flow with ThreadPoolTaskRunner"
+            )
+        if context.task_runner._max_workers < 2:
+            raise StreamProtocolError("Streaming needs concurrent task-runner slots")
+        assert self.stream is not None
+        parameters = self.stream.bind_parameters(self.fn, args, kwargs)
+        upstream = parameters.get(self.stream.input)
+        if not isinstance(upstream, Stream):
+            raise StreamProtocolError("The declared stream input needs a Stream handle")
+
+        def reject_stream(value: Any) -> None:
+            if isinstance(value, Stream):
+                raise StreamProtocolError(
+                    "Only the declared stream input port accepts a Stream"
+                )
+
+        for name, value in parameters.items():
+            if name != self.stream.input:
+                visit_collection(value, visit_fn=reject_stream, return_data=False)
+        if wait_for is not None:
+            # wait_for retains finite completion semantics, including when a
+            # stream dependency is also present as the input port.
+            visit_collection(wait_for, visit_fn=reject_stream, return_data=False)
+        raise_if_flow_run_suspension_requested()
+        output = Stream(upstream.storage, "native-" + uuid4().hex)
+        run_coro_as_sync(output.storage.create_stream(output.stream_id))
+        parameters["__prefect_stream_run__"] = _StreamRun(output)
+
+        def reject_submission(error: str) -> None:
+            try:
+                status = run_coro_as_sync(output.storage.status(output.stream_id))
+                if status.state == "OPEN":
+                    run_coro_as_sync(output.storage.finish(output.stream_id, error))
+            except Exception:
+                logger.warning("Unable to close a rejected stream submission")
+
+        try:
+            future = context.task_runner.submit(self, parameters, wait_for)
+            output._bind_completion(future)
+        except BaseException as exc:
+            reject_submission(type(exc).__name__)
+            raise
+
+        def on_completion(completed: PrefectFuture[Any]) -> None:
+            # Includes a worker failure before the task-engine entrypoint runs.
+            # Control signals preserve an open stream for later reconciliation.
+            try:
+                completed.result()
+            except PrefectSignal:
+                return
+            except BaseException as exc:
+                reject_submission(type(exc).__name__)
+
+        future.add_done_callback(on_completion)
+        return output
+
+    def submit_stream(
+        self, *args: Any, wait_for: Any = None, **kwargs: Any
+    ) -> Stream[Any]:
+        """Submit one stream operator TaskRun and return its native output edge.
+
+        Requires an explicit `stream=StreamTaskConfig(...)` declaration and the
+        supported thread-pool profile. The injected context is not a call input.
+        Ordinary task submission and finite futures retain their existing API.
+        """
+        if self.stream is None:
+            raise StreamProtocolError(
+                "submit_stream requires a stream task declaration"
+            )
+        return self._submit_stream(args, kwargs, wait_for)
 
     @overload
     def map(
@@ -1616,6 +1732,12 @@ class Task(Generic[P, R]):
         """
 
         from prefect.task_runners import TaskRunner
+
+        if self.stream is not None:
+            raise StreamProtocolError(
+                "Stream tasks do not support map or deferred execution"
+            )
+
         from prefect.utilities.visualization import (
             VisualizationUnsupportedError,
             get_task_viz_tracker,
@@ -1734,6 +1856,9 @@ class Task(Generic[P, R]):
             ```
 
         """
+        if self.stream is not None:
+            raise StreamProtocolError("Stream tasks do not support deferred execution")
+
         from prefect.utilities.visualization import (
             VisualizationUnsupportedError,
             get_task_viz_tracker,
@@ -1905,6 +2030,7 @@ def task(
     retry_condition_fn: Optional[RetryConditionCallable] = None,
     viz_return_value: Any = None,
     asset_deps: Optional[list[Union[str, Asset]]] = None,
+    stream: StreamTaskConfig | None = None,
 ) -> Callable[[Callable[P, R]], Task[P, R]]: ...
 
 
@@ -1942,6 +2068,7 @@ def task(
     retry_condition_fn: Optional[RetryConditionCallable] = None,
     viz_return_value: Any = None,
     asset_deps: Optional[list[Union[str, Asset]]] = None,
+    stream: StreamTaskConfig | None = None,
 ) -> Callable[[Callable[P, R]], Task[P, R]]: ...
 
 
@@ -1980,6 +2107,7 @@ def task(
     retry_condition_fn: Optional[RetryConditionCallable] = None,
     viz_return_value: Any = None,
     asset_deps: Optional[list[Union[str, Asset]]] = None,
+    stream: StreamTaskConfig | None = None,
 ) -> Callable[[Callable[P, R]], Task[P, R]]: ...
 
 
@@ -2015,6 +2143,7 @@ def task(
     retry_condition_fn: Optional[RetryConditionCallable] = None,
     viz_return_value: Any = None,
     asset_deps: Optional[list[Union[str, Asset]]] = None,
+    stream: StreamTaskConfig | None = None,
 ):
     """
     Decorator to designate a function as a task in a Prefect workflow.
@@ -2080,6 +2209,8 @@ def task(
             to its retry policy.
         viz_return_value: An optional value to return when the task dependency tree is visualized.
         asset_deps: An optional list of upstream assets that this task depends on.
+        stream: An explicit native stream contract. Submit with `submit_stream()`;
+            storage and finite collection boundaries must be supplied explicitly.
 
     Returns:
         A callable `Task` object which, when called, will submit the task for execution.
@@ -2170,6 +2301,7 @@ def task(
             retry_condition_fn=retry_condition_fn,
             viz_return_value=viz_return_value,
             asset_deps=asset_deps,
+            stream=stream,
         )
     else:
         return cast(
@@ -2201,6 +2333,7 @@ def task(
                 retry_condition_fn=retry_condition_fn,
                 viz_return_value=viz_return_value,
                 asset_deps=asset_deps,
+                stream=stream,
             ),
         )
 

@@ -9,12 +9,21 @@ remains in force.
 ## Existing runner requirements
 
 Current execution: [72-hour ARC run 40672223609](https://github.com/Anacreonsystems/ariadne/actions/runs/40672223609)
-is running on source `ff4972f`; its
-[start observation](evidence/ci-arc-72h-start-40672223609.json) confirms readiness,
-early artifact publication and monitor 00. The
-[same-source short control](evidence/ci-arc-transport-smoke-observed-40671702946.json)
-passes both original and fresh collector jobs. Final long acceptance is open.
-Do not cancel or retrigger this campaign merely to request status.
+completed successfully on 2026-10-31 at source `ff4972f`. The
+[completion record](evidence/ci-arc-72h-completed-40672223609.json) confirms
+259298.161822 measured seconds, all 18 segments, original long acceptance and
+successful fresh collection/publication. The subsequent
+[artifact audit](evidence/ci-arc-72h-artifact-audit-40672223609.json) verifies
+the downloaded published ZIP against GitHub's SHA-256 and all 22 reconstructed
+file contents. DS-052a is `done` and ADR-0030 is `accepted` for its selected
+experimental scope. The [start observation](evidence/ci-arc-72h-start-40672223609.json)
+and [same-source short control](evidence/ci-arc-transport-smoke-observed-40671702946.json)
+remain historical evidence.
+
+[ADR-0031](adr/ADR-0031-validated-durable-stream-theory.md) records the successful
+runtime theory and its limits. [Native integration epoch 1](epochs/epoch-01-native-prefect.md)
+starts a separate 0% native implementation scale. This 72-hour campaign used
+one sequential Python workload process and did not execute native Prefect tasks.
 
 Use the existing inventory: `anacreon-runners` is the ARC ephemeral scale set;
 `k8s-runner` is the optional static runner. Both profiles require Linux x64,

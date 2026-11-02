@@ -4,22 +4,37 @@ This registry slices the [ADR graph](adr/README.md) into delivery tasks. Task
 completion does not make an ADR `accepted`; evidence for every criterion in
 the declared ADR scope must be linked back to it.
 
-Current separate DS-052a work follows
-[ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md): one
-continuous ARC job, 18 monitor steps and a fresh evidence collector. Its gates
-are a short end-to-end publication control, the real 72-hour workload, and
-successful final reconstruction/upload. It remains `progress` and contributes
-no additional short-delivery percentage.
+Current direction: [Native integration epoch 1](epochs/epoch-01-native-prefect.md)
+is `progress`, with **10% earned native foundation readiness** after its first gate. Its [first-stage contract](adr/ADR-0032-native-task-stream-contract.md)
+is accepted for its native Task SDK/engine scope with real HTTP/PostgreSQL
+checks. The first sprint earned its planned 10% share after the complete
+[Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json) passed.
+The [CI integration successor](evidence/native-stage1-ci-acceptance-2026-11-01.json)
+binds the final code revision, complete runtime reruns, full type check and
+client wheel/source build; failed intermediate observations are retained.
 
-Actual execution: [72-hour ARC run 40672223609](https://github.com/Anacreonsystems/ariadne/actions/runs/40672223609)
-passed bootstrap and entered monitor 00 on 2026-10-28 at 10:28:36 UTC. Its
-[start record](evidence/ci-arc-72h-start-40672223609.json) binds the source and
-[passing short successor](evidence/ci-arc-transport-smoke-observed-40671702946.json).
-DS-052a remains `progress` pending full duration, final review and publication.
+The separate DS-052a follow-up is now `done` under
+[ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md): the
+[actual campaign](https://github.com/Anacreonsystems/ariadne/actions/runs/40672223609)
+completed on 2026-10-31 with 18 passing segments, original long review, fresh
+collector and publication. The [completion record](evidence/ci-arc-72h-completed-40672223609.json)
+and [published-artifact audit](evidence/ci-arc-72h-artifact-audit-40672223609.json)
+close its criteria. [ADR-0031](adr/ADR-0031-validated-durable-stream-theory.md)
+accepts the tested prototype theory. This lane adds no percentage to either the
+historical short delivery or the new native implementation scale.
 
 Delivery states are separate from ADR statuses. Sizes assume `S` ≤ 2 engineer
 days, `M` = 3–4 days, and `L` ≈ one engineer week. `H` and `M` denote high and
 medium delivery risk.
+
+## Native epoch 1 — Stage 1 implementation
+
+| ID | State | Depends | Deliverable and acceptance criteria |
+| --- | --- | --- | --- |
+| NI1-001 | `done` | [ADR-0032](adr/ADR-0032-native-task-stream-contract.md) | Native Task configuration, typed Stream/collection dependencies and `submit_stream()`. As a developer, I can inspect the stream edge while ordinary finite entrypoints and copying retain their contracts. |
+| NI1-002 | `done` | NI1-001 | Sync/async per-input execution inside one TaskRun. As a user, I can recover input 200 or 201 on the same TaskRun according to durable terminal acceptance. |
+| NI1-003 | `done` | NI1-001, NI1-002 | Real HTTP/PostgreSQL acceptance, negative cases and full finite-task regression. As a system, I got constant TaskRun/state metadata at 1 and 1000 records and no unsupported admission. |
+| NI1-004 | `done` | NI1-003 | Independent architecture review, client-wheel smoke and evidence/ADR closure. As a developer, I can reproduce the tested source and distinguish Stage 1 from native persistence/deployment readiness. |
 
 ## Protocol epoch 2 — short experimental delivery — target 100%, earned 100%
 
@@ -248,7 +263,12 @@ earns 95%; it does not claim whole-cluster DR, zero RPO or general worker isolat
 | **DS-051c** | `done` | DS-051a | M / M | Security and credential-boundary review. As a system, workers cannot forge storage authority. |
 | **DS-051d** | `done` | DS-051a…c | H / S | Final Principal acceptance and ADR evidence graph. As a user, I got the published guarantee and measured limits with no missing evidence link. |
 
-Separate nonblocking follow-up: **DS-052a** — `progress` — actual 72-hour soak, with its own workload, faults, resource and invariant evidence. The user directed use of the three existing self-hosted runners; the CI chain and deterministic reviewer are being configured under [ADR-0028](adr/ADR-0028-self-hosted-soak-ci-and-reviewer.md) and the [operator guide](soak_ci.md). It carries no percentage in the current delivery; the user selected short acceptance now in [ADR-0027](adr/ADR-0027-short-acceptance-and-separate-long-soak.md). A short smoke is not a long-duration PASS.
+Separate nonblocking follow-up: **DS-052a** — `done` — the real 72-hour campaign, original reviewer, fresh collector, publication and downloaded-artifact audit passed under [ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md). The [completion record](evidence/ci-arc-72h-completed-40672223609.json) and [artifact audit](evidence/ci-arc-72h-artifact-audit-40672223609.json) bind the unchanged profile and exact source. It carries no additional delivery percentage under [ADR-0027](adr/ADR-0027-short-acceptance-and-separate-long-soak.md).
+
+### Historical DS-052a execution observations
+
+The dated observations below retain their original running/queued statuses.
+The current final result appears above and in the [operator guide](soak_ci.md).
 
 2026-10-27 follow-up: the repository transfer is verified and the
 [static-analysis repair](evidence/ci-static-analysis-repair-2026-10-27.json)

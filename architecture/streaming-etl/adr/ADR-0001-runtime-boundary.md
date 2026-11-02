@@ -95,3 +95,24 @@ capability prototypes are retained but excluded from protocol epoch 2.
 - End-to-end deployment tests showing checkpoint recovery under worker loss.
 - User-facing guarantee and metrics documentation.
 
+## Native product direction (2026-10-31)
+
+The user clarified that the target is a foundational extension of Prefect
+itself: stream dependencies, task execution, SDK, server, storage and
+observability belong to the same product. Petya and Anna are Prefect tasks;
+Tanya is a retry attempt of Anna's TaskRun, not a separately named worker.
+There is no global flow mode and the external experimental adapter is not the
+final architecture.
+
+This supersedes the separate-runtime-as-final-product interpretation of the
+earlier proposed agreement. Internal streaming modules and resource boundaries
+remain useful; they are native implementation components. The one-terminal
+`yield|return` contract and client-owned external-effect idempotency continue.
+
+The [validated prototype theory](ADR-0031-validated-durable-stream-theory.md)
+now has completed short and long experimental evidence. Native work starts in
+[integration epoch 1](../epochs/epoch-01-native-prefect.md) with
+[ADR-0032](ADR-0032-native-task-stream-contract.md). This ADR retains its broad
+`progress` status because its production core and deployment criteria remain
+unimplemented. Earlier evidence and decisions are retained.
+

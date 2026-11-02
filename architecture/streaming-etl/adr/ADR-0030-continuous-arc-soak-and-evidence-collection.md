@@ -1,10 +1,16 @@
 # ADR-0030: Continuous ARC soak and fresh-job evidence collection
 
-- Status: `progress`
+- Status: `accepted`
 - Date: 2026-10-28
+- Accepted: 2026-11-01, selected continuous ARC experiment scope
 - Owners: ETL Architect / HighLoad Principal, runtime maintainers
 - Depends on: [ADR-0028](ADR-0028-self-hosted-soak-ci-and-reviewer.md), [ADR-0027](ADR-0027-short-acceptance-and-separate-long-soak.md)
 - Delivery: DS-052a in [todo](../todo.md), [sprint board](../sprint_board.md)
+
+Current verdict: the completed campaign and fresh publication satisfy this
+ADR's declared experimental criteria. The execution observations below retain
+their original 2026-10-28 chronology; the final result and criterion mapping
+appear in the acceptance section at the end.
 
 ## Problem
 
@@ -187,3 +193,47 @@ Log masking, truncation or unavailable download fails transport validation.
 The collector publishes partial failures without treating them as acceptance.
 Actual Prefect integration remains the separate short gate from ADR-0028.
 DS-052a remains a separate lane with no additional delivery percentage.
+
+## Completed campaign acceptance (2026-11-01)
+
+The [final observation](../evidence/ci-arc-72h-completed-40672223609.json)
+confirms successful completion on 2026-10-31 of run `40672223609`, attempt 1,
+source `ff4972fb2c6df313056e828f72a3cad41dce9258`. The original reviewer reports
+259298.161822 seconds, 188659 source documents, 1867 owner-loss cases, three
+process boots, all 18 segments, `long_soak_passed=true` and no violations.
+Both the original job and fresh collector/publication conclude `success`.
+
+| Acceptance criterion | Result and evidence |
+| --- | --- |
+| Short original-to-collector control | PASS: the retained [same-source control](../evidence/ci-arc-transport-smoke-observed-40671702946.json) includes process recovery, original review, fresh collection and upload. |
+| Reject invalid identity, frames, paths, bounds, chains and source conclusions | PASS: the retained [transport regressions](../evidence/ci-arc-single-job-validation-2026-10-28.json), [numeric-bound successor](../evidence/ci-arc-single-job-successor-validation-2026-10-28.json) and [29-test successor](../evidence/ci-arc-target-tail-validation-2026-10-28.json) cover the declared hostile controls. |
+| Real unchanged 72-hour workload and original-pod acceptance | PASS: [completion record](../evidence/ci-arc-72h-completed-40672223609.json), 18 linked segments, scheduled faults 5/11, exact resource caps and original long verdict. |
+| Published artifact bound to the same campaign/source | PASS: artifact `13039886942`, successful fresh job `124513476015`, hosted collector `passed=true`, no transport violations. The [subsequent artifact audit](../evidence/ci-arc-72h-artifact-audit-40672223609.json) verifies downloaded ZIP bytes against GitHub's digest and all 22 source-frame file contents. |
+| No long PASS from a short or partial campaign | PASS: short controls retain `long_soak_passed=false`; this final verdict requires the actual long campaign, complete chain, successful source and publication. |
+
+The [public reconstruction](../evidence/ci-arc-72h-public-40672223609.zip)
+contains exact whitelisted file bytes recovered from bound source-job log
+frames. A local run of the unchanged transport validator passes and matches
+the hosted collector receipt. This reconstruction has its own recorded digest;
+it is not the original published artifact ZIP and contains no raw job logs or
+credentials.
+
+The [original published archive](../evidence/ci-arc-72h-artifact-40672223609.zip)
+has subsequently been downloaded and retained with its own
+[audit](../evidence/ci-arc-72h-artifact-audit-40672223609.json). This closes the
+explicit artifact-retrieval criterion. The earlier completion observation's
+download-unknown field remains an accurate historical snapshot.
+
+The [ETL Architect / HighLoad Principal review](../evidence/native-epoch-1-principal-review-2026-11-01.json)
+accepts this transition against the ADR's experimental acceptance conditions.
+DS-052a is now `done`; the separate
+lane still adds no short-delivery percentage. The scope and limits of the
+successful runtime theory are recorded by
+[ADR-0031](ADR-0031-validated-durable-stream-theory.md). Native core work begins
+under [epoch 1](../epochs/epoch-01-native-prefect.md) and
+[ADR-0032](ADR-0032-native-task-stream-contract.md).
+
+Acceptance covers one sequential Python workload process, small payloads and
+the selected PostgreSQL synchronous pair. It does not establish native Prefect
+execution, high-load scale, multi-process parallelism or ARC pod replacement
+recovery. Earlier running-status evidence remains unchanged.

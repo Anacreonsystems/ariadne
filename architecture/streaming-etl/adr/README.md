@@ -14,7 +14,7 @@ files are immutable historical records: they are superseded or marked
 | `accepted` | Code appropriate to the declared scope exists and every acceptance criterion has evidence. |
 | `rejected` | The theory failed review or validation; the ADR remains as evidence. |
 
-ADRs 0026, 0027 and 0029 are `accepted` for their explicit selected scopes.
+ADRs 0026, 0027, 0029, 0030 and 0031 are `accepted` for their explicit selected scopes.
 Acceptance applies only to the scope defined in each ADR. Passing a selected prototype does not establish general production
 readiness; broader production criteria remain open unless they have their own
 implementation and deployment evidence.
@@ -22,6 +22,20 @@ implementation and deployment evidence.
 Protocol epoch 2 has earned 100% of the agreed short experimental delivery. The gate evidence and remaining
 production scope are recorded in
 [ADR-0012](ADR-0012-protocol-epoch-2-delivery-gates.md).
+
+The separate 72-hour campaign completed successfully on 2026-10-31;
+[ADR-0030](ADR-0030-continuous-arc-soak-and-evidence-collection.md) closes its
+experimental execution and publication scope, and
+[ADR-0031](ADR-0031-validated-durable-stream-theory.md) records the successful
+runtime theory and its limits. [Native integration epoch 1](../epochs/epoch-01-native-prefect.md)
+starts a separate product-delivery scale. Its
+[first-stage ADR](ADR-0032-native-task-stream-contract.md) is now `accepted` for
+the native SDK/task-engine contract, earning **10% of the planned foundation**;
+production storage, source and deployment stages remain open.
+The [initial Stage 1 graph validation](../evidence/adr-graph-native-stage1-2026-11-01.json)
+checks retained ADR statuses, required accepted sections and local evidence links.
+The [CI follow-up graph](../evidence/adr-graph-native-stage1-ci-2026-11-01.json)
+also covers the final source-bound acceptance and retained failed observations.
 
 ## Decision graph
 
@@ -93,6 +107,12 @@ graph TD
     A0028 --> A0009
     A0027 --> A0029[ADR-0029: Short capacity calibration and release scope]
     A0028 --> A0030[ADR-0030: Continuous ARC soak and evidence collection]
+    A0030 --> A0031[ADR-0031: Validated durable-stream theory]
+    A0031 --> E1[Native integration epoch 1]
+    E1 --> A0032[ADR-0032: Native task and stream contract]
+    A0010 --> A0032
+    A0011 --> A0032
+    A0025 -. transition evidence .-> A0032
     A0025 --> A0029
     A0029 --> A0009
     A0011 --> A0020[ADR-0020: Bounded metadata and idempotency horizon]
@@ -163,7 +183,9 @@ graph TD
 - [ADR-0027: Short acceptance and a separate long soak](ADR-0027-short-acceptance-and-separate-long-soak.md) — `accepted`
 - [ADR-0028: Existing self-hosted soak CI and reviewer](ADR-0028-self-hosted-soak-ci-and-reviewer.md) — `progress`
 - [ADR-0029: Short capacity calibration and release scope](ADR-0029-short-capacity-calibration-and-release-scope.md) — `accepted`
-- [ADR-0030: Continuous ARC soak and fresh-job evidence collection](ADR-0030-continuous-arc-soak-and-evidence-collection.md) — `progress`
+- [ADR-0030: Continuous ARC soak and fresh-job evidence collection](ADR-0030-continuous-arc-soak-and-evidence-collection.md) — `accepted`
+- [ADR-0031: Validated durable-stream theory and native integration handoff](ADR-0031-validated-durable-stream-theory.md) — `accepted`
+- [ADR-0032: Native task and stream dependency contract](ADR-0032-native-task-stream-contract.md) — `accepted`
 - [ADR-0090: Use Prefect transactions as the streaming coordinator](ADR-0090-prefect-transactions-as-coordinator.md) — `rejected`
 - [ADR-0091: Idempotency alone provides multi-sink atomicity](ADR-0091-idempotency-alone-is-atomic.md) — `rejected`
 - [ADR-0092: Split lifecycle and progress state machines](ADR-0092-split-safety-state-machines.md) — `rejected`
