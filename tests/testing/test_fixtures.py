@@ -6,11 +6,14 @@ import asyncio
 import socket
 import subprocess
 import threading
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
 from unittest import mock
 
 import pytest
+from anyio.abc import Process
 
 from prefect.testing import fixtures
 
@@ -248,18 +251,29 @@ class TestHostedApiServerOwnership:
             "_reserve_hosted_api_socket",
             lambda _: (port, None),
         )
+        open_process = fixtures.open_process
+        children: list[Process] = []
+
+        @asynccontextmanager
+        async def observe_process(**kwargs: Any) -> AsyncIterator[Process]:
+            async with open_process(**kwargs) as child:
+                children.append(child)
+                yield child
+
+        monkeypatch.setattr(fixtures, "open_process", observe_process)
 
         gen = fixtures.hosted_api_server.__wrapped__(
             unused_tcp_port_factory=lambda: port,
             test_database_connection_url=test_database_connection_url,
         )
         try:
-            with pytest.raises(
-                RuntimeError,
-                match="Hosted test Prefect API process exited before readiness",
-            ):
+            # Either child exit or the ownership deadline may refuse startup.
+            # Neither path may yield the foreign endpoint or leave our child alive.
+            with pytest.raises(RuntimeError):
                 await gen.__anext__()
             assert ForeignHealthHandler.requests > 0
+            assert len(children) == 1
+            assert children[0].returncode is not None
             async with fixtures.httpx.AsyncClient() as client:
                 response = await client.get(f"http://127.0.0.1:{port}/api/health")
             assert response.status_code == 200
@@ -268,6 +282,7 @@ class TestHostedApiServerOwnership:
             foreign_server.shutdown()
             foreign_server.server_close()
             foreign_thread.join(timeout=5)
+            assert not foreign_thread.is_alive()
 
     @pytest.mark.unix
     async def test_concurrent_servers_own_distinct_reserved_ports(
