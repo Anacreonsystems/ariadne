@@ -66,7 +66,7 @@ from prefect.client.orchestration import get_client
 from prefect.client.stream_storage import PrefectStreamStorage
 from prefect.context import FlowRunContext
 from prefect.states import Completed, Running
-from prefect.streams import Stream, StreamTaskConfig
+from prefect.streams import Stream, StreamTaskConfig, StreamSourceConfig, SourceRecord
 from prefect.utilities.asyncutils import run_coro_as_sync
 
 assert not (Path(prefect.__file__).parent / 'server/models').exists()
@@ -94,6 +94,22 @@ def pipeline():
     return run_coro_as_sync(output.storage.read_prefix(output.stream_id, 10))
 
 assert pipeline() == [{'document': 200, 'signed': True}, {'document': 201, 'signed': True}]
+
+@task(stream=StreamSourceConfig())
+async def native_source(*, ctx):
+    for position, document in enumerate([200, 201], 1):
+        if position > ctx.accepted_source_position:
+            yield SourceRecord(position, document)
+
+@flow
+def native_source_pipeline():
+    incoming = native_source.submit_stream()
+    output = sign.submit_stream(incoming)
+    output.wait()
+    assert incoming.wait().accepted_source_position == 2
+    return run_coro_as_sync(output.storage.read_prefix(output.stream_id, 10))
+
+assert native_source_pipeline() == [{'document': 200, 'signed': True}, {'document': 201, 'signed': True}]
 print('STRIPPED_NATIVE_CLIENT_PASS')
 """,
         encoding="utf-8",

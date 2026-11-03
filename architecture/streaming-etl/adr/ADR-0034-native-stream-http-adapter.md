@@ -216,7 +216,11 @@ the unchanged verifier covers all 482 files. The dedicated PostgreSQL 17 job
 still requires the native cases to execute without skips. Unsupported general
 database profiles retain their explicit capability skips. This correction
 changes no SDK, engine, API, schema or storage bytes and earns no extra share.
-The successor hosted result remains pending.
+The [successor hosted result](../evidence/native-stage3-hosted-successor-2026-11-02.json)
+passed with 96 successful checks and five conditional skips on `d832ecd`.
+PR #5 was merged as `d87f109` after all checks completed. Its main tree matches
+the tested PR head. The same working branch was fast-forwarded to that merge;
+N1.4 source work continues there without a new branch or dependent PR chain.
 
 ### Executed findings
 

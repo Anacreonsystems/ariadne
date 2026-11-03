@@ -1260,3 +1260,229 @@ async def test_terminal_task_failure_closes_older_owner_but_not_from_stale_attem
         )
     ) == failed
     assert binding.attempt == 1
+
+
+async def test_source_task_reservation_position_checked_eof_and_completed_retry(
+    db, session, flow_run, task_run
+):
+    await require_postgres_17(db)
+    store = NativeStreamStore(db)
+    stream_id = uuid4()
+    reserved = await store.reserve_source(flow_run.id, stream_id, task_run.id)
+    assert (await store.reserve_source(flow_run.id, stream_id, task_run.id)) == reserved
+
+    with pytest.raises(NativeStreamError) as lag:
+        await store.open_source(stream_id, task_run.id, uuid4(), 1, metadata_lag=True)
+    assert lag.value.code == "METADATA_NOT_READY"
+
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await session.commit()
+    first = await store.open_source(
+        stream_id, task_run.id, uuid4(), 1, metadata_lag=True
+    )
+    assert first.state == "OPEN"
+    assert first.accepted_source_position == 0
+    record = await store.append(first.binding, 1, {"ref": "object:1"})
+    assert record.producer_position == 1
+    assert await store.append(first.binding, 1, {"ref": "object:1"}) == record
+
+    with pytest.raises(NativeStreamError) as drift:
+        await store.close_source(first.binding, 0)
+    assert drift.value.code == "IDENTITY_CONFLICT"
+    assert (await store.status(stream_id)).state == "OPEN"
+
+    await store.close_source(first.binding, 1)
+    await store.close_source(first.binding, 1)
+    assert (await store.status(stream_id)).state == "COMPLETED"
+
+    await next_attempt(db, task_run.id)
+    recovered = await store.open_source(
+        stream_id, task_run.id, uuid4(), 2, metadata_lag=True
+    )
+    assert recovered.state == "COMPLETED"
+    assert recovered.accepted_source_position == 1
+    assert recovered.binding.owner_epoch == first.binding.owner_epoch + 1
+    with pytest.raises(NativeStreamError) as stale:
+        await store.append(first.binding, 2, {"ref": "object:2"})
+    assert stale.value.code in {"ATTEMPT_NOT_CURRENT", "STALE_OWNER"}
+
+
+async def test_source_task_reject_and_open_have_one_winner(
+    db, session, flow_run, task_run
+):
+    await require_postgres_17(db)
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await session.commit()
+    store = NativeStreamStore(db)
+    stream_id = uuid4()
+    await store.reserve_source(flow_run.id, stream_id, task_run.id)
+
+    outcomes = await asyncio.gather(
+        store.open_source(stream_id, task_run.id, uuid4(), 1, metadata_lag=True),
+        store.reject_reserved_source(
+            flow_run.id, stream_id, task_run.id, "submission failed"
+        ),
+        return_exceptions=True,
+    )
+    successes = [value for value in outcomes if not isinstance(value, BaseException)]
+    refusals = [value for value in outcomes if isinstance(value, NativeStreamError)]
+    assert len(successes) == len(refusals) == 1
+    assert refusals[0].code in {"STALE_OWNER", "TERMINAL_CONFLICT"}
+
+    async with db.session_context() as check:
+        stream = await check.get(db.StreamPartition, stream_id)
+        assert stream.producer_kind == "SOURCE"
+        assert stream.producer_task_run_id == task_run.id
+        if stream.state == "FAILED":
+            assert stream.owner_id is None
+            assert stream.record_count == 0
+        else:
+            assert stream.state == "OPEN"
+            assert stream.owner_id is not None
+            assert stream.attempt == stream.owner_epoch == 1
+
+
+async def test_source_task_final_failure_uses_exact_current_attempt(
+    db, session, flow_run, task_run
+):
+    await require_postgres_17(db)
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await session.commit()
+    store = NativeStreamStore(db)
+    stream_id = uuid4()
+    await store.reserve_source(flow_run.id, stream_id, task_run.id)
+    admitted = await store.open_source(
+        stream_id, task_run.id, uuid4(), 1, metadata_lag=True
+    )
+    await store.append(admitted.binding, 1, "ref:1")
+
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Failed(message="retry exhausted"),
+        force=True,
+    )
+    await session.commit()
+    with pytest.raises(NativeStreamError) as stale:
+        await store.fail_task_source(
+            flow_run.id, stream_id, task_run.id, 1, "retry exhausted"
+        )
+    assert stale.value.code == "ATTEMPT_NOT_CURRENT"
+    assert (await store.status(stream_id)).state == "OPEN"
+
+    failed = await store.fail_task_source(
+        flow_run.id, stream_id, task_run.id, 2, "retry exhausted"
+    )
+    assert failed.state == "FAILED"
+    assert failed.producer_position == 1
+    assert (
+        await store.fail_task_source(
+            flow_run.id, stream_id, task_run.id, 2, "retry exhausted"
+        )
+    ) == failed
+    with pytest.raises(NativeStreamError) as conflict:
+        await store.fail_task_source(
+            flow_run.id, stream_id, task_run.id, 2, "different failure"
+        )
+    assert conflict.value.code == "TERMINAL_CONFLICT"
+
+
+async def test_source_task_open_future_cross_flow_and_final_are_read_only(
+    db, session, flow, flow_run, task_run
+):
+    await require_postgres_17(db)
+    store = NativeStreamStore(db)
+    stream_id = uuid4()
+    await store.reserve_source(flow_run.id, stream_id, task_run.id)
+
+    with pytest.raises(NativeStreamError) as future:
+        await store.open_source(stream_id, task_run.id, uuid4(), 2, metadata_lag=True)
+    assert future.value.code == "METADATA_NOT_READY"
+
+    other_flow = await models.flow_runs.create_flow_run(
+        session=session,
+        flow_run=schemas.core.FlowRun(flow_id=flow.id, flow_version="source-other"),
+    )
+    other_task = await models.task_runs.create_task_run(
+        session=session,
+        task_run=schemas.core.TaskRun(
+            flow_run_id=other_flow.id,
+            task_key=f"source-cross-{uuid4()}",
+            dynamic_key="0",
+            state=schemas.states.Running(),
+        ),
+    )
+    await session.commit()
+    with pytest.raises(NativeStreamError) as cross_flow:
+        await store.open_source(stream_id, other_task.id, uuid4(), 1, metadata_lag=True)
+    assert cross_flow.value.code == "IDENTITY_CONFLICT"
+
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await session.commit()
+    unbound_id = uuid4()
+    await store.create(flow_run.id, unbound_id)
+    with pytest.raises(NativeStreamError) as unbound:
+        await store.open_source(unbound_id, task_run.id, uuid4(), 1, metadata_lag=True)
+    assert unbound.value.code == "IDENTITY_CONFLICT"
+
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Cancelled(),
+        force=True,
+    )
+    await session.commit()
+    with pytest.raises(NativeStreamError) as terminal_task:
+        await store.open_source(stream_id, task_run.id, uuid4(), 1, metadata_lag=True)
+    assert terminal_task.value.code == "ATTEMPT_NOT_CURRENT"
+
+    await models.task_runs.set_task_run_state(
+        session=session,
+        task_run_id=task_run.id,
+        state=schemas.states.Running(),
+        force=True,
+    )
+    await models.flow_runs.set_flow_run_state(
+        session=session,
+        flow_run_id=flow_run.id,
+        state=schemas.states.Failed(message="final"),
+        force=True,
+    )
+    await session.commit()
+    with pytest.raises(NativeStreamError) as final:
+        await store.open_source(stream_id, task_run.id, uuid4(), 2, metadata_lag=True)
+    assert final.value.code == "TERMINAL_CONFLICT"
+
+    async with db.session_context() as check:
+        stream = await check.get(db.StreamPartition, stream_id)
+        assert stream.owner_id is None
+        assert stream.attempt == stream.owner_epoch == stream.producer_position == 0
+        unbound = await check.get(db.StreamPartition, unbound_id)
+        assert unbound.producer_kind is None
+        assert unbound.owner_id is None

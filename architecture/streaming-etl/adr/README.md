@@ -54,7 +54,13 @@ and the frozen N1.2 code/test evidence.
 The [native HTTP acceptance](../evidence/native-stage3-acceptance-2026-11-02.json)
 and [current graph validation](../evidence/adr-graph-native-stage3-2026-11-02.json)
 close ADR-0034 with actual HTTP/process/package evidence and scoped Principal
-review. Whole-flow/worker reconstruction and source SDK remain later work.
+review. That transport gate left source SDK and whole-worker recovery for later
+stages.
+The [native source acceptance](../evidence/native-stage4-acceptance-2026-11-02.json)
+and [source graph validation](../evidence/adr-graph-native-stage4-2026-11-02.json)
+close ADR-0035's finite source/task-retry scope at 40%. Whole-worker submission
+recovery has its own pending proposal in ADR-0036 and earns no implementation
+share yet.
 
 ## Decision graph
 
@@ -131,6 +137,8 @@ graph TD
     E1 --> A0032[ADR-0032: Native task and stream contract]
     A0032 --> A0033[ADR-0033: Native storage]
     A0033 --> A0034[ADR-0034: HTTP adapter - accepted]
+    A0034 --> A0035[ADR-0035: Native source runtime - accepted]
+    A0035 --> A0036[ADR-0036: Durable submission recovery - pending]
     A0094[ADR-0094: JSONB fidelity - rejected] -. evidence .-> A0033
     A0095[ADR-0095: Implicit FK lock order - rejected] -. evidence .-> A0033
     A0010 --> A0032
@@ -211,6 +219,8 @@ graph TD
 - [ADR-0032: Native task and stream dependency contract](ADR-0032-native-task-stream-contract.md) — `accepted`
 - [ADR-0033: Native durable stream storage](ADR-0033-native-durable-stream-storage.md) — `accepted`
 - [ADR-0034: Native stream HTTP adapter and runtime admission](ADR-0034-native-stream-http-adapter.md) — `accepted`
+- [ADR-0035: Native source task runtime](ADR-0035-native-source-task-runtime.md) — `accepted`
+- [ADR-0036: Durable submission recovery](ADR-0036-durable-submission-recovery.md) — `pending`
 - [ADR-0090: Use Prefect transactions as the streaming coordinator](ADR-0090-prefect-transactions-as-coordinator.md) — `rejected`
 - [ADR-0091: Idempotency alone provides multi-sink atomicity](ADR-0091-idempotency-alone-is-atomic.md) — `rejected`
 - [ADR-0092: Split lifecycle and progress state machines](ADR-0092-split-safety-state-machines.md) — `rejected`

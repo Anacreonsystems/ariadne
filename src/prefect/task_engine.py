@@ -107,7 +107,7 @@ from prefect.states import (
     exception_to_failed_state,
     return_value_to_state,
 )
-from prefect.streams import StreamProtocolError
+from prefect.streams import StreamProtocolError, StreamTaskConfig
 from prefect.telemetry.run_telemetry import RunTelemetry
 from prefect.transactions import (
     AsyncTransaction,
@@ -322,7 +322,8 @@ class BaseTaskRunEngine(Generic[P, R]):
                     context={
                         "parameter_name": parameter,
                         "allow_stream": bool(
-                            self.task.stream and parameter == self.task.stream.input
+                            isinstance(self.task.stream, StreamTaskConfig)
+                            and parameter == self.task.stream.input
                         ),
                     },
                 )

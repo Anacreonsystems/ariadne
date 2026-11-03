@@ -1,7 +1,7 @@
 """Native stream dependency contracts.
 
-Storage is supplied explicitly in this first integration stage. No production
-backend or source-publication API is selected implicitly.
+Source declarations select the platform HTTP backend. Operator edges carry
+their storage handle explicitly; durable publication never stores Python frames.
 """
 
 from __future__ import annotations
@@ -94,6 +94,72 @@ class StreamTaskConfig:
         bound = exposed.bind(*args, **kwargs)
         bound.apply_defaults()
         return {**bound.arguments, self.context: None}
+
+
+@dataclass(frozen=True)
+class StreamSourceConfig:
+    """Declare a finite, positioned source generator inside an ordinary TaskRun.
+
+    One generator lives for an attempt. A retry creates a fresh generator with
+    the durable accepted position; Python frames are never recovery authority.
+    """
+
+    context: str = "ctx"
+    protocol: str = "source-v1"
+    bounded: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.context or self.protocol != "source-v1" or self.bounded is not True:
+            raise StreamProtocolError("Only a finite source-v1 generator is supported")
+
+    def validate_function(self, fn: Callable[..., Any]) -> None:
+        if not (inspect.isgeneratorfunction(fn) or inspect.isasyncgenfunction(fn)):
+            raise StreamProtocolError("Source tasks require a sync or async generator")
+        parameters = inspect.signature(fn).parameters
+        if self.context not in parameters or parameters[self.context].kind not in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            raise StreamProtocolError(
+                "A source needs an explicit keyword-capable context"
+            )
+        if "__prefect_stream_run__" in parameters:
+            raise StreamProtocolError("Reserved stream execution parameter")
+
+    def bind_parameters(
+        self, fn: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        signature = inspect.signature(fn)
+        exposed = signature.replace(
+            parameters=[
+                p for name, p in signature.parameters.items() if name != self.context
+            ]
+        )
+        bound = exposed.bind(*args, **kwargs)
+        bound.apply_defaults()
+        return {**bound.arguments, self.context: None}
+
+
+@dataclass(frozen=True)
+class SourceRecord(Generic[T]):
+    """One stable, contiguous source position and a small JSON value/reference."""
+
+    position: int
+    value: T
+
+    def __post_init__(self) -> None:
+        if type(self.position) is not int or self.position < 1:
+            raise StreamProtocolError("A source position must be a positive integer")
+
+
+@dataclass
+class SourceContext:
+    """Injected source metadata; only platform acceptance advances position."""
+
+    task_run_id: UUID
+    stream_id: str
+    attempt: int
+    accepted_source_position: int
 
 
 @dataclass
@@ -257,3 +323,12 @@ class StreamRunResult:
 
     consumer_id: str
     output_stream_id: str
+
+
+@dataclass(frozen=True)
+class SourceRunResult:
+    """Bounded source TaskRun result; records remain in durable storage."""
+
+    task_run_id: UUID
+    stream_id: str
+    accepted_source_position: int

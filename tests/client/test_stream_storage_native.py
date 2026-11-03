@@ -37,6 +37,11 @@ REQUEST_SCHEMA_NAMES = (
     "StreamSourceClaimRequest",
     "StreamSourceAppendRequest",
     "StreamSourceFinishRequest",
+    "StreamSourceReserveRequest",
+    "StreamSourceRejectRequest",
+    "StreamSourceFailRequest",
+    "StreamSourceOpenRequest",
+    "StreamSourceCloseRequest",
     "StreamReleaseRequest",
 )
 
@@ -49,6 +54,7 @@ PUBLIC_WIRE_SCHEMA_NAMES = (
     "StreamEnvelope",
     "StreamInfo",
     "StreamCompletionResult",
+    "SourceAdmission",
     *REQUEST_SCHEMA_NAMES,
     "StreamReleaseResult",
 )
@@ -65,6 +71,11 @@ PUBLIC_STREAM_METHODS = (
     "claim_stream_source",
     "append_stream_source",
     "finish_stream_source",
+    "reserve_stream_source",
+    "reject_stream_source",
+    "fail_stream_source",
+    "open_stream_source",
+    "close_stream_source",
     "release_stream_flow",
     "read_stream",
     "read_stream_prefix",
@@ -449,3 +460,111 @@ async def test_terminal_intent_is_frozen_before_transport_wait(
 
     assert captured["value"] == {"items": [1]}
     assert captured["managed_state"] == {"seen": [7]}
+
+
+async def test_source_append_intent_is_frozen_before_transport_wait(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    flow_run_id = uuid4()
+    binding = client_schemas.SourceBinding(
+        flow_run_id=flow_run_id,
+        stream_id=uuid4(),
+        task_run_id=uuid4(),
+        owner_id=uuid4(),
+        attempt=1,
+        owner_epoch=2,
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    captured: dict[str, Any] = {}
+
+    class Client:
+        api_url = httpx.URL("http://prefect.test/api")
+        _loop = asyncio.get_running_loop()
+
+        async def append_stream_source(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+            entered.set()
+            await release.wait()
+
+    client = Client()
+    monkeypatch.setattr(
+        AsyncClientContext,
+        "get",
+        classmethod(lambda cls: SimpleNamespace(client=client)),
+    )
+    monkeypatch.setattr(SyncClientContext, "get", classmethod(lambda cls: None))
+    storage = PrefectStreamStorage(flow_run_id, "http://prefect.test/api")
+    value = {"reference": {"parts": [1]}}
+
+    append = asyncio.create_task(storage.append_source(binding, 8, value))
+    await entered.wait()
+    value["reference"]["parts"].append(2)
+    release.set()
+    await append
+
+    assert captured["position"] == 8
+    assert captured["value"] == {"reference": {"parts": [1]}}
+
+
+async def test_source_records_reuse_one_context_client(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    flow_run_id = uuid4()
+    binding = client_schemas.SourceBinding(
+        flow_run_id=flow_run_id,
+        stream_id=uuid4(),
+        task_run_id=uuid4(),
+        owner_id=uuid4(),
+        attempt=1,
+        owner_epoch=1,
+    )
+
+    class Client:
+        api_url = httpx.URL("http://prefect.test/api")
+        _loop = asyncio.get_running_loop()
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, int | None]] = []
+
+        async def open_stream_source(self, **kwargs: Any) -> Any:
+            self.calls.append(("open", None))
+            return client_schemas.SourceAdmission(
+                binding=binding,
+                state="OPEN",
+                accepted_source_position=0,
+            )
+
+        async def append_stream_source(self, **kwargs: Any) -> None:
+            self.calls.append(("append", kwargs["position"]))
+
+        async def close_stream_source(self, **kwargs: Any) -> None:
+            self.calls.append(("close", kwargs["expected_position"]))
+
+    client = Client()
+    monkeypatch.setattr(
+        AsyncClientContext,
+        "get",
+        classmethod(lambda cls: SimpleNamespace(client=client)),
+    )
+    monkeypatch.setattr(SyncClientContext, "get", classmethod(lambda cls: None))
+
+    async def no_one_off_client() -> Any:
+        raise AssertionError("source record publication opened a one-off client")
+
+    monkeypatch.setattr("prefect.client.stream_storage.get_client", no_one_off_client)
+    storage = PrefectStreamStorage(flow_run_id, "http://prefect.test/api")
+
+    admission = await storage.open_source(
+        str(binding.stream_id), binding.task_run_id, binding.owner_id, 1
+    )
+    await storage.append_source(admission.binding, 1, {"reference": "one"})
+    await storage.append_source(admission.binding, 2, {"reference": "two"})
+    await storage.close_source(admission.binding, 2)
+
+    assert client.calls == [
+        ("open", None),
+        ("append", 1),
+        ("append", 2),
+        ("close", 2),
+    ]

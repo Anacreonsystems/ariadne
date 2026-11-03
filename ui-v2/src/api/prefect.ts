@@ -965,6 +965,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/streams/v1/sources/reserve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reserve Source */
+        post: operations["reserve_source_streams_v1_sources_reserve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/sources/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject Source */
+        post: operations["reject_source_streams_v1_sources_reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/sources/fail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fail Source */
+        post: operations["fail_source_streams_v1_sources_fail_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/sources/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open Source */
+        post: operations["open_source_streams_v1_sources_open_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/streams/v1/sources/append": {
         parameters: {
             query?: never;
@@ -993,6 +1061,23 @@ export interface paths {
         put?: never;
         /** Finish Source */
         post: operations["finish_source_streams_v1_sources_finish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/sources/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Close Source */
+        post: operations["close_source_streams_v1_sources_close_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11108,6 +11193,17 @@ export interface components {
              */
             next_scheduled_start_time: string;
         };
+        /** SourceAdmission */
+        SourceAdmission: {
+            binding: components["schemas"]["SourceBinding"];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "OPEN" | "COMPLETED";
+            /** Accepted Source Position */
+            accepted_source_position: number;
+        };
         /** SourceBinding */
         SourceBinding: {
             /**
@@ -11621,11 +11717,122 @@ export interface components {
             /** Attempt */
             attempt: number;
         };
+        /** StreamSourceCloseRequest */
+        StreamSourceCloseRequest: {
+            binding: components["schemas"]["SourceBinding"];
+            /** Expected Position */
+            expected_position: number;
+        };
+        /** StreamSourceFailRequest */
+        StreamSourceFailRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /** Error */
+            error: string;
+            /** Attempt */
+            attempt: number;
+        };
         /** StreamSourceFinishRequest */
         StreamSourceFinishRequest: {
             binding: components["schemas"]["SourceBinding"];
             /** Error */
             error?: string | null;
+        };
+        /** StreamSourceOpenRequest */
+        StreamSourceOpenRequest: {
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /**
+             * Owner Id
+             * Format: uuid
+             */
+            owner_id: string;
+            /** Attempt */
+            attempt: number;
+            /**
+             * Protocol Version
+             * @default 1
+             * @constant
+             */
+            protocol_version: 1;
+            /**
+             * Source Protocol
+             * @default source-v1
+             * @constant
+             */
+            source_protocol: "source-v1";
+        };
+        /** StreamSourceRejectRequest */
+        StreamSourceRejectRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /** Error */
+            error: string;
+        };
+        /** StreamSourceReserveRequest */
+        StreamSourceReserveRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /**
+             * Protocol Version
+             * @default 1
+             * @constant
+             */
+            protocol_version: 1;
+            limits?: components["schemas"]["StreamLimits"] | null;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /**
+             * Source Protocol
+             * @default source-v1
+             * @constant
+             */
+            source_protocol: "source-v1";
         };
         /**
          * SuspendFlowRun
@@ -15382,6 +15589,146 @@ export interface operations {
             };
         };
     };
+    reserve_source_streams_v1_sources_reserve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSourceReserveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_source_streams_v1_sources_reject_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSourceRejectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fail_source_streams_v1_sources_fail_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSourceFailRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_source_streams_v1_sources_open_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSourceOpenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceAdmission"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     append_source_streams_v1_sources_append_post: {
         parameters: {
             query?: never;
@@ -15429,6 +15776,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["StreamSourceFinishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    close_source_streams_v1_sources_close_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSourceCloseRequest"];
             };
         };
         responses: {

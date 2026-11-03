@@ -18,7 +18,12 @@ from pydantic import JsonValue
 
 from prefect.client.orchestration import get_client
 from prefect.client.orchestration._streams.client import StreamRequestError
-from prefect.client.schemas.streams import ConsumerBinding, DeliveryToken
+from prefect.client.schemas.streams import (
+    ConsumerBinding,
+    DeliveryToken,
+    SourceAdmission,
+    SourceBinding,
+)
 from prefect.context import AsyncClientContext, SyncClientContext
 from prefect.settings import PREFECT_API_URL
 from prefect.streams import StreamProtocolError, StreamRecord, StreamStatus
@@ -31,7 +36,7 @@ class PrefectStreamStorage:
     Task engines own client pools and credentials. Async tasks reuse their
     loop's client; sync tasks reuse their context's thread-safe client through
     a worker thread. No live client, pool, token or credential is pickled here.
-    Source-task decorators and automatic backend selection remain separate.
+    Native source-task submission selects this handle from its FlowRun.
     """
 
     flow_run_id: UUID
@@ -111,9 +116,11 @@ class PrefectStreamStorage:
             "create_stream", flow_run_id=self.flow_run_id, stream_id=UUID(stream_id)
         )
 
-    async def reserve_output(self, stream_id: str, task_run_id: UUID) -> None:
+    async def reserve_output(
+        self, stream_id: str, task_run_id: UUID, *, source: bool = False
+    ) -> None:
         await self._request(
-            "reserve_stream_output",
+            "reserve_stream_source" if source else "reserve_stream_output",
             flow_run_id=self.flow_run_id,
             stream_id=UUID(stream_id),
             task_run_id=task_run_id,
@@ -146,10 +153,10 @@ class PrefectStreamStorage:
         return registered
 
     async def reject_output(
-        self, stream_id: str, task_run_id: UUID, error: str
+        self, stream_id: str, task_run_id: UUID, error: str, *, source: bool = False
     ) -> None:
         await self._request(
-            "reject_stream_output",
+            "reject_stream_source" if source else "reject_stream_output",
             flow_run_id=self.flow_run_id,
             stream_id=UUID(stream_id),
             task_run_id=task_run_id,
@@ -228,13 +235,19 @@ class PrefectStreamStorage:
         )
 
     async def fail_task_output(
-        self, stream_id: str, task_run_id: UUID, attempt: int, error: str
+        self,
+        stream_id: str,
+        task_run_id: UUID,
+        attempt: int,
+        error: str,
+        *,
+        source: bool = False,
     ) -> None:
         deadline = time.monotonic() + self.admission_timeout
         while True:
             try:
                 await self._request(
-                    "fail_stream_task_output",
+                    "fail_stream_source" if source else "fail_stream_task_output",
                     flow_run_id=self.flow_run_id,
                     stream_id=UUID(stream_id),
                     task_run_id=task_run_id,
@@ -257,6 +270,44 @@ class PrefectStreamStorage:
     async def finish(self, stream_id: str, error: str | None = None) -> None:
         raise StreamProtocolError(
             "Native output finish requires an explicit binding or lifecycle identity"
+        )
+
+    async def open_source(
+        self, stream_id: str, task_run_id: UUID, owner_id: UUID, attempt: int
+    ) -> SourceAdmission:
+        admission = await self._request(
+            "open_stream_source",
+            stream_id=UUID(stream_id),
+            task_run_id=task_run_id,
+            owner_id=owner_id,
+            attempt=attempt,
+            metadata_lag=True,
+        )
+        if admission.binding.flow_run_id != self.flow_run_id:
+            raise StreamProtocolError("Source belongs to another FlowRun")
+        return admission
+
+    async def append_source(
+        self, binding: SourceBinding, position: int, value: Any
+    ) -> None:
+        try:
+            snapshot = json.loads(json.dumps(value, allow_nan=False))
+        except (TypeError, ValueError, RecursionError) as error:
+            raise StreamProtocolError("Source values must be finite JSON") from error
+        await self._request(
+            "append_stream_source",
+            **binding.model_dump(),
+            position=position,
+            value=snapshot,
+        )
+
+    async def close_source(
+        self, binding: SourceBinding, expected_position: int
+    ) -> None:
+        await self._request(
+            "close_stream_source",
+            **binding.model_dump(),
+            expected_position=expected_position,
         )
 
     async def status(self, stream_id: str) -> StreamStatus:

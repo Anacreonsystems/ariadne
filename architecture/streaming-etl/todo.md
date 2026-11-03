@@ -5,7 +5,7 @@ completion does not make an ADR `accepted`; evidence for every criterion in
 the declared ADR scope must be linked back to it.
 
 Current direction: [Native integration epoch 1](epochs/epoch-01-native-prefect.md)
-is `progress`, with **30% earned native foundation readiness** after N1.3. Its [first-stage contract](adr/ADR-0032-native-task-stream-contract.md)
+is `progress`, with **40% earned native foundation readiness** after N1.4. Its [first-stage contract](adr/ADR-0032-native-task-stream-contract.md)
 is accepted for its native Task SDK/engine scope with real HTTP/PostgreSQL
 checks. The first sprint earned its planned 10% share after the complete
 [Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json) passed.
@@ -16,8 +16,11 @@ The [N1.2 gate](evidence/native-stage2-closure-acceptance-2026-11-01.json) accep
 native storage-only slice. [ADR-0034](adr/ADR-0034-native-stream-http-adapter.md)
 accepts the HTTP/admission slice through the
 [final native transport gate](evidence/native-stage3-acceptance-2026-11-02.json).
-That earns its planned +10%; native source SDK and whole-worker reconstruction
-remain later runtime work.
+That earns N1.3's planned +10%. The native source SDK is now accepted under
+[ADR-0035](adr/ADR-0035-native-source-task-runtime.md) and its
+[source gate](evidence/native-stage4-acceptance-2026-11-02.json), earning N1.4's
+next planned +10%. Whole-worker reconstruction remains a separate proposal in
+[pending ADR-0036](adr/ADR-0036-durable-submission-recovery.md).
 
 The separate DS-052a follow-up is now `done` under
 [ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md): the
@@ -53,6 +56,16 @@ medium delivery risk.
 | NI1-020 | `done` | NI1-013 | Review [ADR-0034](adr/ADR-0034-native-stream-http-adapter.md). As a developer, I can identify safe HTTP admission and metadata-lag behavior. |
 | NI1-021 | `done` | NI1-020 | Native API and client adapter. As a user, I can use platform storage without DB credentials in the worker. |
 | NI1-022 | `done` | NI1-021 | [Transport acceptance](evidence/native-stage3-acceptance-2026-11-02.json) and packaging. As a system, I got verified remote recovery with retained identities, not only local model tests; whole-flow/worker reconstruction remains the next runtime stage. |
+
+## Native epoch 1 — Stage 3 source delivery
+
+| ID | State | Depends | Deliverable and acceptance criteria |
+| --- | --- | --- | --- |
+| NI1-030 | `done` | NI1-022 | Review [ADR-0035](adr/ADR-0035-native-source-task-runtime.md). As a developer, I can distinguish one generator per source attempt from one terminal event per operator input, and task retry from whole-worker recovery. |
+| NI1-031 | `done` | NI1-030 | Source reservation, atomic admission-position response, exact EOF and client API. As a system, I can bind a source before a worker starts and fence stale append/finish requests. |
+| NI1-032 | `done` | NI1-030, NI1-031 | Native source configuration, submission and sync/async generator loop. As a user, I can receive positioned references while one ordinary source TaskRun stays active and retry from durable source progress. |
+| NI1-033 | `done` | NI1-031, NI1-032 | Real PostgreSQL/HTTP source failure and regression gates. As a user, I got input 200 or 201 according to durable acceptance, safe early delivery and no record-sized orchestration history. |
+| NI1-034 | `done` | NI1-033 | [Principal review](evidence/native-stage4-principal-2026-11-02.json), frozen source evidence, packaging and required CI selection/gate integration. As a developer, I can reproduce N1.4's bounded source gate and identify the deferred whole-worker/GC scope; hosted successor CI is reported separately. |
 
 ## Protocol epoch 2 — short experimental delivery — target 100%, earned 100%
 

@@ -359,6 +359,126 @@ class StreamClient(BaseClient):
         ).model_dump(mode="json")
         self._stream_request("POST", "/streams/v1/sources/finish", json=payload)
 
+    def reserve_stream_source(
+        self,
+        *,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        limits: dict[str, int] | None = None,
+        protocol_version: int = 1,
+        source_protocol: str = "source-v1",
+    ) -> schemas.StreamInfo:
+        """Execute a native source-task lifecycle operation."""
+        payload = schemas.StreamSourceReserveRequest.model_validate(
+            dict(
+                flow_run_id=flow_run_id,
+                stream_id=stream_id,
+                task_run_id=task_run_id,
+                limits=limits,
+                protocol_version=protocol_version,
+                source_protocol=source_protocol,
+            )
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/sources/reserve", json=payload
+        )
+        return schemas.StreamInfo.model_validate(response.json())
+
+    def reject_stream_source(
+        self, *, flow_run_id: UUID, stream_id: UUID, task_run_id: UUID, error: str
+    ) -> schemas.StreamInfo:
+        """Execute a native source-task lifecycle operation."""
+        payload = schemas.StreamSourceRejectRequest.model_validate(
+            dict(
+                flow_run_id=flow_run_id,
+                stream_id=stream_id,
+                task_run_id=task_run_id,
+                error=error,
+            )
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/sources/reject", json=payload
+        )
+        return schemas.StreamInfo.model_validate(response.json())
+
+    def fail_stream_source(
+        self,
+        *,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        attempt: int,
+        error: str,
+    ) -> schemas.StreamInfo:
+        """Execute a native source-task lifecycle operation."""
+        payload = schemas.StreamSourceFailRequest.model_validate(
+            dict(
+                flow_run_id=flow_run_id,
+                stream_id=stream_id,
+                task_run_id=task_run_id,
+                attempt=attempt,
+                error=error,
+            )
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/sources/fail", json=payload
+        )
+        return schemas.StreamInfo.model_validate(response.json())
+
+    def open_stream_source(
+        self,
+        *,
+        stream_id: UUID,
+        task_run_id: UUID,
+        owner_id: UUID,
+        attempt: int,
+        protocol_version: int = 1,
+        source_protocol: str = "source-v1",
+    ) -> schemas.SourceAdmission:
+        """Execute a native source-task lifecycle operation."""
+        payload = schemas.StreamSourceOpenRequest.model_validate(
+            dict(
+                stream_id=stream_id,
+                task_run_id=task_run_id,
+                owner_id=owner_id,
+                attempt=attempt,
+                protocol_version=protocol_version,
+                source_protocol=source_protocol,
+            )
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/sources/open", json=payload
+        )
+        return schemas.SourceAdmission.model_validate(response.json())
+
+    def close_stream_source(
+        self,
+        *,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        owner_id: UUID,
+        attempt: int,
+        owner_epoch: int,
+        expected_position: int,
+    ) -> None:
+        """Execute a native source-task lifecycle operation."""
+        payload = schemas.StreamSourceCloseRequest.model_validate(
+            dict(
+                binding=schemas.SourceBinding(
+                    flow_run_id=flow_run_id,
+                    stream_id=stream_id,
+                    task_run_id=task_run_id,
+                    owner_id=owner_id,
+                    attempt=attempt,
+                    owner_epoch=owner_epoch,
+                ),
+                expected_position=expected_position,
+            )
+        ).model_dump(mode="json")
+        self._stream_request("POST", "/streams/v1/sources/close", json=payload)
+
     def release_stream_flow(
         self,
         *,
@@ -704,6 +824,126 @@ class StreamAsyncClient(BaseAsyncClient):
             {"binding": binding, "error": error}
         ).model_dump(mode="json")
         await self._stream_request("POST", "/streams/v1/sources/finish", json=payload)
+
+    async def reserve_stream_source(
+        self,
+        *,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        limits: dict[str, int] | None = None,
+        protocol_version: int = 1,
+        source_protocol: str = "source-v1",
+    ) -> schemas.StreamInfo:
+        """Execute a native source-task lifecycle operation."""
+        payload = schemas.StreamSourceReserveRequest.model_validate(
+            dict(
+                flow_run_id=flow_run_id,
+                stream_id=stream_id,
+                task_run_id=task_run_id,
+                limits=limits,
+                protocol_version=protocol_version,
+                source_protocol=source_protocol,
+            )
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/sources/reserve", json=payload
+        )
+        return schemas.StreamInfo.model_validate(response.json())
+
+    async def reject_stream_source(
+        self, *, flow_run_id: UUID, stream_id: UUID, task_run_id: UUID, error: str
+    ) -> schemas.StreamInfo:
+        """Execute a native source-task lifecycle operation."""
+        payload = schemas.StreamSourceRejectRequest.model_validate(
+            dict(
+                flow_run_id=flow_run_id,
+                stream_id=stream_id,
+                task_run_id=task_run_id,
+                error=error,
+            )
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/sources/reject", json=payload
+        )
+        return schemas.StreamInfo.model_validate(response.json())
+
+    async def fail_stream_source(
+        self,
+        *,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        attempt: int,
+        error: str,
+    ) -> schemas.StreamInfo:
+        """Execute a native source-task lifecycle operation."""
+        payload = schemas.StreamSourceFailRequest.model_validate(
+            dict(
+                flow_run_id=flow_run_id,
+                stream_id=stream_id,
+                task_run_id=task_run_id,
+                attempt=attempt,
+                error=error,
+            )
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/sources/fail", json=payload
+        )
+        return schemas.StreamInfo.model_validate(response.json())
+
+    async def open_stream_source(
+        self,
+        *,
+        stream_id: UUID,
+        task_run_id: UUID,
+        owner_id: UUID,
+        attempt: int,
+        protocol_version: int = 1,
+        source_protocol: str = "source-v1",
+    ) -> schemas.SourceAdmission:
+        """Execute a native source-task lifecycle operation."""
+        payload = schemas.StreamSourceOpenRequest.model_validate(
+            dict(
+                stream_id=stream_id,
+                task_run_id=task_run_id,
+                owner_id=owner_id,
+                attempt=attempt,
+                protocol_version=protocol_version,
+                source_protocol=source_protocol,
+            )
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/sources/open", json=payload
+        )
+        return schemas.SourceAdmission.model_validate(response.json())
+
+    async def close_stream_source(
+        self,
+        *,
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        owner_id: UUID,
+        attempt: int,
+        owner_epoch: int,
+        expected_position: int,
+    ) -> None:
+        """Execute a native source-task lifecycle operation."""
+        payload = schemas.StreamSourceCloseRequest.model_validate(
+            dict(
+                binding=schemas.SourceBinding(
+                    flow_run_id=flow_run_id,
+                    stream_id=stream_id,
+                    task_run_id=task_run_id,
+                    owner_id=owner_id,
+                    attempt=attempt,
+                    owner_epoch=owner_epoch,
+                ),
+                expected_position=expected_position,
+            )
+        ).model_dump(mode="json")
+        await self._stream_request("POST", "/streams/v1/sources/close", json=payload)
 
     async def release_stream_flow(
         self,
