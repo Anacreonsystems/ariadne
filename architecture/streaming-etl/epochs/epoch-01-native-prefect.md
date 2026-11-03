@@ -152,6 +152,11 @@ finite JSON side parameters, sufficient thread-pool slots, and a selected truste
 launcher on the same deployment/runtime. Production worker automation and the
 remaining epoch acceptance criteria below are still open.
 
+The [N1.5 hosted closure](../evidence/native-stage5c-hosted-successor-2026-11-03.json)
+confirms PR 9 merged after 97 successful checks/five conditional skips with
+identical tested/merge source and a successful native PostgreSQL process-recovery
+job. Its documentation adds no readiness share.
+
 ## Native ownership and storage boundary
 
 The existing Prefect ownership model is the starting point: the server

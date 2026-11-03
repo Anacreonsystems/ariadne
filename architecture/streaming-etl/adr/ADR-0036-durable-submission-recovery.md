@@ -540,6 +540,25 @@ separately passes 375 native/contract cases on the initial revision, including
 the 221-case SDK/HTTP/process/package step. That job does not replace the
 corrected test head's CI. Earned bounded foundation readiness remains 50%.
 
+## Hosted merge closure
+
+[PR 9](https://github.com/Anacreonsystems/ariadne/pull/9) merged on 2026-11-03
+at `4e301583b61c3928afe11ac588c3d3ccac0cf7d0`, after 97 successful checks
+and five conditional skips. The [hosted closure](../evidence/native-stage5c-hosted-successor-2026-11-03.json)
+verifies the tested head `ef16ba1` and merge tree are identical and all 69
+corrected-source hashes survive the merge. The explicit one-test-file bridge
+to the original local acceptance remains preserved.
+
+The final PostgreSQL 17 job passes 375 cases, including all 221 SDK/HTTP/process/
+package cases, with no skipped cases. The corrected ordinary Python 3.14.10
+execution job passes 1,617 cases with its declared 159 profile/version skips
+and seven expected failures. Both successful raw job logs are hash-bound in
+the closure; the original failed 3.14 log remains retained. The
+[captured collector](../evidence/native-stage5c-hosted-collector-2026-11-03.txt)
+records the reproducible merge/source checks. The post-merge main workflow is
+a separate run; this snapshot makes no completion claim for it. Documentation
+closure earns no additional percentage: bounded foundation remains 50%.
+
 ## Failure modes
 
 - A random new TaskRun or stream after process loss duplicates a logical

@@ -1,0 +1,30 @@
+from collections import Counter
+from datetime import datetime, timezone
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+
+root=Path('/workspace/ariadne');ev=root/'architecture/streaming-etl/evidence'
+pr=json.loads(subprocess.check_output(['gh','pr','view','9','--repo','Anacreonsystems/ariadne','--json','url,state,headRefOid,mergeCommit,mergedAt,statusCheckRollup'],text=True))
+assert pr['state']=='MERGED'
+checks=pr['statusCheckRollup']
+assert checks and all(x.get('status')=='COMPLETED' and x.get('conclusion') in ('SUCCESS','SKIPPED','NEUTRAL') for x in checks)
+head,merge=pr['headRefOid'],pr['mergeCommit']['oid']
+subprocess.run(['git','fetch','origin','main'],check=True,stdout=subprocess.DEVNULL)
+read=lambda rev:subprocess.check_output(['git','rev-parse',rev],text=True).strip()
+assert read(head+'^{tree}')==read(merge+'^{tree}')
+acceptance=json.loads((ev/'native-stage5c-acceptance-2026-11-03.json').read_text())
+identity=json.loads((ev/'native-stage5c-identity-python312-2026-11-03.json').read_text())
+review=json.loads((ev/'native-stage5c-identity-principal-2026-11-03.json').read_text())
+assert identity['verdict']=='PASS' and review['verdict']=='PASS_TEST_ONLY_IDENTITY_CORRECTION_SOURCE_QUALIFIED' and not review['conditions_remaining']
+source=identity['source_sha256_after']
+assert identity['source_sha256_before']==source
+assert [p for p in source if source[p]!=acceptance['source_sha256'][p]]==['tests/test_native_stream_code.py']
+for path,digest in source.items():
+    for rev in (head,merge):
+        assert hashlib.sha256(subprocess.check_output(['git','show',rev+':'+path])).hexdigest()==digest
+record={'schema':'native-stage5c-hosted-successor/v1','verdict':'PASS','captured_at_utc':datetime.now(timezone.utc).isoformat(),'pull_request':pr['url'],'tested_head':head,'merge_commit':merge,'merged_at':pr['mergedAt'],'merge_tree_identical':True,'source_sha256':source,'historical_acceptance':{'path':'native-stage5c-acceptance-2026-11-03.json','sha256':hashlib.sha256((ev/'native-stage5c-acceptance-2026-11-03.json').read_bytes()).hexdigest()},'identity_bridge_review':{'path':'native-stage5c-identity-principal-2026-11-03.json','sha256':hashlib.sha256((ev/'native-stage5c-identity-principal-2026-11-03.json').read_bytes()).hexdigest()},'expected_delta_from_historical_acceptance':['tests/test_native_stream_code.py'],'latest_rollup_counts':dict(Counter(x['conclusion'] for x in checks)),'checks':checks,'scope':'Hosted closure for the bounded N1.5c native foundation. Exact 69-file corrected source survives merge. Its only delta from the historical local acceptance is the independently reviewed relocation test; all 68 other witnessed paths remain identical. Earned foundation50%, not production readiness. The post-merge main-branch workflow is a separate run and is not represented as completed by this snapshot.'}
+record['hosted_job_logs']=[{'path':name,'sha256':hashlib.sha256((ev/name).read_bytes()).hexdigest()} for name in ('native-stage5c-hosted-python314-job-126262767431-2026-11-03.log','native-stage5c-hosted-native-job-126262766827-2026-11-03.log')]
+(ev/'native-stage5c-hosted-successor-2026-11-03.json').write_text(json.dumps(record,indent=2)+'\n')
+print(json.dumps({k:record[k] for k in ('verdict','tested_head','merge_commit','latest_rollup_counts')}))
