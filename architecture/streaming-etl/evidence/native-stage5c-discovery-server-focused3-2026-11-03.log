@@ -1,0 +1,390 @@
+F..FF.                                                                   [100%]
+=================================== FAILURES ===================================
+_______________ test_terminal_unsealed_abort_is_atomic_and_exact _______________
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.CheckViolationError: new row for relation "stream_partition" violates check constraint "ck_stream_partition__terminal_shape_valid"
+E   DETAIL:  Failing row contains (1aa3147b-e11c-4928-a37c-9f5c1a3aad88, 1, FAILED, Flow terminated before its native graph was sealed, null, 0, 0, SOURCE, 01a1a262-de6c-7a9c-9b68-8f4052978f4b, null, 0, 0, {"max_bytes": 67108864, "max_records": 10000, "max_consumers": 6..., 0, 0, f, 01a1a262-de6c-7ac0-b3bf-0b70693c89be, 2026-11-03 17:09:10.917388+00, 2026-11-03 17:09:11.006415+00).
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "stream_partition" violates check constraint "ck_stream_partition__terminal_shape_valid"
+E   DETAIL:  Failing row contains (1aa3147b-e11c-4928-a37c-9f5c1a3aad88, 1, FAILED, Flow terminated before its native graph was sealed, null, 0, 0, SOURCE, 01a1a262-de6c-7a9c-9b68-8f4052978f4b, null, 0, 0, {"max_bytes": 67108864, "max_records": 10000, "max_consumers": 6..., 0, 0, f, 01a1a262-de6c-7ac0-b3bf-0b70693c89be, 2026-11-03 17:09:10.917388+00, 2026-11-03 17:09:11.006415+00).
+
+The above exception was the direct cause of the following exception:
+tests/server/models/test_stream_executions.py:1101: in test_terminal_unsealed_abort_is_atomic_and_exact
+    first = await abort_unsealed_execution(session, db, request, credentials)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_executions.py:1193: in abort_unsealed_execution
+    result = await task_run_models.set_task_run_state(
+src/prefect/server/models/task_runs.py:556: in set_task_run_state
+    await context.validate_proposed_state()
+src/prefect/server/orchestration/rules.py:431: in validate_proposed_state
+    await self._validate_proposed_state()
+src/prefect/server/orchestration/rules.py:490: in _validate_proposed_state
+    await self.session.flush()
+.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py:787: in flush
+    await greenlet_spawn(self.sync_session.flush, objects=objects)
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:203: in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:4331: in flush
+    self._flush(objects)
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:4466: in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py:224: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:4427: in _flush
+    flush_context.execute()
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py:463: in execute
+    n.execute_aggregate(self, set_)
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py:567: in execute_aggregate
+    self.execute(uow)
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py:642: in execute
+    util.preloaded.orm_persistence.save_obj(
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py:85: in save_obj
+    _emit_update_statements(
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py:885: in _emit_update_statements
+    c = connection.execute(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1419: in execute
+    return meth(
+.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py:527: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1641: in _execute_clauseelement
+    ret = self._execute_context(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1846: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1986: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2363: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "stream_partition" violates check constraint "ck_stream_partition__terminal_shape_valid"
+E   DETAIL:  Failing row contains (1aa3147b-e11c-4928-a37c-9f5c1a3aad88, 1, FAILED, Flow terminated before its native graph was sealed, null, 0, 0, SOURCE, 01a1a262-de6c-7a9c-9b68-8f4052978f4b, null, 0, 0, {"max_bytes": 67108864, "max_records": 10000, "max_consumers": 6..., 0, 0, f, 01a1a262-de6c-7ac0-b3bf-0b70693c89be, 2026-11-03 17:09:10.917388+00, 2026-11-03 17:09:11.006415+00).
+E   [SQL: UPDATE stream_partition SET state=$1::VARCHAR, error=$2::VARCHAR, updated=now() WHERE stream_partition.id = $3::UUID RETURNING stream_partition.updated]
+E   [parameters: ('FAILED', 'Flow terminated before its native graph was sealed', '01a1a262-de6c-7ac0-b3bf-0b70693c89be')]
+E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_recovery_c_arch'
+Connecting to postgres at 'postgres://native_recovery:native_recovery@127.0.0.1:55436/postgres'
+Creating test postgres database 'native_recovery_c_arch_tests_master'
+Using test database connection URL 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_recovery_c_arch_tests_master'
+Running hosted API server on port 41749
+---------------------------- Captured stderr setup -----------------------------
+17:09:10.297 | INFO    | uvicorn.error - Started server process [37892]
+17:09:10.301 | INFO    | uvicorn.error - Waiting for application startup.
+17:09:10.421 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+17:09:10.437 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+17:09:10.437 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+17:09:10.438 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+17:09:10.438 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+17:09:10.438 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+17:09:10.438 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+17:09:10.441 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+17:09:10.441 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+17:09:10.441 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+17:09:10.441 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+17:09:10.441 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+17:09:10.444 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+17:09:10.447 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+17:09:10.447 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+17:09:10.449 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+17:09:10.449 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+17:09:10.451 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+17:09:10.453 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+17:09:10.455 | INFO    | uvicorn.error - Application startup complete.
+17:09:10.457 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 41749) (Press CTRL+C to quit)
+17:09:10.531 | INFO    | uvicorn.access - 127.0.0.1:41114 - "GET /api/health HTTP/1.1" 200
+----------------------------- Captured stderr call -----------------------------
+17:09:11.042 | ERROR   | prefect.server - Encountered error during state validation
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 550, in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 177, in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 268, in __bind_execute
+    data, status, _ = await self.__do_execute(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 257, in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 205, in bind_execute
+asyncpg.exceptions.CheckViolationError: new row for relation "stream_partition" violates check constraint "ck_stream_partition__terminal_shape_valid"
+DETAIL:  Failing row contains (1aa3147b-e11c-4928-a37c-9f5c1a3aad88, 1, FAILED, Flow terminated before its native graph was sealed, null, 0, 0, SOURCE, 01a1a262-de6c-7a9c-9b68-8f4052978f4b, null, 0, 0, {"max_bytes": 67108864, "max_records": 10000, "max_consumers": 6..., 0, 0, f, 01a1a262-de6c-7ac0-b3bf-0b70693c89be, 2026-11-03 17:09:10.917388+00, 2026-11-03 17:09:11.006415+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "stream_partition" violates check constraint "ck_stream_partition__terminal_shape_valid"
+DETAIL:  Failing row contains (1aa3147b-e11c-4928-a37c-9f5c1a3aad88, 1, FAILED, Flow terminated before its native graph was sealed, null, 0, 0, SOURCE, 01a1a262-de6c-7a9c-9b68-8f4052978f4b, null, 0, 0, {"max_bytes": 67108864, "max_records": 10000, "max_consumers": 6..., 0, 0, f, 01a1a262-de6c-7ac0-b3bf-0b70693c89be, 2026-11-03 17:09:10.917388+00, 2026-11-03 17:09:11.006415+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/src/prefect/server/orchestration/rules.py", line 431, in validate_proposed_state
+    await self._validate_proposed_state()
+  File "/workspace/ariadne/src/prefect/server/orchestration/rules.py", line 490, in _validate_proposed_state
+    await self.session.flush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 787, in flush
+    await greenlet_spawn(self.sync_session.flush, objects=objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 463, in execute
+    n.execute_aggregate(self, set_)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 567, in execute_aggregate
+    self.execute(uow)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 85, in save_obj
+    _emit_update_statements(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 885, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+           ^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "stream_partition" violates check constraint "ck_stream_partition__terminal_shape_valid"
+DETAIL:  Failing row contains (1aa3147b-e11c-4928-a37c-9f5c1a3aad88, 1, FAILED, Flow terminated before its native graph was sealed, null, 0, 0, SOURCE, 01a1a262-de6c-7a9c-9b68-8f4052978f4b, null, 0, 0, {"max_bytes": 67108864, "max_records": 10000, "max_consumers": 6..., 0, 0, f, 01a1a262-de6c-7ac0-b3bf-0b70693c89be, 2026-11-03 17:09:10.917388+00, 2026-11-03 17:09:11.006415+00).
+[SQL: UPDATE stream_partition SET state=$1::VARCHAR, error=$2::VARCHAR, updated=now() WHERE stream_partition.id = $3::UUID RETURNING stream_partition.updated]
+[parameters: ('FAILED', 'Flow terminated before its native graph was sealed', '01a1a262-de6c-7ac0-b3bf-0b70693c89be')]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+------------------------------ Captured log call -------------------------------
+ERROR    prefect.server:rules.py:434 Encountered error during state validation
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 550, in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 177, in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 268, in __bind_execute
+    data, status, _ = await self.__do_execute(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 257, in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 205, in bind_execute
+asyncpg.exceptions.CheckViolationError: new row for relation "stream_partition" violates check constraint "ck_stream_partition__terminal_shape_valid"
+DETAIL:  Failing row contains (1aa3147b-e11c-4928-a37c-9f5c1a3aad88, 1, FAILED, Flow terminated before its native graph was sealed, null, 0, 0, SOURCE, 01a1a262-de6c-7a9c-9b68-8f4052978f4b, null, 0, 0, {"max_bytes": 67108864, "max_records": 10000, "max_consumers": 6..., 0, 0, f, 01a1a262-de6c-7ac0-b3bf-0b70693c89be, 2026-11-03 17:09:10.917388+00, 2026-11-03 17:09:11.006415+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "stream_partition" violates check constraint "ck_stream_partition__terminal_shape_valid"
+DETAIL:  Failing row contains (1aa3147b-e11c-4928-a37c-9f5c1a3aad88, 1, FAILED, Flow terminated before its native graph was sealed, null, 0, 0, SOURCE, 01a1a262-de6c-7a9c-9b68-8f4052978f4b, null, 0, 0, {"max_bytes": 67108864, "max_records": 10000, "max_consumers": 6..., 0, 0, f, 01a1a262-de6c-7ac0-b3bf-0b70693c89be, 2026-11-03 17:09:10.917388+00, 2026-11-03 17:09:11.006415+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/src/prefect/server/orchestration/rules.py", line 431, in validate_proposed_state
+    await self._validate_proposed_state()
+  File "/workspace/ariadne/src/prefect/server/orchestration/rules.py", line 490, in _validate_proposed_state
+    await self.session.flush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 787, in flush
+    await greenlet_spawn(self.sync_session.flush, objects=objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 463, in execute
+    n.execute_aggregate(self, set_)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 567, in execute_aggregate
+    self.execute(uow)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 85, in save_obj
+    _emit_update_statements(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 885, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+           ^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "stream_partition" violates check constraint "ck_stream_partition__terminal_shape_valid"
+DETAIL:  Failing row contains (1aa3147b-e11c-4928-a37c-9f5c1a3aad88, 1, FAILED, Flow terminated before its native graph was sealed, null, 0, 0, SOURCE, 01a1a262-de6c-7a9c-9b68-8f4052978f4b, null, 0, 0, {"max_bytes": 67108864, "max_records": 10000, "max_consumers": 6..., 0, 0, f, 01a1a262-de6c-7ac0-b3bf-0b70693c89be, 2026-11-03 17:09:10.917388+00, 2026-11-03 17:09:11.006415+00).
+[SQL: UPDATE stream_partition SET state=$1::VARCHAR, error=$2::VARCHAR, updated=now() WHERE stream_partition.id = $3::UUID RETURNING stream_partition.updated]
+[parameters: ('FAILED', 'Flow terminated before its native graph was sealed', '01a1a262-de6c-7ac0-b3bf-0b70693c89be')]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+_ TestFlowRetryingRule.test_retriable_state_detail_controls_automatic_flow_retry[default-retries] _
+tests/server/orchestration/test_core_policy.py:565: in test_retriable_state_detail_controls_automatic_flow_retry
+    assert ctx.response_status == expected_status
+E   assert SetStateStatus.ACCEPT == SetStateStatus.REJECT
+E     
+E     - REJECT
+E     + ACCEPT
+_ TestFlowRetryingRule.test_retriable_state_detail_controls_automatic_flow_retry[explicit-true-retries] _
+tests/server/orchestration/test_core_policy.py:565: in test_retriable_state_detail_controls_automatic_flow_retry
+    assert ctx.response_status == expected_status
+E   assert SetStateStatus.ACCEPT == SetStateStatus.REJECT
+E     
+E     - REJECT
+E     + ACCEPT
+=========================== short test summary info ============================
+FAILED tests/server/models/test_stream_executions.py::test_terminal_unsealed_abort_is_atomic_and_exact
+FAILED tests/server/orchestration/test_core_policy.py::TestFlowRetryingRule::test_retriable_state_detail_controls_automatic_flow_retry[default-retries]
+FAILED tests/server/orchestration/test_core_policy.py::TestFlowRetryingRule::test_retriable_state_detail_controls_automatic_flow_retry[explicit-true-retries]
+3 failed, 3 passed in 9.89s

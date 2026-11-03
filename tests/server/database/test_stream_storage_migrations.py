@@ -42,8 +42,34 @@ async def test_native_stream_storage_upgrade_and_downgrade(
 ):
     assert STREAM_TABLES <= await _table_names(database_engine)
 
+    async def execution_attempt_columns() -> set[str]:
+        async with database_engine.connect() as connection:
+            return set(
+                await connection.run_sync(
+                    lambda sync_connection: {
+                        column["name"]
+                        for column in sa.inspect(sync_connection).get_columns(
+                            "stream_execution_attempt"
+                        )
+                    }
+                )
+            )
+
+    abort_columns = {
+        "abort_operation_id",
+        "abort_request_digest",
+        "abort_outcome",
+        "abort_outcome_digest",
+    }
+    assert abort_columns <= await execution_attempt_columns()
+
     await database_engine.dispose()
     try:
+        await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+        assert STREAM_TABLES <= await _table_names(database_engine)
+        assert abort_columns.isdisjoint(await execution_attempt_columns())
+
+        await database_engine.dispose()
         await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
         assert {
             "stream_execution_authority",
@@ -183,6 +209,29 @@ async def test_stream_execution_authority_schema_rejects_partial_seal_and_horizo
             "recovery_operation_id": uuid.uuid4(),
             "recovery_request_digest": "4" * 64,
             "recovery_outcome": {"state": "prepared"},
+        },
+        {"abort_operation_id": uuid.uuid4()},
+        {
+            "abort_operation_id": uuid.uuid4(),
+            "abort_outcome": {"state": "TERMINAL"},
+            "abort_outcome_digest": "5" * 64,
+        },
+        {
+            "abort_operation_id": uuid.uuid4(),
+            "abort_request_digest": "5" * 64,
+            "abort_outcome": {"state": "TERMINAL"},
+        },
+        {
+            "abort_operation_id": uuid.uuid4(),
+            "abort_request_digest": "short",
+            "abort_outcome": {"state": "TERMINAL"},
+            "abort_outcome_digest": "5" * 64,
+        },
+        {
+            "abort_operation_id": uuid.uuid4(),
+            "abort_request_digest": "5" * 64,
+            "abort_outcome": {"state": "TERMINAL"},
+            "abort_outcome_digest": "short",
         },
     ],
 )

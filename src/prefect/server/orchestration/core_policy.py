@@ -1085,6 +1085,12 @@ class RetryFailedFlows(FlowRunOrchestrationRule):
         if initial_state is None or proposed_state is None:
             return
 
+        if getattr(proposed_state.state_details, "retriable", True) is False:
+            updated_policy = context.run.empirical_policy.model_dump()
+            updated_policy["retry_type"] = None
+            context.run.empirical_policy = core.FlowRunPolicy(**updated_policy)
+            return
+
         run_settings = context.run_settings
         run_count = context.run.run_count
 

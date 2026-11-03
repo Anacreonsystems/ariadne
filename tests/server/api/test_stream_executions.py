@@ -1,15 +1,19 @@
 """HTTP authority checks for enrolled native stream executions."""
 
 from datetime import datetime, timezone
-from uuid import uuid4
+from typing import Literal
+from uuid import UUID, uuid4
 
+import anyio
 import pytest
 import sqlalchemy as sa
 
+from prefect import flow
 from prefect.server import schemas
 from prefect.server.database import PrefectDBInterface
 from prefect.server.models import flow_runs as flow_run_models
 from prefect.server.orchestration.core_policy import CoreFlowPolicy
+from prefect.settings import PREFECT_API_URL, temporary_settings
 
 pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
 
@@ -52,6 +56,27 @@ def _headers(claim: dict[str, object]) -> dict[str, str]:
         "X-Prefect-Stream-Execution-Generation": "1",
         "X-Prefect-Stream-Execution-Holder": str(claim["holder_id"]),
         "X-Prefect-Stream-Execution-Capability": str(claim["holder_capability"]),
+    }
+
+
+def _takeover(claim: dict[str, object]) -> dict[str, object]:
+    return {
+        "flow_run_id": claim["flow_run_id"],
+        "operation_id": str(uuid4()),
+        "expected_generation": 1,
+        "expected_holder_id": claim["holder_id"],
+        "supervisor_id": claim["supervisor_id"],
+        "supervisor_capability": claim["supervisor_capability"],
+        "new_holder_id": str(uuid4()),
+        "new_holder_capability": "44" * 32,
+        "new_holder_event_public_key": "55" * 32,
+        "death_witness": {
+            "launcher_instance_id": str(uuid4()),
+            "child_process_id": 1234,
+            "exit_code": 77,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "kind": "WAITPID",
+        },
     }
 
 
@@ -247,24 +272,7 @@ async def test_http_seal_fences_lifecycle_and_unkeyed_mutations(client, db, flow
 
     takeover = await client.post(
         "/streams/v1/executions/takeover",
-        json={
-            "flow_run_id": str(flow_run.id),
-            "operation_id": str(uuid4()),
-            "expected_generation": 1,
-            "expected_holder_id": claim["holder_id"],
-            "supervisor_id": claim["supervisor_id"],
-            "supervisor_capability": claim["supervisor_capability"],
-            "new_holder_id": str(uuid4()),
-            "new_holder_capability": "44" * 32,
-            "new_holder_event_public_key": "55" * 32,
-            "death_witness": {
-                "launcher_instance_id": str(uuid4()),
-                "child_process_id": 1234,
-                "exit_code": 77,
-                "observed_at": datetime.now(timezone.utc).isoformat(),
-                "kind": "WAITPID",
-            },
-        },
+        json=_takeover(claim),
     )
     assert takeover.status_code == 200
     stale_rename = await client.patch(
@@ -277,3 +285,234 @@ async def test_http_seal_fences_lifecycle_and_unkeyed_mutations(client, db, flow
     observed = await client.get(f"/task_runs/{task_run_id}")
     assert observed.status_code == 200
     assert observed.json()["name"] == "current-holder-name"
+
+
+async def test_http_takeover_refuses_unsealed_partial_manifest_without_mutation(
+    client, db, flow_run
+):
+    if not await _postgres_17(db):
+        pytest.skip("Native stream execution authority requires PostgreSQL 17")
+    await _recoverable_flow(db, flow_run)
+    claim = _claim(flow_run.id)
+    claimed = await client.post("/streams/v1/executions/claim", json=claim)
+    assert claimed.status_code == 200
+    headers = _headers(claim)
+    source = await client.post(
+        "/streams/v1/submissions/reserve", json=_source(flow_run.id), headers=headers
+    )
+    source.raise_for_status()
+    running = await client.post(
+        f"/flow_runs/{flow_run.id}/set_state",
+        json={"state": {"type": "RUNNING", "name": "Running"}},
+        headers=headers,
+    )
+    assert running.status_code == 201
+
+    refused = await client.post(
+        "/streams/v1/executions/takeover", json=_takeover(claim)
+    )
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["code"] == "MANIFEST_NOT_SEALED"
+
+    async with db.session_context() as session:
+        flow = await session.get(db.FlowRun, flow_run.id)
+        authority = await session.scalar(
+            sa.select(db.StreamExecutionAuthority).where(
+                db.StreamExecutionAuthority.flow_run_id == flow_run.id
+            )
+        )
+        attempts = await session.scalar(
+            sa.select(sa.func.count(db.StreamExecutionAttempt.id)).where(
+                db.StreamExecutionAttempt.flow_run_id == flow_run.id
+            )
+        )
+        task = await session.get(db.TaskRun, source.json()["task_run_id"])
+        stream = await session.get(db.StreamPartition, source.json()["stream_id"])
+    assert flow is not None and flow.state_type == schemas.states.StateType.RUNNING
+    assert authority is not None
+    assert authority.generation == 1
+    assert authority.holder_id == UUID(str(claim["holder_id"]))
+    assert authority.state == "ACTIVE"
+    assert authority.manifest_set_digest is None
+    assert attempts == 1
+    assert task is not None and task.state_type == schemas.states.StateType.PENDING
+    assert task.run_count == 0
+    assert stream is not None and stream.state == "OPEN"
+    assert stream.owner_id is None and stream.owner_epoch == stream.attempt == 0
+    assert (
+        stream.record_count
+        == stream.byte_count
+        == stream.last_sequence
+        == stream.producer_position
+        == 0
+    )
+
+
+async def test_http_unsealed_abort_is_atomic_replay_and_refuses_drift(
+    client, db, flow_run
+):
+    if not await _postgres_17(db):
+        pytest.skip("Native stream execution authority requires PostgreSQL 17")
+    await _recoverable_flow(db, flow_run)
+    claim = _claim(flow_run.id)
+    claimed = await client.post("/streams/v1/executions/claim", json=claim)
+    assert claimed.status_code == 200
+    headers = _headers(claim)
+    source = await client.post(
+        "/streams/v1/submissions/reserve", json=_source(flow_run.id), headers=headers
+    )
+    source.raise_for_status()
+    witness = {
+        "submission_key": source.json()["submission_key"],
+        "manifest_digest": source.json()["manifest_digest"],
+    }
+
+    empty = await client.post(
+        "/streams/v1/executions/abort-unsealed",
+        json={
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(uuid4()),
+            "manifests": [],
+            "error": "Empty graph must not create an abort receipt",
+        },
+        headers=headers,
+    )
+    assert empty.status_code == 422
+    async with db.session_context() as session:
+        attempt = await session.scalar(
+            sa.select(db.StreamExecutionAttempt).where(
+                db.StreamExecutionAttempt.flow_run_id == flow_run.id
+            )
+        )
+        task = await session.get(db.TaskRun, source.json()["task_run_id"])
+        stream = await session.get(db.StreamPartition, source.json()["stream_id"])
+    assert attempt is not None and attempt.abort_operation_id is None
+    assert task is not None and task.state_type == schemas.states.StateType.PENDING
+    assert stream is not None and stream.state == "OPEN"
+    assert stream.record_count == stream.byte_count == stream.last_sequence == 0
+
+    not_terminal = await client.post(
+        "/streams/v1/executions/abort-unsealed",
+        json={
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(uuid4()),
+            "manifests": [witness],
+            "error": "Flow failed before graph admission",
+        },
+        headers=headers,
+    )
+    assert not_terminal.status_code == 409
+    assert not_terminal.json()["detail"]["code"] == "RECOVERY_NOT_READY"
+
+    running = await client.post(
+        f"/flow_runs/{flow_run.id}/set_state",
+        json={"state": {"type": "RUNNING", "name": "Running"}},
+        headers=headers,
+    )
+    assert running.status_code == 201
+    cancelled = await client.post(
+        f"/flow_runs/{flow_run.id}/set_state",
+        json={"state": {"type": "CANCELLED", "name": "Cancelled"}},
+        headers=headers,
+    )
+    assert cancelled.status_code == 201
+
+    request = {
+        "flow_run_id": str(flow_run.id),
+        "operation_id": str(uuid4()),
+        "manifests": [witness],
+        "error": "Flow failed before graph admission",
+    }
+    first = await client.post(
+        "/streams/v1/executions/abort-unsealed", json=request, headers=headers
+    )
+    second = await client.post(
+        "/streams/v1/executions/abort-unsealed", json=request, headers=headers
+    )
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert first.json()["items"] == [
+        {
+            "submission_key": source.json()["submission_key"],
+            "task_run_id": source.json()["task_run_id"],
+            "stream_id": source.json()["stream_id"],
+        }
+    ]
+
+    drift = await client.post(
+        "/streams/v1/executions/abort-unsealed",
+        json={**request, "error": "Changed abort material"},
+        headers=headers,
+    )
+    assert drift.status_code == 409
+    assert drift.json()["detail"]["code"] == "IDENTITY_CONFLICT"
+
+    task = await client.get(f"/task_runs/{source.json()['task_run_id']}")
+    stream = await client.get(f"/streams/v1/{source.json()['stream_id']}")
+    assert task.status_code == stream.status_code == 200
+    assert task.json()["state_type"] == "FAILED"
+    assert stream.json()["state"] == "FAILED"
+    assert stream.json()["tail_sequence"] == 0
+
+
+@pytest.mark.parametrize("engine", ["sync", "async"])
+async def test_ordinary_flow_exception_retries_remain_enabled(
+    use_hosted_api_server: str, engine: Literal["sync", "async"]
+):
+    attempts = 0
+
+    if engine == "sync":
+
+        @flow(retries=1)
+        def retrying_flow() -> int:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("ordinary sync failure")
+            return attempts
+
+        async def run() -> int:
+            return await anyio.to_thread.run_sync(retrying_flow)
+
+    else:
+
+        @flow(retries=1)
+        async def retrying_flow() -> int:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("ordinary async failure")
+            return attempts
+
+        async def run() -> int:
+            return await retrying_flow()
+
+    with temporary_settings({PREFECT_API_URL: use_hosted_api_server}):
+        assert await run() == 2
+    assert attempts == 2
+
+
+async def test_explicit_non_retriable_flow_failure_remains_final(client, db, flow_run):
+    await _recoverable_flow(db, flow_run)
+    running = await client.post(
+        f"/flow_runs/{flow_run.id}/set_state",
+        json={"state": {"type": "RUNNING", "name": "Running"}},
+    )
+    assert running.status_code == 201
+
+    failed = await client.post(
+        f"/flow_runs/{flow_run.id}/set_state",
+        json={
+            "state": {
+                "type": "FAILED",
+                "name": "Failed",
+                "state_details": {"retriable": False},
+            }
+        },
+    )
+    assert failed.status_code == 201
+    assert failed.json()["state"]["type"] == "FAILED"
+    observed = await client.get(f"/flow_runs/{flow_run.id}")
+    assert observed.status_code == 200
+    assert observed.json()["state_type"] == "FAILED"
+    assert observed.json()["empirical_policy"]["retry_type"] is None

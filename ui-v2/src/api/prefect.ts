@@ -846,6 +846,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/streams/v1/executions/abort-unsealed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Abort Unsealed Stream Execution */
+        post: operations["abort_unsealed_stream_execution_streams_v1_executions_abort_unsealed_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/streams/v1/executions/prepare-recovery": {
         parameters: {
             query?: never;
@@ -12275,6 +12292,62 @@ export interface components {
                 [key: string]: boolean | number | string;
             };
         };
+        /** StreamUnsealedAbortItem */
+        StreamUnsealedAbortItem: {
+            /** Submission Key */
+            submission_key: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+        };
+        /** StreamUnsealedAbortRequest */
+        StreamUnsealedAbortRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Manifests */
+            manifests: components["schemas"]["StreamManifestWitness"][];
+            /** Error */
+            error: string;
+        };
+        /** StreamUnsealedAbortResult */
+        StreamUnsealedAbortResult: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * State
+             * @constant
+             */
+            state: "TERMINAL";
+            /** Items */
+            items: components["schemas"]["StreamUnsealedAbortItem"][];
+            /** Outcome Digest */
+            outcome_digest: string;
+        };
         /**
          * SuspendFlowRun
          * @description Suspends a flow run associated with the trigger
@@ -15792,6 +15865,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StreamExecutionBinding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    abort_unsealed_stream_execution_streams_v1_executions_abort_unsealed_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamUnsealedAbortRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamUnsealedAbortResult"];
                 };
             };
             /** @description Validation Error */

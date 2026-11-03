@@ -58,6 +58,28 @@ class StreamClient(BaseClient):
         except httpx.HTTPStatusError as error:
             raise _refusal(error) from error
 
+    def abort_unsealed_stream_execution(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        manifests: list[dict[str, str]],
+        error: str,
+    ) -> schemas.StreamUnsealedAbortResult:
+        """Close an exact unstarted graph after normal terminal flow failure."""
+        payload = schemas.StreamUnsealedAbortRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "manifests": manifests,
+                "error": error,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/executions/abort-unsealed", json=payload
+        )
+        return schemas.StreamUnsealedAbortResult.model_validate(response.json())
+
     def claim_stream_execution(
         self,
         *,
@@ -689,6 +711,28 @@ class StreamAsyncClient(BaseAsyncClient):
             return await self.request(method, path, **kwargs)
         except httpx.HTTPStatusError as error:
             raise _refusal(error) from error
+
+    async def abort_unsealed_stream_execution(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        manifests: list[dict[str, str]],
+        error: str,
+    ) -> schemas.StreamUnsealedAbortResult:
+        """Close an exact unstarted graph after normal terminal flow failure."""
+        payload = schemas.StreamUnsealedAbortRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "manifests": manifests,
+                "error": error,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/executions/abort-unsealed", json=payload
+        )
+        return schemas.StreamUnsealedAbortResult.model_validate(response.json())
 
     async def claim_stream_execution(
         self,

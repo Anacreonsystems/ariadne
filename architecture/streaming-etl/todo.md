@@ -5,7 +5,7 @@ completion does not make an ADR `accepted`; evidence for every criterion in
 the declared ADR scope must be linked back to it.
 
 Current direction: [Native integration epoch 1](epochs/epoch-01-native-prefect.md)
-is `progress`, with **40% earned native foundation readiness** after N1.4. Its [first-stage contract](adr/ADR-0032-native-task-stream-contract.md)
+is `progress`, with **50% earned native foundation readiness** after N1.5. Its [first-stage contract](adr/ADR-0032-native-task-stream-contract.md)
 is accepted for its native Task SDK/engine scope with real HTTP/PostgreSQL
 checks. The first sprint earned its planned 10% share after the complete
 [Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json) passed.
@@ -19,9 +19,11 @@ accepts the HTTP/admission slice through the
 That earns N1.3's planned +10%. The native source SDK is now accepted under
 [ADR-0035](adr/ADR-0035-native-source-task-runtime.md) and its
 [source gate](evidence/native-stage4-acceptance-2026-11-02.json), earning N1.4's
-next planned +10%. Whole-worker reconstruction remains a separate proposal in
-[ADR-0036](adr/ADR-0036-durable-submission-recovery.md), now in progress under
-the [bounded design agreement](evidence/native-stage5-design-review-2026-11-03.md).
+next planned +10%. Bounded whole-flow reconstruction is now accepted in
+[ADR-0036](adr/ADR-0036-durable-submission-recovery.md) after the
+[bounded design agreement](evidence/native-stage5-design-review-2026-11-03.md)
+and [final acceptance](evidence/native-stage5c-acceptance-2026-11-03.json),
+earning N1.5's planned +10% to reach 50%.
 
 The separate DS-052a follow-up is now `done` under
 [ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md): the
@@ -70,7 +72,7 @@ medium delivery risk.
 
 ## Native epoch 1 — Stage 4 durable submission and recovery
 
-The combined N1.5 gate plans +10%, reaching 50%. Identity and fencing slices
+The combined N1.5 gate earned its planned +10%, reaching 50%. Identity and fencing slices
 earn no percentage separately. All tasks trace to
 [ADR-0036](adr/ADR-0036-durable-submission-recovery.md).
 
@@ -82,9 +84,9 @@ earn no percentage separately. All tasks trace to
 | NI1-043 | `done` | NI1-042 | FlowRun execution generation and verified infrastructure replacement. As a system, I can reject writes from the previous generation. |
 | NI1-044 | `done` | NI1-043 | Normal TaskRun retry and durable terminal reconciliation. As a user, I can retain the TaskRun UUID without forced states or Python frame restoration. |
 | NI1-045 | `done` | NI1-043, NI1-044 | Late TaskRun event and FlowRun lifecycle guards. As a system, I got old-generation observations rejected before they change current progress. [N1.5b acceptance](evidence/native-stage5b-acceptance-2026-11-03.json) and [Principal review](evidence/native-stage5b-principal-2026-11-03.json), zero independent percentage. |
-| NI1-046 | `progress` | NI1-045 | SDK reconstruction from explicit stable keys. As a user, I can replace a terminated flow process and continue the original channels. |
-| NI1-047 | `planned` | NI1-046 | Real process-loss and response-loss matrix plus ordinary runtime/package regressions. As a developer, I got exact first-incomplete continuation on unchanged source bytes. |
-| NI1-048 | `planned` | NI1-047 | Independent review, evidence graph and ADR closure. As a system, I can map all acceptance criteria to reproducible evidence before claiming 50%. |
+| NI1-046 | `done` | NI1-045 | SDK reconstruction from explicit stable keys. As a user, I can replace a terminated flow process and continue the original channels. |
+| NI1-047 | `done` | NI1-046 | Real process-loss and response-loss matrix plus ordinary runtime/package regressions. As a developer, I got exact first-incomplete continuation on unchanged source bytes. |
+| NI1-048 | `done` | NI1-047 | Independent review, evidence graph and ADR closure. As a system, I got all scoped criteria mapped to [frozen acceptance](evidence/native-stage5c-acceptance-2026-11-03.json), [Principal review](evidence/native-stage5c-principal-2026-11-03.json) and the [documentation graph](evidence/native-stage5c-graph-2026-11-03.json), earning 50% foundation readiness. |
 
 ## Protocol epoch 2 — short experimental delivery — target 100%, earned 100%
 

@@ -1,6 +1,7 @@
 from typing import Literal
 
 ServerRoutes = Literal[
+    "/streams/v1/executions/abort-unsealed",
     "/streams/v1/executions/claim",
     "/streams/v1/executions/takeover",
     "/streams/v1/executions/seal-manifest",

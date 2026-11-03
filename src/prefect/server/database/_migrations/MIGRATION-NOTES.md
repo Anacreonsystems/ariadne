@@ -8,6 +8,16 @@ Each time a database migration is written, an entry is included here with:
 
 This gives us a history of changes and will create merge conflicts if two migrations are made at once, flagging situations where a branch needs to be updated before merging.
 
+# Add native stream unsealed-abort receipts
+SQLite: `b86f2d7e0c54`
+Postgres: `a75e1c6d9b43`
+
+Adds a bounded exact-replay receipt to each execution attempt for atomically
+failing an unsealed, entirely unstarted native graph after its FlowRun becomes
+terminal. The upgrade performs no backfill. Downgrading removes only abort
+receipts; execution authority and submission manifests remain, but callers lose
+idempotent replay of a previously committed unsealed abort.
+
 # Add native stream execution-generation authority
 SQLite: `f64a9d5b8c32`
 Postgres: `d53e8c4f7a21`

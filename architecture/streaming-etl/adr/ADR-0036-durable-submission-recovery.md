@@ -1,6 +1,6 @@
 # ADR-0036: Durable submission identity and whole-worker recovery
 
-- Status: `progress`
+- Status: `accepted`
 - Date: 2026-11-02
 - Epoch: [Native integration epoch 1](../epochs/epoch-01-native-prefect.md),
   proposed Stage 4 / N1.5
@@ -64,9 +64,9 @@ generator or operator invocation from durable progress. It does not restore a
 Python frame or create a TaskRun per record.
 
 The 2026-11-02 proposal had no implementation or accepted recovery transition.
-N1.5a now accepts immutable identity. N1.5b implements the server fence and
-normal-policy retry preparation and is undergoing its scoped acceptance. Whole
-flow reconstruction remains N1.5c and has not been accepted.
+N1.5a accepts immutable identity. N1.5b accepts the server fence and
+normal-policy retry preparation. N1.5c now accepts bounded whole-flow
+reconstruction on the same frozen source, completing this ADR's declared scope.
 
 ## Proposed bounded design
 
@@ -177,9 +177,9 @@ and deployment compatibility work beyond the bounded N1.5 candidate.
 The questions below record the original 2026-11-02 proposal. On 2026-11-03,
 the ETL Architect / HighLoad Principal and implementation owner agreed the
 bounded answers in the [design review](../evidence/native-stage5-design-review-2026-11-03.md).
-The user requested implementation. The decision is now in progress; neither
-the agreement nor an individual implementation slice satisfies this ADR's
-acceptance gate.
+The user requested implementation. The initial decision proceeded through three implementation slices; the
+combined final acceptance below now closes this ADR. An agreement alone did
+not satisfy the gate.
 
 1. Is an explicit `submission_key` mandatory in the first profile, and which
    SDK call owns it?
@@ -260,6 +260,94 @@ entrypoint. The descriptor transports holder authority internally; it is not a
 new global Flow mode. Production worker automation and branch/join recovery
 remain later work.
 
+## N1.5c accepted bounded implementation
+
+Stable `submit_stream(submission_key=...)` declarations now reconstruct the same
+TaskRuns and channels inside the ordinary Flow/Task engines. A process-local
+registry holds task entrypoints before `begin_run` until the full ordered graph
+seals initially or passes newer-generation preparation. It refreshes all task
+snapshots before release. The flow engine joins native futures before success,
+including async flow and async generators. Completed EOF attaches a bounded
+result to the existing server Task state without re-entering completed code or
+advancing its run count.
+
+The bounded profile requires one finite source, a linear chain, versioned
+top-level functions, finite JSON side parameters, large-data references, and
+concurrent slots for the whole graph. Finite call/submit/map/apply_async reject
+before collection resolution or work creation. Closures, local functions,
+branches, joins and dynamic graphs remain outside this first profile.
+
+A selected trusted launcher supplies holder credentials through a strict
+one-shot POSIX descriptor to the ordinary flow-engine entrypoint. The maximum
+frame is 4 KiB; the descriptor closes before user code. Supervisor credentials
+stay in the launcher. Malformed shape, identity, routing or credentials refuse
+before Flow start without printing secrets. This introduces no global Flow
+mode. Production worker automation remains later work.
+
+Before admission, construction failure releases held workers and follows
+normal flow retry. After final Flow failure, atomic `abort-unsealed` closes the
+exact zero-work reservations and stores a replayable receipt before terminal
+hooks. It refuses sealed or partially active graphs. Recovered/admission-attempted
+graphs never call that unsealed cleanup path. Post-admission application failure
+ends the Flow; infrastructure loss consumes normal server-owned retry through
+a newer generation.
+
+`RetryFailedFlows` honors explicitly proposed `StateDetails.retriable=False`
+and clears stale retry type. The shared exception helper historically writes
+that value for task classification. Sync/async Flow exception handling resets
+this helper-derived flag before native admission rules apply, preserving ordinary
+exception retries. Actual ordinary sync/async retries and explicit False policy
+have separate regression controls.
+
+### Authority and observability graph
+
+```mermaid
+flowchart LR
+    L[Trusted launcher] -->|claim or confirmed-death takeover| A[FlowRun execution generation]
+    L -->|one-shot private descriptor| F[Ordinary FlowRun engine]
+    F -->|stable submission key| M[Immutable submission manifest]
+    M --> T[Ordinary TaskRun UUID]
+    M --> S[Durable ordered output channel]
+    A -->|fence every native mutation| T
+    A -->|fence every native mutation| S
+    S --> C[Consumer cursor and managed state]
+    T -->|terminal yield acceptance| C
+    T -->|signed lifecycle event| R[Existing TaskRun recorder]
+```
+
+FlowRun/submission key is the recovery lookup. Manifest digest and native code
+witness explain identity refusal. Generation/holder and ordinary run count
+explain authority and consumed retries. Source position and consumer cursor
+explain where work resumes. Channel EOF plus existing Task state ID explain
+why completed user code is skipped. These records form the inspection path;
+Python frames and local futures carry no durable recovery authority.
+
+### Stable code witness finding
+
+[ADR-0096](ADR-0096-pickled-code-as-durable-identity.md) retains the rejected alternative.
+
+Repeated process tests found ordinary task keys changing with hash-seed-dependent
+pickling of frozenset code constants. The unchanged Anna function alternated
+between two keys. Refusal prevented wrong attachment, but blocked recovery.
+
+Keyed native manifests now use a canonical structural witness: semantic bytecode
+and exception table, argument/name/variable/cell fields and tagged constants,
+with frozensets sorted canonically. Paths, line/debug tables and specialization
+are excluded. The full SHA-256 binds `artifact_digest`; the native TaskRun key
+contains its abbreviated digest. Ordinary `Task.task_key` and finite-task cache
+keys remain unchanged. Explicit task versions bind global dependencies outside
+the code object. Unsupported callable/constant forms refuse before admission.
+Independent hash-seeded processes and semantic/location/specialization controls
+verify the witness; the real replay matrix verifies integration.
+
+The [synchronous client flow](../../../tests/fixtures/native_stream_document_flow.py)
+and [async client flow](../../../tests/fixtures/native_stream_async_document_flow.py)
+use ordinary decorators and URI/hash references to 500 actual documents. Client
+file effects implement their own idempotency. Discovery runs alone did not complete this ADR. The final
+[frozen-source acceptance](../evidence/native-stage5c-acceptance-2026-11-03.json)
+and [independent review](../evidence/native-stage5c-principal-2026-11-03.json)
+now satisfy the planned 50% native-foundation milestone.
+
 ## Stories
 
 - As a developer, I want to give a bounded native source or operator a stable
@@ -285,12 +373,12 @@ remain later work.
 - [x] As a developer, I can reuse a declared submission key only with the exact
   role, protocol, code, parameter, upstream and limit witness; drift performs no
   write.
-- [ ] As a user, I got the same source TaskRun UUID after the flow-launch
+- [x] As a user, I got the same source TaskRun UUID after the flow-launch
   process died, with a fresh generator starting after the durable accepted
   position.
-- [ ] As a user, I got the same operator TaskRun UUID after infrastructure loss,
+- [x] As a user, I got the same operator TaskRun UUID after infrastructure loss,
   with only the first input lacking durable terminal completion redelivered.
-- [ ] As a user, I got durable EOF and output completion reconciled before
+- [x] As a user, I got durable EOF and output completion reconciled before
   TaskRun success without re-entering completed user code.
 - [x] As a system, I can claim a strictly newer execution generation and reject
   record, terminal and lifecycle writes from a still-running former process
@@ -300,9 +388,9 @@ remain later work.
   frame.
 - [x] As a system, I can reject late former-generation `Completed`, `Failed` and
   cancellation observations without using wall-clock order as authority.
-- [ ] As a system, I got one TaskRun and one stream per manifest across repeated
+- [x] As a system, I got one TaskRun and one stream per manifest across repeated
   reconstruction attempts, with no TaskRun per record.
-- [ ] As a developer, I got named fail-closed refusals for missing manifests,
+- [x] As a developer, I got named fail-closed refusals for missing manifests,
   expired recovery horizon, code/graph drift and unsupported topology.
 - [x] As a developer, I got real HTTP/PostgreSQL subprocess tests at manifest,
   reservation, append, completion, EOF and TaskRun-state response-loss
@@ -364,11 +452,53 @@ hooks and UI check/lint/build/323 API tests. [PR 7 hosted closure](../evidence/n
 records the identity slice's merge after 97 successful checks/five conditional
 skips and an identical tested merge tree.
 
-Five whole-flow/reconstruction criteria remain open. This ADR stays `progress`
-and native foundation readiness stays 40%; N1.5b earns no percentage alone.
+The [N1.5c acceptance](../evidence/native-stage5c-acceptance-2026-11-03.json)
+and [Principal review](../evidence/native-stage5c-principal-2026-11-03.json)
+close all five remaining criteria on identical 69-file source manifests.
+The [captured acceptance compiler](../evidence/native-stage5c-acceptance-compiler-2026-11-03.txt)
+verifies the selected ledgers and artifact hashes.
+Fourteen selected profiles execute 2,457 cases: 2,437 passed, seven prior
+expected failures and 13 prior skips, with zero failures, errors or source
+drift. The pass count includes one known non-strict XPASS. Native profiles
+have no skips. The separate [ordinary concurrency regression](../evidence/native-stage5c-ordinary-concurrency-2026-11-03.json)
+passes its mapped retry/lease test on the same source bytes.
 
-At the 2026-11-03 start, no N1.5 acceptance evidence exists. Current source inspection
-shows why lookup is not yet possible:
+Five real 500-document whole-process cuts cover before and after document
+200's durable yield, source position 200, accepted source EOF before TaskRun
+success, and async flow/generator recovery. The replacement launch retains no
+TaskRun/channel IDs. Assertions independently check unchanged two TaskRuns and
+channels, first-incomplete delivery, 500 ordered outputs and cursor/state,
+completed-source bypass with the original server State ID, and no more than
+12 TaskRun states. The 36 legacy cases still intentionally use the prototype
+adapter; they are not the native process-recovery proof.
+
+The [C static gate](../evidence/native-stage5c-static-2026-11-03.json) passes CI
+types with zero errors/138 existing warnings, public completeness 1.0, required
+hooks and UI check/lint/build/323 API tests. The kernel retains 18 known ordinary
+CPython resource-tracker diagnostics, versus 16 in N1.5b and 21 in the accepted
+Stage 4 baseline; there are no catalog/startup failures, and clean teardown is
+not claimed. The initial final policy selector named a nonexistent test class
+and ran zero cases. Its failed record is retained in the
+[negative findings](../evidence/native-stage5c-negative-findings-2026-11-03.json);
+the captured successor2 adapter selects the real seven-case class without
+changing frozen source bytes. Failed discovery and invalidated gates remain
+immutable evidence.
+
+The paired unsealed-abort revisions are PostgreSQL `a75e1c6d9b43` and SQLite
+`b86f2d7e0c54`. The [documentation graph](../evidence/native-stage5c-graph-2026-11-03.json)
+links the accepted decision, rejected identity alternative, implementation and
+evidence. [PR 8 hosted closure](../evidence/native-stage5b-hosted-successor-2026-11-03.json)
+records the predecessor's 105 successful check records/five conditional skips,
+including the retained benchmark failure and same-head successful rerun.
+
+This bounded combined gate earns +10%, reaching 50% native-foundation readiness.
+It requires a selected trusted launcher and the same deployment/runtime. Full
+production worker automation, branch/join/dynamic recovery, online retention,
+HA and throughput objectives remain later work. External-effect idempotency
+and replay determinism remain client responsibilities.
+
+At the 2026-11-03 start, no N1.5 acceptance evidence existed. The retained
+initial source inspection showed why lookup was not yet possible:
 
 - [`Task.create_local_run`](../../../src/prefect/tasks.py) uses an unstable
   dynamic key for the current stream submission path;

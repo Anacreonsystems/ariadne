@@ -1,0 +1,75 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+ROOT=Path('/workspace/ariadne')
+EV=ROOT/'architecture/streaming-etl/evidence'
+PROFILES=['flow-http','code','native-http','store-api','migrations','sqlite','legacy-contract','recorder','kernel','client','flow-api','task-api','flow-engine','flow-policy']
+
+def artifact(name):
+    return {'path':name,'sha256':hashlib.sha256((EV/name).read_bytes()).hexdigest()}
+
+freeze=json.loads((EV/'native-stage5c-source-freeze-2026-11-03.json').read_text())
+source=freeze['source_sha256']
+assert len(source)==69 and freeze['verdict']=='PASS'
+profiles={};totals={key:0 for key in ['tests','passed','failure','error','skipped']}
+for profile in PROFILES:
+    label='successor2' if profile=='flow-policy' else 'successor'
+    name=f'native-stage5c-{profile}-{label}-2026-11-03.json'
+    data=json.loads((EV/name).read_text())
+    assert data['verdict']=='PASS',name
+    assert data['source_sha256_before']==data['source_sha256_after']==source,name
+    assert not data['source_drift'] and not data['source_inventory_drift'],name
+    assert not data['unexpected_skip_or_xfail'],name
+    for kind in ['log','junit','expected_markers']:
+        assert artifact(data[kind]['path'])==data[kind],(name,kind)
+    for key in totals:totals[key]+=data[key]
+    profiles[profile]={'ledger':artifact(name),**{key:data[key] for key in totals},'duration_seconds':data['duration_seconds']}
+for name,expected in [('flow-http',17),('code',7),('native-http',197)]:
+    assert profiles[name]['tests']==expected,(name,profiles[name]['tests'])
+assert all(hashlib.sha256((ROOT/path).read_bytes()).hexdigest()==digest for path,digest in source.items())
+principal=json.loads((EV/'native-stage5c-principal-2026-11-03.json').read_text())
+assert principal['verdict']=='PASS_N1_5C_BOUNDED',principal['verdict']
+assert not principal.get('conditions_remaining',[])
+static=json.loads((EV/'native-stage5c-static-2026-11-03.json').read_text())
+assert static['verdict']=='PASS' and static['source_sha256']==source
+concurrency=json.loads((EV/'native-stage5c-ordinary-concurrency-2026-11-03.json').read_text())
+assert concurrency['verdict']=='PASS' and concurrency['tests']==1
+assert concurrency['source_sha256_before']==concurrency['source_sha256_after']==source
+for item in concurrency['artifacts']:
+    assert artifact(item['path'])==item
+record={
+    'schema':'native-stage5c-acceptance/v1','verdict':'PASS_N1_5C_BOUNDED',
+    'earned_native_foundation_percent':50,'percentage_delta':10,'adr_status':'accepted',
+    'repository_base':freeze['repository_head'],'source_sha256':source,'totals':totals,
+    'profiles':profiles,'principal':artifact('native-stage5c-principal-2026-11-03.json'),
+    'static':artifact('native-stage5c-static-2026-11-03.json'),
+    'freeze':artifact('native-stage5c-source-freeze-2026-11-03.json'),
+    'negative_findings':artifact('native-stage5c-negative-findings-2026-11-03.json'),
+    'ordinary_concurrency':artifact('native-stage5c-ordinary-concurrency-2026-11-03.json'),
+    'flow_policy_selection_adapter':artifact('native-stage5c-flow-policy-successor2-runner-2026-11-03.txt'),
+    'accepted_scope':[
+        'Ordinary Flow/Task engines reconstruct one bounded linear native graph using explicit semantic keys and server-owned stable TaskRun/channel identities.',
+        'Whole flow-engine process replacement resumes the first incomplete record without retaining TaskRun/channel IDs in the new launch payload.',
+        'Five 500-document real HTTP/PostgreSQL cuts cover before/after document200yield, source position200, source EOF before task success, and async Flow/async generator source recovery.',
+        'Completed source code is skipped; existing server state identity is preserved; final output/cursor/managed state agree at 500; exactly 2 TaskRuns/streams remain, with at most12TaskRun states.',
+        'Sealed execution fencing, canonical native code witness, retry budget/delay, atomic zero-work abort before hooks, descriptor privacy and early finite-entrypoint refusals pass.',
+    ],
+    'not_claimed':[
+        'This is 50% of the explicitly bounded native foundation, not production readiness or completion of the full product.',
+        'Trusted selected launcher and same deployment/runtime are required; automatic enrollment/replacement in every production worker remains later work.',
+        'No branch/join/fan-out/dynamic graph recovery, closures/local task functions, online retention/GC, production HA, infinite-source capacity or throughput SLO.',
+        'External effects and replay determinism remain client responsibilities; test file effects explicitly implement idempotency.',
+    ],
+    'qualifications':[
+        'Runtime profiles share the exact 69-file product/test/workflow/gate manifest; unchanged ordinary tests come from the recorded repository base.',
+        'The initial final flow-policy invocation failed with zero tests because its class selector was wrong; the preserved successor2 adapter selects the real unchanged class without changing frozen source bytes.',
+        'Legacy 36 contract cases intentionally retain the prototype-backed test adapter; native evidence comes from actual core HTTP/PostgreSQL/process profiles.',
+        'Only exact prior ordinary kernel/client skip-or-xfail cases and already declared markers in unchanged Flow engine/SDK tests are allowed. Native profiles have no skipped cases.',
+        'CPython multiprocessing resource_tracker diagnostics, if present, are retained and compared to the prior baseline; no clean-teardown claim is inferred from pytest exit alone.',
+    ],
+}
+(EV/'native-stage5c-acceptance-2026-11-03.json').write_text(json.dumps(record,indent=2)+'\n')
+print(json.dumps({'verdict':record['verdict'],'source_count':len(source),'totals':totals}))

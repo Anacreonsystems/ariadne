@@ -19,6 +19,8 @@ from typing import (
 )
 from uuid import UUID
 
+from anyio.to_thread import run_sync
+
 from prefect.exceptions import PrefectException
 
 if TYPE_CHECKING:
@@ -170,7 +172,7 @@ class StreamContext:
     consumer_id: str
     input_sequence: int
     attempt: int
-    managed_state: dict[str, Any] = field(default_factory=dict)
+    managed_state: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
 
 
 @dataclass(frozen=True)
@@ -286,6 +288,9 @@ class Stream(Generic[T]):
         """Wait for the operator TaskRun and propagate its final failure."""
         if self.completion is None:
             raise StreamProtocolError("This input handle has no operator completion")
+        from prefect._internal.stream_reconstruction import seal_declared_graph
+
+        seal_declared_graph()
         return self.completion.result(timeout=timeout)
 
 
@@ -300,6 +305,9 @@ class StreamCollection(Generic[T]):
         self.limit = limit
 
     async def resolve(self) -> list[T]:
+        from prefect._internal.stream_reconstruction import seal_declared_graph
+
+        await run_sync(seal_declared_graph)
         while True:
             values = await self.stream.storage.read_prefix(
                 self.stream.stream_id, self.limit

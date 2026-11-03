@@ -1,8 +1,10 @@
 # N1.5c agreement: native graph reconstruction and unsealed abort
 
-Status: `planning`. The ETL Architect / HighLoad Principal reviewed the bounded design.
-This is an agreement and test plan, not implementation or acceptance evidence.
-It assumes the frozen N1.5b execution authority and preserves the 40% earned scope.
+Status: `accepted` for the bounded agreement. The ETL Architect / HighLoad Principal
+reviewed the design. The original agreement and test plan below remain design
+input; executed proof lives in the [final acceptance](native-stage5c-acceptance-2026-11-03.json)
+and [Principal review](native-stage5c-principal-2026-11-03.json). They close
+[ADR-0036](../adr/ADR-0036-durable-submission-recovery.md) at 50% foundation readiness.
 
 ## Existing declaration replay
 
@@ -212,3 +214,16 @@ again by exact declaration replay on its next construction attempt.
 - [Native epoch](../epochs/epoch-01-native-prefect.md)
 - [Task registry](../todo.md)
 - [Sprint board](../sprint_board.md)
+
+
+## Implementation findings and completed final gate
+
+The first matrix exposed hash-seed-dependent ordinary task keys and a shared
+exception helper's task-specific retry flag. [ADR-0036](../adr/ADR-0036-durable-submission-recovery.md)
+records the native structural code witness, ordinary Flow retry preservation,
+and recovered-generation cleanup boundary. The corrected discovery matrix passed
+seven cases, followed by actual async recovery, five bootstrap refusals and four
+finite-entrypoint no-data controls. Rejected identity failures and the global
+90-second teardown timeout remain evidence. The 500-document tests now declare
+a 240-second case budget; the native CI job gets 30 minutes for the measured
+additional work. Existing protocol/process-pool assertions remain unchanged.

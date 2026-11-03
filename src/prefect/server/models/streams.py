@@ -490,6 +490,11 @@ class NativeStreamStore:
                 )
                 .with_for_update()
             )
+            authority = await session.scalar(
+                sa.select(self.db.StreamExecutionAuthority).where(
+                    self.db.StreamExecutionAuthority.flow_run_id == request.flow_run_id
+                )
+            )
             if existing is not None:
                 if existing.request_digest != request_digest:
                     raise NativeStreamError(
@@ -506,18 +511,15 @@ class NativeStreamStore:
                     raise NativeStreamError(
                         "IDENTITY_CONFLICT", "Submission TaskRun is missing"
                     )
-                if task.state_type != StateType.PENDING or task.run_count != 0:
+                if authority is None and (
+                    task.state_type != StateType.PENDING or task.run_count != 0
+                ):
                     raise NativeStreamError(
                         "RECOVERY_NOT_READY",
                         "Existing execution requires the N1.5 recovery fence",
                     )
                 return self._submission_response(existing)
 
-            authority = await session.scalar(
-                sa.select(self.db.StreamExecutionAuthority).where(
-                    self.db.StreamExecutionAuthority.flow_run_id == request.flow_run_id
-                )
-            )
             if authority is not None and authority.manifest_set_digest is not None:
                 raise NativeStreamError(
                     "MANIFEST_SEALED", "No submissions may be added after manifest seal"
