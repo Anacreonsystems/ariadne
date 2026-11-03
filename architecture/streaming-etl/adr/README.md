@@ -244,3 +244,8 @@ execution fencing/lifecycle. The [N1.5c final gate](../evidence/native-stage5c-a
 close bounded whole-flow reconstruction and earn N1.5's planned +10%, reaching
 50% native-foundation readiness. Production worker automation and the remaining
 epoch criteria remain open.
+
+The [N1.5 hosted closure](../evidence/native-stage5c-hosted-successor-2026-11-03.json)
+records PR 9 merged after 97 successful checks/five conditional skips, identical
+tested/merge source, successful native PostgreSQL and corrected Python 3.14
+logs, and the explicit test-only bridge. This earns no extra percentage.

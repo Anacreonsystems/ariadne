@@ -33,6 +33,11 @@ implementation and final acceptance, earning N1.5's planned +10% to reach 50%.
 N1.5a and N1.5b earn no percentage independently. [PR 6 hosted closure](evidence/native-stage4-hosted-successor-2026-11-03.json)
 records N1.4's merge after 97 successful checks and five conditional skips.
 
+The [N1.5 hosted closure](evidence/native-stage5c-hosted-successor-2026-11-03.json)
+records PR 9 merged after 97 successful checks/five conditional skips, with
+identical tested/merge source. The corrected Python 3.14 and native PostgreSQL
+jobs pass; this documentation follow-up earns +0%.
+
 N1.1 follow-up: [final code/CI acceptance](evidence/native-stage1-ci-acceptance-2026-11-01.json)
 records both real PostgreSQL-stream profiles, full finite regression, type
 checking and wheel/source builds after hosted findings. This earns no extra
