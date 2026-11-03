@@ -254,6 +254,89 @@ async def test_manifest_seal_is_required_before_task_admission(db, flow_run):
         )
 
 
+async def test_takeover_refuses_unsealed_partial_manifest_without_mutation(
+    db, flow_run
+):
+    claim, _, credentials, _, source, _, _ = await _claim_and_manifest(
+        db, flow_run, include_operator=False
+    )
+    async with db.session_context(begin_transaction=True) as session:
+        authority = await guard_flow_lifecycle(
+            session,
+            db,
+            flow_run.id,
+            credentials,
+            schemas.states.Running(),
+            force=False,
+        )
+        result = await models.flow_runs.set_flow_run_state(
+            session=session,
+            flow_run_id=flow_run.id,
+            state=schemas.states.Running(),
+            flow_policy=CoreFlowPolicy,
+        )
+        await apply_flow_lifecycle_result(session, db, authority, result.state)
+    assert result.state is not None and result.state.is_running()
+
+    request = StreamExecutionTakeoverRequest(
+        flow_run_id=flow_run.id,
+        operation_id=uuid4(),
+        expected_generation=1,
+        expected_holder_id=claim.holder_id,
+        supervisor_id=claim.supervisor_id,
+        supervisor_capability=claim.supervisor_capability,
+        new_holder_id=uuid4(),
+        new_holder_capability="44" * 32,
+        new_holder_event_public_key="55" * 32,
+        death_witness=StreamExecutionDeathWitness(
+            launcher_instance_id=uuid4(),
+            child_process_id=1234,
+            exit_code=77,
+            observed_at=now("UTC"),
+            kind="WAITPID",
+        ),
+    )
+    async with db.session_context(begin_transaction=True) as session:
+        with pytest.raises(NativeStreamError) as unsealed:
+            await takeover_execution(session, db, request)
+    assert unsealed.value.code == "MANIFEST_NOT_SEALED"
+
+    async with db.session_context() as session:
+        flow = await session.get(db.FlowRun, flow_run.id)
+        authority = await session.scalar(
+            sa.select(db.StreamExecutionAuthority).where(
+                db.StreamExecutionAuthority.flow_run_id == flow_run.id
+            )
+        )
+        attempts = (
+            await session.scalars(
+                sa.select(db.StreamExecutionAttempt).where(
+                    db.StreamExecutionAttempt.flow_run_id == flow_run.id
+                )
+            )
+        ).all()
+        task = await session.get(db.TaskRun, source.task_run_id)
+        stream = await session.get(db.StreamPartition, source.stream_id)
+    assert flow is not None and flow.state_type == schemas.states.StateType.RUNNING
+    assert authority is not None
+    assert authority.generation == 1
+    assert authority.holder_id == claim.holder_id
+    assert authority.state == "ACTIVE"
+    assert authority.manifest_set_digest is None
+    assert len(attempts) == 1 and attempts[0].kind == "CLAIM"
+    assert task is not None and task.state_type == schemas.states.StateType.PENDING
+    assert task.run_count == 0
+    assert stream is not None and stream.state == "OPEN"
+    assert stream.owner_id is None and stream.owner_epoch == stream.attempt == 0
+    assert (
+        stream.record_count
+        == stream.byte_count
+        == stream.last_sequence
+        == stream.producer_position
+        == 0
+    )
+
+
 async def test_takeover_uses_retry_policy_and_fences_old_holder(db, flow_run):
     await _require_postgres_17(db)
     claim, _, credentials, store, source, _, witnesses = await _claim_and_manifest(
@@ -308,6 +391,9 @@ async def test_takeover_uses_retry_policy_and_fences_old_holder(db, flow_run):
     )
     async with db.session_context(begin_transaction=True) as session:
         takeover = await takeover_execution(session, db, request)
+    async with db.session_context(begin_transaction=True) as session:
+        replay = await takeover_execution(session, db, request)
+    assert replay == takeover
     assert takeover.generation == 2
     assert takeover.state == "RECOVERING"
     async with db.session_context() as session:
@@ -968,3 +1054,242 @@ async def test_recorder_rejects_future_timestamp_from_older_local_attempt(db, fl
         assert task.run_count == 2
         assert task.state_type == schemas.states.StateType.RUNNING
         assert await session.get(db.TaskRunState, stale_failed.id) is None
+
+
+async def test_exact_submission_declaration_replays_after_task_started(db, flow_run):
+    claim, _, credentials, store, source, _, witnesses = await _claim_and_manifest(
+        db, flow_run, include_operator=False
+    )
+    async with db.session_context(begin_transaction=True) as session:
+        await seal_manifest(
+            session,
+            db,
+            StreamManifestSealRequest(
+                flow_run_id=flow_run.id,
+                operation_id=uuid4(),
+                manifests=witnesses,
+            ),
+            credentials,
+        )
+        authority = await guard_flow_lifecycle(
+            session, db, flow_run.id, credentials, schemas.states.Running(), force=False
+        )
+        running = await models.flow_runs.set_flow_run_state(
+            session=session,
+            flow_run_id=flow_run.id,
+            state=schemas.states.Running(),
+            flow_policy=CoreFlowPolicy,
+        )
+        await apply_flow_lifecycle_result(session, db, authority, running.state)
+        task_running = await models.task_runs.set_task_run_state(
+            session=session,
+            task_run_id=source.task_run_id,
+            state=schemas.states.Running(),
+            task_policy=CoreTaskPolicy,
+        )
+        assert task_running.state is not None and task_running.state.is_running()
+    replay = await store.reserve_submission(_source(flow_run.id))
+    assert replay == source
+
+
+async def test_sealed_same_generation_flow_retry_requires_takeover(db, flow_run):
+    _, _, credentials, _, _, _, witnesses = await _claim_and_manifest(
+        db, flow_run, include_operator=False
+    )
+    async with db.session_context(begin_transaction=True) as session:
+        await seal_manifest(
+            session,
+            db,
+            StreamManifestSealRequest(
+                flow_run_id=flow_run.id,
+                operation_id=uuid4(),
+                manifests=witnesses,
+            ),
+            credentials,
+        )
+        authority = await guard_flow_lifecycle(
+            session, db, flow_run.id, credentials, schemas.states.Running(), force=False
+        )
+        running = await models.flow_runs.set_flow_run_state(
+            session=session,
+            flow_run_id=flow_run.id,
+            state=schemas.states.Running(),
+            flow_policy=CoreFlowPolicy,
+        )
+        await apply_flow_lifecycle_result(session, db, authority, running.state)
+        authority = await guard_flow_lifecycle(
+            session, db, flow_run.id, credentials, schemas.states.Failed(), force=False
+        )
+        failed = await models.flow_runs.set_flow_run_state(
+            session=session,
+            flow_run_id=flow_run.id,
+            state=schemas.states.Failed(),
+            flow_policy=CoreFlowPolicy,
+        )
+        await apply_flow_lifecycle_result(session, db, authority, failed.state)
+        assert failed.state is not None and failed.state.name == "AwaitingRetry"
+    async with db.session_context(begin_transaction=True) as session:
+        with pytest.raises(NativeStreamError) as blocked:
+            await guard_flow_lifecycle(
+                session,
+                db,
+                flow_run.id,
+                credentials,
+                schemas.states.Running(),
+                force=False,
+            )
+    assert blocked.value.code == "RECOVERY_NOT_READY"
+
+
+async def test_terminal_unsealed_abort_is_atomic_and_exact(db, flow_run):
+    from prefect.server.models.stream_executions import abort_unsealed_execution
+    from prefect.server.schemas.streams import StreamUnsealedAbortRequest
+
+    _, _, credentials, _, source, operator, witnesses = await _claim_and_manifest(
+        db, flow_run
+    )
+    assert operator is not None
+    async with db.session_context(begin_transaction=True) as session:
+        authority = await guard_flow_lifecycle(
+            session, db, flow_run.id, credentials, schemas.states.Running(), force=False
+        )
+        running = await models.flow_runs.set_flow_run_state(
+            session=session,
+            flow_run_id=flow_run.id,
+            state=schemas.states.Running(),
+            flow_policy=CoreFlowPolicy,
+        )
+        await apply_flow_lifecycle_result(session, db, authority, running.state)
+        authority = await guard_flow_lifecycle(
+            session,
+            db,
+            flow_run.id,
+            credentials,
+            schemas.states.Cancelled(),
+            force=False,
+        )
+        cancelled = await models.flow_runs.set_flow_run_state(
+            session=session,
+            flow_run_id=flow_run.id,
+            state=schemas.states.Cancelled(),
+            flow_policy=CoreFlowPolicy,
+        )
+        await apply_flow_lifecycle_result(session, db, authority, cancelled.state)
+        assert cancelled.state is not None and cancelled.state.is_cancelled()
+
+    request = StreamUnsealedAbortRequest(
+        flow_run_id=flow_run.id,
+        operation_id=uuid4(),
+        manifests=witnesses,
+        error="Flow terminated before its native graph was sealed",
+    )
+    invalid_manifests = [
+        witnesses[:-1],
+        list(reversed(witnesses)),
+        [
+            witnesses[0].model_copy(update={"manifest_digest": "f" * 64}),
+            *witnesses[1:],
+        ],
+    ]
+    for manifests in invalid_manifests:
+        invalid_request = request.model_copy(
+            update={"operation_id": uuid4(), "manifests": manifests}
+        )
+        async with db.session_context(begin_transaction=True) as session:
+            with pytest.raises(NativeStreamError) as invalid:
+                await abort_unsealed_execution(
+                    session, db, invalid_request, credentials
+                )
+        assert invalid.value.code in {"IDENTITY_CONFLICT", "UNSUPPORTED_TOPOLOGY"}
+
+    async with db.session_context(begin_transaction=True) as session:
+        first = await abort_unsealed_execution(session, db, request, credentials)
+    async with db.session_context(begin_transaction=True) as session:
+        second = await abort_unsealed_execution(session, db, request, credentials)
+    assert first == second
+    assert [item.task_run_id for item in first.items] == [
+        source.task_run_id,
+        operator.task_run_id,
+    ]
+    async with db.session_context() as session:
+        tasks = (
+            await session.scalars(
+                sa.select(db.TaskRun).where(
+                    db.TaskRun.id.in_([source.task_run_id, operator.task_run_id])
+                )
+            )
+        ).all()
+        streams = (
+            await session.scalars(
+                sa.select(db.StreamPartition).where(
+                    db.StreamPartition.id.in_([source.stream_id, operator.stream_id])
+                )
+            )
+        ).all()
+        assert all(task.state_type == schemas.states.StateType.FAILED for task in tasks)
+        assert all(stream.state == "FAILED" for stream in streams)
+
+
+async def test_terminal_unsealed_abort_refuses_started_graph_atomically(db, flow_run):
+    from prefect.server.models.stream_executions import abort_unsealed_execution
+    from prefect.server.schemas.streams import StreamUnsealedAbortRequest
+
+    _, _, credentials, _, source, _, witnesses = await _claim_and_manifest(
+        db, flow_run, include_operator=False
+    )
+    async with db.session_context(begin_transaction=True) as session:
+        authority = await guard_flow_lifecycle(
+            session, db, flow_run.id, credentials, schemas.states.Running(), force=False
+        )
+        running = await models.flow_runs.set_flow_run_state(
+            session=session,
+            flow_run_id=flow_run.id,
+            state=schemas.states.Running(),
+            flow_policy=CoreFlowPolicy,
+        )
+        await apply_flow_lifecycle_result(session, db, authority, running.state)
+        stream = await session.get(db.StreamPartition, source.stream_id)
+        assert stream is not None
+        stream.owner_id = uuid4()
+        stream.attempt = 1
+        stream.owner_epoch = 1
+        authority = await guard_flow_lifecycle(
+            session,
+            db,
+            flow_run.id,
+            credentials,
+            schemas.states.Cancelled(),
+            force=False,
+        )
+        cancelled = await models.flow_runs.set_flow_run_state(
+            session=session,
+            flow_run_id=flow_run.id,
+            state=schemas.states.Cancelled(),
+            flow_policy=CoreFlowPolicy,
+        )
+        await apply_flow_lifecycle_result(session, db, authority, cancelled.state)
+
+    request = StreamUnsealedAbortRequest(
+        flow_run_id=flow_run.id,
+        operation_id=uuid4(),
+        manifests=witnesses,
+        error="Abort must not overwrite admitted authority",
+    )
+    async with db.session_context(begin_transaction=True) as session:
+        with pytest.raises(NativeStreamError) as refused:
+            await abort_unsealed_execution(session, db, request, credentials)
+    assert refused.value.code == "TERMINAL_CONFLICT"
+
+    async with db.session_context() as session:
+        task = await session.get(db.TaskRun, source.task_run_id)
+        stream = await session.get(db.StreamPartition, source.stream_id)
+        attempt = await session.scalar(
+            sa.select(db.StreamExecutionAttempt).where(
+                db.StreamExecutionAttempt.flow_run_id == flow_run.id,
+                db.StreamExecutionAttempt.generation == 1,
+            )
+        )
+        assert task is not None and task.state_type == schemas.states.StateType.PENDING
+        assert stream is not None and stream.state == "OPEN"
+        assert stream.owner_epoch == 1
+        assert attempt is not None and attempt.abort_operation_id is None

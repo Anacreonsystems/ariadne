@@ -516,6 +516,57 @@ class TestCachingBackendLogic:
 
 
 class TestFlowRetryingRule:
+    @pytest.mark.parametrize(
+        ("retriable", "expected_status", "expected_type", "expected_retry_type"),
+        [
+            (
+                None,
+                SetStateStatus.REJECT,
+                states.StateType.SCHEDULED,
+                "in_process",
+            ),
+            (
+                True,
+                SetStateStatus.REJECT,
+                states.StateType.SCHEDULED,
+                "in_process",
+            ),
+            (False, SetStateStatus.ACCEPT, states.StateType.FAILED, None),
+        ],
+        ids=["default-retries", "explicit-true-retries", "false-is-final"],
+    )
+    async def test_retriable_state_detail_controls_automatic_flow_retry(
+        self,
+        session,
+        initialize_orchestration,
+        retriable,
+        expected_status,
+        expected_type,
+        expected_retry_type,
+    ):
+        intended_transition = (
+            states.StateType.RUNNING,
+            states.StateType.FAILED,
+        )
+        ctx = await initialize_orchestration(
+            session,
+            "flow",
+            *intended_transition,
+        )
+        ctx.run.run_count = 1
+        ctx.run.empirical_policy = schemas.core.FlowRunPolicy(
+            retries=2, retry_type="reschedule"
+        )
+        if retriable is not None:
+            ctx.proposed_state.state_details.retriable = retriable
+
+        async with RetryFailedFlows(ctx, *intended_transition):
+            await ctx.validate_proposed_state()
+
+        assert ctx.response_status == expected_status
+        assert ctx.validated_state_type == expected_type
+        assert ctx.run.empirical_policy.retry_type == expected_retry_type
+
     async def test_retries(
         self,
         session,

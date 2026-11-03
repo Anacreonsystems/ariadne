@@ -1,7 +1,7 @@
 # Streaming ETL sprint board
 
 Current product cycle: [Native integration epoch 1](epochs/epoch-01-native-prefect.md),
-`progress`, **40% earned native foundation readiness** after N1.4. The
+`progress`, **50% earned native foundation readiness** after N1.5. The
 [first-stage ADR](adr/ADR-0032-native-task-stream-contract.md) is accepted for
 its scoped contract gate. Implementation was requested on 2026-11-01 with frequent tests
 against the actual runtime and storage.
@@ -16,9 +16,9 @@ against the actual runtime and storage.
 | N1.4 — Native source task runtime | `done` | 40% | +10% | NI1-030…034 | ADR-0035 accepted: sync/async generators publish positioned references; exact reservation/EOF, same-TaskRun retry, process loss, stripped package and Principal gates pass. |
 | N1.5a — Durable submission identity | `done` | 40% | +0% | NI1-040…042 | [377-case scoped gate](evidence/native-stage5a-acceptance-2026-11-03.json) and independent review pass; exact HTTP replay and drift/limit refusals. No whole-worker claim. |
 | N1.5b — Execution fencing and lifecycle | `done` | 40% | +0% | NI1-043…045 | [1,724-case scoped acceptance](evidence/native-stage5b-acceptance-2026-11-03.json) and independent review: generation fence, signed events and normal retry preparation; no SDK reconstruction. |
-| N1.5c — Whole-worker reconstruction gate | `progress` | 50% | +10% | NI1-046…048 | Real process replacement resumes the same TaskRuns/channels; all ADR-0036 criteria and independent review pass. |
+| N1.5c — Whole-worker reconstruction gate | `done` | 50% | +10% | NI1-046…048 | [2,457-case frozen acceptance](evidence/native-stage5c-acceptance-2026-11-03.json) and [Principal review](evidence/native-stage5c-principal-2026-11-03.json) pass; five 500-document whole-process cuts retain the same TaskRuns/channels. Bounded selected-launcher profile, not production worker automation. |
 
-The 40% is a planning estimate toward the explicitly bounded native foundation,
+The 50% is a planning estimate toward the explicitly bounded native foundation,
 not a measurement of production readiness. The [complete Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json)
 and the [N1.2 storage gate](evidence/native-stage2-closure-acceptance-2026-11-01.json)
 now pass. The [N1.3 transport gate](evidence/native-stage3-acceptance-2026-11-02.json)
@@ -26,11 +26,11 @@ and [Principal review](evidence/native-stage3-principal-2026-11-02.json)
 earned N1.3's planned +10%, reaching 30%.
 [N1.4's source gate](evidence/native-stage4-acceptance-2026-11-02.json) and
 [Principal review](evidence/native-stage4-principal-2026-11-02.json) now earn the
-next planned +10%, reaching 40%. Whole-worker reconstruction is proposed in
-[ADR-0036](adr/ADR-0036-durable-submission-recovery.md), now in progress after
-the [architecture agreement](evidence/native-stage5-design-review-2026-11-03.md).
-N1.5a and N1.5b prepare the combined N1.5c gate; neither earns a percentage
-independently. [PR 6 hosted closure](evidence/native-stage4-hosted-successor-2026-11-03.json)
+next planned +10%, reaching 40%. Whole-flow reconstruction is now accepted in
+[ADR-0036](adr/ADR-0036-durable-submission-recovery.md) after the
+[architecture agreement](evidence/native-stage5-design-review-2026-11-03.md),
+implementation and final acceptance, earning N1.5's planned +10% to reach 50%.
+N1.5a and N1.5b earn no percentage independently. [PR 6 hosted closure](evidence/native-stage4-hosted-successor-2026-11-03.json)
 records N1.4's merge after 97 successful checks and five conditional skips.
 
 N1.1 follow-up: [final code/CI acceptance](evidence/native-stage1-ci-acceptance-2026-11-01.json)

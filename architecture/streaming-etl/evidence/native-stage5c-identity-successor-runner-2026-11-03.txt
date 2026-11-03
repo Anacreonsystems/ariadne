@@ -1,0 +1,28 @@
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+import xml.etree.ElementTree as ET
+
+root=Path('/workspace/ariadne');ev=root/'architecture/streaming-etl/evidence'
+label,executable=sys.argv[1:]
+prefix=ev/f'native-stage5c-identity-{label}-2026-11-03'
+original=json.loads((ev/'native-stage5c-source-freeze-2026-11-03.json').read_text())['source_sha256']
+def hashes():
+    return {name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in original}
+def artifact(path):
+    return {'path':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+before=hashes();delta=[p for p in original if original[p]!=before[p]]
+assert delta==['tests/test_native_stream_code.py'],delta
+command=[executable,'-m','pytest','tests/test_native_stream_code.py','-q','--tb=short',f'--junitxml={prefix.with_suffix(".xml")}']
+env=os.environ.copy();env['PREFECT_SERVER_DATABASE_CONNECTION_URL']=f'sqlite+aiosqlite:////tmp/ariadne-stage5c-identity-{label}.db'
+start=datetime.now(timezone.utc).isoformat();timer=time.monotonic()
+with prefix.with_suffix('.log').open('w') as f:
+    result=subprocess.run(command,cwd=root,env=env,stdout=f,stderr=subprocess.STDOUT,timeout=180)
+after=hashes();cases=ET.parse(prefix.with_suffix('.xml')).findall('.//testcase');issues=[c.get('name') for c in cases if any(c.find(tag) is not None for tag in ('failure','error','skipped'))]
+record={'schema':'native-stage5c-identity-successor/v1','verdict':'PASS' if result.returncode==0 and len(cases)==7 and not issues and before==after else 'FAIL','started_at_utc':start,'python':subprocess.check_output([executable,'--version'],text=True).strip(),'duration_seconds':round(time.monotonic()-timer,3),'command':command,'returncode':result.returncode,'tests':len(cases),'issues':issues,'original_source_sha256':original,'source_sha256_before':before,'source_sha256_after':after,'expected_test_only_delta':delta,'artifacts':[artifact(prefix.with_suffix('.log')),artifact(prefix.with_suffix('.xml'))],'scope':'Correct relocation fixture uses unchanged source while varying filename/leading lines. Existing real3hash-seed subprocess and semantic-mutation/specialization/refusal controls remain. All68other witnessed files, including runtime/protocol/workflow, match accepted N1.5c exactly.'}
+prefix.with_suffix('.json').write_text(json.dumps(record,indent=2)+'\n');print(json.dumps({k:record[k] for k in ('verdict','python','tests','duration_seconds','issues')}));sys.exit(0 if record['verdict']=='PASS' else 1)

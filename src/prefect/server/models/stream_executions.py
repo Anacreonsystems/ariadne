@@ -29,6 +29,9 @@ from prefect.server.schemas.streams import (
     StreamRecoveryItem,
     StreamRecoveryPrepareRequest,
     StreamRecoveryResult,
+    StreamUnsealedAbortItem,
+    StreamUnsealedAbortRequest,
+    StreamUnsealedAbortResult,
 )
 from prefect.types._datetime import DateTime, now
 
@@ -276,6 +279,17 @@ async def takeover_execution(
         or authority.state != "ACTIVE"
     ):
         raise NativeStreamError("STALE_EXECUTION", "Execution generation changed")
+    if (
+        authority.manifest_set_digest is None
+        or authority.manifest_count is None
+        or authority.manifest_sealed_at is None
+        or authority.manifest_seal_operation_id is None
+        or authority.manifest_seal_request_digest is None
+    ):
+        raise NativeStreamError(
+            "MANIFEST_NOT_SEALED",
+            "Process takeover requires the complete immutable stream manifest",
+        )
     if authority.generation >= MAX_EXECUTION_GENERATIONS:
         raise NativeStreamError(
             "RECOVERY_HORIZON_EXPIRED", "Execution generation limit is exhausted"
@@ -407,6 +421,16 @@ async def guard_flow_lifecycle(
     if force:
         raise NativeStreamError(
             "PROTOCOL_ERROR", "Enrolled FlowRun lifecycle cannot bypass policy"
+        )
+    if (
+        proposed_state.is_running()
+        and authority.state == "ACTIVE"
+        and authority.manifest_set_digest is not None
+        and flow.state_type != StateType.RUNNING
+    ):
+        raise NativeStreamError(
+            "RECOVERY_NOT_READY",
+            "A sealed execution requires an explicit newer-generation takeover",
         )
     if proposed_state.is_completed():
         if authority.prepared_generation != authority.generation:
@@ -967,5 +991,255 @@ async def prepare_recovery(
     attempt.recovery_outcome = result.model_dump(mode="json")
     attempt.recovery_outcome_digest = outcome_digest
     authority.prepared_generation = authority.generation
+    await session.flush()
+    return result
+
+
+def _abort_outcome_digest(result: StreamUnsealedAbortResult) -> str:
+    _, digest = _canonical(
+        {
+            "schema": "native-stream-unsealed-abort-outcome-v1",
+            "flow_run_id": str(result.flow_run_id),
+            "generation": result.generation,
+            "operation_id": str(result.operation_id),
+            "state": result.state,
+            "items": [item.model_dump(mode="json") for item in result.items],
+        }
+    )
+    return digest
+
+
+async def abort_unsealed_execution(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: StreamUnsealedAbortRequest,
+    credentials: StreamExecutionCredentials | None,
+) -> StreamUnsealedAbortResult:
+    """Atomically close a terminal, unsealed and entirely unstarted graph."""
+
+    await _require_backend(session, db)
+    flow = await session.scalar(
+        sa.select(db.FlowRun)
+        .where(db.FlowRun.id == request.flow_run_id)
+        .with_for_update()
+    )
+    if flow is None:
+        raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+    authority = await require_execution(
+        session,
+        db,
+        request.flow_run_id,
+        credentials,
+        allowed_states=("TERMINAL", "RELEASED"),
+        update=True,
+    )
+    assert authority is not None
+    _, request_digest = _canonical(
+        {
+            "schema": "native-stream-unsealed-abort-v1",
+            "flow_run_id": str(request.flow_run_id),
+            "generation": authority.generation,
+            "operation_id": str(request.operation_id),
+            "manifests": [item.model_dump(mode="json") for item in request.manifests],
+            "error": request.error,
+        }
+    )
+    attempt = await session.scalar(
+        sa.select(db.StreamExecutionAttempt)
+        .where(
+            db.StreamExecutionAttempt.flow_run_id == request.flow_run_id,
+            db.StreamExecutionAttempt.generation == authority.generation,
+        )
+        .with_for_update()
+    )
+    if attempt is None:
+        raise NativeStreamError("NOT_FOUND", "Execution attempt is missing")
+    prior_operation = await session.scalar(
+        sa.select(db.StreamExecutionAttempt)
+        .where(
+            db.StreamExecutionAttempt.flow_run_id == request.flow_run_id,
+            db.StreamExecutionAttempt.abort_operation_id == request.operation_id,
+        )
+        .with_for_update()
+    )
+    if prior_operation is not None and prior_operation.id != attempt.id:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Abort operation belongs to another generation"
+        )
+    if attempt.abort_operation_id is not None:
+        if (
+            attempt.abort_operation_id != request.operation_id
+            or attempt.abort_request_digest != request_digest
+            or attempt.abort_outcome is None
+        ):
+            raise NativeStreamError("IDENTITY_CONFLICT", "Unsealed abort is immutable")
+        prior_result = StreamUnsealedAbortResult.model_validate(attempt.abort_outcome)
+        prior_digest = _abort_outcome_digest(prior_result)
+        if (
+            prior_result.outcome_digest != prior_digest
+            or attempt.abort_outcome_digest != prior_digest
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Abort outcome witness is inconsistent"
+            )
+        return prior_result
+    if authority.state != "TERMINAL" or flow.state_type not in TERMINAL_STATES:
+        raise NativeStreamError(
+            "RECOVERY_NOT_READY", "Only a terminal FlowRun can abort an unsealed graph"
+        )
+    if (
+        authority.manifest_set_digest is not None
+        or authority.manifest_count is not None
+        or authority.prepared_generation != 0
+    ):
+        raise NativeStreamError(
+            "MANIFEST_SEALED", "A sealed graph cannot use the unsealed abort path"
+        )
+
+    submissions = (
+        await session.scalars(
+            sa.select(db.StreamSubmission)
+            .where(
+                db.StreamSubmission.flow_run_id == request.flow_run_id,
+                db.StreamSubmission.state == "ACTIVE",
+            )
+            .order_by(db.StreamSubmission.task_run_id)
+            .with_for_update()
+        )
+    ).all()
+    by_key = {row.submission_key: row for row in submissions}
+    if len(request.manifests) != len(submissions) or len(by_key) != len(submissions):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Abort must name the complete unsealed manifest set"
+        )
+    ordered: list[orm_models.StreamSubmission] = []
+    for witness in request.manifests:
+        row = by_key.get(witness.submission_key)
+        if row is None or row.manifest_digest != witness.manifest_digest:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Abort manifest witness differs from storage"
+            )
+        ordered.append(row)
+    if ordered:
+        if ordered[0].role != "SOURCE" or ordered[0].upstream_stream_id is not None:
+            raise NativeStreamError("UNSUPPORTED_TOPOLOGY", "Abort graph is not linear")
+        for previous, current in zip(ordered, ordered[1:]):
+            if (
+                current.role != "OPERATOR"
+                or current.upstream_stream_id != previous.stream_id
+            ):
+                raise NativeStreamError(
+                    "UNSUPPORTED_TOPOLOGY",
+                    "Abort graph is not an ordered linear prefix",
+                )
+
+    tasks = {
+        row.id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.TaskRun)
+                .where(db.TaskRun.id.in_([row.task_run_id for row in submissions]))
+                .order_by(db.TaskRun.id)
+                .with_for_update()
+            )
+        ).all()
+    }
+    streams = {
+        row.id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamPartition)
+                .where(
+                    db.StreamPartition.id.in_([row.stream_id for row in submissions])
+                )
+                .order_by(db.StreamPartition.id)
+                .with_for_update()
+            )
+        ).all()
+    }
+    if len(tasks) != len(submissions) or len(streams) != len(submissions):
+        raise NativeStreamError("IDENTITY_CONFLICT", "Abort graph is incomplete")
+    stream_ids = [row.stream_id for row in submissions]
+    consumers = 0
+    if stream_ids:
+        consumers = cast(
+            int,
+            await session.scalar(
+                sa.select(sa.func.count())
+                .select_from(db.StreamConsumer)
+                .where(
+                    sa.or_(
+                        db.StreamConsumer.input_stream_id.in_(stream_ids),
+                        db.StreamConsumer.output_stream_id.in_(stream_ids),
+                    )
+                )
+            ),
+        )
+    if consumers:
+        raise NativeStreamError("TERMINAL_CONFLICT", "Abort graph has consumer state")
+    for submission in submissions:
+        task = tasks[submission.task_run_id]
+        stream = streams[submission.stream_id]
+        if task.state_type != StateType.PENDING or task.run_count != 0:
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "Abort TaskRun already started"
+            )
+        if (
+            stream.state != "OPEN"
+            or stream.owner_id is not None
+            or stream.owner_epoch != 0
+            or stream.attempt != 0
+            or stream.last_sequence != 0
+            or stream.producer_position != 0
+            or stream.record_count != 0
+            or stream.byte_count != 0
+        ):
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "Abort stream already admitted work"
+            )
+
+    items: list[StreamUnsealedAbortItem] = []
+    for submission in ordered:
+        task = tasks[submission.task_run_id]
+        result = await task_run_models.set_task_run_state(
+            session=session,
+            task_run_id=task.id,
+            state=schemas.states.Failed(message=request.error),
+            force=False,
+            task_policy=CoreTaskPolicy,
+        )
+        if (
+            result.status != SetStateStatus.ACCEPT
+            or result.state is None
+            or not result.state.is_failed()
+        ):
+            raise NativeStreamError(
+                "RECOVERY_POLICY_EXHAUSTED", "Pending TaskRun did not fail terminally"
+            )
+        stream = streams[submission.stream_id]
+        stream.state = "FAILED"
+        stream.error = request.error
+        stream.tail_sequence = stream.last_sequence
+        items.append(
+            StreamUnsealedAbortItem(
+                submission_key=submission.submission_key,
+                task_run_id=task.id,
+                stream_id=stream.id,
+            )
+        )
+    unsigned = StreamUnsealedAbortResult(
+        flow_run_id=request.flow_run_id,
+        generation=authority.generation,
+        operation_id=request.operation_id,
+        state="TERMINAL",
+        items=items,
+        outcome_digest="0" * 64,
+    )
+    digest = _abort_outcome_digest(unsigned)
+    result = unsigned.model_copy(update={"outcome_digest": digest})
+    attempt.abort_operation_id = request.operation_id
+    attempt.abort_request_digest = request_digest
+    attempt.abort_outcome = result.model_dump(mode="json")
+    attempt.abort_outcome_digest = digest
     await session.flush()
     return result

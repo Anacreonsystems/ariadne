@@ -1,0 +1,1211 @@
+C408 Unnecessary `dict()` call (rewrite as a literal)
+  --> src/prefect/_internal/stream_reconstruction.py:72:31
+   |
+70 |               try:
+71 |                   with get_client(sync_client=True) as client:
+72 |                       request = dict(
+   |  _______________________________^
+73 | |                         flow_run_id=self.execution.flow_run_id,
+74 | |                         operation_id=self.operation_id,
+75 | |                         manifests=self.witnesses(),
+76 | |                     )
+   | |_____________________^
+77 |                       if self.execution.generation == 1:
+78 |                           client.seal_stream_manifest(**request)
+   |
+help: Rewrite as a literal
+
+BLE001 Do not catch blind exception: `BaseException`
+   --> src/prefect/_internal/stream_reconstruction.py:297:20
+    |
+295 |             except PrefectSignal:
+296 |                 return
+297 |             except BaseException as exc:
+    |                    ^^^^^^^^^^^^^
+298 |                 try:
+299 |                     run_coro_as_sync(reject_stream_submission(run, type(exc).__name__))
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> src/prefect/_internal/stream_reconstruction.py:300:24
+    |
+298 |                 try:
+299 |                     run_coro_as_sync(reject_stream_submission(run, type(exc).__name__))
+300 |                 except Exception:
+    |                        ^^^^^^^^^
+301 |                     # The flow failure remains authoritative if the API is lost.
+302 |                     import logging
+    |
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+   --> src/prefect/client/orchestration/_streams/client.py:554:13
+    |
+552 |           """Execute a native source-task lifecycle operation."""
+553 |           payload = schemas.StreamSourceReserveRequest.model_validate(
+554 | /             dict(
+555 | |                 flow_run_id=flow_run_id,
+556 | |                 stream_id=stream_id,
+557 | |                 task_run_id=task_run_id,
+558 | |                 limits=limits,
+559 | |                 protocol_version=protocol_version,
+560 | |                 source_protocol=source_protocol,
+561 | |             )
+    | |_____________^
+562 |           ).model_dump(mode="json")
+563 |           response = self._stream_request(
+    |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+   --> src/prefect/client/orchestration/_streams/client.py:573:13
+    |
+571 |           """Execute a native source-task lifecycle operation."""
+572 |           payload = schemas.StreamSourceRejectRequest.model_validate(
+573 | /             dict(
+574 | |                 flow_run_id=flow_run_id,
+575 | |                 stream_id=stream_id,
+576 | |                 task_run_id=task_run_id,
+577 | |                 error=error,
+578 | |             )
+    | |_____________^
+579 |           ).model_dump(mode="json")
+580 |           response = self._stream_request(
+    |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+   --> src/prefect/client/orchestration/_streams/client.py:596:13
+    |
+594 |           """Execute a native source-task lifecycle operation."""
+595 |           payload = schemas.StreamSourceFailRequest.model_validate(
+596 | /             dict(
+597 | |                 flow_run_id=flow_run_id,
+598 | |                 stream_id=stream_id,
+599 | |                 task_run_id=task_run_id,
+600 | |                 attempt=attempt,
+601 | |                 error=error,
+602 | |             )
+    | |_____________^
+603 |           ).model_dump(mode="json")
+604 |           response = self._stream_request(
+    |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+   --> src/prefect/client/orchestration/_streams/client.py:621:13
+    |
+619 |           """Execute a native source-task lifecycle operation."""
+620 |           payload = schemas.StreamSourceOpenRequest.model_validate(
+621 | /             dict(
+622 | |                 stream_id=stream_id,
+623 | |                 task_run_id=task_run_id,
+624 | |                 owner_id=owner_id,
+625 | |                 attempt=attempt,
+626 | |                 protocol_version=protocol_version,
+627 | |                 source_protocol=source_protocol,
+628 | |             )
+    | |_____________^
+629 |           ).model_dump(mode="json")
+630 |           response = self._stream_request(
+    |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+   --> src/prefect/client/orchestration/_streams/client.py:648:13
+    |
+646 |           """Execute a native source-task lifecycle operation."""
+647 |           payload = schemas.StreamSourceCloseRequest.model_validate(
+648 | /             dict(
+649 | |                 binding=schemas.SourceBinding(
+650 | |                     flow_run_id=flow_run_id,
+651 | |                     stream_id=stream_id,
+652 | |                     task_run_id=task_run_id,
+653 | |                     owner_id=owner_id,
+654 | |                     attempt=attempt,
+655 | |                     owner_epoch=owner_epoch,
+656 | |                 ),
+657 | |                 expected_position=expected_position,
+658 | |             )
+    | |_____________^
+659 |           ).model_dump(mode="json")
+660 |           self._stream_request("POST", "/streams/v1/sources/close", json=payload)
+    |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+    --> src/prefect/client/orchestration/_streams/client.py:1200:13
+     |
+1198 |           """Execute a native source-task lifecycle operation."""
+1199 |           payload = schemas.StreamSourceReserveRequest.model_validate(
+1200 | /             dict(
+1201 | |                 flow_run_id=flow_run_id,
+1202 | |                 stream_id=stream_id,
+1203 | |                 task_run_id=task_run_id,
+1204 | |                 limits=limits,
+1205 | |                 protocol_version=protocol_version,
+1206 | |                 source_protocol=source_protocol,
+1207 | |             )
+     | |_____________^
+1208 |           ).model_dump(mode="json")
+1209 |           response = await self._stream_request(
+     |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+    --> src/prefect/client/orchestration/_streams/client.py:1219:13
+     |
+1217 |           """Execute a native source-task lifecycle operation."""
+1218 |           payload = schemas.StreamSourceRejectRequest.model_validate(
+1219 | /             dict(
+1220 | |                 flow_run_id=flow_run_id,
+1221 | |                 stream_id=stream_id,
+1222 | |                 task_run_id=task_run_id,
+1223 | |                 error=error,
+1224 | |             )
+     | |_____________^
+1225 |           ).model_dump(mode="json")
+1226 |           response = await self._stream_request(
+     |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+    --> src/prefect/client/orchestration/_streams/client.py:1242:13
+     |
+1240 |           """Execute a native source-task lifecycle operation."""
+1241 |           payload = schemas.StreamSourceFailRequest.model_validate(
+1242 | /             dict(
+1243 | |                 flow_run_id=flow_run_id,
+1244 | |                 stream_id=stream_id,
+1245 | |                 task_run_id=task_run_id,
+1246 | |                 attempt=attempt,
+1247 | |                 error=error,
+1248 | |             )
+     | |_____________^
+1249 |           ).model_dump(mode="json")
+1250 |           response = await self._stream_request(
+     |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+    --> src/prefect/client/orchestration/_streams/client.py:1267:13
+     |
+1265 |           """Execute a native source-task lifecycle operation."""
+1266 |           payload = schemas.StreamSourceOpenRequest.model_validate(
+1267 | /             dict(
+1268 | |                 stream_id=stream_id,
+1269 | |                 task_run_id=task_run_id,
+1270 | |                 owner_id=owner_id,
+1271 | |                 attempt=attempt,
+1272 | |                 protocol_version=protocol_version,
+1273 | |                 source_protocol=source_protocol,
+1274 | |             )
+     | |_____________^
+1275 |           ).model_dump(mode="json")
+1276 |           response = await self._stream_request(
+     |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+    --> src/prefect/client/orchestration/_streams/client.py:1294:13
+     |
+1292 |           """Execute a native source-task lifecycle operation."""
+1293 |           payload = schemas.StreamSourceCloseRequest.model_validate(
+1294 | /             dict(
+1295 | |                 binding=schemas.SourceBinding(
+1296 | |                     flow_run_id=flow_run_id,
+1297 | |                     stream_id=stream_id,
+1298 | |                     task_run_id=task_run_id,
+1299 | |                     owner_id=owner_id,
+1300 | |                     attempt=attempt,
+1301 | |                     owner_epoch=owner_epoch,
+1302 | |                 ),
+1303 | |                 expected_position=expected_position,
+1304 | |             )
+     | |_____________^
+1305 |           ).model_dump(mode="json")
+1306 |           await self._stream_request("POST", "/streams/v1/sources/close", json=payload)
+     |
+help: Rewrite as a literal
+
+G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+   --> src/prefect/flow_engine.py:262:24
+    |
+260 |             flow = _load_flow_from_runtime_entrypoint(entrypoint)
+261 |         except Exception:
+262 |             run_logger.error(
+    |                        ^^^^^
+263 |                 "Unexpected exception encountered when trying to load flow",
+264 |                 exc_info=True,
+    |
+
+DTZ001 `datetime.datetime()` called without a `tzinfo` argument
+   --> src/prefect/flow_engine.py:376:16
+    |
+375 | @deprecated_callable(
+376 |     start_date=datetime.datetime(2026, 3, 1),
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+377 |     help="Use `_send_heartbeats` instead.",
+378 | )
+    |
+help: Pass a `datetime.timezone` object to the `tzinfo` parameter
+
+DTZ001 `datetime.datetime()` called without a `tzinfo` argument
+   --> src/prefect/flow_engine.py:388:16
+    |
+387 | @deprecated_callable(
+388 |     start_date=datetime.datetime(2026, 3, 1),
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+389 |     help="Use `_send_heartbeats` instead.",
+390 | )
+    |
+help: Pass a `datetime.timezone` object to the `tzinfo` parameter
+
+BLE001 Do not catch blind exception: `Exception`
+   --> src/prefect/flow_engine.py:709:20
+    |
+707 |             try:
+708 |                 self.parameters = self.flow.validate_parameters(self.parameters or {})
+709 |             except Exception as exc:
+    |                    ^^^^^^^^^
+710 |                 message = "Validation of flow parameters failed with error:"
+711 |                 self.logger.error("%s %s", message, exc)
+    |
+
+D419 Docstring is empty
+   --> src/prefect/flow_engine.py:756:9
+    |
+755 |     def set_state(self, state: State, force: bool = False) -> State:
+756 |         """ """
+    |         ^^^^^^^
+757 |         # prevents any state-setting activity
+758 |         if self.short_circuit:
+    |
+
+S110 `try`-`except`-`pass` detected, consider logging the exception
+   --> src/prefect/flow_engine.py:829:9
+    |
+828 |               try_mark_milestone("first_flow_run")
+829 | /         except Exception:
+830 | |             pass
+    | |________________^
+831 |
+832 |           return result
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> src/prefect/flow_engine.py:829:16
+    |
+828 |             try_mark_milestone("first_flow_run")
+829 |         except Exception:
+    |                ^^^^^^^^^
+830 |             pass
+    |
+
+G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+    --> src/prefect/flow_engine.py:1075:29
+     |
+1073 |                     run_coro_as_sync(result)
+1074 |             except Exception:
+1075 |                 self.logger.error(
+     |                             ^^^^^
+1076 |                     f"An error was encountered while running hook {hook_name!r}",
+1077 |                     exc_info=True,
+     |
+
+SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+    --> src/prefect/flow_engine.py:1325:17
+     |
+1323 |               raise_if_flow_run_suspension_requested()
+1324 |               try:
+1325 | /                 with timeout_context(
+1326 | |                     seconds=self.flow.timeout_seconds,
+1327 | |                     timeout_exc_type=FlowRunTimeoutError,
+1328 | |                 ):
+1329 | |                     with _send_heartbeats(self):
+     | |________________________________________________^
+1330 |                           self.logger.debug(
+1331 |                               f"Executing flow {self.flow.name!r} for flow run {self.flow_run.name!r}..."
+     |
+help: Combine `with` statements
+
+TRY401 Redundant exception object included in `logging.exception` call
+    --> src/prefect/flow_engine.py:1337:85
+     |
+1335 |                 self.handle_timeout(exc)
+1336 |             except Exception as exc:
+1337 |                 self.logger.exception("Encountered exception during execution: %r", exc)
+     |                                                                                     ^^^
+1338 |                 self.handle_exception(exc)
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> src/prefect/flow_engine.py:1441:20
+     |
+1439 |             try:
+1440 |                 self.parameters = self.flow.validate_parameters(self.parameters or {})
+1441 |             except Exception as exc:
+     |                    ^^^^^^^^^
+1442 |                 message = "Validation of flow parameters failed with error:"
+1443 |                 self.logger.error("%s %s", message, exc)
+     |
+
+D419 Docstring is empty
+    --> src/prefect/flow_engine.py:1488:9
+     |
+1487 |     async def set_state(self, state: State, force: bool = False) -> State:
+1488 |         """ """
+     |         ^^^^^^^
+1489 |         # prevents any state-setting activity
+1490 |         if self.short_circuit:
+     |
+
+S110 `try`-`except`-`pass` detected, consider logging the exception
+    --> src/prefect/flow_engine.py:1557:9
+     |
+1556 |               try_mark_milestone("first_flow_run")
+1557 | /         except Exception:
+1558 | |             pass
+     | |________________^
+1559 |
+1560 |           return result
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> src/prefect/flow_engine.py:1557:16
+     |
+1556 |             try_mark_milestone("first_flow_run")
+1557 |         except Exception:
+     |                ^^^^^^^^^
+1558 |             pass
+     |
+
+G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+    --> src/prefect/flow_engine.py:1800:29
+     |
+1798 |                     await result
+1799 |             except Exception:
+1800 |                 self.logger.error(
+     |                             ^^^^^
+1801 |                     f"An error was encountered while running hook {hook_name!r}",
+1802 |                     exc_info=True,
+     |
+
+SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+    --> src/prefect/flow_engine.py:2078:17
+     |
+2076 |               raise_if_flow_run_suspension_requested()
+2077 |               try:
+2078 | /                 with timeout_context(
+2079 | |                     seconds=self.flow.timeout_seconds,
+2080 | |                     timeout_exc_type=FlowRunTimeoutError,
+2081 | |                 ):
+2082 | |                     with _send_heartbeats(self, join_on_exit=False):
+     | |____________________________________________________________________^
+2083 |                           self.logger.debug(
+2084 |                               f"Executing flow {self.flow.name!r} for flow run {self.flow_run.name!r}..."
+     |
+help: Combine `with` statements
+
+TRY401 Redundant exception object included in `logging.exception` call
+    --> src/prefect/flow_engine.py:2090:85
+     |
+2088 |                 await self.handle_timeout(exc)
+2089 |             except Exception as exc:
+2090 |                 self.logger.exception("Encountered exception during execution: %r", exc)
+     |                                                                                     ^^^
+2091 |                 await self.handle_exception(exc)
+     |
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+    --> src/prefect/flow_engine.py:2258:34
+     |
+2257 |       try:
+2258 |           kwargs: dict[str, Any] = dict(
+     |  __________________________________^
+2259 | |             flow=flow,
+2260 | |             flow_run=flow_run,
+2261 | |             parameters=_flow_parameters(
+2262 | |                 flow=flow, flow_run=flow_run, parameters=parameters
+2263 | |             ),
+2264 | |             wait_for=wait_for,
+2265 | |             return_type=return_type,
+2266 | |             context=context,
+2267 | |         )
+     | |_________^
+2268 |
+2269 |           if flow.isasync and flow.isgenerator:
+     |
+help: Rewrite as a literal
+
+G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+    --> src/prefect/flow_engine.py:2281:26
+     |
+2279 |     except Exception:
+2280 |         if error_logger:
+2281 |             error_logger.error(
+     |                          ^^^^^
+2282 |                 "Engine execution exited with unexpected exception", exc_info=True
+2283 |             )
+     |
+
+G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+    --> src/prefect/flow_engine.py:2297:26
+     |
+2295 |         )
+2296 |         if error_logger and not is_control_termination:
+2297 |             error_logger.error(
+     |                          ^^^^^
+2298 |                 "Engine execution interrupted by base exception", exc_info=True
+2299 |             )
+     |
+
+DTZ001 `datetime.datetime()` called without a `tzinfo` argument
+   --> src/prefect/task_engine.py:400:20
+    |
+399 |     @deprecated.deprecated_callable(
+400 |         start_date=datetime.datetime(2025, 8, 21),
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+401 |         end_date=datetime.datetime(2025, 11, 21),
+402 |         help="This method is no longer used and will be removed in a future version.",
+    |
+help: Pass a `datetime.timezone` object to the `tzinfo` parameter
+
+DTZ001 `datetime.datetime()` called without a `tzinfo` argument
+   --> src/prefect/task_engine.py:401:18
+    |
+399 |     @deprecated.deprecated_callable(
+400 |         start_date=datetime.datetime(2025, 8, 21),
+401 |         end_date=datetime.datetime(2025, 11, 21),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+402 |         help="This method is no longer used and will be removed in a future version.",
+403 |     )
+    |
+help: Pass a `datetime.timezone` object to the `tzinfo` parameter
+
+G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+   --> src/prefect/task_engine.py:510:25
+    |
+508 |             return should_retry
+509 |         except Exception:
+510 |             self.logger.error(
+    |                         ^^^^^
+511 |                 (
+512 |                     "An error was encountered while running `retry_condition_fn` check"
+    |
+
+G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+   --> src/prefect/task_engine.py:549:29
+    |
+547 |                     run_coro_as_sync(result)
+548 |             except Exception:
+549 |                 self.logger.error(
+    |                             ^^^^^
+550 |                     f"An error was encountered while running hook {hook_name!r}",
+551 |                     exc_info=True,
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> src/prefect/task_engine.py:580:20
+    |
+578 |             try:
+579 |                 state.result(retry_result_failure=False, _sync=True)  # type: ignore[reportCallIssue]
+580 |             except Exception:
+    |                    ^^^^^^^^^
+581 |                 state = self.set_state(new_state, force=True)
+    |
+
+SIM102 Use a single `if` statement instead of nested `if` statements
+   --> src/prefect/task_engine.py:670:9
+    |
+668 |           # Handle the case where the task explicitly returns a failed state, in
+669 |           # which case we should retry the task if it has retries left.
+670 | /         if isinstance(result, State) and result.is_failed():
+671 | |             if self.handle_retry(result):
+    | |_________________________________________^
+672 |                   return None
+    |
+help: Combine `if` statements using `and`
+
+LOG014 `exc_info=` outside exception handlers
+   --> src/prefect/task_engine.py:751:21
+    |
+749 |                 self.logger.error(
+750 |                     f"Task run failed with {failure_type}: {exc_or_state!r} - Retries are exhausted",
+751 |                     exc_info=True,
+    |                     ^^^^^^^^^^^^^
+752 |                 )
+753 |             else:
+    |
+help: Remove `exc_info=`
+
+LOG014 `exc_info=` outside exception handlers
+   --> src/prefect/task_engine.py:756:21
+    |
+754 |                 self.logger.error(
+755 |                     f"Task run failed with {failure_type}: {exc_or_state!r}",
+756 |                     exc_info=True,
+    |                     ^^^^^^^^^^^^^
+757 |                 )
+758 |             return False
+    |
+help: Remove `exc_info=`
+
+TRY201 Use `raise` without specifying exception name
+   --> src/prefect/task_engine.py:922:27
+    |
+920 |                     # TerminationSignals are caught and handled as crashes
+921 |                     self.handle_crash(exc)
+922 |                     raise exc
+    |                           ^^^
+923 |
+924 |                 except Exception:
+    |
+help: Remove exception name
+
+SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+   --> src/prefect/task_engine.py:972:9
+    |
+970 |           dependencies: dict[str, set[RunInput]] | None = None,
+971 |       ) -> Generator[None, None, None]:
+972 | /         with self.initialize_run(task_run_id=task_run_id, dependencies=dependencies):
+973 | |             with (
+974 | |                 trace.use_span(self._telemetry.span)
+975 | |                 if self._telemetry.span
+976 | |                 else nullcontext()
+977 | |             ):
+    | |______________^
+978 |                   try:
+979 |                       self._resolve_parameters()
+    |
+help: Combine `with` statements
+
+BLE001 Do not catch blind exception: `Exception`
+    --> src/prefect/task_engine.py:1071:20
+     |
+1069 |             except TimeoutError as exc:
+1070 |                 self.handle_timeout(exc)
+1071 |             except Exception as exc:
+     |                    ^^^^^^^^^
+1072 |                 self.handle_exception(exc)
+     |
+
+G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+    --> src/prefect/task_engine.py:1130:25
+     |
+1129 |         except Exception:
+1130 |             self.logger.error(
+     |                         ^^^^^
+1131 |                 (
+1132 |                     "An error was encountered while running `retry_condition_fn` check"
+     |
+
+G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+    --> src/prefect/task_engine.py:1169:29
+     |
+1167 |                     await result
+1168 |             except Exception:
+1169 |                 self.logger.error(
+     |                             ^^^^^
+1170 |                     f"An error was encountered while running hook {hook_name!r}",
+1171 |                     exc_info=True,
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> src/prefect/task_engine.py:1215:20
+     |
+1213 |             try:
+1214 |                 await state.result(retry_result_failure=False)
+1215 |             except Exception:
+     |                    ^^^^^^^^^
+1216 |                 state = await self.set_state(new_state, force=True)
+     |
+
+SIM102 Use a single `if` statement instead of nested `if` statements
+    --> src/prefect/task_engine.py:1305:9
+     |
+1303 |           self, result: R, transaction: AsyncTransaction
+1304 |       ) -> ResultRecord[R] | None | Coroutine[Any, Any, R] | R:
+1305 | /         if isinstance(result, State) and result.is_failed():
+1306 | |             if await self.handle_retry(result):
+     | |_______________________________________________^
+1307 |                   return None
+     |
+help: Combine `if` statements using `and`
+
+LOG014 `exc_info=` outside exception handlers
+    --> src/prefect/task_engine.py:1388:21
+     |
+1386 |                 self.logger.error(
+1387 |                     f"Task run failed with {failure_type}: {exc_or_state!r} - Retries are exhausted",
+1388 |                     exc_info=True,
+     |                     ^^^^^^^^^^^^^
+1389 |                 )
+1390 |             else:
+     |
+help: Remove `exc_info=`
+
+LOG014 `exc_info=` outside exception handlers
+    --> src/prefect/task_engine.py:1393:21
+     |
+1391 |                 self.logger.error(
+1392 |                     f"Task run failed with {failure_type}: {exc_or_state!r}",
+1393 |                     exc_info=True,
+     |                     ^^^^^^^^^^^^^
+1394 |                 )
+1395 |             return False
+     |
+help: Remove `exc_info=`
+
+TRY201 Use `raise` without specifying exception name
+    --> src/prefect/task_engine.py:1562:27
+     |
+1560 |                     # TerminationSignals are caught and handled as crashes
+1561 |                     await self.handle_crash(exc)
+1562 |                     raise exc
+     |                           ^^^
+1563 |
+1564 |                 except Exception:
+     |
+help: Remove exception name
+
+BLE001 Do not catch blind exception: `Exception`
+    --> src/prefect/task_engine.py:1696:20
+     |
+1694 |             except TimeoutError as exc:
+1695 |                 await self.handle_timeout(exc)
+1696 |             except Exception as exc:
+     |                    ^^^^^^^^^
+1697 |                 await self.handle_exception(exc)
+     |
+
+SIM223 Use `False` instead of `False and ...`
+    --> src/prefect/task_engine.py:1831:20
+     |
+1829 |                 # because they are dynamic by definition
+1830 |                 # for now we just prevent this branch explicitly
+1831 |                 if False and txn.is_committed():
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1832 |                     txn.read()
+1833 |                 else:
+     |
+help: Replace with `False`
+
+SIM223 Use `False` instead of `False and ...`
+    --> src/prefect/task_engine.py:1893:20
+     |
+1891 |                 # because they are dynamic by definition
+1892 |                 # for now we just prevent this branch explicitly
+1893 |                 if False and txn.is_committed():
+     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1894 |                     txn.read()
+1895 |                 else:
+     |
+help: Replace with `False`
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+    --> src/prefect/task_engine.py:1979:30
+     |
+1977 |           The result of the task run
+1978 |       """
+1979 |       kwargs: dict[str, Any] = dict(
+     |  ______________________________^
+1980 | |         task=task,
+1981 | |         task_run_id=task_run_id,
+1982 | |         task_run=task_run,
+1983 | |         parameters=parameters,
+1984 | |         wait_for=wait_for,
+1985 | |         return_type=return_type,
+1986 | |         dependencies=dependencies,
+1987 | |         context=context,
+1988 | |     )
+     | |_____^
+1989 |       if task.stream is not None:
+1990 |           return run_task_async(**kwargs) if task.isasync else run_task_sync(**kwargs)
+     |
+help: Rewrite as a literal
+
+RUF015 Prefer `next(iter(lengths))` over single element slice
+   --> src/prefect/task_runners.py:193:22
+    |
+191 |             )
+192 |
+193 |         map_length = list(lengths)[0]
+    |                      ^^^^^^^^^^^^^^^^
+194 |
+195 |         futures: list[PrefectFuture[Any]] = []
+    |
+help: Replace with `next(iter(lengths))`
+
+PYI036 The first argument in `__exit__` should be annotated with `object` or `type[BaseException] | None`
+   --> src/prefect/task_runners.py:237:34
+    |
+235 |         return self
+236 |
+237 |     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+    |                                  ^^^
+238 |         self.logger.debug("Stopping task runner")
+239 |         self._started = False
+    |
+
+PYI036 The second argument in `__exit__` should be annotated with `object` or `BaseException | None`
+   --> src/prefect/task_runners.py:237:50
+    |
+235 |         return self
+236 |
+237 |     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+    |                                                  ^^^
+238 |         self.logger.debug("Stopping task runner")
+239 |         self._started = False
+    |
+
+PYI036 The third argument in `__exit__` should be annotated with `object` or `types.TracebackType | None`
+   --> src/prefect/task_runners.py:237:66
+    |
+235 |         return self
+236 |
+237 |     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+    |                                                                  ^^^
+238 |         self.logger.debug("Stopping task runner")
+239 |         self._started = False
+    |
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+   --> src/prefect/task_runners.py:416:41
+    |
+414 |               self.logger.debug(f"Submitting task {task.name} to thread pool executor...")
+415 |
+416 |           submit_kwargs: dict[str, Any] = dict(
+    |  _________________________________________^
+417 | |             task=task,
+418 | |             task_run_id=task_run_id,
+419 | |             parameters=parameters,
+420 | |             wait_for=wait_for,
+421 | |             return_type="state",
+422 | |             dependencies=dependencies,
+423 | |             context=dict(cancel_event=cancel_event),
+424 | |         )
+    | |_________^
+425 |           if prebuilt_run is not None:
+426 |               submit_kwargs["task_run"] = prebuilt_run
+    |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+   --> src/prefect/task_runners.py:423:21
+    |
+421 |             return_type="state",
+422 |             dependencies=dependencies,
+423 |             context=dict(cancel_event=cancel_event),
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+424 |         )
+425 |         if prebuilt_run is not None:
+    |
+help: Rewrite as a literal
+
+PYI036 The first argument in `__exit__` should be annotated with `object` or `type[BaseException] | None`
+   --> src/prefect/task_runners.py:557:34
+    |
+555 |         return self
+556 |
+557 |     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+    |                                  ^^^
+558 |         self.cancel_all()
+559 |         if self._executor is not None:
+    |
+
+PYI036 The second argument in `__exit__` should be annotated with `object` or `BaseException | None`
+   --> src/prefect/task_runners.py:557:50
+    |
+555 |         return self
+556 |
+557 |     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+    |                                                  ^^^
+558 |         self.cancel_all()
+559 |         if self._executor is not None:
+    |
+
+PYI036 The third argument in `__exit__` should be annotated with `object` or `types.TracebackType | None`
+   --> src/prefect/task_runners.py:557:66
+    |
+555 |         return self
+556 |
+557 |     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+    |                                                                  ^^^
+558 |         self.cancel_all()
+559 |         if self._executor is not None:
+    |
+
+SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+   --> src/prefect/task_runners.py:651:5
+    |
+649 |       context = kwargs.pop("context", None)
+650 |
+651 | /     with hydrated_context(context):
+652 | |         with handle_engine_signals(kwargs.get("task_run_id")):
+    | |______________________________________________________________^
+653 |               # Determine if this is an async task
+654 |               task = kwargs.get("task")
+    |
+help: Combine `with` statements
+
+BLE001 Do not catch blind exception: `Exception`
+   --> src/prefect/task_runners.py:680:24
+    |
+678 |                 try:
+679 |                     EventsWorker.instance().wait_until_empty()
+680 |                 except Exception:
+    |                        ^^^^^^^^^
+681 |                     get_logger("task_runner").debug(
+682 |                         "Failed to flush subprocess EventsWorker; "
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> src/prefect/task_runners.py:716:28
+    |
+714 |                         result = process_fut.result()
+715 |                         self.set_result(result)
+716 |                     except Exception as e:
+    |                            ^^^^^^^^^
+717 |                         self.set_exception(e)
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> src/prefect/task_runners.py:720:20
+    |
+719 |                 self._process_future.add_done_callback(on_process_done)
+720 |             except Exception as e:
+    |                    ^^^^^^^^^
+721 |                 self.set_exception(e)
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> src/prefect/task_runners.py:773:20
+    |
+772 |                 cloudpickle.loads(wrapped_future.result())
+773 |             except Exception as e:
+    |                    ^^^^^^^^^
+774 |                 self._deserialization_error = e
+775 |             fn(self)
+    |
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+    --> src/prefect/task_runners.py:1150:41
+     |
+1149 |           # Now submit to the process pool with resolved values
+1150 |           submit_kwargs: dict[str, Any] = dict(
+     |  _________________________________________^
+1151 | |             task=task,
+1152 | |             task_run_id=task_run_id,
+1153 | |             parameters=resolved_parameters,
+1154 | |             wait_for=wait_for_states,
+1155 | |             return_type="state",
+1156 | |             dependencies=dependencies,
+1157 | |             context=context,
+1158 | |         )
+     | |_________^
+1159 |
+1160 |           # Prepare the cloudpickle wrapped call for subprocess execution
+     |
+help: Rewrite as a literal
+
+PYI036 The first argument in `__exit__` should be annotated with `object` or `type[BaseException] | None`
+    --> src/prefect/task_runners.py:1351:34
+     |
+1349 |         return self
+1350 |
+1351 |     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+     |                                  ^^^
+1352 |         self.cancel_all()
+1353 |         # cancel_all() already shuts down the executor, but double-check
+     |
+
+PYI036 The second argument in `__exit__` should be annotated with `object` or `BaseException | None`
+    --> src/prefect/task_runners.py:1351:50
+     |
+1349 |         return self
+1350 |
+1351 |     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+     |                                                  ^^^
+1352 |         self.cancel_all()
+1353 |         # cancel_all() already shuts down the executor, but double-check
+     |
+
+PYI036 The third argument in `__exit__` should be annotated with `object` or `types.TracebackType | None`
+    --> src/prefect/task_runners.py:1351:66
+     |
+1349 |         return self
+1350 |
+1351 |     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+     |                                                                  ^^^
+1352 |         self.cancel_all()
+1353 |         # cancel_all() already shuts down the executor, but double-check
+     |
+
+TC004 Move import `prefect.context.TaskRunContext` out of type-checking block. Import is used for more than type hinting.
+   --> src/prefect/tasks.py:96:33
+    |
+ 95 |     from prefect.client.orchestration import PrefectClient
+ 96 |     from prefect.context import TaskRunContext
+    |                                 ^^^^^^^^^^^^^^
+ 97 |     from prefect.transactions import Transaction
+    |
+   ::: src/prefect/tasks.py:898:39
+    |
+896 |             flow_run_context = FlowRunContext.get()
+897 |         if parent_task_run_context is None:
+898 |             parent_task_run_context = TaskRunContext.get()
+    |                                       -------------- Used at runtime here
+899 |         if parameters is None:
+900 |             parameters = {}
+    |
+help: Move out of type-checking block
+
+SIM102 Use a single `if` statement instead of nested `if` statements
+   --> src/prefect/tasks.py:234:5
+    |
+232 |       # in a subflow, so the subflow serves as the parent) or if there is no
+233 |       # flow run
+234 | /     if task_run_context:
+235 | |         # there is no flow run
+236 | |         if not flow_run_context or flow_run_context and task_run_context.task_run.flow_run_id == getattr(
+237 | |             flow_run_context.flow_run, "id", None
+238 | |         ):
+    | |__________^
+239 |               parents.append(TaskRunResult(id=task_run_context.task_run.id))
+    |
+help: Combine `if` statements using `and`
+
+SIM102 Use a single `if` statement instead of nested `if` statements
+   --> src/prefect/tasks.py:503:9
+    |
+501 |               self.name: str = name
+502 |
+503 | /         if task_run_name is not None:
+504 | |             if not isinstance(task_run_name, str) and not callable(task_run_name):
+    | |__________________________________________________________________________________^
+505 |                   raise TypeError(
+506 |                       "Expected string or callable for 'task_run_name'; got"
+    |
+help: Combine `if` statements using `and`
+
+SIM102 Use a single `if` statement instead of nested `if` statements
+   --> src/prefect/tasks.py:541:9
+    |
+539 |           # result persistence settings
+540 |           self._user_persist_result = persist_result
+541 | /         if persist_result is None:
+542 | |             if any(
+543 | |                 [
+544 | |                     cache_policy
+545 | |                     and cache_policy != NO_CACHE
+546 | |                     and cache_policy != NotSet,
+547 | |                     cache_key_fn is not None,
+548 | |                     result_storage_key is not None,
+549 | |                     result_storage is not None,
+550 | |                     result_serializer is not None,
+551 | |                 ]
+552 | |             ):
+    | |______________^
+553 |                   persist_result = True
+    |
+help: Combine `if` statements using `and`
+
+SIM102 Use a single `if` statement instead of nested `if` statements
+   --> src/prefect/tasks.py:605:9
+    |
+603 |           self.persist_result = persist_result
+604 |
+605 | /         if result_storage and not isinstance(result_storage, (str, Path)):
+606 | |             if getattr(result_storage, "_block_document_id", None) is None:
+    | |___________________________________________________________________________^
+607 |                   raise TypeError(
+608 |                       "Result storage configuration must be persisted server-side."
+    |
+help: Combine `if` statements using `and`
+
+BLE001 Do not catch blind exception: `Exception`
+    --> src/prefect/tasks.py:1497:20
+     |
+1495 |             try:
+1496 |                 run_coro_as_sync(reject_stream_submission(run, error))
+1497 |             except Exception:
+     |                    ^^^^^^^^^
+1498 |                 logger.warning("Unable to close a rejected stream submission")
+     |
+
+BLE001 Do not catch blind exception: `BaseException`
+    --> src/prefect/tasks.py:1535:20
+     |
+1533 |             except PrefectSignal:
+1534 |                 return
+1535 |             except BaseException as exc:
+     |                    ^^^^^^^^^^^^^
+1536 |                 reject_submission(type(exc).__name__)
+     |
+
+PYI063 Use PEP 570 syntax for positional-only parameters
+    --> src/prefect/tasks.py:2028:10
+     |
+2027 | @overload
+2028 | def task(__fn: Callable[P, R]) -> Task[P, R]: ...
+     |          ^^^^
+help: Add `/` to function signature
+
+PYI063 Use PEP 570 syntax for positional-only parameters
+    --> src/prefect/tasks.py:2034:5
+     |
+2032 | @overload
+2033 | def task(
+2034 |     __fn: Literal[None] = None,
+     |     ^^^^
+2035 |     *,
+2036 |     name: str | None = None,
+     |
+help: Add `/` to function signature
+
+PYI061 Use `None` rather than `Literal[None]`
+    --> src/prefect/tasks.py:2034:19
+     |
+2032 | @overload
+2033 | def task(
+2034 |     __fn: Literal[None] = None,
+     |                   ^^^^
+2035 |     *,
+2036 |     name: str | None = None,
+     |
+help: Replace with `None`
+
+PYI063 Use PEP 570 syntax for positional-only parameters
+    --> src/prefect/tasks.py:2068:5
+     |
+2066 | @overload
+2067 | def task(
+2068 |     __fn: Literal[None] = None,
+     |     ^^^^
+2069 |     *,
+2070 |     name: str | None = None,
+     |
+help: Add `/` to function signature
+
+PYI061 Use `None` rather than `Literal[None]`
+    --> src/prefect/tasks.py:2068:19
+     |
+2066 | @overload
+2067 | def task(
+2068 |     __fn: Literal[None] = None,
+     |                   ^^^^
+2069 |     *,
+2070 |     name: str | None = None,
+     |
+help: Replace with `None`
+
+PYI063 Use PEP 570 syntax for positional-only parameters
+    --> src/prefect/tasks.py:2132:5
+     |
+2131 | def task(
+2132 |     __fn: Callable[P, R] | None = None,
+     |     ^^^^
+2133 |     *,
+2134 |     name: str | None = None,
+     |
+help: Add `/` to function signature
+
+PLC0414 Import alias does not rename original package
+  --> tests/test_native_flow_recovery_http.py:24:46
+   |
+22 | from prefect.states import Pending
+23 | from tests.test_native_execution_http import Launch, _key_pair, _takeover_request
+24 | from tests.test_native_execution_http import execution_api as execution_api
+   |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+25 | from tests.test_native_stream_http import native_backend as native_backend
+26 | from tests.test_native_stream_recovery_http import RestartableAPI
+   |
+help: Remove import alias
+
+PLC0414 Import alias does not rename original package
+  --> tests/test_native_flow_recovery_http.py:25:43
+   |
+23 | from tests.test_native_execution_http import Launch, _key_pair, _takeover_request
+24 | from tests.test_native_execution_http import execution_api as execution_api
+25 | from tests.test_native_stream_http import native_backend as native_backend
+   |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+26 | from tests.test_native_stream_recovery_http import RestartableAPI
+   |
+help: Remove import alias
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+  --> tests/test_native_flow_recovery_http.py:41:15
+   |
+39 |   def _launch(server: RestartableAPI, run_id: Any) -> Launch:
+40 |       private, public = _key_pair()
+41 |       request = dict(flow_run_id=run_id, operation_id=uuid4(), holder_id=uuid4(),
+   |  _______________^
+42 | |         holder_capability=secrets.token_hex(32), holder_event_public_key=public,
+43 | |         supervisor_id=uuid4(), supervisor_capability=secrets.token_hex(32))
+   | |___________________________________________________________________________^
+44 |       with server.client() as client:
+45 |           binding = client.claim_stream_execution(**request)
+   |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+  --> tests/test_native_flow_recovery_http.py:61:15
+   |
+59 |       environment.update(PREFECT_API_URL=server.url, PREFECT_API_AUTH_STRING=server.auth,
+60 |           PREFECT__FLOW_RUN_ID=str(execution.flow_run_id), PREFECT__STREAM_EXECUTION_FD=str(read_fd))
+61 |       payload = dict(schema='native-stream-execution-v1', flow_run_id=str(execution.flow_run_id),
+   |  _______________^
+62 | |         generation=execution.generation, holder_id=str(execution.holder_id),
+63 | |         api_url=server.url, holder_capability=execution.capability,
+64 | |         event_private_key=execution.event_private_key.hex())
+   | |____________________________________________________________^
+65 |       assert 'supervisor_capability' not in payload
+66 |       encoded = json.dumps(payload).encode()
+   |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+  --> tests/test_native_flow_recovery_http.py:90:61
+   |
+88 |       dataset.mkdir(); coordination.mkdir(); (coordination/'signed').mkdir()
+89 |       for number in range(1, 501):
+90 |           (dataset/f'{number:04}.json').write_text(json.dumps(dict(number=number,
+   |  _____________________________________________________________^
+91 | |             document_id=f'invoice-{number:04}', amount_cents=1200+number,
+92 | |             text=f'Document {number} for streaming signature acceptance'), ensure_ascii=False))
+   | |_________________________________________________________________________^
+93 |       fixture = Path(__file__).parent/'fixtures'/'native_stream_document_flow.py'
+94 |       entrypoint = str(fixture)+':documents_flow'
+   |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+   --> tests/test_native_flow_recovery_http.py:97:66
+    |
+ 95 |       definition = load_flow_from_entrypoint(entrypoint)
+ 96 |       with server.client() as client:
+ 97 |           original = client.create_flow_run(definition, parameters=dict(dataset=str(dataset),
+    |  __________________________________________________________________^
+ 98 | |             coordination=str(coordination), fault=fault), state=Pending())
+    | |________________________________________________________^
+ 99 |       launch = _launch(server, original.id)
+100 |       first = _start_flow(server, entrypoint, launch.context, tmp_path/'attempt1.log')
+    |
+help: Rewrite as a literal
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+   --> tests/test_native_flow_recovery_http.py:126:17
+    |
+124 |                   assert old_source.state.is_running() and old_source.run_count==1
+125 |                   assert client.read_stream(source.stream_id).state=='COMPLETED'
+126 |           death = dict(launcher_instance_id=uuid4(), child_process_id=first.pid,
+    |  _________________^
+127 | |             exit_code=first.returncode, observed_at=datetime.now(UTC), kind='WAITPID')
+    | |______________________________________________________________________________________^
+128 |           request, private = _takeover_request(launch, death)
+129 |           with server.client() as client:
+    |
+help: Rewrite as a literal
+
+Found 657 errors (564 fixed, 93 remaining).
+No fixes available (36 hidden fixes can be enabled with the `--unsafe-fixes` option).

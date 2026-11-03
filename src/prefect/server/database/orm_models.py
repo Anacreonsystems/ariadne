@@ -995,11 +995,16 @@ class StreamExecutionAttempt(Base):
     recovery_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
     recovery_outcome: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
     recovery_outcome_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    abort_operation_id: Mapped[Optional[uuid.UUID]]
+    abort_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    abort_outcome: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    abort_outcome_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
 
     __table_args__: Any = (
         sa.UniqueConstraint("flow_run_id", "generation"),
         sa.UniqueConstraint("flow_run_id", "operation_id"),
         sa.UniqueConstraint("flow_run_id", "recovery_operation_id"),
+        sa.UniqueConstraint("flow_run_id", "abort_operation_id"),
         sa.CheckConstraint("generation BETWEEN 1 AND 64", name="generation_bounded"),
         sa.CheckConstraint("kind IN ('CLAIM', 'TAKEOVER')", name="kind_valid"),
         sa.CheckConstraint(
@@ -1033,6 +1038,17 @@ class StreamExecutionAttempt(Base):
             "AND recovery_outcome_digest IS NOT NULL "
             "AND length(recovery_outcome_digest) = 64)",
             name="recovery_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(abort_operation_id IS NULL AND abort_request_digest IS NULL "
+            "AND abort_outcome IS NULL AND abort_outcome_digest IS NULL) OR "
+            "(abort_operation_id IS NOT NULL "
+            "AND abort_request_digest IS NOT NULL "
+            "AND length(abort_request_digest) = 64 "
+            "AND abort_outcome IS NOT NULL "
+            "AND abort_outcome_digest IS NOT NULL "
+            "AND length(abort_outcome_digest) = 64)",
+            name="abort_shape_valid",
         ),
         sa.Index(
             "ix_stream_execution_attempt__flow_run_id_generation",

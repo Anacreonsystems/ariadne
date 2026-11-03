@@ -158,9 +158,11 @@ jobs:
               tests/test_native_submission_http.py
               tests/test_native_execution_http.py
               tests/test_native_execution_recovery_http.py
+              tests/test_native_flow_recovery_http.py
               tests/test_native_stream_http.py
               tests/test_native_stream_recovery_http.py
               tests/test_native_stream_client_package.py
+              tests/test_native_stream_code.py
               tests/test_task_engine.py
               tests/test_task_runs.py
               tests/test_task_worker.py
@@ -245,9 +247,11 @@ jobs:
                 tests/test_native_submission_http.py
                 tests/test_native_execution_http.py
                 tests/test_native_execution_recovery_http.py
+                tests/test_native_flow_recovery_http.py
                 tests/test_native_stream_http.py
                 tests/test_native_stream_recovery_http.py
                 tests/test_native_stream_client_package.py
+                tests/test_native_stream_code.py
                 tests/test_task_engine.py
                 tests/test_task_runs.py
                 tests/test_task_worker.py
@@ -315,7 +319,8 @@ jobs:
     if: ${{ github.event_name != 'repository_dispatch' }}
     runs-on: ubuntu-latest
     name: Native stream tasks - python:3.12, ${{ matrix.database }}
-    timeout-minutes: 15
+    # The 500-document whole-process matrix adds measured real HTTP recovery work.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -365,6 +370,8 @@ jobs:
           tests/test_native_submission_http.py
           tests/test_native_execution_http.py
           tests/test_native_execution_recovery_http.py
+          tests/test_native_flow_recovery_http.py
+          tests/test_native_stream_code.py
           tests/client/test_stream_storage_native.py
           -q --junitxml=native-stream-http.xml
       - name: Run native HTTP server contract
@@ -382,6 +389,8 @@ jobs:
           tests/server/api/test_stream_executions.py::test_execution_claim_fails_closed_on_sqlite
           tests/server/api/test_stream_executions.py::test_invalid_complete_execution_headers_are_typed_and_secret_free
           tests/server/api/test_stream_executions.py::test_execution_claim_rejects_boolean_generation_before_storage
+          tests/server/api/test_stream_executions.py::test_ordinary_flow_exception_retries_remain_enabled
+          tests/server/api/test_stream_executions.py::test_explicit_non_retriable_flow_failure_remains_final
           -q --junitxml=native-stream-api.xml
       - name: Verify native storage migration upgrade and downgrade
         run: uv run pytest tests/server/database/test_stream_storage_migrations.py -q --junitxml=native-stream-migrations.xml

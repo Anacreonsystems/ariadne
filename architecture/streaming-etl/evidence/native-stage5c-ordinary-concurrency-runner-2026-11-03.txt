@@ -1,0 +1,35 @@
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+import xml.etree.ElementTree as ET
+
+root=Path('/workspace/ariadne')
+ev=root/'architecture/streaming-etl/evidence'
+prefix=ev/'native-stage5c-ordinary-concurrency-2026-11-03'
+source=json.loads((ev/'native-stage5c-source-freeze-2026-11-03.json').read_text())['source_sha256']
+def hashes():
+    return {name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in source}
+def artifact(path):
+    return {'path':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+before=hashes()
+assert before==source
+runner=ev/'native-stage5c-ordinary-concurrency-runner-2026-11-03.txt'
+runner.write_bytes(Path(__file__).read_bytes())
+node='tests/server/orchestration/test_core_policy.py::TestFlowConcurrencyLimits::test_in_process_retry_transition_does_not_release_concurrency_slots'
+command=[sys.executable,'-m','pytest',node,'-q','--tb=short',f'--junitxml={prefix.with_suffix(".xml")}']
+env=os.environ.copy()
+env['PREFECT_SERVER_DATABASE_CONNECTION_URL']='postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_recovery_c_concurrency'
+start=datetime.now(timezone.utc).isoformat();timer=time.monotonic()
+with prefix.with_suffix('.log').open('w') as log:
+    result=subprocess.run(command,cwd=root,env=env,stdout=log,stderr=subprocess.STDOUT,timeout=300)
+after=hashes();tree=ET.parse(prefix.with_suffix('.xml'));cases=tree.findall('.//testcase')
+issues=[case.get('name') for case in cases if any(case.find(tag) is not None for tag in ('failure','error','skipped'))]
+record={'verdict':'PASS' if result.returncode==0 and len(cases)==1 and not issues and before==after==source else 'FAIL','started_utc':start,'duration_seconds':round(time.monotonic()-timer,3),'command':command,'returncode':result.returncode,'tests':len(cases),'issues':issues,'source_sha256_before':before,'source_sha256_after':after,'artifacts':[artifact(prefix.with_suffix('.log')),artifact(prefix.with_suffix('.xml')),artifact(runner)],'scope':'Ordinary in-process Flow retry preserves the deployment concurrency lease and occupied slot. Explicit non-retriable terminal failure follows the existing terminal release path; lease, renewal, expiry, accounting and deletion actions are unchanged, so the bounded deployment-concurrency model abstraction remains valid.'}
+prefix.with_suffix('.json').write_text(json.dumps(record,indent=2)+'\n')
+print(json.dumps({key:record[key] for key in ('verdict','tests','duration_seconds','issues')}))
+sys.exit(0 if record['verdict']=='PASS' else 1)

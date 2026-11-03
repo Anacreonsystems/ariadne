@@ -1,0 +1,15 @@
+"""Correct the policy selection without mutating frozen runner/source bytes."""
+import importlib.util
+import os
+from pathlib import Path
+import sys
+
+path=Path('/tmp/ariadne_stage5c_gate.py')
+spec=importlib.util.spec_from_file_location('native_stage5c_gate',path)
+assert spec is not None and spec.loader is not None
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.PROFILES['flow-policy']=['tests/server/orchestration/test_core_policy.py::TestFlowRetryingRule']
+os.environ['PREFECT_SERVER_DATABASE_CONNECTION_URL']='postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_recovery_c_final_flow_policy'
+sys.argv=[str(path),'flow-policy','successor2']
+raise SystemExit(module.main())

@@ -263,6 +263,14 @@ class BaseTaskRunEngine(Generic[P, R]):
         if self.parameters is None:
             self.parameters = {}
         execution = get_stream_execution()
+        if execution is not None and (
+            self.task_run is None or execution.manifest_digest(self.task_run.id) is None
+        ):
+            from prefect.streams import StreamProtocolError
+
+            raise StreamProtocolError(
+                "An enrolled native flow accepts only its keyed stream tasks"
+            )
         if (
             execution is not None
             and self.task_run is not None

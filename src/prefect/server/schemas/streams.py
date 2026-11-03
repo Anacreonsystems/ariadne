@@ -480,3 +480,36 @@ class StreamRecoveryResult(BaseModel):
     operation_id: UUID
     items: list[StreamRecoveryItem]
     outcome_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class StreamUnsealedAbortRequest(_StreamRequest):
+    flow_run_id: UUID
+    operation_id: UUID
+    manifests: list[StreamManifestWitness] = Field(min_length=1, max_length=128)
+    error: str = Field(min_length=1, max_length=4096)
+
+    @field_validator("error")
+    @classmethod
+    def error_is_bounded_utf8(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 4096:
+            raise ValueError("abort error must be at most 4096 UTF-8 bytes")
+        return value
+
+
+class StreamUnsealedAbortItem(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    submission_key: str
+    task_run_id: UUID
+    stream_id: UUID
+
+
+class StreamUnsealedAbortResult(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    flow_run_id: UUID
+    generation: int = Field(ge=1, le=64, strict=True)
+    operation_id: UUID
+    state: Literal["TERMINAL"]
+    items: list[StreamUnsealedAbortItem]
+    outcome_digest: str = Field(pattern=r"^[0-9a-f]{64}$")

@@ -391,6 +391,20 @@ class ThreadPoolTaskRunner(TaskRunner[PrefectConcurrentFuture[R]]):
 
         stream_run = parameters.get("__prefect_stream_run__") if task.stream else None
         prebuilt_run = getattr(stream_run, "task_run", None)
+        from prefect._internal.stream_execution import get_stream_execution
+        from prefect._internal.stream_reconstruction import reconstruction
+        from prefect.streams import StreamProtocolError
+
+        native_graph = reconstruction()
+        native_execution = get_stream_execution()
+        if native_execution is not None and (
+            native_graph is None
+            or prebuilt_run is None
+            or native_execution.manifest_digest(prebuilt_run.id) is None
+        ):
+            raise StreamProtocolError(
+                "An enrolled native flow accepts only its keyed stream tasks"
+            )
         task_run_id = prebuilt_run.id if prebuilt_run is not None else uuid7()
         cancel_event = threading.Event()
         self._cancel_events[task_run_id] = cancel_event
@@ -416,13 +430,35 @@ class ThreadPoolTaskRunner(TaskRunner[PrefectConcurrentFuture[R]]):
         if prebuilt_run is not None:
             submit_kwargs["task_run"] = prebuilt_run
 
+        def admitted_task_kwargs() -> tuple[dict[str, Any], Any]:
+            if native_graph is None:
+                return submit_kwargs, None
+            entry = native_graph.wait_for_entry(task_run_id, cancel_event)
+            completed = (
+                entry.run.task_run.state.model_copy(
+                    update={"data": entry.completed_result}
+                )
+                if entry.completed_result is not None
+                else None
+            )
+            return {**submit_kwargs, "task_run": entry.run.task_run}, completed
+
+        def run_sync_task() -> Any:
+            admitted, completed = admitted_task_kwargs()
+            return completed if completed is not None else run_task_sync(**admitted)
+
         if task.isasync:
             # TODO: Explore possibly using a long-lived thread with an event loop
             # for better performance
             def run_async_task() -> Any:
                 # Construct the coroutine only after the executor accepts and
                 # starts the job. A rejected submission must not leak one.
-                return asyncio.run(run_task_async(**submit_kwargs))
+                admitted, completed = admitted_task_kwargs()
+                return (
+                    completed
+                    if completed is not None
+                    else asyncio.run(run_task_async(**admitted))
+                )
 
             future = self._executor.submit(
                 context.run,
@@ -431,8 +467,7 @@ class ThreadPoolTaskRunner(TaskRunner[PrefectConcurrentFuture[R]]):
         else:
             future = self._executor.submit(
                 context.run,
-                run_task_sync,
-                **submit_kwargs,
+                run_sync_task,
             )
         with self._submission_lock:
             self._active_submission_count += 1

@@ -298,7 +298,10 @@ def _main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    _run_flow_from_runtime_entrypoint(flow_run_id, args[0])
+    from prefect._internal.stream_bootstrap import flow_execution_bootstrap
+
+    with flow_execution_bootstrap(flow_run_id):
+        _run_flow_from_runtime_entrypoint(flow_run_id, args[0])
     return 0
 
 
@@ -426,6 +429,19 @@ class BaseFlowRunEngine(Generic[P, R]):
     _attempt_conclusion: EngineOutcomeReceipt | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
+        from prefect._internal.stream_execution import get_stream_execution
+
+        execution = get_stream_execution()
+        if execution is not None:
+            requested_id = (
+                self.flow_run.id if self.flow_run is not None else self.flow_run_id
+            )
+            if requested_id != execution.flow_run_id:
+                from prefect.streams import StreamProtocolError
+
+                raise StreamProtocolError(
+                    "Nested flows are outside the bounded native reconstruction profile"
+                )
         if self.flow is None and self.flow_run_id is None:
             raise ValueError("Either a flow or a flow_run_id must be provided.")
 
@@ -757,6 +773,9 @@ class FlowRunEngine(BaseFlowRunEngine[P, R]):
         if self.short_circuit:
             return self.state
 
+        from prefect._internal.stream_reconstruction import prepare_flow_state
+
+        prepare_flow_state(state)
         state = propose_state_sync(
             self.client, state, flow_run_id=self.flow_run.id, force=force
         )  # type: ignore
@@ -766,6 +785,9 @@ class FlowRunEngine(BaseFlowRunEngine[P, R]):
 
         self._capture_state_report(state)
         self._telemetry.update_state(state)
+        from prefect._internal.stream_reconstruction import reconcile_unstarted_graph
+
+        reconcile_unstarted_graph(self.flow_run)
         self.call_hooks(state)
 
         return state
@@ -845,6 +867,9 @@ class FlowRunEngine(BaseFlowRunEngine[P, R]):
                 )
             ),
         )
+        # The shared exception helper marks task failures non-retriable.
+        # Flow exception retries have their own policy; preserve that default.
+        terminal_state.state_details.retriable = None
         self._get_flow_run_suspension_request().raise_if_requested()
         state = self.set_state(terminal_state)
         if self.state.is_scheduled():
@@ -1342,12 +1367,20 @@ class FlowRunEngine(BaseFlowRunEngine[P, R]):
         if self.flow.isasync:
 
             async def _call_flow_fn():
-                result = await call_with_parameters(self.flow.fn, self.parameters)
+                from prefect._internal.stream_reconstruction import (
+                    async_stream_flow_scope,
+                )
+
+                async with async_stream_flow_scope(self.flow_run):
+                    result = await call_with_parameters(self.flow.fn, self.parameters)
                 self.handle_success(result)
 
             return _call_flow_fn()
         else:
-            result = call_with_parameters(self.flow.fn, self.parameters)
+            from prefect._internal.stream_reconstruction import stream_flow_scope
+
+            with stream_flow_scope(self.flow_run):
+                result = call_with_parameters(self.flow.fn, self.parameters)
             self.handle_success(result)
 
 
@@ -1481,6 +1514,9 @@ class AsyncFlowRunEngine(BaseFlowRunEngine[P, R]):
         if self.short_circuit:
             return self.state
 
+        from prefect._internal.stream_reconstruction import prepare_flow_state
+
+        prepare_flow_state(state)
         state = await propose_state(
             self.client, state, flow_run_id=self.flow_run.id, force=force
         )  # type: ignore
@@ -1490,6 +1526,9 @@ class AsyncFlowRunEngine(BaseFlowRunEngine[P, R]):
 
         self._capture_state_report(state)
         self._telemetry.update_state(state)
+        from prefect._internal.stream_reconstruction import reconcile_unstarted_graph
+
+        await anyio.to_thread.run_sync(reconcile_unstarted_graph, self.flow_run)
         await self.call_hooks(state)
 
         return state
@@ -1563,6 +1602,9 @@ class AsyncFlowRunEngine(BaseFlowRunEngine[P, R]):
                 write_result=True,
             ),
         )
+        # The shared exception helper marks task failures non-retriable.
+        # Flow exception retries have their own policy; preserve that default.
+        terminal_state.state_details.retriable = None
         self._get_flow_run_suspension_request().raise_if_requested()
         state = await self.set_state(terminal_state)
         if self.state.is_scheduled():
@@ -2084,7 +2126,10 @@ class AsyncFlowRunEngine(BaseFlowRunEngine[P, R]):
         """
         assert self.flow.isasync, "Flow must be async to be run with AsyncFlowRunEngine"
 
-        result = await call_with_parameters(self.flow.fn, self.parameters)
+        from prefect._internal.stream_reconstruction import async_stream_flow_scope
+
+        async with async_stream_flow_scope(self.flow_run):
+            result = await call_with_parameters(self.flow.fn, self.parameters)
         await self.handle_success(result)
         return result
 

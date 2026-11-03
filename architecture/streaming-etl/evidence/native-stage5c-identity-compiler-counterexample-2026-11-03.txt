@@ -1,0 +1,15 @@
+import dis
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+root=Path('/workspace/ariadne')
+spec=importlib.util.spec_from_file_location('native_code',root/'src/prefect/_internal/stream_code.py')
+module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
+values=[]
+for source,filename in [("\ndef operator(value):\n    return value in {'alpha', 'beta', 'gamma'}\n",'/first/location.py'),("\n\n\n\ndef operator(value):\n    return value in {'gamma', 'alpha', 'beta'}\n",'/another/location.py')]:
+    namespace={};exec(compile(source,filename,'exec'),namespace);fn=namespace['operator'];values.append((fn,module._code(fn.__code__)))
+    print(filename,fn.__code__.co_code.hex(),fn.__code__.co_consts,module.native_task_code_identity(fn))
+    dis.dis(fn)
+print('DIFFERENCES',json.dumps({k:[values[0][1][k],values[1][1][k]] for k in values[0][1] if values[0][1][k]!=values[1][1][k]},indent=2))

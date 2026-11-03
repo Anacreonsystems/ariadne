@@ -1,0 +1,251 @@
+"""Frozen-source native recovery acceptance against the actual Prefect implementation."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+ROOT = Path("/workspace/ariadne")
+EVIDENCE = ROOT / "architecture/streaming-etl/evidence"
+PROFILES = {
+    "flow-http": ["tests/test_native_flow_recovery_http.py"],
+    "code": ["tests/test_native_stream_code.py"],
+    "native-http": [
+        "tests/test_native_submission_http.py",
+        "tests/test_stream_sources.py",
+        "tests/test_native_source_recovery_http.py",
+        "tests/test_native_stream_http.py",
+        "tests/test_native_stream_recovery_http.py",
+        "tests/test_native_stream_client_package.py",
+        "tests/client/test_stream_storage_native.py",
+        "tests/test_native_execution_http.py",
+        "tests/test_native_execution_recovery_http.py",
+    ],
+    "store-api": [
+        "tests/server/models/test_streams.py",
+        "tests/server/api/test_streams.py",
+        "tests/server/models/test_stream_executions.py",
+        "tests/server/api/test_stream_executions.py",
+        "-k",
+        "not (test_backend_capability_error_has_stable_wire_shape or test_execution_claim_fails_closed_on_sqlite)",
+    ],
+    "migrations": ["tests/server/database/test_stream_storage_migrations.py"],
+    "sqlite": [
+        "tests/server/database/test_stream_storage_migrations.py",
+        "tests/server/models/test_streams.py::test_backend_capability_fails_before_sqlite_writes",
+        "tests/server/api/test_streams.py::test_backend_capability_error_has_stable_wire_shape",
+        "tests/server/api/test_streams.py::test_boolean_protocol_version_is_rejected_before_mutation",
+        "tests/server/api/test_stream_executions.py::test_execution_claim_fails_closed_on_sqlite",
+        "tests/server/api/test_stream_executions.py::test_invalid_complete_execution_headers_are_typed_and_secret_free",
+        "tests/server/api/test_stream_executions.py::test_execution_claim_rejects_boolean_generation_before_storage",
+        "tests/server/api/test_stream_executions.py::test_ordinary_flow_exception_retries_remain_enabled",
+        "tests/server/api/test_stream_executions.py::test_explicit_non_retriable_flow_failure_remains_final",
+    ],
+    "legacy-contract": ["tests/test_stream_tasks.py"],
+    "recorder": ["tests/server/services/test_task_run_recorder.py"],
+    "kernel": [
+        "tests/test_task_engine.py",
+        "tests/test_futures.py",
+        "tests/test_tasks.py",
+        "tests/test_task_runners.py",
+        "-n4",
+    ],
+    "client": [
+        "tests/client/test_prefect_client.py",
+        "tests/client/test_base_client.py",
+        "tests/client/test_client_routes.py",
+        "-n4",
+    ],
+    "flow-api": ["tests/server/orchestration/api/test_flow_runs.py"],
+    "task-api": [
+        "tests/server/models/test_task_runs.py",
+        "tests/server/orchestration/api/test_task_runs.py",
+    ],
+    "flow-engine": ["tests/test_flow_engine.py", "tests/test_flows.py", "-n4"],
+    "flow-policy": [
+        "tests/server/orchestration/test_core_policy.py::TestRetryFailedFlows"
+    ],
+}
+
+PLUGIN = """import json,os
+from pathlib import Path
+
+def pytest_collection_modifyitems(config,items):
+    allowed=[]
+    for item in items:
+        marks=[m for m in item.iter_markers() if m.name in ('skip','skipif','xfail')]
+        if marks:
+            parent=item.parent.nodeid.replace('/', '.').replace('.py','').replace('::','.')
+            allowed.append({'classname':parent,'name':item.name,'marks':[{'kind':m.name,'reason':str(m.kwargs.get('reason',''))} for m in marks]})
+    Path(os.environ['ARIADNE_EXPECTED_MARKERS']).write_text(json.dumps(allowed,indent=2)+'\\n')
+"""
+
+
+def sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def artifact(path: Path) -> dict[str, str]:
+    return {"path": path.name, "sha256": sha(path)}
+
+
+def main() -> int:
+    os.chdir(ROOT)
+    profile, label = sys.argv[1:3]
+    paths = set(
+        json.loads(
+            (EVIDENCE / "native-stage5b-acceptance-2026-11-03.json").read_text()
+        )["source_sha256"]
+    )
+    paths.update(
+        (
+            "scripts/verify_test_selection.py",
+            "architecture/streaming-etl/evidence/native-stage5c-gate-runner-2026-11-03.txt",
+        )
+    )
+    for args in (
+        ["git", "diff", "--name-only"],
+        ["git", "ls-files", "--others", "--exclude-standard"],
+    ):
+        changed = subprocess.check_output(args, text=True).splitlines()
+        paths.update(
+            p
+            for p in changed
+            if p.startswith(("src/", "tests/", ".github/"))
+            or p == "ui-v2/src/api/prefect.ts"
+        )
+
+    def hashes() -> dict[str, str]:
+        return {p: sha(ROOT / p) for p in sorted(paths)}
+
+    before = hashes()
+    prefix = EVIDENCE / f"native-stage5c-{profile}-{label}-2026-11-03"
+    log, junit, report = (prefix.with_suffix(ext) for ext in (".log", ".xml", ".json"))
+    expected = prefix.with_name(prefix.name + "-markers").with_suffix(".json")
+    plugin_dir = Path("/tmp/ariadne-stage5c-gate-plugin")
+    plugin_dir.mkdir(exist_ok=True)
+    (plugin_dir / "native_gate_expected.py").write_text(PLUGIN)
+    env = os.environ.copy()
+    env["ARIADNE_EXPECTED_MARKERS"] = str(expected)
+    env["PYTHONPATH"] = str(plugin_dir) + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        *PROFILES[profile],
+        "-p",
+        "native_gate_expected",
+        "-q",
+        "--tb=short",
+        f"--junitxml={junit}",
+    ]
+    started = datetime.now(timezone.utc).isoformat()
+    timer = time.monotonic()
+    with log.open("w") as f:
+        result = subprocess.run(
+            command, stdout=f, stderr=subprocess.STDOUT, env=env, timeout=2400
+        )
+    after = hashes()
+    cases = ET.parse(junit).findall(".//testcase") if junit.exists() else []
+    counts = {
+        key: sum(c.find(key) is not None for c in cases)
+        for key in ("failure", "error", "skipped")
+    }
+    allowed: set[tuple[str | None, str | None]] = set()
+    qualification = "No skipped or xfailed native cases are accepted."
+    if profile in ("kernel", "client"):
+        baseline = EVIDENCE / (
+            "native-stage5b-"
+            + profile
+            + ("-provisioned" if profile == "kernel" else "-successor")
+            + "-2026-11-03.xml"
+        )
+        allowed = {
+            (c.get("classname"), c.get("name"))
+            for c in ET.parse(baseline).findall(".//testcase")
+            if c.find("skipped") is not None
+        }
+        qualification = "Only exact named skip/xfail cases from the accepted N1.5b ordinary profile are allowed."
+    elif profile == "flow-engine":
+        # These test files are unchanged; only their already declared markers may be observed.
+        for name in ["tests/test_flow_engine.py", "tests/test_flows.py"]:
+            assert hashlib.sha256(
+                subprocess.check_output(
+                    ["git", "show", "c2ac450b170c6675d6748ea5cffb7167e5ebb5cf:" + name]
+                )
+            ).hexdigest() == sha(ROOT / name)
+        markers = json.loads(expected.read_text())
+        allowed = {(m["classname"], m["name"]) for m in markers}
+        qualification = "Only markers declared in unchanged ordinary Flow engine/SDK tests are allowed; no new xfail/skip was added."
+    observed = {
+        (c.get("classname"), c.get("name"))
+        for c in cases
+        if c.find("skipped") is not None
+    }
+    record: dict[str, Any] = {
+        "schema": "native-stage5c-gate/v1",
+        "profile": profile,
+        "started_at_utc": started,
+        "duration_seconds": round(time.monotonic() - timer, 3),
+        "pytest_arguments": command[3:],
+        "returncode": result.returncode,
+        "tests": len(cases),
+        **counts,
+        "passed": len(cases) - sum(counts.values()),
+        "source_sha256_before": before,
+        "source_sha256_after": after,
+        "source_drift": [p for p in before if before[p] != after[p]],
+        "log": artifact(log),
+        "junit": artifact(junit) if junit.exists() else None,
+        "expected_markers": artifact(expected) if expected.exists() else None,
+        "allowed_ordinary_skip_or_xfail": sorted(allowed),
+        "unexpected_skip_or_xfail": sorted(observed - allowed),
+        "qualification": qualification,
+        "scope": "Bounded N1.5 whole-flow reconstruction; external effects remain client-owned; production worker automation, HA, branches/joins and throughput are not claimed.",
+    }
+    record["verdict"] = (
+        "PASS"
+        if result.returncode == 0
+        and cases
+        and not counts["failure"]
+        and not counts["error"]
+        and not observed - allowed
+        and before == after
+        else "FAIL"
+    )
+    report.write_text(json.dumps(record, indent=2) + "\n")
+    print(
+        json.dumps(
+            {
+                k: record[k]
+                for k in [
+                    "profile",
+                    "verdict",
+                    "tests",
+                    "passed",
+                    "failure",
+                    "error",
+                    "skipped",
+                    "duration_seconds",
+                    "source_drift",
+                    "unexpected_skip_or_xfail",
+                ]
+            }
+        ),
+        flush=True,
+    )
+    return 0 if record["verdict"] == "PASS" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

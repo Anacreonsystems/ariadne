@@ -49,6 +49,7 @@ from prefect._internal.stream_engine import (
     _StreamRun,
     reject_stream_submission,
 )
+from prefect._internal.stream_execution import get_stream_execution
 from prefect._internal.uuid7 import uuid7
 from prefect.assets import Asset
 from prefect.cache_policies import DEFAULT, NO_CACHE, CachePolicy
@@ -283,6 +284,13 @@ def _infer_parent_task_runs(
                 )
 
     return parents
+
+
+def _require_unenrolled_task_entrypoint() -> None:
+    if get_stream_execution() is not None:
+        raise StreamProtocolError(
+            "An enrolled native graph accepts only keyed submit_stream declarations"
+        )
 
 
 def _generate_task_key(fn: Callable[..., Any]) -> str:
@@ -1247,6 +1255,7 @@ class Task(Generic[P, R]):
         Run the task and return the result. If `return_state` is True returns
         the result is wrapped in a Prefect State which provides error handling.
         """
+        _require_unenrolled_task_entrypoint()
         from prefect.utilities.visualization import (
             get_task_viz_tracker,
             track_viz_task,
@@ -1427,6 +1436,7 @@ class Task(Generic[P, R]):
 
         """
 
+        _require_unenrolled_task_entrypoint()
         from prefect.utilities.visualization import (
             VisualizationUnsupportedError,
             get_task_viz_tracker,
@@ -1589,11 +1599,22 @@ class Task(Generic[P, R]):
         supported thread-pool profile. Sources select the platform HTTP backend;
         operators take a Stream input. The injected context is not a call input.
         Ordinary task submission and finite futures retain their existing API.
+
+        A platform-launched recoverable execution requires a stable
+        `submission_key` for every call and versioned top-level task functions.
+        Declare the full linear graph before waiting or collecting its output.
+        Infrastructure replacement then resolves the same TaskRuns and channels.
         """
         if self.stream is None:
             raise StreamProtocolError(
                 "submit_stream requires a stream task declaration"
             )
+        if get_stream_execution() is not None:
+            from prefect._internal.stream_reconstruction import (
+                submit_reconstructed_stream,
+            )
+
+            return submit_reconstructed_stream(self, args, kwargs, wait_for)
         return self._submit_stream(args, kwargs, wait_for)
 
     @overload
@@ -1793,6 +1814,7 @@ class Task(Generic[P, R]):
             ```
         """
 
+        _require_unenrolled_task_entrypoint()
         from prefect.task_runners import TaskRunner
 
         if self.stream is not None:
@@ -1918,6 +1940,7 @@ class Task(Generic[P, R]):
             ```
 
         """
+        _require_unenrolled_task_entrypoint()
         if self.stream is not None:
             raise StreamProtocolError("Stream tasks do not support deferred execution")
 

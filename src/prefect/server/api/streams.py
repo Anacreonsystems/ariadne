@@ -9,6 +9,7 @@ from fastapi import Depends, HTTPException, Query, status
 from prefect.server.api.stream_execution_dependencies import ExecutionCredentials
 from prefect.server.database import PrefectDBInterface, provide_database_interface
 from prefect.server.models.stream_executions import (
+    abort_unsealed_execution,
     claim_execution,
     prepare_recovery,
     seal_manifest,
@@ -51,6 +52,8 @@ from prefect.server.schemas.streams import (
     StreamSubmissionLookupRequest,
     StreamSubmissionManifest,
     StreamSubmissionReserveRequest,
+    StreamUnsealedAbortRequest,
+    StreamUnsealedAbortResult,
 )
 from prefect.server.utilities.server import PrefectRouter
 
@@ -106,6 +109,19 @@ async def takeover_stream_execution(
     try:
         async with db.session_context(begin_transaction=True) as session:
             return await takeover_execution(session, db, request)
+    except NativeStreamError as error:
+        raise _stream_http_error(error) from error
+
+
+@router.post("/executions/abort-unsealed")
+async def abort_unsealed_stream_execution(
+    request: StreamUnsealedAbortRequest,
+    db: Database,
+    execution: ExecutionCredentials,
+) -> StreamUnsealedAbortResult:
+    try:
+        async with db.session_context(begin_transaction=True) as session:
+            return await abort_unsealed_execution(session, db, request, execution)
     except NativeStreamError as error:
         raise _stream_http_error(error) from error
 
