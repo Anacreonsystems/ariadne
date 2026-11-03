@@ -63,9 +63,10 @@ uses the normal TaskRun retry/run-count protocol, and constructs a fresh Python
 generator or operator invocation from durable progress. It does not restore a
 Python frame or create a TaskRun per record.
 
-This theory has not been implemented or accepted. In particular, Prefect does
-not yet have an agreed server transition for taking over a TaskRun whose last
-metadata is still `Running` after its process disappeared.
+The 2026-11-02 proposal had no implementation or accepted recovery transition.
+N1.5a now accepts immutable identity. N1.5b implements the server fence and
+normal-policy retry preparation and is undergoing its scoped acceptance. Whole
+flow reconstruction remains N1.5c and has not been accepted.
 
 ## Proposed bounded design
 
@@ -204,8 +205,9 @@ and lifecycle, then N1.5c reconstruction. Explicit call-site keys and task/flow
 versions are mandatory. Parameters use strict finite JSON and durable object
 references. Infrastructure replacement consumes ordinary retry policy and
 requires confirmed process termination by the existing runner. A live
-partition remains unsupported until FlowRun lifecycle writes also carry and
-validate execution generation. The original questions and alternatives remain
+partition does not authorize takeover: the first profile requires the trusted
+launcher to confirm termination. N1.5b now fences FlowRun lifecycle as well as
+stream and task mutations once a takeover is accepted. The original questions and alternatives remain
 above for traceability.
 
 ## N1.5a implementation boundary
@@ -227,12 +229,36 @@ with `REPLAY_HORIZON_EXPIRED`.
 This API establishes identity only. Replaying a reservation whose TaskRun is
 already running refuses with `RECOVERY_NOT_READY`; lookup remains diagnostic.
 The call-site `submit_stream(submission_key=...)`, generation-bound execution
-and automatic whole-process reconstruction belong to the following slices.
+is the N1.5b slice; automatic whole-process reconstruction belongs to N1.5c.
 Ordinary unkeyed N1.4 source/operator calls keep their existing behavior.
 
 The [N1.5b wire proposal](../evidence/native-stage5b-wire-proposal-2026-11-03.md)
 develops the next lifecycle and event-authority boundary. It is design input,
 not implementation evidence or an accepted recovery guarantee.
+
+## N1.5b/c implementation agreement
+
+The implementation uses a FlowRun-wide monotonic generation, an opaque holder
+capability and a separate trusted-launcher takeover capability. A confirmed
+owned-child termination is the first replacement witness. Each enrolled native
+mutation checks the generation before individual source/consumer ownership.
+Task state events carry an Ed25519 signature binding immutable manifest,
+identity, policy, generation and attempt before the real recorder can upsert.
+Only a public verification key is persisted or returned.
+
+Recovery preparation runs through normal CoreFlowPolicy/CoreTaskPolicy with
+`force=False`, retains IDs and consumed retry counts, and reconciles accepted
+EOF before task success. A current late Completed event can finish metadata
+already covered by EOF; a former-generation event cannot change current state.
+These components do not yet reconstruct a lost future graph.
+
+The [N1.5c design agreement](../evidence/native-stage5c-design-2026-11-03.md)
+defines stable-key graph redeclaration, held native task engines, exact graph
+seal/prepare, completed-result bypass and terminal unsealed cleanup. Its first
+whole-flow gate uses 500 real document references and the ordinary flow-engine
+entrypoint. The descriptor transports holder authority internally; it is not a
+new global Flow mode. Production worker automation and branch/join recovery
+remain later work.
 
 ## Stories
 
@@ -266,24 +292,24 @@ not implementation evidence or an accepted recovery guarantee.
   with only the first input lacking durable terminal completion redelivered.
 - [ ] As a user, I got durable EOF and output completion reconciled before
   TaskRun success without re-entering completed user code.
-- [ ] As a system, I can claim a strictly newer execution generation and reject
+- [x] As a system, I can claim a strictly newer execution generation and reject
   record, terminal and lifecycle writes from a still-running former process
   before individual stream takeover.
-- [ ] As a system, I can advance the retained TaskRun through a normal retry
+- [x] As a system, I can advance the retained TaskRun through a normal retry
   attempt without `force=True`, a replacement TaskRun or a fabricated Python
   frame.
-- [ ] As a system, I can reject late former-generation `Completed`, `Failed` and
+- [x] As a system, I can reject late former-generation `Completed`, `Failed` and
   cancellation observations without using wall-clock order as authority.
 - [ ] As a system, I got one TaskRun and one stream per manifest across repeated
   reconstruction attempts, with no TaskRun per record.
 - [ ] As a developer, I got named fail-closed refusals for missing manifests,
   expired recovery horizon, code/graph drift and unsupported topology.
-- [ ] As a developer, I got real HTTP/PostgreSQL subprocess tests at manifest,
+- [x] As a developer, I got real HTTP/PostgreSQL subprocess tests at manifest,
   reservation, append, completion, EOF and TaskRun-state response-loss
   boundaries, including a live zombie writer.
-- [ ] As a user, I got ordinary finite-task, accepted N1.2-N1.4 stream and
+- [x] As a user, I got ordinary finite-task, accepted N1.2-N1.4 stream and
   client-package regressions on the same source bytes.
-- [ ] As a system, I got independent review that distinguishes TaskRun retry,
+- [x] As a system, I got independent review that distinguishes TaskRun retry,
   whole-worker reconstruction and later branch/join recovery scopes.
 
 ## Evidence
@@ -309,9 +335,37 @@ retain the SQLite reflection assertion defect, the correctly rejected
 source-drift trial and the legacy invocation that omitted its required test
 DSN. Successful successors remain linked; no rejected evidence was removed.
 
-Only the first two identity criteria are checked. This ADR remains `progress`:
-N1.5b/c and the remaining eleven criteria are open. Earned native foundation
-readiness remains 40%, with no contribution from this identity slice alone.
+The first two identity criteria and six scoped fencing/lifecycle/regression
+criteria are checked. The [N1.5b acceptance](../evidence/native-stage5b-acceptance-2026-11-03.json)
+and [independent review](../evidence/native-stage5b-principal-2026-11-03.json)
+verify the same 53 source hashes across ten profiles: 1,724 cases, 1,720 passed,
+two baseline expected failures, two version-conditioned skips, zero failures,
+errors or source drift. The client pass count includes one known non-strict
+XPASS. Native profiles have no skips. The 197-case native HTTP profile includes
+actual signed sync/async source-task process loss, real retry-budget/delay
+checks, a live former-capability actor, late terminal events and redirect
+credential isolation. These tests retain task/channel identities at the control
+layer; they do not prove automatic whole-flow SDK reconstruction.
+
+The paired execution-authority revisions are PostgreSQL `d53e8c4f7a21` and
+SQLite `f64a9d5b8c32`; [migration notes](../../../src/prefect/server/database/_migrations/MIGRATION-NOTES.md)
+record upgrade/downgrade boundaries. Real dialect tests cover normalized schema
+parity, monotonic generation and near-complete NULL witness refusals. The
+[negative findings](../evidence/native-stage5b-negative-findings-2026-11-03.json)
+retain the immutable-tag and SQL CHECK findings, load-related readiness/timing
+failures, invalidated source freezes and an auxiliary missing-base startup.
+The selected provisioned kernel successor has no catalog/startup failure. It
+retains 16 known ordinary CPython resource-tracker diagnostics versus 21 in the
+accepted Stage 4 baseline; this is not a clean-log claim.
+
+The [static gate](../evidence/native-stage5b-static-2026-11-03.json) passes CI
+types with zero errors/139 baseline warnings, public completeness 1.0, required
+hooks and UI check/lint/build/323 API tests. [PR 7 hosted closure](../evidence/native-stage5a-hosted-successor-2026-11-03.json)
+records the identity slice's merge after 97 successful checks/five conditional
+skips and an identical tested merge tree.
+
+Five whole-flow/reconstruction criteria remain open. This ADR stays `progress`
+and native foundation readiness stays 40%; N1.5b earns no percentage alone.
 
 At the 2026-11-03 start, no N1.5 acceptance evidence exists. Current source inspection
 shows why lookup is not yet possible:

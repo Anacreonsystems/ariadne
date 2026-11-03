@@ -21,6 +21,7 @@ from typing_extensions import Self
 import prefect
 from prefect._internal.compatibility.starlette import status
 from prefect._internal.server_maintenance import record_maintenance_backoff
+from prefect._internal.stream_execution import apply_stream_execution_headers
 from prefect.client import constants
 from prefect.client.attribution import get_attribution_headers
 from prefect.client.schemas.objects import CsrfToken
@@ -391,6 +392,13 @@ class PrefectHttpxAsyncClient(httpx.AsyncClient):
         for header_name, header_value in get_attribution_headers().items():
             request.headers[header_name] = header_value
 
+    def _build_redirect_request(self, request: Request, response: Response) -> Request:
+        redirected = super()._build_redirect_request(request, response)
+        apply_stream_execution_headers(
+            str(self.base_url), str(redirected.url), redirected.headers
+        )
+        return redirected
+
     async def send(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         """
         Send a request with automatic retry behavior for the following status codes:
@@ -402,6 +410,9 @@ class PrefectHttpxAsyncClient(httpx.AsyncClient):
         - 503 Service unavailable
         - Any additional status codes provided in `PREFECT_CLIENT_RETRY_EXTRA_CODES`
         """
+        apply_stream_execution_headers(
+            str(self.base_url), str(request.url), request.headers
+        )
         # Add attribution headers for usage tracking
         self._add_attribution_headers(request)
 
@@ -664,6 +675,13 @@ class PrefectHttpxSyncClient(httpx.Client):
         for header_name, header_value in get_attribution_headers().items():
             request.headers[header_name] = header_value
 
+    def _build_redirect_request(self, request: Request, response: Response) -> Request:
+        redirected = super()._build_redirect_request(request, response)
+        apply_stream_execution_headers(
+            str(self.base_url), str(redirected.url), redirected.headers
+        )
+        return redirected
+
     def send(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         """
         Send a request with automatic retry behavior for the following status codes:
@@ -675,6 +693,9 @@ class PrefectHttpxSyncClient(httpx.Client):
         - 503 Service unavailable
         - Any additional status codes provided in `PREFECT_CLIENT_RETRY_EXTRA_CODES`
         """
+        apply_stream_execution_headers(
+            str(self.base_url), str(request.url), request.headers
+        )
         # Add attribution headers for usage tracking
         self._add_attribution_headers(request)
 

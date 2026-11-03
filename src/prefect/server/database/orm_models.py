@@ -912,6 +912,136 @@ class StreamSubmission(Base):
     )
 
 
+class StreamExecutionAuthority(Base):
+    """The current process-generation fence for one enrolled FlowRun."""
+
+    flow_run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("flow_run.id", ondelete="CASCADE"), index=True
+    )
+    generation: Mapped[int] = mapped_column(sa.BigInteger)
+    prepared_generation: Mapped[int] = mapped_column(sa.BigInteger)
+    holder_id: Mapped[uuid.UUID]
+    holder_capability_digest: Mapped[str] = mapped_column(sa.String(64))
+    holder_event_public_key: Mapped[str] = mapped_column(sa.String(64))
+    event_key_id: Mapped[str] = mapped_column(sa.String(64))
+    supervisor_id: Mapped[uuid.UUID]
+    supervisor_capability_digest: Mapped[str] = mapped_column(sa.String(64))
+    state: Mapped[str]
+    flow_run_run_count: Mapped[int] = mapped_column(sa.BigInteger)
+    manifest_set_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    manifest_count: Mapped[Optional[int]]
+    manifest_sealed_at: Mapped[Optional[DateTime]]
+    manifest_seal_operation_id: Mapped[Optional[uuid.UUID]]
+    manifest_seal_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("flow_run_id"),
+        sa.CheckConstraint("generation BETWEEN 1 AND 64", name="generation_bounded"),
+        sa.CheckConstraint(
+            "prepared_generation BETWEEN 0 AND generation",
+            name="prepared_generation_bounded",
+        ),
+        sa.CheckConstraint(
+            "flow_run_run_count >= 0", name="flow_run_run_count_nonnegative"
+        ),
+        sa.CheckConstraint(
+            "length(holder_capability_digest) = 64 "
+            "AND length(supervisor_capability_digest) = 64 "
+            "AND length(holder_event_public_key) = 64 "
+            "AND length(event_key_id) = 64",
+            name="authority_identity_lengths_valid",
+        ),
+        sa.CheckConstraint(
+            "state IN ('CLAIMED', 'ACTIVE', 'RECOVERING', 'TERMINAL', 'RELEASED')",
+            name="state_valid",
+        ),
+        sa.CheckConstraint(
+            "(manifest_set_digest IS NULL AND manifest_count IS NULL "
+            "AND manifest_sealed_at IS NULL AND manifest_seal_operation_id IS NULL "
+            "AND manifest_seal_request_digest IS NULL) OR "
+            "(manifest_set_digest IS NOT NULL "
+            "AND length(manifest_set_digest) = 64 "
+            "AND manifest_count IS NOT NULL "
+            "AND manifest_count BETWEEN 1 AND 128 "
+            "AND manifest_sealed_at IS NOT NULL "
+            "AND manifest_seal_operation_id IS NOT NULL "
+            "AND manifest_seal_request_digest IS NOT NULL "
+            "AND length(manifest_seal_request_digest) = 64)",
+            name="manifest_seal_shape_valid",
+        ),
+    )
+
+
+class StreamExecutionAttempt(Base):
+    """A bounded immutable claim or takeover witness for one generation."""
+
+    flow_run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("flow_run.id", ondelete="CASCADE"), index=True
+    )
+    generation: Mapped[int] = mapped_column(sa.BigInteger)
+    operation_id: Mapped[uuid.UUID]
+    kind: Mapped[str]
+    request_digest: Mapped[str] = mapped_column(sa.String(64))
+    outcome_digest: Mapped[str] = mapped_column(sa.String(64))
+    holder_id: Mapped[uuid.UUID]
+    holder_event_public_key: Mapped[str] = mapped_column(sa.String(64))
+    event_key_id: Mapped[str] = mapped_column(sa.String(64))
+    previous_generation: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    previous_holder_id: Mapped[Optional[uuid.UUID]]
+    death_witness: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    state: Mapped[str]
+    flow_run_run_count: Mapped[int] = mapped_column(sa.BigInteger)
+    recovery_operation_id: Mapped[Optional[uuid.UUID]]
+    recovery_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    recovery_outcome: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    recovery_outcome_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("flow_run_id", "generation"),
+        sa.UniqueConstraint("flow_run_id", "operation_id"),
+        sa.UniqueConstraint("flow_run_id", "recovery_operation_id"),
+        sa.CheckConstraint("generation BETWEEN 1 AND 64", name="generation_bounded"),
+        sa.CheckConstraint("kind IN ('CLAIM', 'TAKEOVER')", name="kind_valid"),
+        sa.CheckConstraint(
+            "state IN ('CLAIMED', 'ACTIVE', 'RECOVERING', 'TERMINAL', 'RELEASED')",
+            name="state_valid",
+        ),
+        sa.CheckConstraint(
+            "length(request_digest) = 64 AND length(outcome_digest) = 64 "
+            "AND length(holder_event_public_key) = 64 "
+            "AND length(event_key_id) = 64",
+            name="attempt_identity_lengths_valid",
+        ),
+        sa.CheckConstraint(
+            "flow_run_run_count >= 0", name="flow_run_run_count_nonnegative"
+        ),
+        sa.CheckConstraint(
+            "(kind = 'CLAIM' AND previous_generation IS NULL "
+            "AND previous_holder_id IS NULL AND death_witness IS NULL) OR "
+            "(kind = 'TAKEOVER' AND previous_generation IS NOT NULL "
+            "AND previous_generation >= 1 AND previous_holder_id IS NOT NULL "
+            "AND death_witness IS NOT NULL)",
+            name="takeover_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(recovery_operation_id IS NULL AND recovery_request_digest IS NULL "
+            "AND recovery_outcome IS NULL AND recovery_outcome_digest IS NULL) OR "
+            "(recovery_operation_id IS NOT NULL "
+            "AND recovery_request_digest IS NOT NULL "
+            "AND length(recovery_request_digest) = 64 "
+            "AND recovery_outcome IS NOT NULL "
+            "AND recovery_outcome_digest IS NOT NULL "
+            "AND length(recovery_outcome_digest) = 64)",
+            name="recovery_shape_valid",
+        ),
+        sa.Index(
+            "ix_stream_execution_attempt__flow_run_id_generation",
+            "flow_run_id",
+            "generation",
+        ),
+    )
+
+
 _TaskInput = Union[
     schemas.core.TaskRunResult,
     schemas.core.FlowRunResult,

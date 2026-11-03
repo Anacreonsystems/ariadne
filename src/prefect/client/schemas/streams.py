@@ -318,3 +318,170 @@ class StreamSubmissionManifest(BaseModel):
     protocol: Literal["source-v1", "yield-v2"]
     state: Literal["ACTIVE", "RELEASED"]
     created_at: DateTime
+
+
+class StreamExecutionCredentials(BaseModel):
+    """Opaque runtime authority extracted from internal HTTP headers."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    generation: int = Field(ge=1, le=64, strict=True)
+    holder_id: UUID
+    capability: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+        repr=False,
+    )
+
+
+class StreamExecutionDeathWitness(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    launcher_instance_id: UUID
+    child_process_id: int = Field(ge=1, strict=True)
+    exit_code: int = Field(ge=-255, le=255, strict=True)
+    observed_at: DateTime
+    kind: Literal["WAITPID", "OWNED_SIGKILL"]
+
+    @field_validator("observed_at")
+    @classmethod
+    def observed_at_is_aware(cls, value: DateTime) -> DateTime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("observed_at must include an explicit timezone")
+        return value
+
+
+class StreamExecutionClaimRequest(_StreamRequest):
+    flow_run_id: UUID
+    operation_id: UUID
+    expected_generation: Literal[0] = 0
+    holder_id: UUID
+    holder_capability: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+        repr=False,
+    )
+    holder_event_public_key: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    supervisor_id: UUID
+    supervisor_capability: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+        repr=False,
+    )
+    protocol_version: Literal[1] = 1
+
+    @field_validator("expected_generation", mode="before")
+    @classmethod
+    def expected_generation_is_integer_zero(cls, value: object) -> object:
+        if type(value) is not int or value != 0:
+            raise ValueError("expected_generation must be the integer 0")
+        return value
+
+    @field_validator("protocol_version", mode="before")
+    @classmethod
+    def protocol_version_is_an_integer(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("protocol_version must be the integer 1")
+        return value
+
+
+class StreamExecutionTakeoverRequest(_StreamRequest):
+    flow_run_id: UUID
+    operation_id: UUID
+    expected_generation: int = Field(ge=1, le=63, strict=True)
+    expected_holder_id: UUID
+    supervisor_id: UUID
+    supervisor_capability: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+        repr=False,
+    )
+    new_holder_id: UUID
+    new_holder_capability: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+        repr=False,
+    )
+    new_holder_event_public_key: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    death_witness: StreamExecutionDeathWitness
+
+
+class StreamExecutionBinding(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    flow_run_id: UUID
+    generation: int = Field(ge=1, le=64, strict=True)
+    holder_id: UUID
+    operation_id: UUID
+    state: Literal["CLAIMED", "ACTIVE", "RECOVERING", "TERMINAL", "RELEASED"]
+    flow_run_run_count: int = Field(ge=0, strict=True)
+    created_at: DateTime
+
+
+class StreamManifestWitness(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    submission_key: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+    )
+    manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class StreamManifestSealRequest(_StreamRequest):
+    flow_run_id: UUID
+    operation_id: UUID
+    manifests: list[StreamManifestWitness] = Field(min_length=1, max_length=128)
+
+
+class StreamManifestSealResult(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    flow_run_id: UUID
+    generation: int = Field(ge=1, le=64, strict=True)
+    operation_id: UUID
+    manifest_set_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    manifest_count: int = Field(ge=1, le=128, strict=True)
+
+
+class StreamRecoveryPrepareRequest(_StreamRequest):
+    flow_run_id: UUID
+    operation_id: UUID
+    manifests: list[StreamManifestWitness] = Field(min_length=1, max_length=128)
+
+
+class StreamRecoveryItem(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    submission_key: str
+    task_run_id: UUID
+    stream_id: UUID
+    durable_position: int = Field(ge=0, strict=True)
+    stream_state: Literal["OPEN", "COMPLETED", "FAILED"]
+    task_state: str
+    current_run_count: int = Field(ge=0, strict=True)
+    next_run_count: int = Field(ge=1, strict=True)
+
+
+class StreamRecoveryResult(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    flow_run_id: UUID
+    generation: int = Field(ge=1, le=64, strict=True)
+    operation_id: UUID
+    items: list[StreamRecoveryItem]
+    outcome_digest: str = Field(pattern=r"^[0-9a-f]{64}$")

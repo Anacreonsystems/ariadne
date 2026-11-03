@@ -156,6 +156,8 @@ jobs:
               tests/test_stream_sources.py
               tests/test_native_source_recovery_http.py
               tests/test_native_submission_http.py
+              tests/test_native_execution_http.py
+              tests/test_native_execution_recovery_http.py
               tests/test_native_stream_http.py
               tests/test_native_stream_recovery_http.py
               tests/test_native_stream_client_package.py
@@ -241,6 +243,8 @@ jobs:
                 tests/test_stream_sources.py
                 tests/test_native_source_recovery_http.py
                 tests/test_native_submission_http.py
+                tests/test_native_execution_http.py
+                tests/test_native_execution_recovery_http.py
                 tests/test_native_stream_http.py
                 tests/test_native_stream_recovery_http.py
                 tests/test_native_stream_client_package.py
@@ -346,7 +350,7 @@ jobs:
         run: uv run pytest tests/test_stream_tasks.py -q --junitxml=native-stream-tests.xml
       - name: Run native storage transactions on PostgreSQL 17
         if: matrix.database == 'postgres:17'
-        run: uv run pytest tests/server/models/test_streams.py -q --junitxml=native-stream-storage.xml
+        run: uv run pytest tests/server/models/test_streams.py tests/server/models/test_stream_executions.py -q --junitxml=native-stream-storage.xml
       - name: Require SQLite data-plane refusal before writes
         if: matrix.database == 'sqlite'
         run: uv run pytest tests/server/models/test_streams.py::test_backend_capability_fails_before_sqlite_writes -q --junitxml=native-stream-storage.xml
@@ -359,13 +363,15 @@ jobs:
           tests/test_stream_sources.py
           tests/test_native_source_recovery_http.py
           tests/test_native_submission_http.py
+          tests/test_native_execution_http.py
+          tests/test_native_execution_recovery_http.py
           tests/client/test_stream_storage_native.py
           -q --junitxml=native-stream-http.xml
       - name: Run native HTTP server contract
         if: matrix.database == 'postgres:17'
         run: >-
-          uv run pytest tests/server/api/test_streams.py
-          -k 'not test_backend_capability_error_has_stable_wire_shape'
+          uv run pytest tests/server/api/test_streams.py tests/server/api/test_stream_executions.py
+          -k 'not (test_backend_capability_error_has_stable_wire_shape or test_execution_claim_fails_closed_on_sqlite)'
           -q --junitxml=native-stream-api.xml
       - name: Require SQLite HTTP capability and version refusal
         if: matrix.database == 'sqlite'
@@ -373,6 +379,9 @@ jobs:
           uv run pytest
           tests/server/api/test_streams.py::test_backend_capability_error_has_stable_wire_shape
           tests/server/api/test_streams.py::test_boolean_protocol_version_is_rejected_before_mutation
+          tests/server/api/test_stream_executions.py::test_execution_claim_fails_closed_on_sqlite
+          tests/server/api/test_stream_executions.py::test_invalid_complete_execution_headers_are_typed_and_secret_free
+          tests/server/api/test_stream_executions.py::test_execution_claim_rejects_boolean_generation_before_storage
           -q --junitxml=native-stream-api.xml
       - name: Verify native storage migration upgrade and downgrade
         run: uv run pytest tests/server/database/test_stream_storage_migrations.py -q --junitxml=native-stream-migrations.xml

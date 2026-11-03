@@ -26,6 +26,7 @@ from typing_extensions import TypeIs
 import prefect
 import prefect.exceptions
 from prefect._internal.concurrency.cancellation import get_deadline
+from prefect._internal.stream_execution import stream_task_event_resource
 from prefect.client.schemas import FlowRunResult, OrchestrationResult, TaskRun
 from prefect.client.schemas.objects import (
     FlowRun,
@@ -899,80 +900,83 @@ def emit_task_run_state_change_event(
     else:
         data = None
 
-    return emit_event(
-        id=validated_state.id,
-        occurred=validated_state.timestamp,
-        event=f"prefect.task-run.{validated_state.name}",
-        payload={
-            "intended": {
-                "from": str(initial_state.type.value) if initial_state else None,
-                "to": str(validated_state.type.value) if validated_state else None,
-            },
-            "initial_state": (
-                {
-                    "type": str(initial_state.type.value),
-                    "name": initial_state.name,
-                    "message": truncated_to(
-                        state_message_truncation_length, initial_state.message
-                    ),
-                    "state_details": initial_state.state_details.model_dump(
-                        mode="json",
-                        exclude_none=True,
-                        exclude_unset=True,
-                        exclude={"flow_run_id", "task_run_id"},
-                    ),
-                }
-                if initial_state
-                else None
-            ),
-            "validated_state": {
-                "type": str(validated_state.type.value),
-                "name": validated_state.name,
+    payload = {
+        "intended": {
+            "from": str(initial_state.type.value) if initial_state else None,
+            "to": str(validated_state.type.value) if validated_state else None,
+        },
+        "initial_state": (
+            {
+                "type": str(initial_state.type.value),
+                "name": initial_state.name,
                 "message": truncated_to(
-                    state_message_truncation_length, validated_state.message
+                    state_message_truncation_length, initial_state.message
                 ),
-                "state_details": validated_state.state_details.model_dump(
+                "state_details": initial_state.state_details.model_dump(
                     mode="json",
                     exclude_none=True,
                     exclude_unset=True,
                     exclude={"flow_run_id", "task_run_id"},
                 ),
-                "data": data,
-            },
-            "task_run": task_run.model_dump(
-                mode="json",
-                exclude_none=True,
-                exclude={
-                    "id",
-                    "created",
-                    "updated",
-                    "flow_run_id",
-                    "state_id",
-                    "state_type",
-                    "state_name",
-                    "state",
-                    # server materialized fields
-                    "estimated_start_time_delta",
-                    "estimated_run_time",
-                },
-            ),
-        },
-        resource={
-            "prefect.resource.id": f"prefect.task-run.{task_run.id}",
-            "prefect.resource.name": task_run.name,
-            "prefect.run-count": str(task_run.run_count),
-            "prefect.state-message": truncated_to(
+            }
+            if initial_state
+            else None
+        ),
+        "validated_state": {
+            "type": str(validated_state.type.value),
+            "name": validated_state.name,
+            "message": truncated_to(
                 state_message_truncation_length, validated_state.message
             ),
-            "prefect.state-name": validated_state.name or "",
-            "prefect.state-timestamp": (
-                validated_state.timestamp.isoformat()
-                if validated_state and validated_state.timestamp
-                else ""
+            "state_details": validated_state.state_details.model_dump(
+                mode="json",
+                exclude_none=True,
+                exclude_unset=True,
+                exclude={"flow_run_id", "task_run_id"},
             ),
-            "prefect.state-type": str(validated_state.type.value),
-            "prefect.orchestration": "client",
+            "data": data,
         },
+        "task_run": task_run.model_dump(
+            mode="json",
+            exclude_none=True,
+            exclude={
+                "id",
+                "created",
+                "updated",
+                "flow_run_id",
+                "state_id",
+                "state_type",
+                "state_name",
+                "state",
+                # server materialized fields
+                "estimated_start_time_delta",
+                "estimated_run_time",
+            },
+        ),
+    }
+    resource = {
+        "prefect.resource.id": f"prefect.task-run.{task_run.id}",
+        "prefect.resource.name": task_run.name,
+        "prefect.run-count": str(task_run.run_count),
+        "prefect.state-message": truncated_to(
+            state_message_truncation_length, validated_state.message
+        ),
+        "prefect.state-name": validated_state.name or "",
+        "prefect.state-timestamp": (
+            validated_state.timestamp.isoformat()
+            if validated_state and validated_state.timestamp
+            else ""
+        ),
+        "prefect.state-type": str(validated_state.type.value),
+        "prefect.orchestration": "client",
+    }
+    resource = stream_task_event_resource(task_run, validated_state, payload, resource)
+    return emit_event(
+        id=validated_state.id,
+        occurred=validated_state.timestamp,
+        event=f"prefect.task-run.{validated_state.name}",
+        payload=payload,
+        resource=resource,
         related=[
             {
                 "prefect.resource.id": f"prefect.tag.{tag}",

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="6" time="39.181" timestamp="2026-11-03T15:07:24.339679+00:00" hostname="ad6fbedc8af0"><testcase classname="tests.test_native_execution_http" name="test_claim_exact_response_replay_after_api_restart" time="12.692" /><testcase classname="tests.test_native_execution_http" name="test_takeover_fences_before_source_owner_rotation_and_prepares_normal_retry" time="4.882"><failure message="prefect.client.orchestration._streams.client.StreamRequestError: Execution generation is not active">src/prefect/client/orchestration/_streams/client.py:57: in _stream_request
+    return self.request(method, path, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/orchestration/base.py:33: in request
+    return self._client.send(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/base.py:732: in send
+    response.raise_for_status()
+src/prefect/client/base.py:182: in raise_for_status
+    raise PrefectHTTPStatusError.from_httpx_error(exc) from exc.__cause__
+E   prefect.exceptions.PrefectHTTPStatusError: Client error '409 Conflict' for url 'http://127.0.0.1:35885/api/streams/v1/executions/prepare-recovery' - Response: {'detail': {'code': 'RECOVERY_NOT_READY', 'message': 'Execution generation is not active', 'retryable': False}} - For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/409
+
+The above exception was the direct cause of the following exception:
+tests/test_native_execution_http.py:248: in test_takeover_fences_before_source_owner_rotation_and_prepares_normal_retry
+    prepared = client.prepare_stream_recovery(**prepare)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/orchestration/_streams/client.py:162: in prepare_stream_recovery
+    response = self._stream_request(
+src/prefect/client/orchestration/_streams/client.py:59: in _stream_request
+    raise _refusal(error) from error
+E   prefect.client.orchestration._streams.client.StreamRequestError: Execution generation is not active</failure></testcase><testcase classname="tests.test_native_execution_http" name="test_only_one_concurrent_takeover_wins" time="4.730" /><testcase classname="tests.test_native_execution_http" name="test_malformed_execution_headers_return_protocol_refusal[headers0]" time="5.420" /><testcase classname="tests.test_native_execution_http" name="test_malformed_execution_headers_return_protocol_refusal[headers1]" time="5.114" /><testcase classname="tests.test_native_execution_http" name="test_malformed_execution_headers_return_protocol_refusal[headers2]" time="6.115" /></testsuite></testsuites>

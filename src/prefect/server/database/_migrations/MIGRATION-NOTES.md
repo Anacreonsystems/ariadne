@@ -8,6 +8,26 @@ Each time a database migration is written, an entry is included here with:
 
 This gives us a history of changes and will create merge conflicts if two migrations are made at once, flagging situations where a branch needs to be updated before merging.
 
+# Add native stream execution-generation authority
+SQLite: `f64a9d5b8c32`
+Postgres: `d53e8c4f7a21`
+
+Creates bounded execution-authority and attempt-witness tables for explicit
+holder claims, confirmed takeovers, manifest sealing and recovery preparation.
+The upgrade does not enroll or backfill existing FlowRuns. Downgrading drops
+only these authority and attempt witnesses; native stream data and immutable
+submission manifests remain, but generation-fenced recovery is unavailable.
+
+# Add immutable native stream submission manifests
+SQLite: `e42d7b9c5f10`
+Postgres: `c31f8a2d6e40`
+
+Creates bounded, create-once submission manifests that atomically bind a
+FlowRun slot to its TaskRun, stream, protocol, policy and canonical identity
+witness. The upgrade performs no data backfill, so existing streams remain
+unenrolled. Downgrading removes the manifests and their retained release
+witnesses; callers can no longer recover those submission identities.
+
 # Add `flow_run(state_type, coalesce(start_time, expected_start_time))` index
 SQLite: `a3b9c7d2e5f1`
 Postgres: `d4a7e1c93f52`

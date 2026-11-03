@@ -238,3 +238,11 @@ requires its own implementation and proof. Historical ADRs and evidence remain
 available; this epoch supersedes only the external-adapter-as-final-product
 direction in [ADR-0001](../adr/ADR-0001-runtime-boundary.md) and
 [ADR-0025](../adr/ADR-0025-prefect-adapter-and-operational-projections.md).
+
+
+N1.5b's [scoped acceptance](../evidence/native-stage5b-acceptance-2026-11-03.json)
+and [Principal review](../evidence/native-stage5b-principal-2026-11-03.json)
+pass execution fencing, signed lifecycle events and normal retry preparation.
+This adds zero percentage. [N1.5c reconstruction](../evidence/native-stage5c-design-2026-11-03.md)
+is in progress; whole-flow identity recovery and completed-code bypass still
+require the actual process gate before the planned 50% can be claimed.

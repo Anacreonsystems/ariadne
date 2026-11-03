@@ -79,10 +79,10 @@ earn no percentage separately. All tasks trace to
 | NI1-040 | `done` | NI1-034 | Bounded architecture agreement. As a developer, I can trace identity, retry, generation and infrastructure ownership to the design review. |
 | NI1-041 | `done` | NI1-040 | Atomic manifest, TaskRun and reserved output with paired migrations and HTTP/client DTOs. As a system, I can exactly replay a lost creation response without duplicate identities or partial rows. [N1.5a acceptance](evidence/native-stage5a-acceptance-2026-11-03.json). |
 | NI1-042 | `done` | NI1-041 | Identity drift, capacity, topology and release-horizon controls. As a developer, I got named refusals and real HTTP/PostgreSQL tests on the same 31 source files, with [Principal review](evidence/native-stage5a-principal-2026-11-03.json). |
-| NI1-043 | `planned` | NI1-042 | FlowRun execution generation and verified infrastructure replacement. As a system, I can reject writes from the previous generation. |
-| NI1-044 | `planned` | NI1-043 | Normal TaskRun retry and durable terminal reconciliation. As a user, I can retain the TaskRun UUID without forced states or Python frame restoration. |
-| NI1-045 | `planned` | NI1-043, NI1-044 | Late TaskRun event and FlowRun lifecycle guards. As a system, I got old-generation observations rejected before they change current progress. |
-| NI1-046 | `planned` | NI1-045 | SDK reconstruction from explicit stable keys. As a user, I can replace a terminated flow process and continue the original channels. |
+| NI1-043 | `done` | NI1-042 | FlowRun execution generation and verified infrastructure replacement. As a system, I can reject writes from the previous generation. |
+| NI1-044 | `done` | NI1-043 | Normal TaskRun retry and durable terminal reconciliation. As a user, I can retain the TaskRun UUID without forced states or Python frame restoration. |
+| NI1-045 | `done` | NI1-043, NI1-044 | Late TaskRun event and FlowRun lifecycle guards. As a system, I got old-generation observations rejected before they change current progress. [N1.5b acceptance](evidence/native-stage5b-acceptance-2026-11-03.json) and [Principal review](evidence/native-stage5b-principal-2026-11-03.json), zero independent percentage. |
+| NI1-046 | `progress` | NI1-045 | SDK reconstruction from explicit stable keys. As a user, I can replace a terminated flow process and continue the original channels. |
 | NI1-047 | `planned` | NI1-046 | Real process-loss and response-loss matrix plus ordinary runtime/package regressions. As a developer, I got exact first-incomplete continuation on unchanged source bytes. |
 | NI1-048 | `planned` | NI1-047 | Independent review, evidence graph and ADR closure. As a system, I can map all acceptance criteria to reproducible evidence before claiming 50%. |
 

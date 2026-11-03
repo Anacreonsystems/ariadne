@@ -15,8 +15,8 @@ against the actual runtime and storage.
 | N1.3 — Native storage transport | `done` | 30% | +10% | NI1-020…022 | ADR-0034 accepted: actual HTTP/client/API restart with retained tokens, lifecycle cleanup, DTO/error parity, stripped-client packaging and Principal gate pass. |
 | N1.4 — Native source task runtime | `done` | 40% | +10% | NI1-030…034 | ADR-0035 accepted: sync/async generators publish positioned references; exact reservation/EOF, same-TaskRun retry, process loss, stripped package and Principal gates pass. |
 | N1.5a — Durable submission identity | `done` | 40% | +0% | NI1-040…042 | [377-case scoped gate](evidence/native-stage5a-acceptance-2026-11-03.json) and independent review pass; exact HTTP replay and drift/limit refusals. No whole-worker claim. |
-| N1.5b — Execution fencing and lifecycle | `planned` | 40% | +0% | NI1-043…045 | Execution generation, stale-write/event exclusion and normal retry reconciliation. |
-| N1.5c — Whole-worker reconstruction gate | `planned` | 50% | +10% | NI1-046…048 | Real process replacement resumes the same TaskRuns/channels; all ADR-0036 criteria and independent review pass. |
+| N1.5b — Execution fencing and lifecycle | `done` | 40% | +0% | NI1-043…045 | [1,724-case scoped acceptance](evidence/native-stage5b-acceptance-2026-11-03.json) and independent review: generation fence, signed events and normal retry preparation; no SDK reconstruction. |
+| N1.5c — Whole-worker reconstruction gate | `progress` | 50% | +10% | NI1-046…048 | Real process replacement resumes the same TaskRuns/channels; all ADR-0036 criteria and independent review pass. |
 
 The 40% is a planning estimate toward the explicitly bounded native foundation,
 not a measurement of production readiness. The [complete Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json)
