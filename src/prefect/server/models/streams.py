@@ -1,21 +1,25 @@
-"""Native durable stream transactions; no prototype or TaskRun state writes.
+"""Native durable stream transactions with bounded TaskRun registration.
 
-This internal store owns each transaction. HTTP transport and runtime admission
-are separate layers. Reclamation is explicitly limited to final FlowRuns.
+This internal store owns each transaction. Submission manifests atomically
+create their initial Pending TaskRun; runtime lifecycle admission is a separate
+layer. Reclamation is explicitly limited to final FlowRuns.
 """
 
 import hashlib
 import json
 from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from prefect._internal.uuid7 import uuid7
 from prefect.server.database import PrefectDBInterface, orm_models
+from prefect.server.models import task_runs as task_run_models
+from prefect.server.schemas import core
 from prefect.server.schemas.states import TERMINAL_STATES, StateType
 from prefect.server.schemas.streams import (
     ConsumerBinding,
@@ -27,9 +31,17 @@ from prefect.server.schemas.streams import (
     StreamEnvelope,
     StreamInfo,
     StreamLimits,
+    StreamSubmissionLookupRequest,
+    StreamSubmissionManifest,
+    StreamSubmissionReserveRequest,
 )
+from prefect.types import DateTime
 
 MAX_STREAMS_PER_FLOW = 128
+MAX_SUBMISSIONS_PER_FLOW = 128
+MAX_SUBMISSION_BYTES_PER_FLOW = 1024 * 1024
+MAX_SUBMISSION_CANONICAL_BYTES = 64 * 1024
+MAX_SUBMISSION_PARAMETER_BYTES = 32 * 1024
 _JSON_VALUE = TypeAdapter(JsonValue)
 
 
@@ -309,6 +321,334 @@ class NativeStreamStore:
             or stream.byte_count + size > limits.max_bytes
         ):
             raise NativeStreamError("CAPACITY", "Frozen stream capacity is exhausted")
+
+    def _submission_material(
+        self, request: StreamSubmissionReserveRequest
+    ) -> tuple[dict[str, JsonValue], bytes, str, str, StreamLimits, list[str]]:
+        parameters, _parameter_bytes, parameter_digest = _canonical(
+            request.parameters, MAX_SUBMISSION_PARAMETER_BYTES
+        )
+        if not isinstance(parameters, dict):
+            raise NativeStreamError(
+                "PROTOCOL_ERROR", "Submission parameters must be a JSON object"
+            )
+        limits = request.limits or StreamLimits()
+        tags = sorted(set(request.tags))
+        material: dict[str, Any] = {
+            "schema": "native-stream-submission-v1",
+            "flow_run_id": str(request.flow_run_id),
+            "submission_key": request.submission_key,
+            "role": request.role,
+            "protocol": request.protocol,
+            "task_name": request.task_name,
+            "task_key": request.task_key,
+            "task_version": request.task_version,
+            "flow_version": request.flow_version,
+            "deployment_id": (
+                str(request.deployment_id) if request.deployment_id else None
+            ),
+            "deployment_version": request.deployment_version,
+            "artifact_digest": request.artifact_digest,
+            "parameters": parameters,
+            "upstream_stream_id": (
+                str(request.upstream_stream_id) if request.upstream_stream_id else None
+            ),
+            "input_key": request.input_key,
+            "limits": limits.model_dump(mode="json"),
+            "task_policy": request.task_policy.model_dump(mode="json"),
+            "tags": tags,
+            "labels": request.labels,
+        }
+        _, encoded, request_digest = _canonical(
+            material, MAX_SUBMISSION_CANONICAL_BYTES
+        )
+        return parameters, encoded, request_digest, parameter_digest, limits, tags
+
+    @staticmethod
+    def _submission_response(
+        manifest: orm_models.StreamSubmission,
+    ) -> StreamSubmissionManifest:
+        return StreamSubmissionManifest(
+            flow_run_id=manifest.flow_run_id,
+            submission_key=manifest.submission_key,
+            manifest_digest=manifest.manifest_digest,
+            task_run_id=manifest.task_run_id,
+            stream_id=manifest.stream_id,
+            dynamic_key=manifest.dynamic_key,
+            role=cast(Literal["SOURCE", "OPERATOR"], manifest.role),
+            protocol=cast(Literal["source-v1", "yield-v2"], manifest.protocol),
+            state=cast(Literal["ACTIVE", "RELEASED"], manifest.state),
+            created_at=manifest.created,
+        )
+
+    async def reserve_submission(
+        self, request: StreamSubmissionReserveRequest
+    ) -> StreamSubmissionManifest:
+        """Atomically create or exactly replay one semantic stream submission."""
+
+        (
+            parameters,
+            canonical,
+            request_digest,
+            parameters_digest,
+            limits,
+            tags,
+        ) = self._submission_material(request)
+        async with self._session() as session:
+            flow = await session.scalar(
+                sa.select(self.db.FlowRun)
+                .where(self.db.FlowRun.id == request.flow_run_id)
+                .with_for_update()
+            )
+            if flow is None:
+                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+            if (
+                flow.flow_version != request.flow_version
+                or flow.deployment_id != request.deployment_id
+                or flow.deployment_version != request.deployment_version
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "Submission version does not match the authoritative FlowRun",
+                )
+            existing = await session.scalar(
+                sa.select(self.db.StreamSubmission)
+                .where(
+                    self.db.StreamSubmission.flow_run_id == request.flow_run_id,
+                    self.db.StreamSubmission.submission_key == request.submission_key,
+                )
+                .with_for_update()
+            )
+            if existing is not None:
+                if existing.request_digest != request_digest:
+                    raise NativeStreamError(
+                        "IDENTITY_CONFLICT",
+                        "Submission key is already bound to another manifest",
+                    )
+                if existing.state == "RELEASED":
+                    raise NativeStreamError(
+                        "REPLAY_HORIZON_EXPIRED",
+                        "Submission payload has been released",
+                    )
+                task = await session.get(self.db.TaskRun, existing.task_run_id)
+                if task is None:
+                    raise NativeStreamError(
+                        "IDENTITY_CONFLICT", "Submission TaskRun is missing"
+                    )
+                if task.state_type != StateType.PENDING or task.run_count != 0:
+                    raise NativeStreamError(
+                        "RECOVERY_NOT_READY",
+                        "Existing execution requires the N1.5 recovery fence",
+                    )
+                return self._submission_response(existing)
+
+            if flow.state_type in TERMINAL_STATES:
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT",
+                    "Cannot reserve a submission for a final FlowRun",
+                )
+            flow_retries = flow.empirical_policy.retries
+            task_retries = request.task_policy.retries
+            if (
+                flow_retries is None
+                or flow_retries < 1
+                or task_retries is None
+                or task_retries < 1
+            ):
+                raise NativeStreamError(
+                    "PROTOCOL_ERROR",
+                    "Recoverable submissions require FlowRun and TaskRun retries",
+                )
+
+            count, total_bytes = (
+                await session.execute(
+                    sa.select(
+                        sa.func.count(),
+                        sa.func.coalesce(
+                            sa.func.sum(self.db.StreamSubmission.canonical_size), 0
+                        ),
+                    ).where(self.db.StreamSubmission.flow_run_id == request.flow_run_id)
+                )
+            ).one()
+            if count >= MAX_SUBMISSIONS_PER_FLOW:
+                raise NativeStreamError(
+                    "CAPACITY", "FlowRun submission capacity is exhausted"
+                )
+            if total_bytes + len(canonical) > MAX_SUBMISSION_BYTES_PER_FLOW:
+                raise NativeStreamError(
+                    "CAPACITY", "FlowRun submission metadata capacity is exhausted"
+                )
+
+            if request.role == "SOURCE":
+                source_root = await session.scalar(
+                    sa.select(self.db.StreamSubmission.id).where(
+                        self.db.StreamSubmission.flow_run_id == request.flow_run_id,
+                        self.db.StreamSubmission.role == "SOURCE",
+                    )
+                )
+                if source_root is not None:
+                    raise NativeStreamError(
+                        "UNSUPPORTED_TOPOLOGY",
+                        "The first recovery profile allows one source root",
+                    )
+
+            upstream: orm_models.StreamSubmission | None = None
+            if request.upstream_stream_id is not None:
+                upstream = await session.scalar(
+                    sa.select(self.db.StreamSubmission)
+                    .where(
+                        self.db.StreamSubmission.stream_id == request.upstream_stream_id
+                    )
+                    .with_for_update()
+                )
+                if upstream is None or upstream.flow_run_id != request.flow_run_id:
+                    raise NativeStreamError(
+                        "UNSUPPORTED_TOPOLOGY",
+                        "Operator input must be an active manifest in the same FlowRun",
+                    )
+                if upstream.state != "ACTIVE":
+                    raise NativeStreamError(
+                        "REPLAY_HORIZON_EXPIRED", "Upstream manifest was released"
+                    )
+                downstream = await session.scalar(
+                    sa.select(self.db.StreamSubmission.id).where(
+                        self.db.StreamSubmission.upstream_stream_id
+                        == request.upstream_stream_id
+                    )
+                )
+                if downstream is not None:
+                    raise NativeStreamError(
+                        "UNSUPPORTED_TOPOLOGY",
+                        "The first recovery profile does not support fan-out",
+                    )
+
+            stream_count = await session.scalar(
+                sa.select(sa.func.count())
+                .select_from(self.db.StreamPartition)
+                .where(self.db.StreamPartition.flow_run_id == request.flow_run_id)
+            )
+            if stream_count is not None and stream_count >= MAX_STREAMS_PER_FLOW:
+                raise NativeStreamError(
+                    "CAPACITY", "FlowRun stream capacity is exhausted"
+                )
+
+            dynamic_key = (
+                "stream-"
+                + hashlib.sha256(request.submission_key.encode("utf-8")).hexdigest()[
+                    :32
+                ]
+            )
+            existing_task = await session.scalar(
+                sa.select(self.db.TaskRun).where(
+                    self.db.TaskRun.flow_run_id == request.flow_run_id,
+                    self.db.TaskRun.task_key == request.task_key,
+                    self.db.TaskRun.dynamic_key == dynamic_key,
+                )
+            )
+            if existing_task is not None:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "Submission TaskRun identity exists without its manifest",
+                )
+
+            task_run_id, stream_id = uuid7(), uuid7()
+            task_inputs: dict[
+                str,
+                list[
+                    core.TaskRunResult
+                    | core.FlowRunResult
+                    | core.Parameter
+                    | core.Constant
+                ],
+            ] = {}
+            if upstream is not None:
+                assert request.input_key is not None
+                task_inputs[request.input_key] = [
+                    core.TaskRunResult(id=upstream.task_run_id)
+                ]
+            task = core.TaskRun(
+                id=task_run_id,
+                name=request.task_name,
+                flow_run_id=request.flow_run_id,
+                task_key=request.task_key,
+                dynamic_key=dynamic_key,
+                task_version=request.task_version,
+                empirical_policy=request.task_policy,
+                tags=tags,
+                labels=request.labels,
+                task_inputs=task_inputs,
+                flow_run_run_count=flow.run_count,
+                state=core.states.Pending(),
+            )
+            created_task = await task_run_models.create_task_run(
+                session=session, task_run=task
+            )
+            if created_task.id != task_run_id:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "TaskRun identity was claimed concurrently"
+                )
+
+            producer_kind = "SOURCE" if request.role == "SOURCE" else "CONSUMER"
+            stream = self.db.StreamPartition(
+                id=stream_id,
+                flow_run_id=request.flow_run_id,
+                protocol_version=1,
+                producer_kind=producer_kind,
+                producer_task_run_id=task_run_id,
+                limits=limits.model_dump(),
+            )
+            session.add(stream)
+            await session.flush()
+            manifest_digest = hashlib.sha256(
+                b"native-stream-manifest-v1\0"
+                + request_digest.encode("ascii")
+                + task_run_id.bytes
+                + stream_id.bytes
+            ).hexdigest()
+            manifest = self.db.StreamSubmission(
+                flow_run_id=request.flow_run_id,
+                submission_key=request.submission_key,
+                request_digest=request_digest,
+                manifest_digest=manifest_digest,
+                canonical_size=len(canonical),
+                parameters=parameters,
+                parameters_digest=parameters_digest,
+                role=request.role,
+                protocol=request.protocol,
+                input_key=request.input_key,
+                upstream_stream_id=request.upstream_stream_id,
+                task_run_id=task_run_id,
+                stream_id=stream_id,
+                task_name=request.task_name,
+                task_key=request.task_key,
+                task_version=request.task_version,
+                flow_version=request.flow_version,
+                deployment_id=request.deployment_id,
+                deployment_version=request.deployment_version,
+                artifact_digest=request.artifact_digest,
+                dynamic_key=dynamic_key,
+                limits=limits.model_dump(),
+                task_policy=request.task_policy.model_dump(mode="json"),
+                tags=tags,
+                labels=request.labels,
+            )
+            session.add(manifest)
+            await session.flush()
+            return self._submission_response(manifest)
+
+    async def lookup_submission(
+        self, request: StreamSubmissionLookupRequest
+    ) -> StreamSubmissionManifest:
+        async with self._session() as session:
+            manifest = await session.scalar(
+                sa.select(self.db.StreamSubmission).where(
+                    self.db.StreamSubmission.flow_run_id == request.flow_run_id,
+                    self.db.StreamSubmission.submission_key == request.submission_key,
+                )
+            )
+            if manifest is None:
+                raise NativeStreamError("NOT_FOUND", "Unknown submission manifest")
+            return self._submission_response(manifest)
 
     async def create(
         self,
@@ -1212,6 +1552,14 @@ class NativeStreamStore:
                 raise NativeStreamError(
                     "TERMINAL_CONFLICT", "Only a final FlowRun can release payloads"
                 )
+            manifests = (
+                await session.scalars(
+                    sa.select(self.db.StreamSubmission)
+                    .where(self.db.StreamSubmission.flow_run_id == flow_run_id)
+                    .order_by(self.db.StreamSubmission.submission_key)
+                    .with_for_update()
+                )
+            ).all()
             streams = (
                 await session.scalars(
                     sa.select(self.db.StreamPartition)
@@ -1249,4 +1597,9 @@ class NativeStreamStore:
                         )
                     stream.released = True
                     stream.record_count, stream.byte_count = 0, 0
+            released_at = DateTime.now("UTC")
+            for manifest in manifests:
+                if manifest.state == "ACTIVE":
+                    manifest.state = "RELEASED"
+                    manifest.released_at = released_at
         return count

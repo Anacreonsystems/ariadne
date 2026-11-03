@@ -1,0 +1,30 @@
+{
+  "schema": "native-stage5a-negative-findings/v1",
+  "findings": [
+    {
+      "finding": "SQLite reflection returns the unique-index flag as integer 1; the migration test used identity with boolean True.",
+      "effect": "One test assertion failed; the actual unique index was present and valid.",
+      "predecessor": "native-stage5a-sqlite-2026-11-03.json",
+      "correction": "Convert the reflected flag to bool in the test. Production DDL is unchanged.",
+      "successor": "native-stage5a-sqlite-final-2026-11-03.json"
+    },
+    {
+      "finding": "The first complete native HTTP run overlapped the one-line SQLite test correction.",
+      "effect": "All 167 tests passed but the frozen-source gate correctly refused acceptance for drift in the migration test file.",
+      "predecessor": "native-stage5a-native-http-2026-11-03.json",
+      "correction": "Rerun the complete 167-case native profile after the final test correction.",
+      "successor": "native-stage5a-native-http-final-2026-11-03.json"
+    },
+    {
+      "finding": "The first legacy contract invocation omitted ARIADNE_NATIVE_STREAM_TEST_DSN.",
+      "effect": "Nine cases executed and 27 skipped, so the no-skip gate correctly failed.",
+      "predecessor": "native-stage5a-legacy-contract-final-2026-11-03.json",
+      "correction": "Run the explicit legacy test adapter against the owned PostgreSQL 17 service. This remains prototype-backed test infrastructure, separate from native storage evidence.",
+      "successor": "native-stage5a-legacy-contract-successor-2026-11-03.json"
+    }
+  ],
+  "unresolved_runtime_failures": [],
+  "remaining_product_scope": [
+    "Execution-generation fencing, signed lifecycle events and whole-worker reconstruction remain N1.5b/c; N1.5a earns no additional percentage."
+  ]
+}

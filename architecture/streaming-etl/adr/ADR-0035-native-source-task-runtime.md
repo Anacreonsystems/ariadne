@@ -278,6 +278,15 @@ not satisfy this stage.
 
 ## Evidence
 
+Hosted closure on 2026-11-03: [PR 6](https://github.com/Anacreonsystems/ariadne/pull/6)
+merged as `408076c95ca932e0ef2fd68988ee01ce40835217` after 97 successful
+checks and five conditional skips. The merged tree equals the tested
+`53a469868c4101ab1a476cd08188e432b52b4550` tree. The
+[hosted successor record](../evidence/native-stage4-hosted-successor-2026-11-03.json)
+retains the check list and merge observation. This closes N1.4 publication;
+whole-worker reconstruction remains governed separately by
+[ADR-0036](ADR-0036-durable-submission-recovery.md).
+
 The initial inspected boundary is retained below; the final implemented gate
 following it supersedes these starting observations:
 

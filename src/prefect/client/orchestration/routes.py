@@ -1,6 +1,8 @@
 from typing import Literal
 
 ServerRoutes = Literal[
+    "/streams/v1/submissions/reserve",
+    "/streams/v1/submissions/lookup",
     "/streams/v1/create",
     "/streams/v1/outputs/reserve",
     "/streams/v1/outputs/reject",

@@ -812,6 +812,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/streams/v1/submissions/reserve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reserve Submission */
+        post: operations["reserve_submission_streams_v1_submissions_reserve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/submissions/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Lookup Submission */
+        post: operations["lookup_submission_streams_v1_submissions_lookup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/streams/v1/create": {
         parameters: {
             query?: never;
@@ -11834,6 +11868,110 @@ export interface components {
              */
             source_protocol: "source-v1";
         };
+        /** StreamSubmissionLookupRequest */
+        StreamSubmissionLookupRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Submission Key */
+            submission_key: string;
+        };
+        /** StreamSubmissionManifest */
+        StreamSubmissionManifest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Submission Key */
+            submission_key: string;
+            /** Manifest Digest */
+            manifest_digest: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /** Dynamic Key */
+            dynamic_key: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "SOURCE" | "OPERATOR";
+            /**
+             * Protocol
+             * @enum {string}
+             */
+            protocol: "source-v1" | "yield-v2";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "ACTIVE" | "RELEASED";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** StreamSubmissionReserveRequest */
+        StreamSubmissionReserveRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Submission Key */
+            submission_key: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "SOURCE" | "OPERATOR";
+            /**
+             * Protocol
+             * @enum {string}
+             */
+            protocol: "source-v1" | "yield-v2";
+            /** Task Name */
+            task_name: string;
+            /** Task Key */
+            task_key: string;
+            /** Task Version */
+            task_version: string;
+            /** Flow Version */
+            flow_version: string;
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Deployment Version */
+            deployment_version?: string | null;
+            /** Artifact Digest */
+            artifact_digest?: string | null;
+            /** Parameters */
+            parameters: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Upstream Stream Id */
+            upstream_stream_id?: string | null;
+            /** Input Key */
+            input_key?: string | null;
+            limits?: components["schemas"]["StreamLimits"] | null;
+            task_policy?: components["schemas"]["TaskRunPolicy"];
+            /** Tags */
+            tags?: string[];
+            /** Labels */
+            labels?: {
+                [key: string]: boolean | number | string;
+            };
+        };
         /**
          * SuspendFlowRun
          * @description Suspends a flow run associated with the trigger
@@ -15263,6 +15401,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["State"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reserve_submission_streams_v1_submissions_reserve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSubmissionReserveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubmissionManifest"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lookup_submission_streams_v1_submissions_lookup_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSubmissionLookupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubmissionManifest"];
                 };
             };
             /** @description Validation Error */

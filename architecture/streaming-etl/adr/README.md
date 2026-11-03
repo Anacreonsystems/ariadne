@@ -59,7 +59,7 @@ stages.
 The [native source acceptance](../evidence/native-stage4-acceptance-2026-11-02.json)
 and [source graph validation](../evidence/adr-graph-native-stage4-2026-11-02.json)
 close ADR-0035's finite source/task-retry scope at 40%. Whole-worker submission
-recovery has its own pending proposal in ADR-0036 and earns no implementation
+recovery is in progress under ADR-0036 and earns no implementation
 share yet.
 
 ## Decision graph
@@ -138,7 +138,7 @@ graph TD
     A0032 --> A0033[ADR-0033: Native storage]
     A0033 --> A0034[ADR-0034: HTTP adapter - accepted]
     A0034 --> A0035[ADR-0035: Native source runtime - accepted]
-    A0035 --> A0036[ADR-0036: Durable submission recovery - pending]
+    A0035 --> A0036[ADR-0036: Durable submission recovery - progress]
     A0094[ADR-0094: JSONB fidelity - rejected] -. evidence .-> A0033
     A0095[ADR-0095: Implicit FK lock order - rejected] -. evidence .-> A0033
     A0010 --> A0032
@@ -220,7 +220,7 @@ graph TD
 - [ADR-0033: Native durable stream storage](ADR-0033-native-durable-stream-storage.md) — `accepted`
 - [ADR-0034: Native stream HTTP adapter and runtime admission](ADR-0034-native-stream-http-adapter.md) — `accepted`
 - [ADR-0035: Native source task runtime](ADR-0035-native-source-task-runtime.md) — `accepted`
-- [ADR-0036: Durable submission recovery](ADR-0036-durable-submission-recovery.md) — `pending`
+- [ADR-0036: Durable submission recovery](ADR-0036-durable-submission-recovery.md) — `progress`
 - [ADR-0090: Use Prefect transactions as the streaming coordinator](ADR-0090-prefect-transactions-as-coordinator.md) — `rejected`
 - [ADR-0091: Idempotency alone provides multi-sink atomicity](ADR-0091-idempotency-alone-is-atomic.md) — `rejected`
 - [ADR-0092: Split lifecycle and progress state machines](ADR-0092-split-safety-state-machines.md) — `rejected`
@@ -232,3 +232,7 @@ Delivery planning is tracked in [todo.md](../todo.md) and
 [sprint_board.md](../sprint_board.md). Those files may change as work is sliced;
 the decision history remains in ADRs.
 
+
+N1.5a [immutable submission acceptance](../evidence/native-stage5a-acceptance-2026-11-03.json)
+closes the identity slice on 377 source-bound case executions. N1.5b/c remain
+open; earned native foundation readiness stays at 40%.

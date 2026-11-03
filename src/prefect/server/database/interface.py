@@ -212,6 +212,11 @@ class PrefectDBInterface(metaclass=DBSingleton):
         return orm_models.StreamCompletion
 
     @property
+    def StreamSubmission(self) -> type[orm_models.StreamSubmission]:
+        """An immutable native stream submission manifest orm model"""
+        return orm_models.StreamSubmission
+
+    @property
     def TaskRun(self) -> type[orm_models.TaskRun]:
         """A task run orm model"""
         return orm_models.TaskRun

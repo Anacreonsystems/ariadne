@@ -110,6 +110,23 @@ def native_source_pipeline():
     return run_coro_as_sync(output.storage.read_prefix(output.stream_id, 10))
 
 assert native_source_pipeline() == [{'document': 200, 'signed': True}, {'document': 201, 'signed': True}]
+@flow(version='identity-v1', retries=2)
+def identity_definition():
+    pass
+
+with get_client(sync_client=True) as client:
+    identity_run = client.create_flow_run(identity_definition, state=Running())
+    request = dict(flow_run_id=identity_run.id, submission_key='source.orders',
+                   role='SOURCE', protocol='source-v1', task_name='orders',
+                   task_key='orders', task_version='identity-v1', flow_version='identity-v1',
+                   parameters={'ref': 'object://orders'}, task_policy={'retries': 2})
+    manifest = client.reserve_stream_submission(**request)
+    assert client.reserve_stream_submission(**request) == manifest
+    assert client.read_stream_submission(flow_run_id=identity_run.id,
+                                        submission_key='source.orders') == manifest
+    assert client.read_task_run(manifest.task_run_id).state.is_pending()
+    assert client.read_stream(manifest.stream_id).state == 'OPEN'
+
 print('STRIPPED_NATIVE_CLIENT_PASS')
 """,
         encoding="utf-8",
