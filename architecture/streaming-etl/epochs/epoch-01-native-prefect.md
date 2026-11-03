@@ -104,7 +104,7 @@ as a reference, not silently inherited by this native foundation.
 | --- | --- | --- |
 | 1. Native task and dependency contract | Define stream ports, supported per-input execution, finite dependency boundaries and stable TaskRun retry binding. Native SDK/task-engine tests execute against a real HTTP API and an explicit PostgreSQL test adapter; native migrations and deployment proof follow. | `accepted` for Stage 1 — [ADR-0032](../adr/ADR-0032-native-task-stream-contract.md). |
 | 2. Native durable storage | Add versioned platform models, migrations and an internal storage interface for append, terminal completion, fencing, retention and quotas. Prove atomicity and compatibility on the selected PostgreSQL profile. | `accepted`: storage-only N1.2 in [ADR-0033](../adr/ADR-0033-native-durable-stream-storage.md); HTTP/admission N1.3 in [ADR-0034](../adr/ADR-0034-native-stream-http-adapter.md). [ADR-0018](../adr/ADR-0018-postgresql-authoritative-data-plane.md) remains prototype input. |
-| 3. Native runtime and source | Extend the accepted operator transport with native source-task SDK, persisted source coordinates and durable submission identity/lookup. Reconstruct supported execution after whole-worker/flow loss, including output accepted before final TaskRun reporting. | `progress`: finite source/task retry accepted in [ADR-0035](../adr/ADR-0035-native-source-task-runtime.md); whole-worker reconstruction proposed in [pending ADR-0036](../adr/ADR-0036-durable-submission-recovery.md). [ADR-0017](../adr/ADR-0017-sync-async-generator-adapter.md) and [ADR-0019](../adr/ADR-0019-production-generator-state-and-replacement.md) remain prototype input. |
+| 3. Native runtime and source | Extend the accepted operator transport with native source-task SDK, persisted source coordinates and durable submission identity/lookup. Reconstruct supported execution after whole-worker/flow loss, including output accepted before final TaskRun reporting. | `progress`: finite source/task retry accepted in [ADR-0035](../adr/ADR-0035-native-source-task-runtime.md); whole-worker reconstruction in progress under [ADR-0036](../adr/ADR-0036-durable-submission-recovery.md). [ADR-0017](../adr/ADR-0017-sync-async-generator-adapter.md) and [ADR-0019](../adr/ADR-0019-production-generator-state-and-replacement.md) remain prototype input. |
 | 4. Mixed-flow execution | Schedule downstream while producers run, support finite side inputs and explicit bounded collection/end-of-stream, and prevent dependency/capacity deadlocks. Register required consumers before source admission. | Subsequent ADR required; Stage 1 defines the contracts. |
 | 5. Server, deployment and operations | Bind native deployment/FlowRun/TaskRun identities, authorization, lifecycle commands, cancellation/drain, worker launch and bounded progress projections. Reject incompatible code/state versions before data admission. | Subsequent ADR required; [ADR-0024](../adr/ADR-0024-control-plane-authority-and-lifecycle.md) and [ADR-0025](../adr/ADR-0025-prefect-adapter-and-operational-projections.md) are transition references. |
 | 6. Native foundation acceptance | Run the selected graph through actual SDK/server/worker deployment, task retry and process-loss cases; prove ordinary-flow regression, resource isolation, completion/cancellation and documented compatibility limits. | Subsequent acceptance ADR required; first native gate cannot be replaced by standalone prototype results. |
@@ -132,8 +132,14 @@ and Principal review have now passed, earning its planned +10% and reaching
 30%. The [N1.4 source gate](../evidence/native-stage4-acceptance-2026-11-02.json)
 and Principal review have now passed under
 [ADR-0035](../adr/ADR-0035-native-source-task-runtime.md), earning its planned
-+10% and reaching 40%. Whole-worker reconstruction remains a separate pending
++10% and reaching 40%. Whole-worker reconstruction remains a separate in-progress
 decision in [ADR-0036](../adr/ADR-0036-durable-submission-recovery.md).
+
+N1.5a now passes its [immutable submission gate](../evidence/native-stage5a-acceptance-2026-11-03.json)
+and independent review: atomic manifest, TaskRun and output reservation with
+exact HTTP replay, drift/limit refusals and real pre-commit API process loss.
+This earns no percentage. The epoch remains at 40% while generation/lifecycle
+fencing and whole-worker reconstruction continue under ADR-0036.
 
 ## Native ownership and storage boundary
 

@@ -20,7 +20,8 @@ That earns N1.3's planned +10%. The native source SDK is now accepted under
 [ADR-0035](adr/ADR-0035-native-source-task-runtime.md) and its
 [source gate](evidence/native-stage4-acceptance-2026-11-02.json), earning N1.4's
 next planned +10%. Whole-worker reconstruction remains a separate proposal in
-[pending ADR-0036](adr/ADR-0036-durable-submission-recovery.md).
+[ADR-0036](adr/ADR-0036-durable-submission-recovery.md), now in progress under
+the [bounded design agreement](evidence/native-stage5-design-review-2026-11-03.md).
 
 The separate DS-052a follow-up is now `done` under
 [ADR-0030](adr/ADR-0030-continuous-arc-soak-and-evidence-collection.md): the
@@ -66,6 +67,24 @@ medium delivery risk.
 | NI1-032 | `done` | NI1-030, NI1-031 | Native source configuration, submission and sync/async generator loop. As a user, I can receive positioned references while one ordinary source TaskRun stays active and retry from durable source progress. |
 | NI1-033 | `done` | NI1-031, NI1-032 | Real PostgreSQL/HTTP source failure and regression gates. As a user, I got input 200 or 201 according to durable acceptance, safe early delivery and no record-sized orchestration history. |
 | NI1-034 | `done` | NI1-033 | [Principal review](evidence/native-stage4-principal-2026-11-02.json), frozen source evidence, packaging and required CI selection/gate integration. As a developer, I can reproduce N1.4's bounded source gate and identify the deferred whole-worker/GC scope; hosted successor CI is reported separately. |
+
+## Native epoch 1 — Stage 4 durable submission and recovery
+
+The combined N1.5 gate plans +10%, reaching 50%. Identity and fencing slices
+earn no percentage separately. All tasks trace to
+[ADR-0036](adr/ADR-0036-durable-submission-recovery.md).
+
+| ID | State | Depends | Deliverable and acceptance criteria |
+| --- | --- | --- | --- |
+| NI1-040 | `done` | NI1-034 | Bounded architecture agreement. As a developer, I can trace identity, retry, generation and infrastructure ownership to the design review. |
+| NI1-041 | `done` | NI1-040 | Atomic manifest, TaskRun and reserved output with paired migrations and HTTP/client DTOs. As a system, I can exactly replay a lost creation response without duplicate identities or partial rows. [N1.5a acceptance](evidence/native-stage5a-acceptance-2026-11-03.json). |
+| NI1-042 | `done` | NI1-041 | Identity drift, capacity, topology and release-horizon controls. As a developer, I got named refusals and real HTTP/PostgreSQL tests on the same 31 source files, with [Principal review](evidence/native-stage5a-principal-2026-11-03.json). |
+| NI1-043 | `planned` | NI1-042 | FlowRun execution generation and verified infrastructure replacement. As a system, I can reject writes from the previous generation. |
+| NI1-044 | `planned` | NI1-043 | Normal TaskRun retry and durable terminal reconciliation. As a user, I can retain the TaskRun UUID without forced states or Python frame restoration. |
+| NI1-045 | `planned` | NI1-043, NI1-044 | Late TaskRun event and FlowRun lifecycle guards. As a system, I got old-generation observations rejected before they change current progress. |
+| NI1-046 | `planned` | NI1-045 | SDK reconstruction from explicit stable keys. As a user, I can replace a terminated flow process and continue the original channels. |
+| NI1-047 | `planned` | NI1-046 | Real process-loss and response-loss matrix plus ordinary runtime/package regressions. As a developer, I got exact first-incomplete continuation on unchanged source bytes. |
+| NI1-048 | `planned` | NI1-047 | Independent review, evidence graph and ADR closure. As a system, I can map all acceptance criteria to reproducible evidence before claiming 50%. |
 
 ## Protocol epoch 2 — short experimental delivery — target 100%, earned 100%
 

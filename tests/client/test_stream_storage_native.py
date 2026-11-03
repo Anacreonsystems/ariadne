@@ -26,6 +26,8 @@ from prefect.settings import PREFECT_CLIENT_CSRF_SUPPORT_ENABLED, temporary_sett
 from prefect.streams import StreamProtocolError, StreamRecord
 
 REQUEST_SCHEMA_NAMES = (
+    "StreamSubmissionReserveRequest",
+    "StreamSubmissionLookupRequest",
     "StreamCreateRequest",
     "StreamOutputReserveRequest",
     "StreamOutputRejectRequest",
@@ -46,6 +48,7 @@ REQUEST_SCHEMA_NAMES = (
 )
 
 PUBLIC_WIRE_SCHEMA_NAMES = (
+    "StreamSubmissionManifest",
     "StreamLimits",
     "SourceBinding",
     "ConsumerBinding",
@@ -60,6 +63,8 @@ PUBLIC_WIRE_SCHEMA_NAMES = (
 )
 
 PUBLIC_STREAM_METHODS = (
+    "reserve_stream_submission",
+    "read_stream_submission",
     "create_stream",
     "reserve_stream_output",
     "reject_stream_output",

@@ -17,7 +17,14 @@ from prefect.server import models, schemas
 from prefect.server.database import PrefectDBInterface
 from prefect.server.events.clients import AssertingEventsClient
 from prefect.server.models.streams import NativeStreamError, NativeStreamStore
-from prefect.server.schemas.streams import ConsumerBinding, SourceBinding, StreamLimits
+from prefect.server.orchestration.core_policy import CoreFlowPolicy
+from prefect.server.schemas.streams import (
+    ConsumerBinding,
+    SourceBinding,
+    StreamLimits,
+    StreamSubmissionLookupRequest,
+    StreamSubmissionReserveRequest,
+)
 
 
 @dataclass
@@ -1486,3 +1493,212 @@ async def test_source_task_open_future_cross_flow_and_final_are_read_only(
         unbound = await check.get(db.StreamPartition, unbound_id)
         assert unbound.producer_kind is None
         assert unbound.owner_id is None
+
+
+async def _recoverable_flow(db: PrefectDBInterface, flow_run) -> None:
+    async with db.session_context(begin_transaction=True) as session:
+        row = await session.get(db.FlowRun, flow_run.id)
+        row.flow_version = "flow-v1"
+        row.deployment_id = None
+        row.deployment_version = None
+        row.empirical_policy = schemas.core.FlowRunPolicy(retries=2)
+
+
+def _source_submission(flow_run, **updates) -> StreamSubmissionReserveRequest:
+    values = {
+        "flow_run_id": flow_run.id,
+        "submission_key": "source.documents",
+        "role": "SOURCE",
+        "protocol": "source-v1",
+        "task_name": "documents-source",
+        "task_key": "documents-source-key",
+        "task_version": "task-v1",
+        "flow_version": "flow-v1",
+        "parameters": {"connector": {"block_document_id": "documents-v1"}},
+        "limits": StreamLimits(max_records=16),
+        "task_policy": schemas.core.TaskRunPolicy(retries=2),
+        "tags": ["source", "documents"],
+        "labels": {"profile": "bounded"},
+    }
+    values.update(updates)
+    return StreamSubmissionReserveRequest.model_validate(values)
+
+
+async def test_submission_manifest_exact_replay_is_one_atomic_identity(db, flow_run):
+    await require_postgres_17(db)
+    await _recoverable_flow(db, flow_run)
+    store = NativeStreamStore(db)
+    request = _source_submission(flow_run)
+    first = await store.reserve_submission(request)
+    second = await store.reserve_submission(request)
+    lookup = await store.lookup_submission(
+        StreamSubmissionLookupRequest(
+            flow_run_id=flow_run.id, submission_key=request.submission_key
+        )
+    )
+    assert first == second == lookup
+    assert first.state == "ACTIVE"
+    assert len(first.manifest_digest) == 64
+    async with db.session_context() as session:
+        manifest = await session.scalar(
+            sa.select(db.StreamSubmission).where(
+                db.StreamSubmission.flow_run_id == flow_run.id
+            )
+        )
+        task = await session.get(db.TaskRun, first.task_run_id)
+        stream = await session.get(db.StreamPartition, first.stream_id)
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count(db.StreamSubmission.id)).where(
+                    db.StreamSubmission.flow_run_id == flow_run.id
+                )
+            )
+            == 1
+        )
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count(db.StreamPartition.id)).where(
+                    db.StreamPartition.flow_run_id == flow_run.id
+                )
+            )
+            == 1
+        )
+        assert task.state_type == schemas.states.StateType.PENDING
+        assert task.run_count == 0
+        assert task.empirical_policy.retries == 2
+        assert stream.producer_kind == "SOURCE"
+        assert stream.producer_task_run_id == task.id
+        assert manifest.request_digest != manifest.manifest_digest
+        assert manifest.parameters == request.parameters
+
+
+async def test_submission_manifest_drift_is_read_only(db, flow_run):
+    await require_postgres_17(db)
+    await _recoverable_flow(db, flow_run)
+    store = NativeStreamStore(db)
+    request = _source_submission(flow_run)
+    original = await store.reserve_submission(request)
+    with pytest.raises(NativeStreamError) as drift:
+        await store.reserve_submission(
+            _source_submission(
+                flow_run,
+                parameters={"connector": {"block_document_id": "documents-v2"}},
+            )
+        )
+    assert drift.value.code == "IDENTITY_CONFLICT"
+    async with db.session_context() as session:
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count(db.StreamSubmission.id)).where(
+                    db.StreamSubmission.flow_run_id == flow_run.id
+                )
+            )
+            == 1
+        )
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count(db.StreamPartition.id)).where(
+                    db.StreamPartition.flow_run_id == flow_run.id
+                )
+            )
+            == 1
+        )
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count(db.TaskRun.id)).where(
+                    db.TaskRun.id == original.task_run_id
+                )
+            )
+            == 1
+        )
+
+
+async def test_submission_manifest_binds_linear_operator_topology(db, flow_run):
+    await require_postgres_17(db)
+    await _recoverable_flow(db, flow_run)
+    store = NativeStreamStore(db)
+    source = await store.reserve_submission(_source_submission(flow_run))
+    operator_request = StreamSubmissionReserveRequest(
+        flow_run_id=flow_run.id,
+        submission_key="operator.sign",
+        role="OPERATOR",
+        protocol="yield-v2",
+        task_name="sign-documents",
+        task_key="sign-documents-key",
+        task_version="task-v1",
+        flow_version="flow-v1",
+        parameters={"input": {"submission_key": "source.documents"}},
+        upstream_stream_id=source.stream_id,
+        input_key="input",
+        task_policy=schemas.core.TaskRunPolicy(retries=2),
+    )
+    operator = await store.reserve_submission(operator_request)
+    async with db.session_context() as session:
+        task = await session.get(db.TaskRun, operator.task_run_id)
+        assert task.task_inputs == {
+            "input": [schemas.core.TaskRunResult(id=source.task_run_id)]
+        }
+    with pytest.raises(NativeStreamError) as fanout:
+        await store.reserve_submission(
+            operator_request.model_copy(
+                update={
+                    "submission_key": "operator.fanout",
+                    "task_key": "fanout-key",
+                }
+            )
+        )
+    assert fanout.value.code == "UNSUPPORTED_TOPOLOGY"
+
+
+async def test_submission_manifest_rejects_a_second_source_root(db, flow_run):
+    await require_postgres_17(db)
+    await _recoverable_flow(db, flow_run)
+    store = NativeStreamStore(db)
+    original = await store.reserve_submission(_source_submission(flow_run))
+    with pytest.raises(NativeStreamError) as second_root:
+        await store.reserve_submission(
+            _source_submission(
+                flow_run,
+                submission_key="source.second",
+                task_key="second-source-key",
+            )
+        )
+    assert second_root.value.code == "UNSUPPORTED_TOPOLOGY"
+    async with db.session_context() as session:
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count(db.StreamSubmission.id)).where(
+                    db.StreamSubmission.flow_run_id == flow_run.id
+                )
+            )
+            == 1
+        )
+        assert await session.get(db.TaskRun, original.task_run_id) is not None
+
+
+async def test_release_retains_submission_witness_and_expires_execution(db, flow_run):
+    await require_postgres_17(db)
+    await _recoverable_flow(db, flow_run)
+    store = NativeStreamStore(db)
+    request = _source_submission(flow_run)
+    manifest = await store.reserve_submission(request)
+    async with db.session_context(begin_transaction=True) as session:
+        result = await models.flow_runs.set_flow_run_state(
+            session=session,
+            flow_run_id=flow_run.id,
+            state=schemas.states.Cancelled(message="bounded release"),
+            flow_policy=CoreFlowPolicy,
+        )
+        assert result.state is not None
+        assert result.state.is_cancelled()
+    assert await store.release_flow(flow_run.id) == 1
+    witness = await store.lookup_submission(
+        StreamSubmissionLookupRequest(
+            flow_run_id=flow_run.id, submission_key=request.submission_key
+        )
+    )
+    assert witness.state == "RELEASED"
+    assert witness.manifest_digest == manifest.manifest_digest
+    with pytest.raises(NativeStreamError) as expired:
+        await store.reserve_submission(request)
+    assert expired.value.code == "REPLAY_HORIZON_EXPIRED"

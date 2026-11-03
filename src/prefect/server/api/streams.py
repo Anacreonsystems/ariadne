@@ -34,6 +34,9 @@ from prefect.server.schemas.streams import (
     StreamSourceOpenRequest,
     StreamSourceRejectRequest,
     StreamSourceReserveRequest,
+    StreamSubmissionLookupRequest,
+    StreamSubmissionManifest,
+    StreamSubmissionReserveRequest,
 )
 from prefect.server.utilities.server import PrefectRouter
 
@@ -66,6 +69,22 @@ async def _call(operation: Awaitable[T]) -> T:
         return await operation
     except NativeStreamError as error:
         raise _stream_http_error(error) from error
+
+
+@router.post("/submissions/reserve")
+async def reserve_submission(
+    request: StreamSubmissionReserveRequest,
+    db: Database,
+) -> StreamSubmissionManifest:
+    return await _call(NativeStreamStore(db).reserve_submission(request))
+
+
+@router.post("/submissions/lookup")
+async def lookup_submission(
+    request: StreamSubmissionLookupRequest,
+    db: Database,
+) -> StreamSubmissionManifest:
+    return await _call(NativeStreamStore(db).lookup_submission(request))
 
 
 @router.post("/create")

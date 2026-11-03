@@ -58,6 +58,68 @@ class StreamClient(BaseClient):
         except httpx.HTTPStatusError as error:
             raise _refusal(error) from error
 
+    def reserve_stream_submission(
+        self,
+        *,
+        flow_run_id: UUID,
+        submission_key: str,
+        role: Literal["SOURCE", "OPERATOR"],
+        protocol: Literal["source-v1", "yield-v2"],
+        task_name: str,
+        task_key: str,
+        task_version: str,
+        flow_version: str,
+        parameters: dict[str, JsonValue],
+        input_key: str | None = None,
+        upstream_stream_id: UUID | None = None,
+        deployment_id: UUID | None = None,
+        deployment_version: str | None = None,
+        artifact_digest: str | None = None,
+        limits: dict[str, int] | None = None,
+        task_policy: dict[str, Any] | None = None,
+        tags: list[str] | None = None,
+        labels: dict[str, bool | int | float | str] | None = None,
+    ) -> schemas.StreamSubmissionManifest:
+        """Create or exactly resolve a durable call slot and its native resources."""
+        payload = schemas.StreamSubmissionReserveRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "submission_key": submission_key,
+                "role": role,
+                "protocol": protocol,
+                "task_name": task_name,
+                "task_key": task_key,
+                "task_version": task_version,
+                "flow_version": flow_version,
+                "parameters": parameters,
+                "input_key": input_key,
+                "upstream_stream_id": upstream_stream_id,
+                "deployment_id": deployment_id,
+                "deployment_version": deployment_version,
+                "artifact_digest": artifact_digest,
+                "limits": limits,
+                "task_policy": task_policy or {},
+                "tags": tags or [],
+                "labels": labels or {},
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/submissions/reserve", json=payload
+        )
+        return schemas.StreamSubmissionManifest.model_validate(response.json())
+
+    def read_stream_submission(
+        self, *, flow_run_id: UUID, submission_key: str
+    ) -> schemas.StreamSubmissionManifest:
+        """Resolve the original resources without process-local identifiers."""
+        payload = schemas.StreamSubmissionLookupRequest(
+            flow_run_id=flow_run_id, submission_key=submission_key
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/submissions/lookup", json=payload
+        )
+        return schemas.StreamSubmissionManifest.model_validate(response.json())
+
     def create_stream(
         self,
         *,
@@ -521,6 +583,68 @@ class StreamAsyncClient(BaseAsyncClient):
             return await self.request(method, path, **kwargs)
         except httpx.HTTPStatusError as error:
             raise _refusal(error) from error
+
+    async def reserve_stream_submission(
+        self,
+        *,
+        flow_run_id: UUID,
+        submission_key: str,
+        role: Literal["SOURCE", "OPERATOR"],
+        protocol: Literal["source-v1", "yield-v2"],
+        task_name: str,
+        task_key: str,
+        task_version: str,
+        flow_version: str,
+        parameters: dict[str, JsonValue],
+        input_key: str | None = None,
+        upstream_stream_id: UUID | None = None,
+        deployment_id: UUID | None = None,
+        deployment_version: str | None = None,
+        artifact_digest: str | None = None,
+        limits: dict[str, int] | None = None,
+        task_policy: dict[str, Any] | None = None,
+        tags: list[str] | None = None,
+        labels: dict[str, bool | int | float | str] | None = None,
+    ) -> schemas.StreamSubmissionManifest:
+        """Create or exactly resolve a durable call slot and its native resources."""
+        payload = schemas.StreamSubmissionReserveRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "submission_key": submission_key,
+                "role": role,
+                "protocol": protocol,
+                "task_name": task_name,
+                "task_key": task_key,
+                "task_version": task_version,
+                "flow_version": flow_version,
+                "parameters": parameters,
+                "input_key": input_key,
+                "upstream_stream_id": upstream_stream_id,
+                "deployment_id": deployment_id,
+                "deployment_version": deployment_version,
+                "artifact_digest": artifact_digest,
+                "limits": limits,
+                "task_policy": task_policy or {},
+                "tags": tags or [],
+                "labels": labels or {},
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/submissions/reserve", json=payload
+        )
+        return schemas.StreamSubmissionManifest.model_validate(response.json())
+
+    async def read_stream_submission(
+        self, *, flow_run_id: UUID, submission_key: str
+    ) -> schemas.StreamSubmissionManifest:
+        """Resolve the original resources without process-local identifiers."""
+        payload = schemas.StreamSubmissionLookupRequest(
+            flow_run_id=flow_run_id, submission_key=submission_key
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/submissions/lookup", json=payload
+        )
+        return schemas.StreamSubmissionManifest.model_validate(response.json())
 
     async def create_stream(
         self,

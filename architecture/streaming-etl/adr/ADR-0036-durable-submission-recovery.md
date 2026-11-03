@@ -1,6 +1,6 @@
 # ADR-0036: Durable submission identity and whole-worker recovery
 
-- Status: `pending`
+- Status: `progress`
 - Date: 2026-11-02
 - Epoch: [Native integration epoch 1](../epochs/epoch-01-native-prefect.md),
   proposed Stage 4 / N1.5
@@ -173,6 +173,13 @@ and deployment compatibility work beyond the bounded N1.5 candidate.
 
 ## Open agreement questions
 
+The questions below record the original 2026-11-02 proposal. On 2026-11-03,
+the ETL Architect / HighLoad Principal and implementation owner agreed the
+bounded answers in the [design review](../evidence/native-stage5-design-review-2026-11-03.md).
+The user requested implementation. The decision is now in progress; neither
+the agreement nor an individual implementation slice satisfies this ADR's
+acceptance gate.
+
 1. Is an explicit `submission_key` mandatory in the first profile, and which
    SDK call owns it?
 2. What canonical parameter representation excludes secrets and unstable
@@ -192,8 +199,40 @@ and deployment compatibility work beyond the bounded N1.5 candidate.
 9. What deployment/code changes require a new FlowRun rather than recovery of
    the existing one?
 
-Until these questions are resolved, this ADR records a design boundary rather
-than an implementation agreement.
+The agreed first sequence is N1.5a immutable identity, N1.5b execution fencing
+and lifecycle, then N1.5c reconstruction. Explicit call-site keys and task/flow
+versions are mandatory. Parameters use strict finite JSON and durable object
+references. Infrastructure replacement consumes ordinary retry policy and
+requires confirmed process termination by the existing runner. A live
+partition remains unsupported until FlowRun lifecycle writes also carry and
+validate execution generation. The original questions and alternatives remain
+above for traceability.
+
+## N1.5a implementation boundary
+
+The first slice adds the authenticated `submissions/reserve` and
+`submissions/lookup` operations and their paired Python clients. Reservation
+creates the manifest, normal Pending TaskRun and reserved output in one native
+PostgreSQL transaction. The server chooses the TaskRun and channel IDs.
+Canonical task/flow/deployment versions, finite JSON parameters, upstream
+identity, protocol, policy, limits, tags and labels bind the call slot.
+
+The profile has one source root and a linear chain. It rejects another root
+or a second consumer of an upstream manifest before creating that rejected
+submission. Hard limits are 128 manifests, 1 MiB of canonical manifest material
+per FlowRun, 64 KiB per manifest and 32 KiB of parameters per call. Payload
+release retains a RELEASED identity witness, while execution replay refuses
+with `REPLAY_HORIZON_EXPIRED`.
+
+This API establishes identity only. Replaying a reservation whose TaskRun is
+already running refuses with `RECOVERY_NOT_READY`; lookup remains diagnostic.
+The call-site `submit_stream(submission_key=...)`, generation-bound execution
+and automatic whole-process reconstruction belong to the following slices.
+Ordinary unkeyed N1.4 source/operator calls keep their existing behavior.
+
+The [N1.5b wire proposal](../evidence/native-stage5b-wire-proposal-2026-11-03.md)
+develops the next lifecycle and event-authority boundary. It is design input,
+not implementation evidence or an accepted recovery guarantee.
 
 ## Stories
 
@@ -215,9 +254,9 @@ than an implementation agreement.
 
 ## Acceptance criteria
 
-- [ ] As a developer, I can create or exactly replay an immutable submission
+- [x] As a developer, I can create or exactly replay an immutable submission
   manifest and receive the same TaskRun and output stream identities.
-- [ ] As a developer, I can reuse a declared submission key only with the exact
+- [x] As a developer, I can reuse a declared submission key only with the exact
   role, protocol, code, parameter, upstream and limit witness; drift performs no
   write.
 - [ ] As a user, I got the same source TaskRun UUID after the flow-launch
@@ -249,7 +288,32 @@ than an implementation agreement.
 
 ## Evidence
 
-No N1.5 implementation or acceptance evidence exists. Current source inspection
+N1.5a's [scoped acceptance](../evidence/native-stage5a-acceptance-2026-11-03.json)
+and [independent review](../evidence/native-stage5a-principal-2026-11-03.json)
+pass on one identical 31-file source manifest. Six profiles execute 377 cases
+with zero failures or skips: 167 native HTTP/client/source/process/package
+cases, 67 store/API cases, 10 PostgreSQL migration cases, 13 SQLite
+migration/capability cases, 36 legacy contract cases and 84 ordinary TaskRun
+model/orchestration API cases. The legacy contract deliberately retains its
+prototype-backed test adapter; native persistence proof comes from the other
+profiles. UI API regression passes 323 cases, CI type analysis reports zero
+errors, and public type completeness is 1.0.
+
+The real HTTP controls cover 16 concurrent exact reservations, client death
+after creation, API SIGKILL while the manifest INSERT waits inside its
+transaction, drift refusals, both hard budgets, oversized parameters and safe
+refusal to attach to an already running TaskRun. Direct PostgreSQL counts
+independently check all-or-none manifest/TaskRun/channel creation. The
+[negative findings](../evidence/native-stage5a-negative-findings-2026-11-03.json)
+retain the SQLite reflection assertion defect, the correctly rejected
+source-drift trial and the legacy invocation that omitted its required test
+DSN. Successful successors remain linked; no rejected evidence was removed.
+
+Only the first two identity criteria are checked. This ADR remains `progress`:
+N1.5b/c and the remaining eleven criteria are open. Earned native foundation
+readiness remains 40%, with no contribution from this identity slice alone.
+
+At the 2026-11-03 start, no N1.5 acceptance evidence exists. Current source inspection
 shows why lookup is not yet possible:
 
 - [`Task.create_local_run`](../../../src/prefect/tasks.py) uses an unstable
@@ -298,10 +362,11 @@ requires explicit lifecycle design for abandoned `Running` TaskRuns. This is a
 larger change than source TaskRun retry, which is why it remains a separate
 stage.
 
-The proposed N1.5 contribution is provisionally +10%, reaching 50% of the
-native-foundation scope only after an agreement, implementation, all acceptance
-criteria and independent review. No percentage is earned or task allocation is
-created by this pending ADR.
+The proposed N1.5 contribution is +10%, reaching 50% of the native-foundation
+scope only after implementation, all acceptance criteria and independent
+review. The [task registry](../todo.md) and [sprint board](../sprint_board.md)
+track the three implementation slices. No percentage is earned by starting a
+slice or documenting the agreement.
 
 The initial linear-flow restriction leaves branch, join and dynamic graph
 recovery open. It does not reduce the later requirement; it gives the identity

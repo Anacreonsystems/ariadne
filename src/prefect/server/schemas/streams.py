@@ -3,7 +3,18 @@
 from typing import ClassVar, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_validator,
+    model_validator,
+)
+from typing_extensions import Self
+
+from prefect.server.schemas.core import KeyValueLabels, TaskRunPolicy
+from prefect.types import DateTime
 
 
 class _StreamRequest(BaseModel):
@@ -225,3 +236,80 @@ class StreamReleaseResult(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
 
     released: int = Field(ge=0)
+
+
+class StreamSubmissionReserveRequest(_StreamRequest):
+    flow_run_id: UUID
+    submission_key: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+    )
+    role: Literal["SOURCE", "OPERATOR"]
+    protocol: Literal["source-v1", "yield-v2"]
+    task_name: str = Field(min_length=1, max_length=255)
+    task_key: str = Field(min_length=1, max_length=255)
+    task_version: str = Field(min_length=1, max_length=255)
+    flow_version: str = Field(min_length=1, max_length=255)
+    deployment_id: UUID | None = None
+    deployment_version: str | None = Field(default=None, min_length=1, max_length=255)
+    artifact_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    parameters: dict[str, JsonValue]
+    upstream_stream_id: UUID | None = None
+    input_key: str | None = Field(default=None, min_length=1, max_length=255)
+    limits: StreamLimits | None = None
+    task_policy: TaskRunPolicy = Field(default_factory=TaskRunPolicy)
+    tags: list[str] = Field(default_factory=list, max_length=64)
+    labels: KeyValueLabels = Field(default_factory=dict)
+
+    @field_validator("tags")
+    @classmethod
+    def tags_are_bounded(cls, value: list[str]) -> list[str]:
+        if any(not tag or len(tag.encode("utf-8")) > 255 for tag in value):
+            raise ValueError("tags must be nonempty and at most 255 UTF-8 bytes")
+        return value
+
+    @model_validator(mode="after")
+    def topology_and_deployment_shape(self) -> Self:
+        if self.role == "SOURCE":
+            if (
+                self.protocol != "source-v1"
+                or self.upstream_stream_id is not None
+                or self.input_key is not None
+            ):
+                raise ValueError("SOURCE requires source-v1 and no upstream input")
+        elif (
+            self.protocol != "yield-v2"
+            or self.upstream_stream_id is None
+            or self.input_key is None
+        ):
+            raise ValueError("OPERATOR requires yield-v2 and an upstream stream input")
+        if (self.deployment_id is None) != (self.deployment_version is None):
+            raise ValueError(
+                "deployment_id and deployment_version must be provided together"
+            )
+        return self
+
+
+class StreamSubmissionLookupRequest(_StreamRequest):
+    flow_run_id: UUID
+    submission_key: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+    )
+
+
+class StreamSubmissionManifest(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    flow_run_id: UUID
+    submission_key: str
+    manifest_digest: str
+    task_run_id: UUID
+    stream_id: UUID
+    dynamic_key: str
+    role: Literal["SOURCE", "OPERATOR"]
+    protocol: Literal["source-v1", "yield-v2"]
+    state: Literal["ACTIVE", "RELEASED"]
+    created_at: DateTime

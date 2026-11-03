@@ -640,3 +640,47 @@ async def test_http_source_protocol_position_and_identity_refusals_are_read_only
         stream = await check.get(db.StreamPartition, stream_id)
         assert stream.state == "OPEN"
         assert stream.producer_position == 0
+
+
+async def test_http_submission_manifest_exact_replay_and_drift(
+    client, db, session, flow_run
+):
+    if not await _postgres_17(db):
+        pytest.skip("Native stream data plane requires PostgreSQL 17")
+    row = await session.get(db.FlowRun, flow_run.id)
+    row.flow_version = "flow-v1"
+    row.empirical_policy = schemas.core.FlowRunPolicy(retries=2)
+    await session.commit()
+    request = {
+        "flow_run_id": str(flow_run.id),
+        "submission_key": "source.http",
+        "role": "SOURCE",
+        "protocol": "source-v1",
+        "task_name": "http-source",
+        "task_key": "http-source-key",
+        "task_version": "task-v1",
+        "flow_version": "flow-v1",
+        "parameters": {"connector": {"block_document_id": "http-v1"}},
+        "task_policy": {"retries": 2},
+    }
+    first = await client.post("/streams/v1/submissions/reserve", json=request)
+    second = await client.post("/streams/v1/submissions/reserve", json=request)
+    lookup = await client.post(
+        "/streams/v1/submissions/lookup",
+        json={
+            "flow_run_id": str(flow_run.id),
+            "submission_key": "source.http",
+        },
+    )
+    assert first.status_code == second.status_code == lookup.status_code == 200
+    assert first.json() == second.json() == lookup.json()
+    assert first.json()["state"] == "ACTIVE"
+    drift = await client.post(
+        "/streams/v1/submissions/reserve",
+        json={
+            **request,
+            "parameters": {"connector": {"block_document_id": "http-v2"}},
+        },
+    )
+    assert drift.status_code == 409
+    assert drift.json()["detail"]["code"] == "IDENTITY_CONFLICT"

@@ -14,6 +14,9 @@ against the actual runtime and storage.
 | N1.2 — Native storage transactions | `done` | 20% | +10% | NI1-010…013 | ADR-0033 storage-only criteria: migrations, atomic fenced operations, quotas, final-flow release and real PostgreSQL hostile gate. |
 | N1.3 — Native storage transport | `done` | 30% | +10% | NI1-020…022 | ADR-0034 accepted: actual HTTP/client/API restart with retained tokens, lifecycle cleanup, DTO/error parity, stripped-client packaging and Principal gate pass. |
 | N1.4 — Native source task runtime | `done` | 40% | +10% | NI1-030…034 | ADR-0035 accepted: sync/async generators publish positioned references; exact reservation/EOF, same-TaskRun retry, process loss, stripped package and Principal gates pass. |
+| N1.5a — Durable submission identity | `done` | 40% | +0% | NI1-040…042 | [377-case scoped gate](evidence/native-stage5a-acceptance-2026-11-03.json) and independent review pass; exact HTTP replay and drift/limit refusals. No whole-worker claim. |
+| N1.5b — Execution fencing and lifecycle | `planned` | 40% | +0% | NI1-043…045 | Execution generation, stale-write/event exclusion and normal retry reconciliation. |
+| N1.5c — Whole-worker reconstruction gate | `planned` | 50% | +10% | NI1-046…048 | Real process replacement resumes the same TaskRuns/channels; all ADR-0036 criteria and independent review pass. |
 
 The 40% is a planning estimate toward the explicitly bounded native foundation,
 not a measurement of production readiness. The [complete Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json)
@@ -24,8 +27,11 @@ earned N1.3's planned +10%, reaching 30%.
 [N1.4's source gate](evidence/native-stage4-acceptance-2026-11-02.json) and
 [Principal review](evidence/native-stage4-principal-2026-11-02.json) now earn the
 next planned +10%, reaching 40%. Whole-worker reconstruction is proposed in
-[pending ADR-0036](adr/ADR-0036-durable-submission-recovery.md); its questions
-remain open and later sprint tasks remain unallocated.
+[ADR-0036](adr/ADR-0036-durable-submission-recovery.md), now in progress after
+the [architecture agreement](evidence/native-stage5-design-review-2026-11-03.md).
+N1.5a and N1.5b prepare the combined N1.5c gate; neither earns a percentage
+independently. [PR 6 hosted closure](evidence/native-stage4-hosted-successor-2026-11-03.json)
+records N1.4's merge after 97 successful checks and five conditional skips.
 
 N1.1 follow-up: [final code/CI acceptance](evidence/native-stage1-ci-acceptance-2026-11-01.json)
 records both real PostgreSQL-stream profiles, full finite regression, type

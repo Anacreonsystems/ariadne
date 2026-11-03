@@ -835,6 +835,83 @@ class StreamCompletion(Base):
     )
 
 
+class StreamSubmission(Base):
+    """An immutable semantic submission slot within a FlowRun."""
+
+    flow_run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("flow_run.id", ondelete="CASCADE"), index=True
+    )
+    submission_key: Mapped[str] = mapped_column(sa.String(128))
+    request_digest: Mapped[str] = mapped_column(sa.String(64))
+    manifest_digest: Mapped[str] = mapped_column(sa.String(64))
+    canonical_size: Mapped[int]
+    parameters: Mapped[dict[str, Any]] = mapped_column(stream_value_JSON)
+    parameters_digest: Mapped[str] = mapped_column(sa.String(64))
+    role: Mapped[str]
+    protocol: Mapped[str]
+    input_key: Mapped[Optional[str]] = mapped_column(sa.String(255))
+    upstream_stream_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        sa.ForeignKey("stream_partition.id")
+    )
+    task_run_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("task_run.id"))
+    stream_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("stream_partition.id"))
+    task_name: Mapped[str]
+    task_key: Mapped[str]
+    task_version: Mapped[str]
+    flow_version: Mapped[str]
+    deployment_id: Mapped[Optional[uuid.UUID]]
+    deployment_version: Mapped[Optional[str]]
+    artifact_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    dynamic_key: Mapped[str]
+    limits: Mapped[dict[str, Any]] = mapped_column(JSON)
+    task_policy: Mapped[dict[str, Any]] = mapped_column(JSON)
+    tags: Mapped[list[str]] = mapped_column(JSON)
+    labels: Mapped[dict[str, Any]] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(server_default="ACTIVE", default="ACTIVE")
+    released_at: Mapped[Optional[DateTime]]
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("flow_run_id", "submission_key"),
+        sa.UniqueConstraint("task_run_id"),
+        sa.UniqueConstraint("stream_id"),
+        # The first recovery profile is a linear graph without fan-out.
+        sa.UniqueConstraint("upstream_stream_id"),
+        sa.CheckConstraint(
+            "length(submission_key) BETWEEN 1 AND 128",
+            name="submission_key_length_valid",
+        ),
+        sa.CheckConstraint(
+            "length(request_digest) = 64 AND "
+            "length(manifest_digest) = 64 AND "
+            "length(parameters_digest) = 64",
+            name="digest_lengths_valid",
+        ),
+        sa.CheckConstraint("canonical_size > 0", name="canonical_size_positive"),
+        sa.CheckConstraint("role IN ('SOURCE', 'OPERATOR')", name="role_valid"),
+        sa.CheckConstraint(
+            "(role = 'SOURCE' AND protocol = 'source-v1' "
+            "AND input_key IS NULL AND upstream_stream_id IS NULL) OR "
+            "(role = 'OPERATOR' AND protocol = 'yield-v2' "
+            "AND input_key IS NOT NULL AND upstream_stream_id IS NOT NULL)",
+            name="topology_shape_valid",
+        ),
+        sa.CheckConstraint("state IN ('ACTIVE', 'RELEASED')", name="state_valid"),
+        sa.CheckConstraint(
+            "(state = 'ACTIVE' AND released_at IS NULL) OR "
+            "(state = 'RELEASED' AND released_at IS NOT NULL)",
+            name="release_shape_valid",
+        ),
+        sa.Index(
+            "uq_stream_submission__one_source_per_flow",
+            "flow_run_id",
+            unique=True,
+            postgresql_where=sa.text("role = 'SOURCE'"),
+            sqlite_where=sa.text("role = 'SOURCE'"),
+        ),
+        sa.Index("ix_stream_submission__flow_run_id_state", "flow_run_id", "state"),
+    )
+
+
 _TaskInput = Union[
     schemas.core.TaskRunResult,
     schemas.core.FlowRunResult,

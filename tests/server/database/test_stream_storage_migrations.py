@@ -21,6 +21,7 @@ STREAM_TABLES = {
     "stream_record",
     "stream_consumer",
     "stream_completion",
+    "stream_submission",
 }
 
 
@@ -41,6 +42,13 @@ async def test_native_stream_storage_upgrade_and_downgrade(
     await database_engine.dispose()
     try:
         await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+        assert "stream_submission" not in await _table_names(database_engine)
+        assert (STREAM_TABLES - {"stream_submission"}) <= await _table_names(
+            database_engine
+        )
+
+        await database_engine.dispose()
+        await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
         assert STREAM_TABLES.isdisjoint(await _table_names(database_engine))
 
         await database_engine.dispose()
@@ -60,6 +68,7 @@ async def test_native_stream_storage_schema_matches_orm(
         db.StreamRecord,
         db.StreamConsumer,
         db.StreamCompletion,
+        db.StreamSubmission,
     ):
         table = cast(sa.Table, model.__table__)
         orm_tables[table.name] = table
@@ -78,6 +87,130 @@ async def test_native_stream_storage_schema_matches_orm(
         assert actual["unique_constraints"] == _orm_unique_constraints(orm_table)
         assert actual["check_constraints"] == _orm_check_constraints(orm_table)
         assert actual["foreign_keys"] == _orm_foreign_keys(orm_table)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    [
+        ({"canonical_size": 0}, "canonical_size_positive"),
+        ({"request_digest": "short"}, "digest_lengths_valid"),
+        ({"protocol": "yield-v2"}, "topology_shape_valid"),
+        ({"state": "RELEASED"}, "release_shape_valid"),
+    ],
+)
+async def test_stream_submission_schema_rejects_invalid_authority_shapes(
+    db: PrefectDBInterface,
+    session,
+    flow_run,
+    task_run,
+    mutation: dict[str, object],
+    match: str,
+):
+    stream_id = uuid.uuid4()
+    session.add(
+        db.StreamPartition(
+            id=stream_id,
+            flow_run_id=flow_run.id,
+            producer_kind="SOURCE",
+            producer_task_run_id=task_run.id,
+            limits={},
+        )
+    )
+    await session.flush()
+    values: dict[str, object] = {
+        "flow_run_id": flow_run.id,
+        "submission_key": "source.documents",
+        "request_digest": "0" * 64,
+        "manifest_digest": "1" * 64,
+        "canonical_size": 1,
+        "parameters": {"negative_zero": -0.0},
+        "parameters_digest": "2" * 64,
+        "role": "SOURCE",
+        "protocol": "source-v1",
+        "task_run_id": task_run.id,
+        "stream_id": stream_id,
+        "task_name": "documents",
+        "task_key": "documents-key",
+        "task_version": "v1",
+        "flow_version": "v1",
+        "dynamic_key": "stream-documents",
+        "limits": {},
+        "task_policy": {"retries": 1},
+        "tags": [],
+        "labels": {},
+    }
+    values.update(mutation)
+    session.add(db.StreamSubmission(**values))
+    with pytest.raises(IntegrityError, match=match):
+        await session.flush()
+
+
+async def test_stream_submission_parameters_preserve_signed_zero(
+    db: PrefectDBInterface,
+    flow_run,
+    task_run,
+):
+    stream_id = uuid.uuid4()
+    async with db.session_context(begin_transaction=True) as session:
+        session.add(
+            db.StreamPartition(
+                id=stream_id,
+                flow_run_id=flow_run.id,
+                producer_kind="SOURCE",
+                producer_task_run_id=task_run.id,
+                limits={},
+            )
+        )
+        await session.flush()
+        session.add(
+            db.StreamSubmission(
+                flow_run_id=flow_run.id,
+                submission_key="source.signed-zero",
+                request_digest="0" * 64,
+                manifest_digest="1" * 64,
+                canonical_size=1,
+                parameters={"negative_zero": -0.0},
+                parameters_digest="2" * 64,
+                role="SOURCE",
+                protocol="source-v1",
+                task_run_id=task_run.id,
+                stream_id=stream_id,
+                task_name="signed-zero",
+                task_key="signed-zero-key",
+                task_version="v1",
+                flow_version="v1",
+                dynamic_key="stream-signed-zero",
+                limits={},
+                task_policy={"retries": 1},
+                tags=[],
+                labels={},
+            )
+        )
+    async with db.session_context() as session:
+        parameters = await session.scalar(
+            sa.select(db.StreamSubmission.parameters).where(
+                db.StreamSubmission.stream_id == stream_id
+            )
+        )
+    assert math.copysign(1.0, parameters["negative_zero"]) == -1.0
+
+
+async def test_stream_submission_schema_has_one_source_root_index(
+    database_engine: AsyncEngine,
+):
+    async with database_engine.connect() as connection:
+        indexes = await connection.run_sync(
+            lambda sync_connection: sa.inspect(sync_connection).get_indexes(
+                "stream_submission"
+            )
+        )
+    index = next(
+        item
+        for item in indexes
+        if item["name"] == "uq_stream_submission__one_source_per_flow"
+    )
+    assert bool(index["unique"]) is True
+    assert index["column_names"] == ["flow_run_id"]
 
 
 async def test_native_stream_json_preserves_null_and_signed_zero(
