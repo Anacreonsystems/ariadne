@@ -812,6 +812,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/streams/v1/executions/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Stream Execution */
+        post: operations["claim_stream_execution_streams_v1_executions_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/executions/takeover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Takeover Stream Execution */
+        post: operations["takeover_stream_execution_streams_v1_executions_takeover_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/executions/prepare-recovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare Stream Recovery */
+        post: operations["prepare_stream_recovery_streams_v1_executions_prepare_recovery_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/executions/seal-manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Seal Stream Manifest */
+        post: operations["seal_stream_manifest_streams_v1_executions_seal_manifest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/streams/v1/submissions/reserve": {
         parameters: {
             query?: never;
@@ -11568,6 +11636,138 @@ export interface components {
             /** Size Bytes */
             size_bytes: number;
         };
+        /** StreamExecutionBinding */
+        StreamExecutionBinding: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Holder Id
+             * Format: uuid
+             */
+            holder_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "CLAIMED" | "ACTIVE" | "RECOVERING" | "TERMINAL" | "RELEASED";
+            /** Flow Run Run Count */
+            flow_run_run_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** StreamExecutionClaimRequest */
+        StreamExecutionClaimRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Expected Generation
+             * @default 0
+             * @constant
+             */
+            expected_generation: 0;
+            /**
+             * Holder Id
+             * Format: uuid
+             */
+            holder_id: string;
+            /** Holder Capability */
+            holder_capability: string;
+            /** Holder Event Public Key */
+            holder_event_public_key: string;
+            /**
+             * Supervisor Id
+             * Format: uuid
+             */
+            supervisor_id: string;
+            /** Supervisor Capability */
+            supervisor_capability: string;
+            /**
+             * Protocol Version
+             * @default 1
+             * @constant
+             */
+            protocol_version: 1;
+        };
+        /** StreamExecutionDeathWitness */
+        StreamExecutionDeathWitness: {
+            /**
+             * Launcher Instance Id
+             * Format: uuid
+             */
+            launcher_instance_id: string;
+            /** Child Process Id */
+            child_process_id: number;
+            /** Exit Code */
+            exit_code: number;
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "WAITPID" | "OWNED_SIGKILL";
+        };
+        /** StreamExecutionTakeoverRequest */
+        StreamExecutionTakeoverRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Expected Generation */
+            expected_generation: number;
+            /**
+             * Expected Holder Id
+             * Format: uuid
+             */
+            expected_holder_id: string;
+            /**
+             * Supervisor Id
+             * Format: uuid
+             */
+            supervisor_id: string;
+            /** Supervisor Capability */
+            supervisor_capability: string;
+            /**
+             * New Holder Id
+             * Format: uuid
+             */
+            new_holder_id: string;
+            /** New Holder Capability */
+            new_holder_capability: string;
+            /** New Holder Event Public Key */
+            new_holder_event_public_key: string;
+            death_witness: components["schemas"]["StreamExecutionDeathWitness"];
+        };
         /** StreamInfo */
         StreamInfo: {
             /**
@@ -11644,6 +11844,47 @@ export interface components {
              */
             max_prefix_bytes: number;
         };
+        /** StreamManifestSealRequest */
+        StreamManifestSealRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Manifests */
+            manifests: components["schemas"]["StreamManifestWitness"][];
+        };
+        /** StreamManifestSealResult */
+        StreamManifestSealResult: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Manifest Set Digest */
+            manifest_set_digest: string;
+            /** Manifest Count */
+            manifest_count: number;
+        };
+        /** StreamManifestWitness */
+        StreamManifestWitness: {
+            /** Submission Key */
+            submission_key: string;
+            /** Manifest Digest */
+            manifest_digest: string;
+        };
         /** StreamOutputFailRequest */
         StreamOutputFailRequest: {
             /**
@@ -11710,6 +11951,68 @@ export interface components {
              * Format: uuid
              */
             task_run_id: string;
+        };
+        /** StreamRecoveryItem */
+        StreamRecoveryItem: {
+            /** Submission Key */
+            submission_key: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /** Durable Position */
+            durable_position: number;
+            /**
+             * Stream State
+             * @enum {string}
+             */
+            stream_state: "OPEN" | "COMPLETED" | "FAILED";
+            /** Task State */
+            task_state: string;
+            /** Current Run Count */
+            current_run_count: number;
+            /** Next Run Count */
+            next_run_count: number;
+        };
+        /** StreamRecoveryPrepareRequest */
+        StreamRecoveryPrepareRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Manifests */
+            manifests: components["schemas"]["StreamManifestWitness"][];
+        };
+        /** StreamRecoveryResult */
+        StreamRecoveryResult: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Items */
+            items: components["schemas"]["StreamRecoveryItem"][];
+            /** Outcome Digest */
+            outcome_digest: string;
         };
         /** StreamReleaseRequest */
         StreamReleaseRequest: {
@@ -14536,6 +14839,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path: {
                 /** @description The flow run id */
@@ -14644,6 +14950,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -14679,6 +14988,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path: {
                 /** @description The flow run id */
@@ -14970,6 +15282,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15071,6 +15386,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path: {
                 /** @description The task run id */
@@ -15247,6 +15565,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path: {
                 /** @description The task run id */
@@ -15414,11 +15735,160 @@ export interface operations {
             };
         };
     };
+    claim_stream_execution_streams_v1_executions_claim_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamExecutionClaimRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamExecutionBinding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    takeover_stream_execution_streams_v1_executions_takeover_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamExecutionTakeoverRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamExecutionBinding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prepare_stream_recovery_streams_v1_executions_prepare_recovery_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamRecoveryPrepareRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamRecoveryResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    seal_stream_manifest_streams_v1_executions_seal_manifest_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamManifestSealRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamManifestSealResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     reserve_submission_streams_v1_submissions_reserve_post: {
         parameters: {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15489,6 +15959,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15524,6 +15997,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15559,6 +16035,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15594,6 +16073,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15629,6 +16111,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15664,6 +16149,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15699,6 +16187,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15734,6 +16225,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15767,6 +16261,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15802,6 +16299,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15837,6 +16337,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15872,6 +16375,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15907,6 +16413,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15942,6 +16451,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15977,6 +16489,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -16010,6 +16525,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -16043,6 +16561,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path?: never;
             cookie?: never;

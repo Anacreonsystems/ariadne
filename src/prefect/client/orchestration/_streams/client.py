@@ -58,6 +58,112 @@ class StreamClient(BaseClient):
         except httpx.HTTPStatusError as error:
             raise _refusal(error) from error
 
+    def claim_stream_execution(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        holder_id: UUID,
+        holder_capability: str,
+        holder_event_public_key: str,
+        supervisor_id: UUID,
+        supervisor_capability: str,
+        expected_generation: int = 0,
+        protocol_version: int = 1,
+    ) -> schemas.StreamExecutionBinding:
+        """Execute an idempotent native execution-authority operation."""
+        payload = schemas.StreamExecutionClaimRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "holder_id": holder_id,
+                "holder_capability": holder_capability,
+                "holder_event_public_key": holder_event_public_key,
+                "supervisor_id": supervisor_id,
+                "supervisor_capability": supervisor_capability,
+                "expected_generation": expected_generation,
+                "protocol_version": protocol_version,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/executions/claim", json=payload
+        )
+        return schemas.StreamExecutionBinding.model_validate(response.json())
+
+    def takeover_stream_execution(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        expected_generation: int,
+        expected_holder_id: UUID,
+        supervisor_id: UUID,
+        supervisor_capability: str,
+        new_holder_id: UUID,
+        new_holder_capability: str,
+        new_holder_event_public_key: str,
+        death_witness: dict[str, Any],
+    ) -> schemas.StreamExecutionBinding:
+        """Execute an idempotent native execution-authority operation."""
+        payload = schemas.StreamExecutionTakeoverRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "expected_generation": expected_generation,
+                "expected_holder_id": expected_holder_id,
+                "supervisor_id": supervisor_id,
+                "supervisor_capability": supervisor_capability,
+                "new_holder_id": new_holder_id,
+                "new_holder_capability": new_holder_capability,
+                "new_holder_event_public_key": new_holder_event_public_key,
+                "death_witness": death_witness,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/executions/takeover", json=payload
+        )
+        return schemas.StreamExecutionBinding.model_validate(response.json())
+
+    def seal_stream_manifest(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        manifests: list[dict[str, str]],
+    ) -> schemas.StreamManifestSealResult:
+        """Execute an idempotent native execution-authority operation."""
+        payload = schemas.StreamManifestSealRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "manifests": manifests,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/executions/seal-manifest", json=payload
+        )
+        return schemas.StreamManifestSealResult.model_validate(response.json())
+
+    def prepare_stream_recovery(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        manifests: list[dict[str, str]],
+    ) -> schemas.StreamRecoveryResult:
+        """Execute an idempotent native execution-authority operation."""
+        payload = schemas.StreamRecoveryPrepareRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "manifests": manifests,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/executions/prepare-recovery", json=payload
+        )
+        return schemas.StreamRecoveryResult.model_validate(response.json())
+
     def reserve_stream_submission(
         self,
         *,
@@ -583,6 +689,112 @@ class StreamAsyncClient(BaseAsyncClient):
             return await self.request(method, path, **kwargs)
         except httpx.HTTPStatusError as error:
             raise _refusal(error) from error
+
+    async def claim_stream_execution(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        holder_id: UUID,
+        holder_capability: str,
+        holder_event_public_key: str,
+        supervisor_id: UUID,
+        supervisor_capability: str,
+        expected_generation: int = 0,
+        protocol_version: int = 1,
+    ) -> schemas.StreamExecutionBinding:
+        """Execute an idempotent native execution-authority operation."""
+        payload = schemas.StreamExecutionClaimRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "holder_id": holder_id,
+                "holder_capability": holder_capability,
+                "holder_event_public_key": holder_event_public_key,
+                "supervisor_id": supervisor_id,
+                "supervisor_capability": supervisor_capability,
+                "expected_generation": expected_generation,
+                "protocol_version": protocol_version,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/executions/claim", json=payload
+        )
+        return schemas.StreamExecutionBinding.model_validate(response.json())
+
+    async def takeover_stream_execution(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        expected_generation: int,
+        expected_holder_id: UUID,
+        supervisor_id: UUID,
+        supervisor_capability: str,
+        new_holder_id: UUID,
+        new_holder_capability: str,
+        new_holder_event_public_key: str,
+        death_witness: dict[str, Any],
+    ) -> schemas.StreamExecutionBinding:
+        """Execute an idempotent native execution-authority operation."""
+        payload = schemas.StreamExecutionTakeoverRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "expected_generation": expected_generation,
+                "expected_holder_id": expected_holder_id,
+                "supervisor_id": supervisor_id,
+                "supervisor_capability": supervisor_capability,
+                "new_holder_id": new_holder_id,
+                "new_holder_capability": new_holder_capability,
+                "new_holder_event_public_key": new_holder_event_public_key,
+                "death_witness": death_witness,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/executions/takeover", json=payload
+        )
+        return schemas.StreamExecutionBinding.model_validate(response.json())
+
+    async def seal_stream_manifest(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        manifests: list[dict[str, str]],
+    ) -> schemas.StreamManifestSealResult:
+        """Execute an idempotent native execution-authority operation."""
+        payload = schemas.StreamManifestSealRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "manifests": manifests,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/executions/seal-manifest", json=payload
+        )
+        return schemas.StreamManifestSealResult.model_validate(response.json())
+
+    async def prepare_stream_recovery(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        manifests: list[dict[str, str]],
+    ) -> schemas.StreamRecoveryResult:
+        """Execute an idempotent native execution-authority operation."""
+        payload = schemas.StreamRecoveryPrepareRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "manifests": manifests,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/executions/prepare-recovery", json=payload
+        )
+        return schemas.StreamRecoveryResult.model_validate(response.json())
 
     async def reserve_stream_submission(
         self,

@@ -217,6 +217,16 @@ class PrefectDBInterface(metaclass=DBSingleton):
         return orm_models.StreamSubmission
 
     @property
+    def StreamExecutionAuthority(self) -> type[orm_models.StreamExecutionAuthority]:
+        """The current native stream execution-generation authority orm model"""
+        return orm_models.StreamExecutionAuthority
+
+    @property
+    def StreamExecutionAttempt(self) -> type[orm_models.StreamExecutionAttempt]:
+        """A bounded native stream execution-generation attempt orm model"""
+        return orm_models.StreamExecutionAttempt
+
+    @property
     def TaskRun(self) -> type[orm_models.TaskRun]:
         """A task run orm model"""
         return orm_models.TaskRun

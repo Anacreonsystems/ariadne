@@ -45,12 +45,14 @@ from prefect._internal.states import (
     return_value_to_state_sync,
 )
 from prefect._internal.stream_engine import (
+    _check_execution,
     execute_stream_async,
     execute_stream_sync,
     finish_stream_async,
     finish_stream_sync,
     reject_stream_execution,
 )
+from prefect._internal.stream_execution import get_stream_execution
 from prefect._internal.uuid7 import uuid7
 from prefect.cache_policies import CachePolicy
 from prefect.client.orchestration import PrefectClient, SyncPrefectClient, get_client
@@ -260,6 +262,31 @@ class BaseTaskRunEngine(Generic[P, R]):
     def __post_init__(self) -> None:
         if self.parameters is None:
             self.parameters = {}
+        execution = get_stream_execution()
+        if (
+            execution is not None
+            and self.task_run is not None
+            and execution.manifest_digest(self.task_run.id) is not None
+        ):
+            # The retained count is read before begin_run increments it. An
+            # infrastructure replacement already consumes the next retry; it
+            # must not grant a fresh local retry budget to the same TaskRun.
+            self.retries = max(self.retries, self.task_run.run_count)
+
+    def _stream_initial_retry_delay(self) -> float:
+        execution = get_stream_execution()
+        if (
+            execution is None
+            or self.task_run is None
+            or execution.manifest_digest(self.task_run.id) is None
+            or self.task_run.state is None
+            or not self.task_run.state.is_scheduled()
+        ):
+            return 0
+        scheduled = self.task_run.state.state_details.scheduled_time
+        if scheduled is None:
+            return 0
+        return max(0, (scheduled - prefect.types._datetime.now("UTC")).total_seconds())
 
     @property
     def state(self) -> State:
@@ -530,6 +557,9 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
                 self.logger.info(f"Hook {hook_name!r} finished running successfully")
 
     def begin_run(self) -> None:
+        while delay := self._stream_initial_retry_delay():
+            _check_execution(self)
+            time.sleep(min(delay, 0.1))
         new_state = Running()
 
         assert self.task_run is not None, "Task run is not set"
@@ -1163,6 +1193,10 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
                 force=self.state.is_pending(),
             )
             return
+
+        while delay := self._stream_initial_retry_delay():
+            _check_execution(self)
+            await anyio.sleep(min(delay, 0.1))
 
         new_state = Running()
 

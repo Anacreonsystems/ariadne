@@ -6,7 +6,14 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query, status
 
+from prefect.server.api.stream_execution_dependencies import ExecutionCredentials
 from prefect.server.database import PrefectDBInterface, provide_database_interface
+from prefect.server.models.stream_executions import (
+    claim_execution,
+    prepare_recovery,
+    seal_manifest,
+    takeover_execution,
+)
 from prefect.server.models.streams import NativeStreamError, NativeStreamStore
 from prefect.server.schemas.streams import (
     ConsumerBinding,
@@ -20,10 +27,17 @@ from prefect.server.schemas.streams import (
     StreamCreateRequest,
     StreamDelivery,
     StreamEnvelope,
+    StreamExecutionBinding,
+    StreamExecutionClaimRequest,
+    StreamExecutionTakeoverRequest,
     StreamInfo,
+    StreamManifestSealRequest,
+    StreamManifestSealResult,
     StreamOutputFailRequest,
     StreamOutputRejectRequest,
     StreamOutputReserveRequest,
+    StreamRecoveryPrepareRequest,
+    StreamRecoveryResult,
     StreamReleaseRequest,
     StreamReleaseResult,
     StreamSourceAppendRequest,
@@ -50,6 +64,7 @@ def _stream_http_error(error: NativeStreamError) -> HTTPException:
     statuses = {
         "NOT_FOUND": status.HTTP_404_NOT_FOUND,
         "REPLAY_HORIZON_EXPIRED": status.HTTP_410_GONE,
+        "RECOVERY_HORIZON_EXPIRED": status.HTTP_410_GONE,
         "PAYLOAD_TOO_LARGE": status.HTTP_413_CONTENT_TOO_LARGE,
         "PROTOCOL_ERROR": status.HTTP_422_UNPROCESSABLE_CONTENT,
         "UNSUPPORTED_BACKEND": status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -71,12 +86,63 @@ async def _call(operation: Awaitable[T]) -> T:
         raise _stream_http_error(error) from error
 
 
+@router.post("/executions/claim")
+async def claim_stream_execution(
+    request: StreamExecutionClaimRequest,
+    db: Database,
+) -> StreamExecutionBinding:
+    try:
+        async with db.session_context(begin_transaction=True) as session:
+            return await claim_execution(session, db, request)
+    except NativeStreamError as error:
+        raise _stream_http_error(error) from error
+
+
+@router.post("/executions/takeover")
+async def takeover_stream_execution(
+    request: StreamExecutionTakeoverRequest,
+    db: Database,
+) -> StreamExecutionBinding:
+    try:
+        async with db.session_context(begin_transaction=True) as session:
+            return await takeover_execution(session, db, request)
+    except NativeStreamError as error:
+        raise _stream_http_error(error) from error
+
+
+@router.post("/executions/prepare-recovery")
+async def prepare_stream_recovery(
+    request: StreamRecoveryPrepareRequest,
+    db: Database,
+    execution: ExecutionCredentials,
+) -> StreamRecoveryResult:
+    try:
+        async with db.session_context(begin_transaction=True) as session:
+            return await prepare_recovery(session, db, request, execution)
+    except NativeStreamError as error:
+        raise _stream_http_error(error) from error
+
+
+@router.post("/executions/seal-manifest")
+async def seal_stream_manifest(
+    request: StreamManifestSealRequest,
+    db: Database,
+    execution: ExecutionCredentials,
+) -> StreamManifestSealResult:
+    try:
+        async with db.session_context(begin_transaction=True) as session:
+            return await seal_manifest(session, db, request, execution)
+    except NativeStreamError as error:
+        raise _stream_http_error(error) from error
+
+
 @router.post("/submissions/reserve")
 async def reserve_submission(
     request: StreamSubmissionReserveRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> StreamSubmissionManifest:
-    return await _call(NativeStreamStore(db).reserve_submission(request))
+    return await _call(NativeStreamStore(db, execution).reserve_submission(request))
 
 
 @router.post("/submissions/lookup")
@@ -91,9 +157,10 @@ async def lookup_submission(
 async def create_stream(
     request: StreamCreateRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> StreamInfo:
     return await _call(
-        NativeStreamStore(db).create(
+        NativeStreamStore(db, execution).create(
             request.flow_run_id,
             request.stream_id,
             limits=request.limits,
@@ -106,9 +173,10 @@ async def create_stream(
 async def reserve_output(
     request: StreamOutputReserveRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> StreamInfo:
     return await _call(
-        NativeStreamStore(db).reserve_output(
+        NativeStreamStore(db, execution).reserve_output(
             request.flow_run_id,
             request.stream_id,
             request.task_run_id,
@@ -122,9 +190,10 @@ async def reserve_output(
 async def reject_output(
     request: StreamOutputRejectRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> StreamInfo:
     return await _call(
-        NativeStreamStore(db).reject_reserved_output(
+        NativeStreamStore(db, execution).reject_reserved_output(
             request.flow_run_id,
             request.stream_id,
             request.task_run_id,
@@ -137,9 +206,10 @@ async def reject_output(
 async def fail_output(
     request: StreamOutputFailRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> StreamInfo:
     return await _call(
-        NativeStreamStore(db).fail_task_output(
+        NativeStreamStore(db, execution).fail_task_output(
             request.flow_run_id,
             request.stream_id,
             request.task_run_id,
@@ -153,9 +223,10 @@ async def fail_output(
 async def open_consumer(
     request: StreamConsumerOpenRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> ConsumerBinding:
     return await _call(
-        NativeStreamStore(db).open_consumer(
+        NativeStreamStore(db, execution).open_consumer(
             request.input_stream_id,
             request.output_stream_id,
             request.task_run_id,
@@ -171,17 +242,19 @@ async def open_consumer(
 async def read_consumer(
     request: StreamConsumerReadRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> StreamDelivery | None:
-    return await _call(NativeStreamStore(db).read(request.binding))
+    return await _call(NativeStreamStore(db, execution).read(request.binding))
 
 
 @router.post("/consumers/complete")
 async def complete_consumer(
     request: StreamConsumerCompleteRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> StreamCompletionResult:
     return await _call(
-        NativeStreamStore(db).complete(
+        NativeStreamStore(db, execution).complete(
             request.binding,
             request.token,
             request.kind,
@@ -195,17 +268,21 @@ async def complete_consumer(
 async def finish_consumer(
     request: StreamConsumerFinishRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> None:
-    await _call(NativeStreamStore(db).finish_consumer(request.binding, request.error))
+    await _call(
+        NativeStreamStore(db, execution).finish_consumer(request.binding, request.error)
+    )
 
 
 @router.post("/sources/claim")
 async def claim_source(
     request: StreamSourceClaimRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> SourceBinding:
     return await _call(
-        NativeStreamStore(db).claim_source(
+        NativeStreamStore(db, execution).claim_source(
             request.stream_id,
             request.task_run_id,
             request.owner_id,
@@ -218,9 +295,10 @@ async def claim_source(
 async def reserve_source(
     request: StreamSourceReserveRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> StreamInfo:
     return await _call(
-        NativeStreamStore(db).reserve_source(
+        NativeStreamStore(db, execution).reserve_source(
             request.flow_run_id,
             request.stream_id,
             request.task_run_id,
@@ -235,9 +313,10 @@ async def reserve_source(
 async def reject_source(
     request: StreamSourceRejectRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> StreamInfo:
     return await _call(
-        NativeStreamStore(db).reject_reserved_source(
+        NativeStreamStore(db, execution).reject_reserved_source(
             request.flow_run_id,
             request.stream_id,
             request.task_run_id,
@@ -250,9 +329,10 @@ async def reject_source(
 async def fail_source(
     request: StreamSourceFailRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> StreamInfo:
     return await _call(
-        NativeStreamStore(db).fail_task_source(
+        NativeStreamStore(db, execution).fail_task_source(
             request.flow_run_id,
             request.stream_id,
             request.task_run_id,
@@ -266,9 +346,10 @@ async def fail_source(
 async def open_source(
     request: StreamSourceOpenRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> SourceAdmission:
     return await _call(
-        NativeStreamStore(db).open_source(
+        NativeStreamStore(db, execution).open_source(
             request.stream_id,
             request.task_run_id,
             request.owner_id,
@@ -284,9 +365,12 @@ async def open_source(
 async def append_source(
     request: StreamSourceAppendRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> StreamEnvelope:
     return await _call(
-        NativeStreamStore(db).append(request.binding, request.position, request.value)
+        NativeStreamStore(db, execution).append(
+            request.binding, request.position, request.value
+        )
     )
 
 
@@ -294,17 +378,23 @@ async def append_source(
 async def finish_source(
     request: StreamSourceFinishRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> None:
-    await _call(NativeStreamStore(db).finish_source(request.binding, request.error))
+    await _call(
+        NativeStreamStore(db, execution).finish_source(request.binding, request.error)
+    )
 
 
 @router.post("/sources/close", status_code=status.HTTP_204_NO_CONTENT)
 async def close_source(
     request: StreamSourceCloseRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> None:
     await _call(
-        NativeStreamStore(db).close_source(request.binding, request.expected_position)
+        NativeStreamStore(db, execution).close_source(
+            request.binding, request.expected_position
+        )
     )
 
 
@@ -312,8 +402,11 @@ async def close_source(
 async def release_streams(
     request: StreamReleaseRequest,
     db: Database,
+    execution: ExecutionCredentials,
 ) -> StreamReleaseResult:
-    released = await _call(NativeStreamStore(db).release_flow(request.flow_run_id))
+    released = await _call(
+        NativeStreamStore(db, execution).release_flow(request.flow_run_id)
+    )
     return StreamReleaseResult(released=released)
 
 

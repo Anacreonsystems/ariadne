@@ -26,7 +26,16 @@ import prefect.server.schemas as schemas
 from prefect._internal.compatibility.starlette import status
 from prefect.logging import get_logger
 from prefect.server.api.run_history import run_history
+from prefect.server.api.stream_execution_dependencies import (
+    execution_credentials,
+    execution_http_error,
+)
 from prefect.server.database import PrefectDBInterface, provide_database_interface
+from prefect.server.models.stream_executions import (
+    guard_task_creation,
+    guard_task_lifecycle,
+)
+from prefect.server.models.streams import NativeStreamError
 from prefect.server.orchestration import dependencies as orchestration_dependencies
 from prefect.server.orchestration.core_policy import CoreTaskPolicy
 from prefect.server.orchestration.policies import TaskRunOrchestrationPolicy
@@ -34,6 +43,7 @@ from prefect.server.schemas.responses import (
     OrchestrationResult,
     TaskRunPaginationResponse,
 )
+from prefect.server.schemas.streams import StreamExecutionCredentials
 from prefect.server.task_queue import MultiQueue, TaskQueue
 from prefect.server.utilities import subscriptions
 from prefect.server.utilities.server import PrefectRouter
@@ -56,6 +66,7 @@ async def create_task_run(
     orchestration_parameters: Dict[str, Any] = Depends(
         orchestration_dependencies.provide_task_orchestration_parameters
     ),
+    execution: StreamExecutionCredentials | None = Depends(execution_credentials),
 ) -> schemas.core.TaskRun:
     """
     Create a task run. If a task run with the same flow_run_id,
@@ -67,6 +78,7 @@ async def create_task_run(
     For more information, see https://docs.prefect.io/v3/concepts/tasks.
     """
     # hydrate the input model into a full task run / state model
+    flow_run_id = task_run.flow_run_id
     task_run_dict = task_run.model_dump()
     if not task_run_dict.get("id"):
         task_run_dict.pop("id", None)
@@ -78,11 +90,15 @@ async def create_task_run(
     right_now = now("UTC")
 
     async with db.session_context(begin_transaction=True) as session:
-        model = await models.task_runs.create_task_run(
-            session=session,
-            task_run=task_run,
-            orchestration_parameters=orchestration_parameters,
-        )
+        try:
+            await guard_task_creation(session, db, flow_run_id, execution)
+            model = await models.task_runs.create_task_run(
+                session=session,
+                task_run=task_run,
+                orchestration_parameters=orchestration_parameters,
+            )
+        except NativeStreamError as error:
+            raise execution_http_error(error) from error
 
     if model.created >= right_now:
         response.status_code = status.HTTP_201_CREATED
@@ -97,14 +113,26 @@ async def update_task_run(
     task_run: schemas.actions.TaskRunUpdate,
     task_run_id: UUID = Path(..., description="The task run id", alias="id"),
     db: PrefectDBInterface = Depends(provide_database_interface),
+    execution: StreamExecutionCredentials | None = Depends(execution_credentials),
 ) -> None:
     """
     Updates a task run.
     """
     async with db.session_context(begin_transaction=True) as session:
-        result = await models.task_runs.update_task_run(
-            session=session, task_run=task_run, task_run_id=task_run_id
-        )
+        try:
+            await guard_task_lifecycle(
+                session,
+                db,
+                task_run_id,
+                execution,
+                None,
+                force=False,
+            )
+            result = await models.task_runs.update_task_run(
+                session=session, task_run=task_run, task_run_id=task_run_id
+            )
+        except NativeStreamError as error:
+            raise execution_http_error(error) from error
     if not result:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Task run not found")
 
@@ -325,6 +353,7 @@ async def set_task_run_state(
     orchestration_parameters: Dict[str, Any] = Depends(
         orchestration_dependencies.provide_task_orchestration_parameters
     ),
+    execution: StreamExecutionCredentials | None = Depends(execution_credentials),
 ) -> OrchestrationResult:
     """Set a task run state, invoking any orchestration rules."""
 
@@ -334,16 +363,26 @@ async def set_task_run_state(
     async with db.session_context(
         begin_transaction=True, with_for_update=True
     ) as session:
-        orchestration_result = await models.task_runs.set_task_run_state(
-            session=session,
-            task_run_id=task_run_id,
-            state=schemas.states.State.model_validate(
-                state
-            ),  # convert to a full State object
-            force=force,
-            task_policy=CoreTaskPolicy,
-            orchestration_parameters=orchestration_parameters,
-        )
+        try:
+            proposed_state = schemas.states.State.model_validate(state)
+            await guard_task_lifecycle(
+                session,
+                db,
+                task_run_id,
+                execution,
+                proposed_state,
+                force=force,
+            )
+            orchestration_result = await models.task_runs.set_task_run_state(
+                session=session,
+                task_run_id=task_run_id,
+                state=proposed_state,
+                force=force,
+                task_policy=CoreTaskPolicy,
+                orchestration_parameters=orchestration_parameters,
+            )
+        except NativeStreamError as error:
+            raise execution_http_error(error) from error
 
     # set the 201 if a new state was created
     if orchestration_result.state and orchestration_result.state.timestamp >= right_now:

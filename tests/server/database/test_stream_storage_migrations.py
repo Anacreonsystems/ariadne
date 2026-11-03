@@ -12,6 +12,7 @@ from prefect.server.database.alembic_commands import (
     alembic_upgrade,
 )
 from prefect.server.database.interface import PrefectDBInterface
+from prefect.types._datetime import now
 from prefect.utilities.asyncutils import run_sync_in_worker_thread
 
 pytestmark = [pytest.mark.service("database"), pytest.mark.clear_db]
@@ -22,6 +23,8 @@ STREAM_TABLES = {
     "stream_consumer",
     "stream_completion",
     "stream_submission",
+    "stream_execution_authority",
+    "stream_execution_attempt",
 }
 
 
@@ -42,10 +45,25 @@ async def test_native_stream_storage_upgrade_and_downgrade(
     await database_engine.dispose()
     try:
         await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+        assert {
+            "stream_execution_authority",
+            "stream_execution_attempt",
+        }.isdisjoint(await _table_names(database_engine))
+        assert (
+            STREAM_TABLES - {"stream_execution_authority", "stream_execution_attempt"}
+        ) <= await _table_names(database_engine)
+
+        await database_engine.dispose()
+        await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
         assert "stream_submission" not in await _table_names(database_engine)
-        assert (STREAM_TABLES - {"stream_submission"}) <= await _table_names(
-            database_engine
-        )
+        assert (
+            STREAM_TABLES
+            - {
+                "stream_submission",
+                "stream_execution_authority",
+                "stream_execution_attempt",
+            }
+        ) <= await _table_names(database_engine)
 
         await database_engine.dispose()
         await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
@@ -69,6 +87,8 @@ async def test_native_stream_storage_schema_matches_orm(
         db.StreamConsumer,
         db.StreamCompletion,
         db.StreamSubmission,
+        db.StreamExecutionAuthority,
+        db.StreamExecutionAttempt,
     ):
         table = cast(sa.Table, model.__table__)
         orm_tables[table.name] = table
@@ -87,6 +107,108 @@ async def test_native_stream_storage_schema_matches_orm(
         assert actual["unique_constraints"] == _orm_unique_constraints(orm_table)
         assert actual["check_constraints"] == _orm_check_constraints(orm_table)
         assert actual["foreign_keys"] == _orm_foreign_keys(orm_table)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"manifest_set_digest": "0" * 64},
+        {
+            "manifest_set_digest": "0" * 64,
+            "manifest_count": 1,
+            "manifest_sealed_at": now("UTC"),
+        },
+        {
+            "manifest_count": 1,
+            "manifest_sealed_at": now("UTC"),
+            "manifest_seal_operation_id": uuid.uuid4(),
+            "manifest_seal_request_digest": "1" * 64,
+        },
+        {
+            "manifest_set_digest": "0" * 64,
+            "manifest_sealed_at": now("UTC"),
+            "manifest_seal_operation_id": uuid.uuid4(),
+            "manifest_seal_request_digest": "1" * 64,
+        },
+        {
+            "manifest_set_digest": "0" * 64,
+            "manifest_count": 1,
+            "manifest_sealed_at": now("UTC"),
+            "manifest_seal_operation_id": uuid.uuid4(),
+        },
+        {"generation": 65},
+        {"prepared_generation": -1},
+        {"prepared_generation": 2},
+    ],
+)
+async def test_stream_execution_authority_schema_rejects_partial_seal_and_horizon(
+    db: PrefectDBInterface,
+    session,
+    flow_run,
+    mutation: dict[str, object],
+):
+    values: dict[str, object] = {
+        "flow_run_id": flow_run.id,
+        "generation": 1,
+        "prepared_generation": 0,
+        "holder_id": uuid.uuid4(),
+        "holder_capability_digest": "0" * 64,
+        "holder_event_public_key": "1" * 64,
+        "event_key_id": "2" * 64,
+        "supervisor_id": uuid.uuid4(),
+        "supervisor_capability_digest": "3" * 64,
+        "state": "CLAIMED",
+        "flow_run_run_count": 0,
+    }
+    values.update(mutation)
+    session.add(db.StreamExecutionAuthority(**values))
+    with pytest.raises(IntegrityError):
+        await session.flush()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"generation": 65},
+        {"previous_generation": 1},
+        {"kind": "TAKEOVER"},
+        {"state": "FORGED"},
+        {"recovery_operation_id": uuid.uuid4()},
+        {
+            "recovery_operation_id": uuid.uuid4(),
+            "recovery_outcome": {"state": "prepared"},
+            "recovery_outcome_digest": "4" * 64,
+        },
+        {
+            "recovery_operation_id": uuid.uuid4(),
+            "recovery_request_digest": "4" * 64,
+            "recovery_outcome": {"state": "prepared"},
+        },
+    ],
+)
+async def test_stream_execution_attempt_schema_rejects_invalid_witness_shapes(
+    db: PrefectDBInterface,
+    session,
+    flow_run,
+    mutation: dict[str, object],
+):
+    values: dict[str, object] = {
+        "flow_run_id": flow_run.id,
+        "generation": 1,
+        "operation_id": uuid.uuid4(),
+        "kind": "CLAIM",
+        "request_digest": "0" * 64,
+        "outcome_digest": "1" * 64,
+        "holder_id": uuid.uuid4(),
+        "holder_event_public_key": "2" * 64,
+        "event_key_id": "3" * 64,
+        "state": "CLAIMED",
+        "flow_run_run_count": 0,
+    }
+    values.update(mutation)
+    session.add(db.StreamExecutionAttempt(**values))
+    with pytest.raises(IntegrityError):
+        await session.flush()
 
 
 @pytest.mark.parametrize(

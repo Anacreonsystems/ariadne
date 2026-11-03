@@ -48,6 +48,17 @@ REQUEST_SCHEMA_NAMES = (
 )
 
 PUBLIC_WIRE_SCHEMA_NAMES = (
+    "StreamExecutionCredentials",
+    "StreamExecutionDeathWitness",
+    "StreamExecutionClaimRequest",
+    "StreamExecutionTakeoverRequest",
+    "StreamExecutionBinding",
+    "StreamManifestWitness",
+    "StreamManifestSealRequest",
+    "StreamManifestSealResult",
+    "StreamRecoveryPrepareRequest",
+    "StreamRecoveryItem",
+    "StreamRecoveryResult",
     "StreamSubmissionManifest",
     "StreamLimits",
     "SourceBinding",
@@ -63,6 +74,10 @@ PUBLIC_WIRE_SCHEMA_NAMES = (
 )
 
 PUBLIC_STREAM_METHODS = (
+    "claim_stream_execution",
+    "takeover_stream_execution",
+    "seal_stream_manifest",
+    "prepare_stream_recovery",
     "reserve_stream_submission",
     "read_stream_submission",
     "create_stream",

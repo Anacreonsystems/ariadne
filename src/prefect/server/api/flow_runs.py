@@ -33,6 +33,10 @@ import prefect.server.schemas as schemas
 from prefect._internal.compatibility.starlette import status
 from prefect.logging import get_logger
 from prefect.server.api.run_history import run_history
+from prefect.server.api.stream_execution_dependencies import (
+    execution_credentials,
+    execution_http_error,
+)
 from prefect.server.api.validation import validate_job_variables_for_deployment_flow_run
 from prefect.server.api.workers import WorkerLookups
 from prefect.server.database import PrefectDBInterface, provide_database_interface
@@ -41,6 +45,11 @@ from prefect.server.models.flow_runs import (
     DependencyResult,
     read_flow_run_graph,
 )
+from prefect.server.models.stream_executions import (
+    apply_flow_lifecycle_result,
+    guard_flow_lifecycle,
+)
+from prefect.server.models.streams import NativeStreamError
 from prefect.server.orchestration import dependencies as orchestration_dependencies
 from prefect.server.orchestration.policies import (
     FlowRunOrchestrationPolicy,
@@ -54,6 +63,7 @@ from prefect.server.schemas.responses import (
     FlowRunPaginationResponse,
     OrchestrationResult,
 )
+from prefect.server.schemas.streams import StreamExecutionCredentials
 from prefect.server.services.cancellation_cleanup import (
     maybe_schedule_cancelling_timeout_check_for_state,
 )
@@ -446,6 +456,7 @@ async def resume_flow_run(
     ),
     api_version: str = Depends(dependencies.provide_request_api_version),
     client_version: Optional[str] = Depends(dependencies.get_prefect_client_version),
+    execution: StreamExecutionCredentials | None = Depends(execution_credentials),
 ) -> OrchestrationResult:
     """
     Resume a paused flow run.
@@ -533,26 +544,35 @@ async def resume_flow_run(
                     ),
                 )
 
+        proposed_state: schemas.states.State
         if state.state_details.pause_reschedule:
-            orchestration_result = await models.flow_runs.set_flow_run_state(
-                session=session,
-                flow_run_id=flow_run_id,
-                state=schemas.states.Scheduled(
-                    name="Resuming", scheduled_time=now("UTC")
-                ),
-                flow_policy=flow_policy,
-                orchestration_parameters=orchestration_parameters,
-                client_version=client_version,
+            proposed_state = schemas.states.Scheduled(
+                name="Resuming", scheduled_time=now("UTC")
             )
         else:
+            proposed_state = schemas.states.Running()
+        try:
+            authority = await guard_flow_lifecycle(
+                session,
+                db,
+                flow_run_id,
+                execution,
+                proposed_state,
+                force=False,
+            )
             orchestration_result = await models.flow_runs.set_flow_run_state(
                 session=session,
                 flow_run_id=flow_run_id,
-                state=schemas.states.Running(),
+                state=proposed_state,
                 flow_policy=flow_policy,
                 orchestration_parameters=orchestration_parameters,
                 client_version=client_version,
             )
+            await apply_flow_lifecycle_result(
+                session, db, authority, orchestration_result.state
+            )
+        except NativeStreamError as error:
+            raise execution_http_error(error) from error
 
         if (
             keyset
@@ -746,6 +766,7 @@ async def bulk_set_flow_run_state(
     ),
     api_version: str = Depends(dependencies.provide_request_api_version),
     client_version: Optional[str] = Depends(dependencies.get_prefect_client_version),
+    execution: StreamExecutionCredentials | None = Depends(execution_credentials),
 ) -> FlowRunBulkSetStateResponse:
     """
     Bulk set state for flow runs matching the specified filter criteria.
@@ -774,14 +795,26 @@ async def bulk_set_flow_run_state(
             begin_transaction=True, with_for_update=True
         ) as session:
             try:
+                proposed_state = schemas.states.State.model_validate(state)
+                authority = await guard_flow_lifecycle(
+                    session,
+                    db,
+                    flow_run.id,
+                    execution,
+                    proposed_state,
+                    force=force,
+                )
                 orchestration_result = await models.flow_runs.set_flow_run_state(
                     session=session,
                     flow_run_id=flow_run.id,
-                    state=schemas.states.State.model_validate(state),
+                    state=proposed_state,
                     force=force,
                     flow_policy=flow_policy,
                     orchestration_parameters=orchestration_parameters,
                     client_version=client_version,
+                )
+                await apply_flow_lifecycle_result(
+                    session, db, authority, orchestration_result.state
                 )
                 results.append(
                     FlowRunOrchestrationResult(
@@ -839,6 +872,7 @@ async def set_flow_run_state(
     ),
     api_version: str = Depends(dependencies.provide_request_api_version),
     client_version: Optional[str] = Depends(dependencies.get_prefect_client_version),
+    execution: StreamExecutionCredentials | None = Depends(execution_credentials),
 ) -> OrchestrationResult:
     """Set a flow run state, invoking any orchestration rules."""
 
@@ -847,20 +881,34 @@ async def set_flow_run_state(
 
     right_now = now("UTC")
 
+    proposed_state = schemas.states.State.model_validate(state)
     # create the state
     async with db.session_context(
         begin_transaction=True, with_for_update=True
     ) as session:
-        orchestration_result = await models.flow_runs.set_flow_run_state(
-            session=session,
-            flow_run_id=flow_run_id,
-            # convert to a full State object
-            state=schemas.states.State.model_validate(state),
-            force=force,
-            flow_policy=flow_policy,
-            orchestration_parameters=orchestration_parameters,
-            client_version=client_version,
-        )
+        try:
+            authority = await guard_flow_lifecycle(
+                session,
+                db,
+                flow_run_id,
+                execution,
+                proposed_state,
+                force=force,
+            )
+            orchestration_result = await models.flow_runs.set_flow_run_state(
+                session=session,
+                flow_run_id=flow_run_id,
+                state=proposed_state,
+                force=force,
+                flow_policy=flow_policy,
+                orchestration_parameters=orchestration_parameters,
+                client_version=client_version,
+            )
+            await apply_flow_lifecycle_result(
+                session, db, authority, orchestration_result.state
+            )
+        except NativeStreamError as error:
+            raise execution_http_error(error) from error
 
     if orchestration_result.status == schemas.responses.SetStateStatus.ACCEPT:
         await _maybe_schedule_cancelling_timeout_check_for_state(

@@ -19,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from prefect._internal.uuid7 import uuid7
 from prefect.server.database import PrefectDBInterface, orm_models
 from prefect.server.models import task_runs as task_run_models
+from prefect.server.models._stream_errors import NativeStreamError
+from prefect.server.models.stream_executions import require_execution
 from prefect.server.schemas import core
 from prefect.server.schemas.states import TERMINAL_STATES, StateType
 from prefect.server.schemas.streams import (
@@ -29,6 +31,7 @@ from prefect.server.schemas.streams import (
     StreamCompletionResult,
     StreamDelivery,
     StreamEnvelope,
+    StreamExecutionCredentials,
     StreamInfo,
     StreamLimits,
     StreamSubmissionLookupRequest,
@@ -43,14 +46,6 @@ MAX_SUBMISSION_BYTES_PER_FLOW = 1024 * 1024
 MAX_SUBMISSION_CANONICAL_BYTES = 64 * 1024
 MAX_SUBMISSION_PARAMETER_BYTES = 32 * 1024
 _JSON_VALUE = TypeAdapter(JsonValue)
-
-
-class NativeStreamError(RuntimeError):
-    """A named storage refusal; HTTP mapping belongs to the transport layer."""
-
-    def __init__(self, code: str, message: str) -> None:
-        self.code = code
-        super().__init__(message)
 
 
 def _canonical(value: Any, maximum: int = 65_536) -> tuple[JsonValue, bytes, str]:
@@ -106,8 +101,13 @@ def _finish(stream: orm_models.StreamPartition, error: str | None) -> None:
 class NativeStreamStore:
     """PostgreSQL 17 storage authority, reconstructed from native platform tables."""
 
-    def __init__(self, db: PrefectDBInterface) -> None:
+    def __init__(
+        self,
+        db: PrefectDBInterface,
+        execution: StreamExecutionCredentials | None = None,
+    ) -> None:
         self.db = db
+        self.execution = execution
 
     @asynccontextmanager
     async def _session(self) -> AsyncGenerator[AsyncSession, None]:
@@ -131,6 +131,64 @@ class NativeStreamStore:
         if stream is None:
             raise NativeStreamError("NOT_FOUND", "Unknown stream")
         return stream
+
+    async def _flow(
+        self,
+        session: AsyncSession,
+        flow_run_id: UUID,
+        *,
+        update: bool = False,
+        allowed_execution_states: Iterable[str] = ("ACTIVE",),
+        require_manifest_sealed: bool = False,
+    ) -> orm_models.FlowRun:
+        query = sa.select(self.db.FlowRun).where(self.db.FlowRun.id == flow_run_id)
+        query = query.with_for_update() if update else query.with_for_update(read=True)
+        flow = await session.scalar(query)
+        if flow is None:
+            raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+        execution_states = tuple(allowed_execution_states)
+        validation_states = (
+            ("CLAIMED", "ACTIVE", "RECOVERING", "TERMINAL", "RELEASED")
+            if require_manifest_sealed
+            else execution_states
+        )
+        authority = await require_execution(
+            session,
+            self.db,
+            flow_run_id,
+            self.execution,
+            allowed_states=validation_states,
+        )
+        if (
+            authority is not None
+            and authority.state == "RELEASED"
+            and "RELEASED" not in execution_states
+        ):
+            raise NativeStreamError(
+                "RECOVERY_HORIZON_EXPIRED", "Execution generation was released"
+            )
+        if (
+            require_manifest_sealed
+            and authority is not None
+            and authority.manifest_set_digest is None
+        ):
+            raise NativeStreamError(
+                "MANIFEST_NOT_SEALED",
+                "Native execution cannot admit work before its manifest is sealed",
+            )
+        if (
+            require_manifest_sealed
+            and authority is not None
+            and authority.prepared_generation != authority.generation
+        ):
+            raise NativeStreamError(
+                "RECOVERY_NOT_READY", "Execution generation is not prepared"
+            )
+        if authority is not None and authority.state not in execution_states:
+            raise NativeStreamError(
+                "RECOVERY_NOT_READY", "Execution generation is not active"
+            )
+        return flow
 
     async def _streams(
         self, session: AsyncSession, stream_ids: Iterable[UUID]
@@ -163,6 +221,7 @@ class NativeStreamStore:
         allow_failed: bool = False,
         metadata_lag: bool = False,
     ) -> orm_models.TaskRun:
+        await self._flow(session, flow_id, require_manifest_sealed=True)
         task = await session.scalar(
             sa.select(self.db.TaskRun)
             .where(self.db.TaskRun.id == task_id)
@@ -180,6 +239,19 @@ class NativeStreamStore:
             raise NativeStreamError(
                 "IDENTITY_CONFLICT", "TaskRun must exist in the stream's FlowRun"
             )
+        if self.execution is not None:
+            manifest = await session.scalar(
+                sa.select(self.db.StreamSubmission.id).where(
+                    self.db.StreamSubmission.flow_run_id == flow_id,
+                    self.db.StreamSubmission.task_run_id == task_id,
+                    self.db.StreamSubmission.state == "ACTIVE",
+                )
+            )
+            if manifest is None:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "Enrolled TaskRun is outside the sealed manifest",
+                )
         if metadata_lag:
             if task.state_type in TERMINAL_STATES or task.run_count > attempt:
                 raise NativeStreamError(
@@ -395,13 +467,12 @@ class NativeStreamStore:
             tags,
         ) = self._submission_material(request)
         async with self._session() as session:
-            flow = await session.scalar(
-                sa.select(self.db.FlowRun)
-                .where(self.db.FlowRun.id == request.flow_run_id)
-                .with_for_update()
+            flow = await self._flow(
+                session,
+                request.flow_run_id,
+                update=True,
+                allowed_execution_states=("CLAIMED", "ACTIVE", "RECOVERING"),
             )
-            if flow is None:
-                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
             if (
                 flow.flow_version != request.flow_version
                 or flow.deployment_id != request.deployment_id
@@ -441,6 +512,21 @@ class NativeStreamStore:
                         "Existing execution requires the N1.5 recovery fence",
                     )
                 return self._submission_response(existing)
+
+            authority = await session.scalar(
+                sa.select(self.db.StreamExecutionAuthority).where(
+                    self.db.StreamExecutionAuthority.flow_run_id == request.flow_run_id
+                )
+            )
+            if authority is not None and authority.manifest_set_digest is not None:
+                raise NativeStreamError(
+                    "MANIFEST_SEALED", "No submissions may be added after manifest seal"
+                )
+            if authority is not None and authority.state == "RECOVERING":
+                raise NativeStreamError(
+                    "MANIFEST_NOT_SEALED",
+                    "An incomplete manifest cannot be extended after takeover",
+                )
 
             if flow.state_type in TERMINAL_STATES:
                 raise NativeStreamError(
@@ -664,13 +750,17 @@ class NativeStreamStore:
             )
         limits = limits or StreamLimits()
         async with self._session() as session:
-            flow = await session.scalar(
-                sa.select(self.db.FlowRun)
-                .where(self.db.FlowRun.id == flow_run_id)
-                .with_for_update()
+            flow = await self._flow(
+                session,
+                flow_run_id,
+                update=True,
+                allowed_execution_states=("CLAIMED", "ACTIVE"),
             )
-            if flow is None:
-                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+            if self.execution is not None:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "Enrolled executions require task-bound manifest streams",
+                )
             stream = await session.get(self.db.StreamPartition, stream_id)
             if stream is not None:
                 if stream.released:
@@ -723,13 +813,13 @@ class NativeStreamStore:
             )
         limits = limits or StreamLimits()
         async with self._session() as session:
-            flow = await session.scalar(
-                sa.select(self.db.FlowRun)
-                .where(self.db.FlowRun.id == flow_run_id)
-                .with_for_update()
+            flow = await self._flow(
+                session,
+                flow_run_id,
+                update=True,
+                allowed_execution_states=("CLAIMED", "ACTIVE"),
+                require_manifest_sealed=self.execution is not None,
             )
-            if flow is None:
-                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
             task = await session.scalar(
                 sa.select(self.db.TaskRun)
                 .where(self.db.TaskRun.id == task_run_id)
@@ -743,6 +833,22 @@ class NativeStreamStore:
                 raise NativeStreamError(
                     "IDENTITY_CONFLICT", "TaskRun must belong to the output FlowRun"
                 )
+            if self.execution is not None:
+                manifest = await session.scalar(
+                    sa.select(self.db.StreamSubmission).where(
+                        self.db.StreamSubmission.flow_run_id == flow_run_id,
+                        self.db.StreamSubmission.task_run_id == task_run_id,
+                        self.db.StreamSubmission.stream_id == stream_id,
+                        self.db.StreamSubmission.state == "ACTIVE",
+                    )
+                )
+                if manifest is None or manifest.role != (
+                    "SOURCE" if producer_kind == "SOURCE" else "OPERATOR"
+                ):
+                    raise NativeStreamError(
+                        "IDENTITY_CONFLICT",
+                        "Task stream is outside the sealed manifest",
+                    )
             stream = await session.scalar(
                 sa.select(self.db.StreamPartition)
                 .where(self.db.StreamPartition.id == stream_id)
@@ -847,13 +953,13 @@ class NativeStreamStore:
     ) -> StreamInfo:
         """Fail an exact task stream reservation without an admitted owner."""
         async with self._session() as session:
-            flow = await session.scalar(
-                sa.select(self.db.FlowRun)
-                .where(self.db.FlowRun.id == flow_run_id)
-                .with_for_update()
+            await self._flow(
+                session,
+                flow_run_id,
+                update=True,
+                allowed_execution_states=("CLAIMED", "ACTIVE"),
+                require_manifest_sealed=self.execution is not None,
             )
-            if flow is None:
-                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
             stream = await session.scalar(
                 sa.select(self.db.StreamPartition)
                 .where(self.db.StreamPartition.id == stream_id)
@@ -873,6 +979,20 @@ class NativeStreamStore:
                 raise NativeStreamError(
                     "IDENTITY_CONFLICT", "Task stream reservation does not match"
                 )
+            if self.execution is not None:
+                manifest = await session.scalar(
+                    sa.select(self.db.StreamSubmission.id).where(
+                        self.db.StreamSubmission.flow_run_id == flow_run_id,
+                        self.db.StreamSubmission.task_run_id == task_run_id,
+                        self.db.StreamSubmission.stream_id == stream_id,
+                        self.db.StreamSubmission.state == "ACTIVE",
+                    )
+                )
+                if manifest is None:
+                    raise NativeStreamError(
+                        "IDENTITY_CONFLICT",
+                        "Task stream is outside the sealed manifest",
+                    )
             has_consumer = await session.scalar(
                 sa.select(
                     sa.exists().where(
@@ -944,13 +1064,6 @@ class NativeStreamStore:
         """Fail a task stream using its exact terminal lifecycle witness."""
         _attempt(attempt)
         async with self._session() as session:
-            flow = await session.scalar(
-                sa.select(self.db.FlowRun)
-                .where(self.db.FlowRun.id == flow_run_id)
-                .with_for_update(read=True)
-            )
-            if flow is None:
-                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
             task = await self._task(
                 session,
                 task_run_id,
@@ -1070,13 +1183,9 @@ class NativeStreamStore:
             raise NativeStreamError("PROTOCOL_ERROR", "Unsupported source protocol")
         async with self._session() as session:
             peek = await self._peek(session, stream_id)
-            flow = await session.scalar(
-                sa.select(self.db.FlowRun)
-                .where(self.db.FlowRun.id == peek.flow_run_id)
-                .with_for_update(read=True)
+            flow = await self._flow(
+                session, peek.flow_run_id, require_manifest_sealed=True
             )
-            if flow is None:
-                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
             await self._task(
                 session,
                 task_run_id,
@@ -1187,13 +1296,9 @@ class NativeStreamStore:
             # An inserted consumer takes an implicit FK lock on its FlowRun.
             # Acquire the parent before children to avoid reversing release's
             # FlowRun -> stream order; SHARE also fences terminal transitions.
-            flow = await session.scalar(
-                sa.select(self.db.FlowRun)
-                .where(self.db.FlowRun.id == peek.flow_run_id)
-                .with_for_update(read=True)
+            flow = await self._flow(
+                session, peek.flow_run_id, require_manifest_sealed=True
             )
-            if flow is None:
-                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
             await self._task(
                 session,
                 task_run_id,
@@ -1541,13 +1646,12 @@ class NativeStreamStore:
 
     async def release_flow(self, flow_run_id: UUID) -> int:
         async with self._session() as session:
-            flow = await session.scalar(
-                sa.select(self.db.FlowRun)
-                .where(self.db.FlowRun.id == flow_run_id)
-                .with_for_update()
+            flow = await self._flow(
+                session,
+                flow_run_id,
+                update=True,
+                allowed_execution_states=("TERMINAL", "RELEASED"),
             )
-            if flow is None:
-                raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
             if flow.state_type not in TERMINAL_STATES:
                 raise NativeStreamError(
                     "TERMINAL_CONFLICT", "Only a final FlowRun can release payloads"
@@ -1602,4 +1706,11 @@ class NativeStreamStore:
                 if manifest.state == "ACTIVE":
                     manifest.state = "RELEASED"
                     manifest.released_at = released_at
+            authority = await session.scalar(
+                sa.select(self.db.StreamExecutionAuthority)
+                .where(self.db.StreamExecutionAuthority.flow_run_id == flow_run_id)
+                .with_for_update()
+            )
+            if authority is not None:
+                authority.state = "RELEASED"
         return count

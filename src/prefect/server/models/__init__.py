@@ -16,6 +16,7 @@ from . import (
     logs,
     saved_searches,
     storage_defaults,
+    stream_executions,
     task_run_states,
     task_runs,
     task_workers,

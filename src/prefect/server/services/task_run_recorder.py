@@ -12,6 +12,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import prefect.types._datetime
+from prefect._internal.stream_event_auth import (
+    canonical_event_witness,
+    verify_task_event,
+)
 from prefect.logging import get_logger
 from prefect.server.database import (
     PrefectDBInterface,
@@ -19,7 +23,7 @@ from prefect.server.database import (
     provide_database_interface,
 )
 from prefect.server.events.schemas.events import ReceivedEvent
-from prefect.server.schemas.core import TaskRun
+from prefect.server.schemas.core import TaskRun, TaskRunPolicy
 from prefect.server.schemas.states import State
 from prefect.server.services.base import RunInEphemeralServers, Service
 from prefect.server.utilities.database import get_max_query_parameters
@@ -45,6 +49,255 @@ if TYPE_CHECKING:
 logger: "logging.Logger" = get_logger(__name__)
 
 DEFAULT_PERSIST_MAX_RETRIES = 5
+
+_NATIVE_RESERVED_TASK_PAYLOAD_KEYS = frozenset(
+    {
+        "id",
+        "created",
+        "updated",
+        "flow_run_id",
+        "state_id",
+        "state_type",
+        "state_name",
+        "state",
+    }
+)
+_NATIVE_RESERVED_STATE_PAYLOAD_KEYS = frozenset({"id", "timestamp"})
+
+
+async def _authorized_stream_events(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    events: list[ReceivedEvent],
+) -> tuple[list[ReceivedEvent], set[UUID]]:
+    """Fence enrolled task events under the same locks as their upsert."""
+
+    event_scope: list[tuple[ReceivedEvent, UUID | None, UUID]] = []
+    flow_ids: set[UUID] = set()
+    task_ids: set[UUID] = set()
+    for event in events:
+        task_id = event.resource.prefect_object_id("prefect.task-run")
+        flow_id = None
+        if flow_resource := event.resource_in_role.get("flow-run"):
+            flow_id = flow_resource.prefect_object_id("prefect.flow-run")
+            flow_ids.add(flow_id)
+        event_scope.append((event, flow_id, task_id))
+        task_ids.add(task_id)
+
+    manifests = {
+        row.task_run_id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamSubmission).where(
+                    db.StreamSubmission.task_run_id.in_(task_ids),
+                    db.StreamSubmission.state == "ACTIVE",
+                )
+            )
+        ).all()
+    }
+    task_flow_ids = dict(
+        (
+            await session.execute(
+                sa.select(db.TaskRun.id, db.TaskRun.flow_run_id).where(
+                    db.TaskRun.id.in_(task_ids)
+                )
+            )
+        ).all()
+    )
+    flow_ids.update(row.flow_run_id for row in manifests.values())
+    flow_ids.update(
+        flow_run_id for flow_run_id in task_flow_ids.values() if flow_run_id is not None
+    )
+    if not flow_ids:
+        return events, set()
+
+    await session.execute(
+        sa.select(db.FlowRun.id)
+        .where(db.FlowRun.id.in_(flow_ids))
+        .order_by(db.FlowRun.id)
+        .with_for_update(read=True)
+    )
+    authorities = {
+        row.flow_run_id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamExecutionAuthority)
+                .where(db.StreamExecutionAuthority.flow_run_id.in_(flow_ids))
+                .order_by(db.StreamExecutionAuthority.flow_run_id)
+                .with_for_update(read=True)
+            )
+        ).all()
+    }
+    if not authorities:
+        return events, set()
+    locked_tasks = {
+        row.id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.TaskRun)
+                .where(db.TaskRun.id.in_(task_ids))
+                .order_by(db.TaskRun.id)
+                .with_for_update()
+            )
+        ).all()
+    }
+    outputs = {
+        row.id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamPartition)
+                .where(
+                    db.StreamPartition.id.in_(
+                        [manifest.stream_id for manifest in manifests.values()]
+                    )
+                )
+                .order_by(db.StreamPartition.id)
+                .with_for_update(read=True)
+            )
+        ).all()
+    }
+
+    decisions: dict[int, bool] = {}
+    candidates: dict[UUID, list[tuple[ReceivedEvent, int, str]]] = {}
+    native_task_ids: set[UUID] = set()
+    for event, flow_id, task_id in event_scope:
+        manifest = manifests.get(task_id)
+        authoritative_flow_id = (
+            manifest.flow_run_id
+            if manifest is not None
+            else task_flow_ids.get(task_id, flow_id)
+        )
+        authority = authorities.get(authoritative_flow_id)
+        if authority is None:
+            decisions[id(event)] = True
+            continue
+        native_task_ids.add(task_id)
+        try:
+            if flow_id != authoritative_flow_id:
+                raise ValueError("task event FlowRun identity drift")
+            generation = int(event.resource["prefect.stream-execution-generation"])
+            holder_id = UUID(event.resource["prefect.stream-execution-holder"])
+            manifest_digest = event.resource["prefect.stream-submission-digest"]
+            key_id = event.resource["prefect.stream-event-key-id"]
+            signature = event.resource["prefect.stream-event-signature"]
+            run_count = int(event.resource["prefect.run-count"])
+            task_run_payload = event.payload["task_run"]
+            validated_state = event.payload["validated_state"]
+            if not isinstance(task_run_payload, dict) or not isinstance(
+                validated_state, dict
+            ):
+                raise ValueError("native event payload is not an object")
+            if _NATIVE_RESERVED_TASK_PAYLOAD_KEYS.intersection(task_run_payload):
+                raise ValueError("native event carries reserved TaskRun fields")
+            if _NATIVE_RESERVED_STATE_PAYLOAD_KEYS.intersection(validated_state):
+                raise ValueError("native event carries reserved State fields")
+            state_type = validated_state.get("type")
+            payload_run_count = task_run_payload.get("run_count")
+            flow_run_run_count = task_run_payload.get("flow_run_run_count")
+            payload_tags = task_run_payload.get("tags")
+            if not isinstance(payload_tags, list) or not all(
+                isinstance(tag, str) for tag in payload_tags
+            ):
+                raise ValueError("native event tags are not a string list")
+            normalized_tags = sorted(set(payload_tags))
+            event_policy = TaskRunPolicy.model_validate(
+                task_run_payload.get("empirical_policy")
+            ).model_dump(mode="json")
+            manifest_policy = TaskRunPolicy.model_validate(
+                manifest.task_policy if manifest is not None else None
+            ).model_dump(mode="json")
+            if (
+                (
+                    authority.state != "ACTIVE"
+                    and not (
+                        authority.state == "TERMINAL" and state_type == "COMPLETED"
+                    )
+                )
+                or generation != authority.generation
+                or holder_id != authority.holder_id
+                or key_id != authority.event_key_id
+                or authority.manifest_set_digest is None
+                or authority.prepared_generation != authority.generation
+                or manifest is None
+                or manifest.flow_run_id != authoritative_flow_id
+                or manifest.manifest_digest != manifest_digest
+                or task_run_payload.get("task_key") != manifest.task_key
+                or task_run_payload.get("dynamic_key") != manifest.dynamic_key
+                or task_run_payload.get("task_version") != manifest.task_version
+                or normalized_tags != manifest.tags
+                or event_policy != manifest_policy
+                or type(payload_run_count) is not int
+                or payload_run_count != run_count
+                or type(flow_run_run_count) is not int
+                or flow_run_run_count != authority.flow_run_run_count
+            ):
+                raise ValueError("stale execution event")
+            if state_type == "COMPLETED":
+                output = outputs.get(manifest.stream_id)
+                if (
+                    output is None
+                    or output.state != "COMPLETED"
+                    or output.producer_task_run_id != task_id
+                    or output.attempt != run_count
+                ):
+                    raise ValueError("TaskRun completed before durable stream EOF")
+            witness = canonical_event_witness(
+                event_id=event.id,
+                event=event.event,
+                occurred=event.occurred,
+                flow_run_id=authoritative_flow_id,
+                task_run_id=task_id,
+                generation=generation,
+                holder_id=holder_id,
+                manifest_digest=manifest_digest,
+                run_count=run_count,
+                task_run=task_run_payload,
+                validated_state=validated_state,
+            )
+            if not verify_task_event(
+                bytes.fromhex(authority.holder_event_public_key), witness, signature
+            ):
+                raise ValueError("invalid execution event signature")
+            candidates.setdefault(task_id, []).append((event, run_count, state_type))
+        except (KeyError, TypeError, ValueError):
+            decisions[id(event)] = False
+            logger.warning(
+                "Discarding fenced native TaskRun event %s for flow %s",
+                event.id,
+                authoritative_flow_id,
+            )
+
+    for task_id, task_events in candidates.items():
+        task = locked_tasks.get(task_id)
+        if task is None:
+            for event, _, _ in task_events:
+                decisions[id(event)] = False
+            continue
+        current_run_count = task.run_count
+        retry_limit = task.empirical_policy.retries or 0
+        maximum_run_count = retry_limit + 1
+        for event, run_count, state_type in sorted(
+            task_events, key=lambda item: (item[1], item[0].occurred, item[0].id)
+        ):
+            if run_count > maximum_run_count or run_count < current_run_count:
+                decisions[id(event)] = False
+            elif run_count == current_run_count:
+                decisions[id(event)] = True
+            elif run_count == current_run_count + 1 and state_type == "RUNNING":
+                current_run_count = run_count
+                decisions[id(event)] = True
+            else:
+                decisions[id(event)] = False
+            if not decisions[id(event)]:
+                logger.warning(
+                    "Discarding stale native TaskRun attempt event %s for task %s",
+                    event.id,
+                    task_id,
+                )
+
+    return [
+        event for event in events if decisions.get(id(event), False)
+    ], native_task_ids
 
 
 def _task_run_upsert_key(task_run: TaskRun) -> TaskRunUpsertKey:
@@ -368,9 +621,26 @@ async def record_bulk_task_run_events(events: list[ReceivedEvent]) -> None:
 
 
 async def _record_bulk_task_run_events(events: list[ReceivedEvent]) -> None:
-    if len(events) == 0:
+    if not events:
         return
+    db = provide_database_interface()
+    async with db.session_context() as session:
+        authorized, native_task_ids = await _authorized_stream_events(
+            session, db, events
+        )
+        if not authorized:
+            return
+        await _record_bulk_task_run_events_in_session(
+            authorized, db, session, native_task_ids
+        )
 
+
+async def _record_bulk_task_run_events_in_session(
+    events: list[ReceivedEvent],
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    native_task_ids: set[UUID],
+) -> None:
     now = prefect.types._datetime.now("UTC")
 
     all_task_runs = [
@@ -382,7 +652,12 @@ async def _record_bulk_task_run_events(events: list[ReceivedEvent]) -> None:
     # Drop duplicate task run rows, keep the one with the latest state_timestamp.
     # A single bulk flush can contain events that collide on either id or natural
     # key, so coalesce connected conflicts before choosing the ON CONFLICT target.
-    all_task_runs.sort(key=lambda tr: tr.task_run.state.timestamp)
+    all_task_runs.sort(
+        key=lambda tr: (
+            tr.task_run.run_count if tr.task_run.id in native_task_ids else 0,
+            tr.task_run.state.timestamp,
+        )
+    )
     parent: dict[TaskRunUpsertKey, TaskRunUpsertKey] = {}
 
     def find(key: TaskRunUpsertKey) -> TaskRunUpsertKey:
@@ -422,8 +697,6 @@ async def _record_bulk_task_run_events(events: list[ReceivedEvent]) -> None:
         key=lambda tr: tr.upsert_key,
     )
 
-    db = provide_database_interface()
-
     task_run_ids: list[UUID] = []
     natural_keys: list[tuple[UUID, str, str]] = []
     for conflict_keys in conflict_keys_by_group.values():
@@ -433,185 +706,179 @@ async def _record_bulk_task_run_events(events: list[ReceivedEvent]) -> None:
             else:
                 natural_keys.append((conflict_key[1], conflict_key[2], conflict_key[3]))
 
-    async with db.session_context() as session:
-        existing_task_run_ids: set[UUID] = set()
-        existing_natural_keys: set[tuple[UUID, str, str]] = set()
-        existing_task_run_ids_by_key: dict[TaskRunUpsertKey, UUID] = {}
-        if task_run_ids or natural_keys:
-            conditions = []
-            if task_run_ids:
-                conditions.append(db.TaskRun.id.in_(task_run_ids))
-            if natural_keys:
-                conditions.append(
+    existing_task_run_ids: set[UUID] = set()
+    existing_natural_keys: set[tuple[UUID, str, str]] = set()
+    existing_task_run_ids_by_key: dict[TaskRunUpsertKey, UUID] = {}
+    if task_run_ids or natural_keys:
+        conditions = []
+        if task_run_ids:
+            conditions.append(db.TaskRun.id.in_(task_run_ids))
+        if natural_keys:
+            conditions.append(
+                sa.tuple_(
+                    db.TaskRun.flow_run_id,
+                    db.TaskRun.task_key,
+                    db.TaskRun.dynamic_key,
+                ).in_(natural_keys)
+            )
+        result = await session.execute(
+            sa.select(
+                db.TaskRun.id,
+                db.TaskRun.flow_run_id,
+                db.TaskRun.task_key,
+                db.TaskRun.dynamic_key,
+            ).where(sa.or_(*conditions))
+        )
+        for task_run_id, flow_run_id, task_key, dynamic_key in result.all():
+            existing_task_run_ids.add(task_run_id)
+            existing_task_run_ids_by_key[("id", task_run_id)] = task_run_id
+            if flow_run_id is not None:
+                existing_natural_keys.add((flow_run_id, task_key, dynamic_key))
+                existing_task_run_ids_by_key[
+                    ("natural-key", flow_run_id, task_key, dynamic_key)
+                ] = task_run_id
+
+    def conflict_target(tr: _TaskRunRecord) -> str:
+        task_run = tr.task_run
+        natural_key = (
+            task_run.flow_run_id,
+            task_run.task_key,
+            task_run.dynamic_key,
+        )
+        if task_run.flow_run_id is not None and natural_key in existing_natural_keys:
+            return "natural-key"
+        if task_run.id in existing_task_run_ids:
+            return "id"
+        for conflict_key in sorted(conflict_keys_by_group[tr.conflict_group], key=str):
+            if conflict_key in existing_task_run_ids_by_key:
+                tr.rewrite_id(existing_task_run_ids_by_key[conflict_key])
+                return "id"
+        if task_run.flow_run_id is not None:
+            return "natural-key"
+        return "id"
+
+    for tr in unique_task_runs:
+        tr.resolve_conflict_target(conflict_target(tr))
+
+    fillable = _fillable_columns(db)
+    # Sized on how many columns the table has, not how many keys the rows
+    # carry: SQLAlchemy renders a bind parameter for every column with a
+    # Python-side default, whether the row supplies it or not.
+    max_rows = get_max_query_parameters() // len(db.TaskRun.__table__.columns)
+    segments = _segment_task_runs_for_upsert(unique_task_runs, fillable, max_rows)
+
+    logger.debug(
+        "Partitioned %s task runs into %s upsert statement(s)",
+        len(unique_task_runs),
+        len(segments),
+    )
+
+    canonical_task_run_ids: dict[TaskRunUpsertKey, UUID] = {}
+    supports_insertmanyvalues = db.dialect.name == "postgresql"
+
+    for segment in segments:
+        update_cols = (segment.columns | {"updated"}) - {"id", "created"}
+        # sorted so the column order does not vary with the hash seed, which
+        # keeps the generated SQL text stable
+        insert_cols = sorted(segment.columns)
+
+        # Execution-time parameter sets must share a column list, so give every
+        # row the same keys.
+        to_insert = [
+            {column: tr.task_run_dict.get(column) for column in insert_cols}
+            | {"created": now, "updated": now}
+            for tr in segment.rows
+        ]
+        use_insertmanyvalues = supports_insertmanyvalues and len(to_insert) > 1
+
+        insert_statement = db.queries.insert(db.TaskRun)
+        if not use_insertmanyvalues:
+            insert_statement = insert_statement.values(to_insert)
+        index_elements = (
+            db.orm.task_run_unique_upsert_columns
+            if segment.conflict_target == "natural-key"
+            else ["id"]
+        )
+        # See https://www.postgresql.org/docs/current/sql-insert.html for details on excluded.
+        # Idea is excluded.x references the proposed insertion value for column x.
+        # `coalesce` undoes the NULL fills, and applies to exactly the columns
+        # that were filled. A column every row supplied keeps a plain
+        # `excluded.col`, so a row asking to write a real NULL still writes one.
+        upsert_statement = insert_statement.on_conflict_do_update(
+            index_elements=index_elements,
+            set_={
+                col.name: (
+                    sa.func.coalesce(
+                        getattr(insert_statement.excluded, col.name),
+                        getattr(db.TaskRun, col.name),
+                    )
+                    if col.name in segment.null_filled
+                    else getattr(insert_statement.excluded, col.name)
+                )
+                for col in insert_statement.excluded
+                if col.name in update_cols
+            },
+            where=db.TaskRun.state_timestamp
+            < insert_statement.excluded.state_timestamp,
+        )
+        if use_insertmanyvalues:
+            # asyncpg uses insertmanyvalues for execution-time parameters only
+            # when RETURNING is present. Return the ids and discard them. Core
+            # DML keeps the explicit NULL values used by the upsert semantics.
+            upsert_statement = upsert_statement.returning(
+                db.TaskRun.id
+            ).execution_options(dml_strategy="raw")
+            result = await session.execute(upsert_statement, to_insert)
+            result.close()
+        else:
+            # SQLite versions before 3.35 do not support RETURNING. Keep the
+            # existing multi-row statement for supported older versions.
+            await session.execute(upsert_statement)
+
+        if segment.conflict_target == "natural-key":
+            segment_natural_keys = [
+                (
+                    tr.task_run.flow_run_id,
+                    tr.task_run.task_key,
+                    tr.task_run.dynamic_key,
+                )
+                for tr in segment.rows
+            ]
+            result = await session.execute(
+                sa.select(
+                    db.TaskRun.flow_run_id,
+                    db.TaskRun.task_key,
+                    db.TaskRun.dynamic_key,
+                    db.TaskRun.id,
+                ).where(
                     sa.tuple_(
                         db.TaskRun.flow_run_id,
                         db.TaskRun.task_key,
                         db.TaskRun.dynamic_key,
-                    ).in_(natural_keys)
+                    ).in_(segment_natural_keys)
                 )
-            result = await session.execute(
-                sa.select(
-                    db.TaskRun.id,
-                    db.TaskRun.flow_run_id,
-                    db.TaskRun.task_key,
-                    db.TaskRun.dynamic_key,
-                ).where(sa.or_(*conditions))
             )
-            for task_run_id, flow_run_id, task_key, dynamic_key in result.all():
-                existing_task_run_ids.add(task_run_id)
-                existing_task_run_ids_by_key[("id", task_run_id)] = task_run_id
-                if flow_run_id is not None:
-                    existing_natural_keys.add((flow_run_id, task_key, dynamic_key))
-                    existing_task_run_ids_by_key[
-                        ("natural-key", flow_run_id, task_key, dynamic_key)
-                    ] = task_run_id
+            for flow_run_id, task_key, dynamic_key, task_run_id in result.all():
+                canonical_task_run_ids[
+                    ("natural-key", flow_run_id, task_key, dynamic_key)
+                ] = task_run_id
+        else:
+            for tr in segment.rows:
+                canonical_task_run_ids[tr.upsert_key] = tr.task_run.id
 
-        def conflict_target(tr: _TaskRunRecord) -> str:
-            task_run = tr.task_run
-            natural_key = (
-                task_run.flow_run_id,
-                task_run.task_key,
-                task_run.dynamic_key,
-            )
-            if (
-                task_run.flow_run_id is not None
-                and natural_key in existing_natural_keys
-            ):
-                return "natural-key"
-            if task_run.id in existing_task_run_ids:
-                return "id"
-            for conflict_key in sorted(
-                conflict_keys_by_group[tr.conflict_group], key=str
-            ):
-                if conflict_key in existing_task_run_ids_by_key:
-                    tr.rewrite_id(existing_task_run_ids_by_key[conflict_key])
-                    return "id"
-            if task_run.flow_run_id is not None:
-                return "natural-key"
-            return "id"
+    for alias_key, canonical_key in upsert_key_aliases.items():
+        canonical_task_run_ids[alias_key] = canonical_task_run_ids[canonical_key]
 
-        for tr in unique_task_runs:
-            tr.resolve_conflict_target(conflict_target(tr))
+    for tr in all_task_runs:
+        task_run = tr.task_run
+        canonical_task_run_id = canonical_task_run_ids[tr.upsert_key]
+        task_run.id = canonical_task_run_id
+        if task_run.state is not None:
+            task_run.state.state_details.task_run_id = canonical_task_run_id
 
-        fillable = _fillable_columns(db)
-        # Sized on how many columns the table has, not how many keys the rows
-        # carry: SQLAlchemy renders a bind parameter for every column with a
-        # Python-side default, whether the row supplies it or not.
-        max_rows = get_max_query_parameters() // len(db.TaskRun.__table__.columns)
-        segments = _segment_task_runs_for_upsert(unique_task_runs, fillable, max_rows)
-
-        logger.debug(
-            "Partitioned %s task runs into %s upsert statement(s)",
-            len(unique_task_runs),
-            len(segments),
-        )
-
-        canonical_task_run_ids: dict[TaskRunUpsertKey, UUID] = {}
-        supports_insertmanyvalues = db.dialect.name == "postgresql"
-
-        for segment in segments:
-            update_cols = (segment.columns | {"updated"}) - {"id", "created"}
-            # sorted so the column order does not vary with the hash seed, which
-            # keeps the generated SQL text stable
-            insert_cols = sorted(segment.columns)
-
-            # Execution-time parameter sets must share a column list, so give every
-            # row the same keys.
-            to_insert = [
-                {column: tr.task_run_dict.get(column) for column in insert_cols}
-                | {"created": now, "updated": now}
-                for tr in segment.rows
-            ]
-            use_insertmanyvalues = supports_insertmanyvalues and len(to_insert) > 1
-
-            insert_statement = db.queries.insert(db.TaskRun)
-            if not use_insertmanyvalues:
-                insert_statement = insert_statement.values(to_insert)
-            index_elements = (
-                db.orm.task_run_unique_upsert_columns
-                if segment.conflict_target == "natural-key"
-                else ["id"]
-            )
-            # See https://www.postgresql.org/docs/current/sql-insert.html for details on excluded.
-            # Idea is excluded.x references the proposed insertion value for column x.
-            # `coalesce` undoes the NULL fills, and applies to exactly the columns
-            # that were filled. A column every row supplied keeps a plain
-            # `excluded.col`, so a row asking to write a real NULL still writes one.
-            upsert_statement = insert_statement.on_conflict_do_update(
-                index_elements=index_elements,
-                set_={
-                    col.name: (
-                        sa.func.coalesce(
-                            getattr(insert_statement.excluded, col.name),
-                            getattr(db.TaskRun, col.name),
-                        )
-                        if col.name in segment.null_filled
-                        else getattr(insert_statement.excluded, col.name)
-                    )
-                    for col in insert_statement.excluded
-                    if col.name in update_cols
-                },
-                where=db.TaskRun.state_timestamp
-                < insert_statement.excluded.state_timestamp,
-            )
-            if use_insertmanyvalues:
-                # asyncpg uses insertmanyvalues for execution-time parameters only
-                # when RETURNING is present. Return the ids and discard them. Core
-                # DML keeps the explicit NULL values used by the upsert semantics.
-                upsert_statement = upsert_statement.returning(
-                    db.TaskRun.id
-                ).execution_options(dml_strategy="raw")
-                result = await session.execute(upsert_statement, to_insert)
-                result.close()
-            else:
-                # SQLite versions before 3.35 do not support RETURNING. Keep the
-                # existing multi-row statement for supported older versions.
-                await session.execute(upsert_statement)
-
-            if segment.conflict_target == "natural-key":
-                segment_natural_keys = [
-                    (
-                        tr.task_run.flow_run_id,
-                        tr.task_run.task_key,
-                        tr.task_run.dynamic_key,
-                    )
-                    for tr in segment.rows
-                ]
-                result = await session.execute(
-                    sa.select(
-                        db.TaskRun.flow_run_id,
-                        db.TaskRun.task_key,
-                        db.TaskRun.dynamic_key,
-                        db.TaskRun.id,
-                    ).where(
-                        sa.tuple_(
-                            db.TaskRun.flow_run_id,
-                            db.TaskRun.task_key,
-                            db.TaskRun.dynamic_key,
-                        ).in_(segment_natural_keys)
-                    )
-                )
-                for flow_run_id, task_key, dynamic_key, task_run_id in result.all():
-                    canonical_task_run_ids[
-                        ("natural-key", flow_run_id, task_key, dynamic_key)
-                    ] = task_run_id
-            else:
-                for tr in segment.rows:
-                    canonical_task_run_ids[tr.upsert_key] = tr.task_run.id
-
-        for alias_key, canonical_key in upsert_key_aliases.items():
-            canonical_task_run_ids[alias_key] = canonical_task_run_ids[canonical_key]
-
-        for tr in all_task_runs:
-            task_run = tr.task_run
-            canonical_task_run_id = canonical_task_run_ids[tr.upsert_key]
-            task_run.id = canonical_task_run_id
-            if task_run.state is not None:
-                task_run.state.state_details.task_run_id = canonical_task_run_id
-
-        # Insert all task run states - we only coalesce task run updates, not states
-        await _insert_task_run_states(session, [tr.task_run for tr in all_task_runs])
-        await session.commit()
+    # Insert all task run states - we only coalesce task run updates, not states
+    await _insert_task_run_states(session, [tr.task_run for tr in all_task_runs])
+    await session.commit()
 
 
 class RetryableEvent(BaseModel):
