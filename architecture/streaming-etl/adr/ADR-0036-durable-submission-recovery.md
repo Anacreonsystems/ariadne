@@ -513,6 +513,33 @@ initial source inspection showed why lookup was not yet possible:
 Those observations support the problem statement only. They do not validate a
 manifest schema, takeover rule or lifecycle transition.
 
+## Hosted compatibility successor
+
+The initial hosted revision `1371763` exposed a relocation fixture assumption
+on Python 3.14.10. The test changed both debug location and source literal order.
+CPython 3.14 retains a different unused constant for those different sources,
+even when executable instructions agree. The structural v1 witness binds the
+compiled constant table; arbitrary source-rewrite equivalence is outside this
+contract. Unchanged-source identity across real hash-seeded processes passes.
+
+The [hosted finding and compiler counterexample](../evidence/native-stage5c-hosted-findings-2026-11-03.json)
+retain the failed CI log and local 3.14 reproduction. The corrected relocation
+fixture keeps literal order identical and explicitly asserts different filename
+and first line. The existing three-seed subprocess control retains hash/frozenset
+order coverage, with semantic mutation, specialization and refusal controls.
+Runtime code, v1 digests and manifest compatibility remain unchanged.
+
+[Python 3.12](../evidence/native-stage5c-identity-python312-2026-11-03.json) and
+[Python 3.14](../evidence/native-stage5c-identity-python314-2026-11-03.json)
+focused successors pass seven cases each. Each records the exact one-file test
+delta and all 68 unchanged witnessed files. Historical fourteen-profile evidence
+continues to describe its original 69-file snapshot; it is not relabelled as a
+new-head run. [Independent compatibility review](../evidence/native-stage5c-identity-principal-2026-11-03.json)
+checks this evidence bridge. The [initial hosted PostgreSQL job](../evidence/native-stage5c-native-hosted-initial-2026-11-03.json)
+separately passes 375 native/contract cases on the initial revision, including
+the 221-case SDK/HTTP/process/package step. That job does not replace the
+corrected test head's CI. Earned bounded foundation readiness remains 50%.
+
 ## Failure modes
 
 - A random new TaskRun or stream after process loss duplicates a logical
