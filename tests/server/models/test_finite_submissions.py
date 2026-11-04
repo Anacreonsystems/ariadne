@@ -1,12 +1,12 @@
 """Bounded finite Task authority for mixed native stream executions."""
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
 
 from prefect.server import models, schemas
-from prefect.server.database import PrefectDBInterface
+from prefect.server.database import PrefectDBInterface, orm_models
 from prefect.server.models.finite_submissions import NativeFiniteStore
 from prefect.server.models.stream_executions import (
     apply_flow_lifecycle_result,
@@ -54,7 +54,7 @@ async def postgres_17(db: PrefectDBInterface) -> None:
     await _require_postgres_17(db)
 
 
-def _claim(flow_run_id):
+def _claim(flow_run_id: UUID) -> StreamExecutionClaimRequest:
     return StreamExecutionClaimRequest(
         flow_run_id=flow_run_id,
         operation_id=uuid4(),
@@ -74,7 +74,7 @@ def _credentials(request: StreamExecutionClaimRequest) -> StreamExecutionCredent
     )
 
 
-def _prefix(flow_run_id) -> StreamFiniteReserveRequest:
+def _prefix(flow_run_id: UUID) -> StreamFiniteReserveRequest:
     return StreamFiniteReserveRequest(
         flow_run_id=flow_run_id,
         phase="PREFIX",
@@ -89,7 +89,9 @@ def _prefix(flow_run_id) -> StreamFiniteReserveRequest:
     )
 
 
-async def _claimed_running_flow(db, flow_run):
+async def _claimed_running_flow(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+) -> tuple[StreamExecutionClaimRequest, StreamExecutionCredentials]:
     async with db.session_context(begin_transaction=True) as session:
         row = await session.get(db.FlowRun, flow_run.id)
         row.flow_version = "flow-v1"
@@ -123,7 +125,11 @@ async def _claimed_running_flow(db, flow_run):
     return claim, credentials
 
 
-async def _set_task_running(db, task_run_id, credentials) -> None:
+async def _set_task_running(
+    db: PrefectDBInterface,
+    task_run_id: UUID,
+    credentials: StreamExecutionCredentials,
+) -> None:
     async with db.session_context(begin_transaction=True) as session:
         await guard_task_lifecycle(
             session,
@@ -142,7 +148,11 @@ async def _set_task_running(db, task_run_id, credentials) -> None:
         assert result.state is not None and result.state.is_running()
 
 
-async def _set_task_completed(db, task_run_id, credentials) -> None:
+async def _set_task_completed(
+    db: PrefectDBInterface,
+    task_run_id: UUID,
+    credentials: StreamExecutionCredentials,
+) -> None:
     async with db.session_context(begin_transaction=True) as session:
         await guard_task_lifecycle(
             session,
@@ -161,7 +171,9 @@ async def _set_task_completed(db, task_run_id, credentials) -> None:
         assert result.state is not None and result.state.is_completed()
 
 
-async def test_prefix_reserve_and_null_receipt_are_exact_and_immutable(db, flow_run):
+async def test_prefix_reserve_and_null_receipt_are_exact_and_immutable(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+):
     _, credentials = await _claimed_running_flow(db, flow_run)
     store = NativeFiniteStore(db, credentials)
     request = _prefix(flow_run.id)
@@ -218,7 +230,9 @@ async def test_prefix_reserve_and_null_receipt_are_exact_and_immutable(db, flow_
     assert corrupted.value.code == "IDENTITY_CONFLICT"
 
 
-async def test_prefix_only_takeover_prepares_same_task_retry(db, flow_run):
+async def test_prefix_only_takeover_prepares_same_task_retry(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+):
     claim, credentials = await _claimed_running_flow(db, flow_run)
     prefix = await NativeFiniteStore(db, credentials).reserve(_prefix(flow_run.id))
     await _set_task_running(db, prefix.task_run_id, credentials)
@@ -288,7 +302,7 @@ async def test_prefix_only_takeover_prepares_same_task_retry(db, flow_run):
 
 
 async def test_prefix_only_recovery_refuses_exhausted_retry_without_mutation(
-    db, flow_run
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
 ):
     claim, credentials = await _claimed_running_flow(db, flow_run)
     prefix = await NativeFiniteStore(db, credentials).reserve(
@@ -365,7 +379,9 @@ async def test_prefix_only_recovery_refuses_exhausted_retry_without_mutation(
     assert authority is not None and authority.prepared_generation == 1
 
 
-async def test_tail_receipt_and_all_eof_allow_mixed_flow_completion(db, flow_run):
+async def test_tail_receipt_and_all_eof_allow_mixed_flow_completion(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+):
     _, credentials = await _claimed_running_flow(db, flow_run)
     finite = NativeFiniteStore(db, credentials)
     prefix = await finite.reserve(_prefix(flow_run.id))
@@ -469,7 +485,7 @@ async def test_tail_receipt_and_all_eof_allow_mixed_flow_completion(db, flow_run
 
 
 async def test_finite_payload_and_combined_manifest_quotas_fail_before_mutation(
-    db, flow_run
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
 ):
     _, credentials = await _claimed_running_flow(db, flow_run)
     finite = NativeFiniteStore(db, credentials)
@@ -521,7 +537,9 @@ async def test_finite_payload_and_combined_manifest_quotas_fail_before_mutation(
         )
 
 
-async def test_release_removes_result_and_retains_finite_horizon_witness(db, flow_run):
+async def test_release_removes_result_and_retains_finite_horizon_witness(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+):
     _, credentials = await _claimed_running_flow(db, flow_run)
     finite = NativeFiniteStore(db, credentials)
     prefix = await finite.reserve(_prefix(flow_run.id))

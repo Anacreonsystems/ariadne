@@ -5,8 +5,9 @@ from typing import cast
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from prefect.server.database import orm_models
 from prefect.server.database.alembic_commands import (
     alembic_downgrade,
     alembic_upgrade,
@@ -432,9 +433,9 @@ async def test_stream_submission_parameters_preserve_signed_zero(
 )
 async def test_finite_submission_schema_rejects_invalid_shapes(
     db: PrefectDBInterface,
-    session,
-    flow_run,
-    task_run,
+    session: AsyncSession,
+    flow_run: orm_models.FlowRun,
+    task_run: orm_models.TaskRun,
     mutation: dict[str, object],
     match: str,
 ):
@@ -476,9 +477,9 @@ async def test_finite_submission_schema_rejects_invalid_shapes(
 )
 async def test_finite_receipt_schema_rejects_invalid_shapes(
     db: PrefectDBInterface,
-    session,
-    flow_run,
-    task_run,
+    session: AsyncSession,
+    flow_run: orm_models.FlowRun,
+    task_run: orm_models.TaskRun,
     mutation: dict[str, object],
     match: str,
 ):
@@ -523,8 +524,8 @@ async def test_finite_receipt_schema_rejects_invalid_shapes(
 
 async def test_finite_json_preserves_null_and_signed_zero(
     db: PrefectDBInterface,
-    flow_run,
-    task_run,
+    flow_run: orm_models.FlowRun,
+    task_run: orm_models.TaskRun,
 ):
     async with db.session_context(begin_transaction=True) as session:
         manifest = db.StreamFiniteSubmission(

@@ -1,0 +1,60 @@
+"""Qualify retained functional evidence; replace the erroneous static approval."""
+from pathlib import Path
+from datetime import datetime, timezone
+import hashlib
+import json
+import xml.etree.ElementTree as ET
+
+root = Path('/workspace/ariadne')
+ev = root / 'architecture/streaming-etl/evidence'
+def read(name):
+    return json.loads((ev / name).read_text())
+def artifact(name):
+    return {'path': name, 'sha256': hashlib.sha256((ev / name).read_bytes()).hexdigest()}
+def verify(item):
+    assert artifact(item['path']) == item, item
+original = read('native-stage6a-acceptance-2026-11-04.json')
+bridge = read('native-stage6a-test-typing-bridge-v2-2026-11-04.json')
+static = read('native-stage6a-static-correction-2026-11-04.json')
+review = read('native-stage6a-corrected-principal-2026-11-04.json')
+baseline = original['source_sha256']
+current = bridge['source_qualification']['successor_source_sha256']
+assert baseline == bridge['source_qualification']['baseline_source_sha256']
+assert len(current) == len(baseline) == 76
+expected = {'src/prefect/server/models/finite_submissions.py', 'tests/server/models/test_finite_submissions.py', 'tests/server/database/test_stream_storage_migrations.py'}
+assert {p for p in current if current[p] != baseline[p]} == expected
+assert all(hashlib.sha256((root / p).read_bytes()).hexdigest() == h for p, h in current.items())
+assert static['verdict'] == 'PASS' and static['source_sha256_before'] == static['source_sha256_after'] == current
+for key, check in static['checks'].items():
+    verify(check['log'])
+    assert check['pass'] and check['exit_code'] == 0
+    if key == 'public-types':
+        assert not check['diagnostic_errors']
+        assert ' - error:' not in (ev / check['log']['path']).read_text()
+    else:
+        assert check['summary']['filesAnalyzed'] == 1308 and check['summary']['errorCount'] == 0
+for item in original['profiles'].values():
+    verify(item['ledger'])
+    ledger = read(item['ledger']['path'])
+    assert ledger['verdict'] == 'PASS' and ledger['source_sha256_before'] == ledger['source_sha256_after'] == baseline
+    for key in ('log', 'junit', 'expected_markers'):
+        verify(ledger[key])
+for profile in bridge['functional_profiles']:
+    assert profile['tests'] == profile['passed'] and not any(profile[k] for k in ('failure', 'error', 'skipped'))
+    verify(profile['log']); verify(profile['junit'])
+    suites = list(ET.parse(ev / profile['junit']['path']).getroot().iter('testsuite'))
+    assert sum(int(s.get('tests', 0)) for s in suites) == profile['tests']
+assert bridge['functional_totals']['passed'] == 92
+assert review['verdict'] == 'PASS_N1_6A_CORRECTED_SCOPED' and not review['conditions_remaining']
+assert review['source_sha256'] == current
+verify(review['static']); verify(review['annotation_bridge'])
+initial = read('native-stage6a-isolated-types-initial-2026-11-04.json')
+renamed = {}
+for key, check in initial['checks'].items():
+    name = f'native-stage6a-isolated-{key}-initial-2026-11-04.log'
+    a = artifact(name)
+    assert a['sha256'] == check['log']['sha256']
+    renamed[check['log']['path']] = a
+record = {'schema': 'native-stage6a-corrected-acceptance/v1', 'captured_at_utc': datetime.now(timezone.utc).isoformat(), 'verdict': 'PASS_N1_6A_CORRECTED_SCOPED', 'supersedes': 'Original static/public-type approval was incorrect. Historical raw logs and acceptance are retained unchanged. The successor is qualified by three annotation-only deltas, normalized executable-body AST review, 92 focused reruns and exit-aware whole CI/public-type checks. The 2519 original cases are not claimed as a rerun on successor source.', 'source_sha256': current, 'original_functional_acceptance': artifact('native-stage6a-acceptance-2026-11-04.json'), 'original_functional_totals': original['totals'], 'successor_focused_totals': bridge['functional_totals'], 'annotation_bridge': artifact('native-stage6a-test-typing-bridge-v2-2026-11-04.json'), 'static': artifact('native-stage6a-static-correction-2026-11-04.json'), 'principal': artifact('native-stage6a-corrected-principal-2026-11-04.json'), 'negative_findings': {'hosted_original_type_failure': artifact('native-stage6a-hosted-typecheck-initial-2026-11-04.log'), 'original_public_type_error': artifact('native-stage6a-type-completeness-2026-11-04.log'), 'isolated_no_dev_discovery': artifact('native-stage6a-isolated-types-initial-2026-11-04.json'), 'isolated_log_rename_map': renamed, 'isolated_qualification': 'Exploratory no-sync/no-dev environment lacked MkDocs/dev type dependencies, unlike the effective hosted uv run environment. It failed and is excluded. An environment sync occurred while its full analysis was running, so no trustworthy runtime/static acceptance is claimed from it.'}, 'earned_native_foundation_percent': 50, 'percentage_delta': 0, 'parent_adr_status': 'progress', 'slice_status': 'accepted', 'accepted_scope': original['accepted_scope'], 'not_claimed': original['not_claimed'], 'hosted_ci': 'Separate publication gate; completion is recorded by a subsequent hosted closure.'}
+(ev / 'native-stage6a-corrected-acceptance-2026-11-04.json').write_text(json.dumps(record, indent=2) + '\n')
+print(json.dumps({'verdict': record['verdict'], 'source_paths': len(current), 'original_functional_cases': original['totals']['tests'], 'successor_focused_passed': 92, 'earned_percent': 50}))

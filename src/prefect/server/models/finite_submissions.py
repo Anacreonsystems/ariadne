@@ -103,7 +103,7 @@ class NativeFiniteStore:
     ) -> None:
         self.db = db
         self.execution = execution
-        self.streams = NativeStreamStore(db, execution)
+        self.streams: NativeStreamStore = NativeStreamStore(db, execution)
 
     async def _existing_receipt(
         self, session: AsyncSession, submission_id: UUID

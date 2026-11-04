@@ -189,9 +189,13 @@ adapter. Normal task/flow/client/API/recorder and mapped lease-retention
 regressions pass. The kernel retains 21 known CPython resource-tracker diagnostics,
 matching Stage 4's count (versus 18 in N1.5c); no clean-teardown claim is made.
 
-The [static gate](../evidence/native-stage6a-static-2026-11-04.json) passes whole
-CI type analysis (1,308 files, zero errors, 138 baseline warnings), public type
-completeness 1.0, required hooks and Node 24.20 UI check/lint/build/323 API tests.
+The [original static gate](../evidence/native-stage6a-static-2026-11-04.json)
+records whole CI type analysis (1,308 files, zero errors, 138 baseline warnings),
+required hooks and Node 24.20 UI check/lint/build/323 API tests. Its public-type
+PASS was incorrect: the retained log contains a missing attribute annotation
+error even though the displayed completeness score rounds to 100%. The original
+static, Principal and acceptance records remain historical; their public-type
+qualification is superseded by the correction below.
 Paired revisions are PostgreSQL `e41c7b6d2a90` and SQLite `a12d8e4f6c30` under
 the [migration notes](../../../src/prefect/server/database/_migrations/MIGRATION-NOTES.md).
 The [finite store](../../../src/prefect/server/models/finite_submissions.py),
@@ -210,6 +214,29 @@ This closes N1.6a only: NI1-050…053 are done, parent ADR remains `progress`, a
 earned foundation stays 50% (+0%). Direct mixed finite Task execution and the
 four-TaskRun/two-channel 500-document matrix remain N1.6b. Existing SDK finite
 entrypoint refusals are intentionally retained until that integration passes.
+
+## Static acceptance correction
+
+The [hosted failure](../evidence/native-stage6a-hosted-typecheck-initial-2026-11-04.log)
+exposed the missing explicit type of `NativeFiniteStore.streams`. Reading the
+original local raw log confirmed the same error had already been present.
+Rounded type completeness alone is therefore rejected as an acceptance test:
+the process must exit zero and report no error diagnostics.
+
+The [annotation bridge](../evidence/native-stage6a-test-typing-bridge-v2-2026-11-04.json)
+records three annotation-only source changes, unchanged normalized executable
+bodies, 73 identical frozen paths, and 92 passing focused cases: six PostgreSQL
+model cases plus 43 migration cases on each dialect. Its conditional verdict
+does not grant static acceptance. Test parameter and helper return annotations
+also satisfy the test-suite Standards. No SDK admission rule changes.
+
+The [corrected static check](../evidence/native-stage6a-static-correction-2026-11-04.json)
+requires actual exit status and diagnostics. The
+[corrected acceptance](../evidence/native-stage6a-corrected-acceptance-2026-11-04.json)
+qualifies the original functional evidence through this explicit source bridge
+and supersedes the erroneous static approval. The original 2,519-case run is
+not relabelled as a full rerun of the successor source. Earned readiness stays
+50%, and this ADR stays `progress` until N1.6b passes.
 
 ## Consequences
 
