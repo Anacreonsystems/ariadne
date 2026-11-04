@@ -154,6 +154,7 @@ jobs:
               tests/test_subprocess_logging.py
               tests/test_stream_tasks.py
               tests/test_stream_sources.py
+              tests/test_stream_routing.py
               tests/test_native_source_recovery_http.py
               tests/test_native_submission_http.py
               tests/test_native_execution_http.py
@@ -247,6 +248,7 @@ jobs:
                 tests/test_subprocess_logging.py
                 tests/test_stream_tasks.py
                 tests/test_stream_sources.py
+                tests/test_stream_routing.py
                 tests/test_native_source_recovery_http.py
                 tests/test_native_submission_http.py
                 tests/test_native_execution_http.py
@@ -436,6 +438,62 @@ jobs:
         with:
           name: native-stream-tests-${{ strategy.job-index }}
           path: native-stream*.xml
+
+  run-stream-routing-tests:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    runs-on: ubuntu-latest
+    name: Native key routing - Python 3.11-3.14
+    timeout-minutes: 10
+    steps:
+      - *python-test-checkout
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install packages
+        run: uv sync --locked
+      - name: Make all supported Python minors discoverable
+        run: |
+          uv python install 3.11 3.12 3.13 3.14
+          for version in 3.11 3.12 3.13 3.14; do
+            executable=$(uv python find --managed-python --system "$version")
+            dirname "$executable" >> "$GITHUB_PATH"
+            "$executable" --version
+          done
+      - name: Run canonical key and cross-runtime routing tests
+        env:
+          PREFECT_HOME: ${{ runner.temp }}/native-stream-routing-home
+          PREFECT_SERVER_DATABASE_CONNECTION_URL: sqlite+aiosqlite:///${{ runner.temp }}/native-stream-routing.db
+        run: uv run pytest tests/test_stream_routing.py -q --junitxml=native-stream-routing.xml
+      - name: Require all 85 cases and all four runtime controls
+        run: |
+          uv run python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          cases = ET.parse("native-stream-routing.xml").findall(".//testcase")
+          assert len(cases) == 85, f"Expected 85 routing cases, got {len(cases)}"
+          assert all(case.get("classname") == "tests.test_stream_routing" for case in cases)
+          assert not any(case.find(tag) is not None for case in cases for tag in ("skipped", "failure", "error"))
+          names = {case.get("name") for case in cases}
+          assert len(names) == 85, "Routing cases were duplicated"
+          runtime_cases = {
+              name for name in names
+              if name.startswith("test_mapping_across_real_python_processes_and_hash_seeds[")
+          }
+          assert runtime_cases == {
+              f"test_mapping_across_real_python_processes_and_hash_seeds[python_version{index}]"
+              for index in range(4)
+          }, f"Incomplete Python 3.11-3.14 controls: {runtime_cases}"
+          print("85 routing cases passed; all four Python minors and 16 child processes executed")
+          PY
+      - name: Upload canonical routing test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-stream-routing-python-3.11-3.14
+          path: native-stream-routing.xml
+          if-no-files-found: error
 
   prepare-canonical-test-durations:
     if: ${{ github.event_name != 'repository_dispatch' }}

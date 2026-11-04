@@ -5,11 +5,12 @@ completion does not make an ADR `accepted`; evidence for every criterion in
 the declared ADR scope must be linked back to it.
 
 Current direction: [Native integration epoch 2](epochs/epoch-02-native-streaming-completion.md)
-is in architecture discussion under [ADR-0042](adr/ADR-0042-flink-informed-native-streaming-architecture.md)–[ADR-0048](adr/ADR-0048-rescaling-compatibility-and-native-acceptance.md).
-The original broader streaming ETL objective is unfinished. This cycle records
-the Flink comparison, review and standalone state-materialization experiment;
-it earns **zero new native capability completion**. New implementation tasks
-and weighted sprints will be sliced in the next planning cycle on command.
+implements the explicitly approved [ADR-0042](adr/ADR-0042-flink-informed-native-streaming-architecture.md)–[ADR-0048](adr/ADR-0048-rescaling-compatibility-and-native-acceptance.md)
+set. The user approved version `fae53c90aa3b44dbc45032833b4d193001e5c8bd`
+on 2026-11-04; the [approval record](evidence/flink-architecture-2026-11-04/epoch2-work-approval-2026-11-04.json)
+binds the decision bytes. The original broader objective remains unfinished,
+and earned epoch-2 native readiness remains **0%** until implementation gates
+pass.
 
 Historical foundation: [Native integration epoch 1](epochs/epoch-01-native-prefect.md)
 is `accepted`, with **100% earned native foundation readiness** for the selected scope. Its [first-stage contract](adr/ADR-0032-native-task-stream-contract.md)
@@ -45,6 +46,106 @@ historical short delivery or the new native implementation scale.
 Delivery states are separate from ADR statuses. Sizes assume `S` ≤ 2 engineer
 days, `M` = 3–4 days, and `L` ≈ one engineer week. `H` and `M` denote high and
 medium delivery risk.
+
+## Native epoch 2 — full implementation registry
+
+ADR-0042 is an extending umbrella, not a blocking dependency. Task dependency
+edges start at the completed ADR-0032–ADR-0040 foundation and proceed through
+ADR-0043–ADR-0048. Stable `Axx-yy` IDs refer to the unchanged criterion mapping
+appended to each approved ADR.
+
+### N2.1 — Fixed physical execution (`+15%`, earned `0%`)
+
+| ID | State | Depends | Size/risk | Deliverable and mapped criteria |
+| --- | --- | --- | --- | --- |
+| NI2-001 | `progress` | ADR-0032…0040, A43-01 | M/H | Immutable graph revision, logical operator and physical subtask/grant topology with paired migrations. Reuse existing StreamPartition/Record/Consumer/Completion and ordinary TaskRun; no second data plane. |
+| NI2-002 | `progress` | NI2-001 | M/H | Freeze reserve/seal/read-plan and subtask claim/register/renew/replacement server DTO/API with secret-free projection. A child gets only an exact subtask credential, never Basic/Flow-wide/admin authority. A43-01, A43-05, A43-07. |
+| NI2-003 | `progress` | NI2-001, NI2-002 | L/H | Extend existing append/read/complete/status, task-event and task-lease guards with graph/assignment/subtask/attempt authority. Scope the former one-source restriction only for `partitioned-fixed-v1`; preserve `bounded-linear-v1`. Reserve the runnable P2 region before any source starts. A43-03, A43-05, A43-08. |
+| NI2-004 | `done` | approved ADR-0043 | S/M | Internal `tagged-key-v1` exact codec/group mapping and cross-runtime/hash-seed golden controls; [independent component verification](evidence/flink-architecture-2026-11-04/ni2-004-principal-verification-2026-11-04.json) passed 85/85 without skips. No public wire, admission or readiness claim yet. A43-06, A43-10. |
+| NI2-005 | `planned` | NI2-002, NI2-003, NI2-004 | L/H | Thin source/operator subtask subprocess bootstrap over existing TaskRun engines and ProcessHandle/pidfd. P2 has A0/A1 source and B0/B1 operator TaskRuns, each with existing output partitions; one Flow lease and ordinary task/tag leases. A43-04, A43-05, A43-07, A43-08. |
+| NI2-006 | `planned` | NI2-001…005 | M/H | Real SDK/HTTP/PostgreSQL P2 gate: sync/async, 500/5000 inputs, B0 loss, healthy A0/A1/B1, 200/201 recovery, cross-subtask capability and slot-starvation controls, SQLite fail-closed, finite regressions, packaging and Principal execution. A42-01, A43-01, A43-03…08, A43-10. |
+
+### N2.2 — Branched DAG and durable exchanges (`+12%`)
+
+| ID | State | Depends | Size/risk | Deliverable and mapped criteria |
+| --- | --- | --- | --- | --- |
+| NI2-010 | `planned` | NI2-006 | M/H | Seal named typed ports, DAG revision and acyclic topology; reject cycles, duplicate subscribers and unsupported edges before user code. A43-02. |
+| NI2-011 | `planned` | NI2-010 | L/H | Materialize bounded forward/rebalance/broadcast/keyed routes in the existing terminal transaction, with independent edge partitions/cursors/pins. A43-03, A43-09. |
+| NI2-012 | `planned` | NI2-010, NI2-011 | M/H | SDK/client/worker graph bootstrap and fan-out while retaining ordinary Task definitions and constant metadata per fixed graph. A42-02, A43-02, A43-04. |
+| NI2-013 | `planned` | NI2-011, NI2-012 | M/H | Exact append/read retry and branch replacement with immutable route digest, different partition counts and no cross-branch acknowledgement. A43-03, A43-09. |
+| NI2-014 | `planned` | NI2-010…013 | M/H | Real branched native process gate and independent Principal verification on frozen source. A43-02, A43-03, A43-09. |
+
+### N2.3 — Multi-input, journaled state and correlated join (`+15%`)
+
+| ID | State | Depends | Size/risk | Deliverable and mapped criteria |
+| --- | --- | --- | --- | --- |
+| NI2-020 | `planned` | NI2-014 | L/H | Native state batches/postimages, stable logical receipt identity, derived materialization and fail-closed contiguous fold. A44-01, A44-02, A44-07. |
+| NI2-021 | `planned` | NI2-020 | L/H | Tagged multi-input mailbox/inbox, completion holes and one durable global apply order. A44-03, A44-06. |
+| NI2-022 | `planned` | NI2-020, NI2-021 | M/H | Versioned OUTPUT(value)/NO_OUTPUT with old epoch-1 state-only RETURN decoding unchanged. A44-08. |
+| NI2-023 | `planned` | NI2-021, NI2-022 | L/H | First one-to-one correlated keyed join with duplicate, unmatched, late and end policies plus bounded unmatched state. A42-02, A44-05. |
+| NI2-024 | `planned` | NI2-020, NI2-021 | L/H | Ordered barrier participant manifests, state/timer roots, immutable COMPLETE cuts and complete-only restore/GC authority. A44-06, A44-09. |
+| NI2-025 | `planned` | NI2-020…024 | M/H | Real SDK/HTTP/PostgreSQL/process join/state matrix and Principal verification, including 200/201 and no accepted-body replay. A42-03, A44-01…09. |
+
+### N2.4 — Continuous sources, event time and timers (`+13%`)
+
+| ID | State | Depends | Size/risk | Deliverable and mapped criteria |
+| --- | --- | --- | --- | --- |
+| NI2-030 | `planned` | NI2-025 | L/H | Durable source enumerator, split assignment, connector position/rewind/retention admission and native readers. A45-01, A45-03. |
+| NI2-031 | `planned` | NI2-030 | L/H | Ordered DATA/WATERMARK/IDLE/RESUME/EOF/DRAIN entries, read permits and exact append-intent reconciliation. A45-01, A45-07. |
+| NI2-032 | `planned` | NI2-030, NI2-031 | M/H | Atomic enumerator-frontier drain, all-split EOF and finite tail exactly once. A45-02, A45-06, A45-07. |
+| NI2-033 | `planned` | NI2-025, NI2-031 | M/H | Watermark minimum, idleness/reactivation, skew alignment and explicit late-input outcomes in the keyed join. A45-04, A45-06. |
+| NI2-034 | `planned` | NI2-020, NI2-033 | M/H | Journaled timer register/cancel/fire identities, overdue policy and no accepted callback replay. A45-05, A45-06. |
+| NI2-035 | `planned` | NI2-030…034 | M/H | Real continuous source/drain/event-time/timer process gate and independent Principal verification. A42-04, A45-01…07. |
+
+### N2.5 — Backpressure and online retention (`+12%`)
+
+| ID | State | Depends | Size/risk | Deliverable and mapped criteria |
+| --- | --- | --- | --- | --- |
+| NI2-040 | `planned` | NI2-014, NI2-025, NI2-035 | L/H | Full-turn reservation vectors for data/routes/state/join/timer/control with exact conversion/refund/reclamation and control headroom. A46-03, A46-08. |
+| NI2-041 | `planned` | NI2-040 | M/H | Durable fair capacity wait/notification and upstream pressure integrated with region/task/tag/global admission. A46-02, A46-06, A46-07. |
+| NI2-042 | `planned` | NI2-040, NI2-041 | L/H | Online segment/receipt retirement, completion holes, subscriber/state/recovery/rescale pins and explicit horizon tombstones. A46-04, A46-05. |
+| NI2-043 | `planned` | NI2-042 | M/H | Object-reference GC follows every durable log/state/join/recovery root; timeout/watermark alone cannot delete. A46-05. |
+| NI2-044 | `planned` | NI2-041, NI2-042 | M/M | Pressure/lag/reservation/pin/GC projections distinguish idle, busy, backpressured and failed states. A46-06. |
+| NI2-045 | `planned` | NI2-040…044 | L/H | PostgreSQL turnover, paused branch, owner loss, WAL/index/vacuum and storage-plateau gate with independent Principal verification. A42-04, A46-01…08. |
+
+### N2.6 — Selective and verified cross-host recovery (`+13%`)
+
+| ID | State | Depends | Size/risk | Deliverable and mapped criteria |
+| --- | --- | --- | --- | --- |
+| NI2-050 | `planned` | NI2-025, NI2-045 | M/H | Compute immutable recovery region and pin accepted inputs/state/retention roots without restarting unaffected subtasks. A47-01, A47-02, A47-06. |
+| NI2-051 | `planned` | NI2-050 | L/H | RESTORING target plans and one atomic READY activation; stale coordinator/assignment/subtask writes and mixed activation are refused. A47-03, A47-07. |
+| NI2-052 | `planned` | NI2-051 | M/H | Same-host selective replacement proves B-only loss with healthy siblings, bounded budgets, cancellation and one Flow lease. A47-01, A47-02, A47-03. |
+| NI2-053 | `planned` | NI2-051 | L/H | Real two-host placement with provider/old-host verified stop, portable package/state/object references and strict no-timeout-as-death admission. A47-04, A47-05. |
+| NI2-054 | `planned` | NI2-050…053 | M/H | Region-expansion, shared-process loss, unavailable partition and cancellation races with exact explanations. A47-05, A47-06, A47-07. |
+| NI2-055 | `planned` | NI2-050…054 | M/H | Source-bound same-host and actual two-host fault matrix plus independent Principal verification. A42-05, A47-01…07. |
+
+### N2.7 — Rescale and compatibility (`+10%`)
+
+| ID | State | Depends | Size/risk | Deliverable and mapped criteria |
+| --- | --- | --- | --- | --- |
+| NI2-060 | `planned` | NI2-035, NI2-045, NI2-055 | L/H | Complete transfer manifest for source/control/mailbox/state/timer/capacity/pins/capabilities and immutable cut. A48-07. |
+| NI2-061 | `planned` | NI2-060 | L/H | Two-to-three subtask transfer, whole key-group movement, atomic owner/pin/reservation activation and old-writer fence. A48-01, A48-02. |
+| NI2-062 | `planned` | NI2-061 | M/H | Native API/SDK/worker rescale lifecycle and logical operator/old TaskRun retirement projections. A48-01, A48-07. |
+| NI2-063 | `planned` | NI2-060, NI2-062 | M/H | Package/state/router/source-codec compatibility and explicit supported migration/refusal before user code. A48-03. |
+| NI2-064 | `planned` | NI2-061…063 | M/H | Fault every transfer/activation boundary and prove one complete old or new assignment, never mixed. A48-02, A48-07. |
+| NI2-065 | `planned` | NI2-060…064 | M/H | Real rescale/compatibility gate on frozen source with independent Principal verification. A42-03, A48-01…03, A48-07. |
+
+### N2.8 — Full native profile acceptance (`+10%`)
+
+| ID | State | Depends | Size/risk | Deliverable and mapped criteria |
+| --- | --- | --- | --- | --- |
+| NI2-070 | `planned` | NI2-014, NI2-025, NI2-035, NI2-045, NI2-055, NI2-065 | L/H | End-to-end source → fan-out → keyed join → sink through ordinary SDK/server/worker paths with continuous input and stable identities. A42-02. |
+| NI2-071 | `planned` | NI2-070 | L/H | Declared load/skew/record-size workload, storage plateau, throughput/latency/recovery/catch-up measurements and explicit missed limits. A48-05. |
+| NI2-072 | `planned` | NI2-070 | M/H | Finite/native foundation regressions, paired migrations, supported Python/client package, mixed-version and unsupported-profile controls. A43-01, A48-03. |
+| NI2-073 | `planned` | NI2-070, NI2-071 | M/M | Operator/UI/runbook projections expose logical/physical state, pressure, recovery, rescale, limits and evidence without capabilities or payloads. A42-01, A48-05. |
+| NI2-074 | `planned` | NI2-070…073 | L/H | Frozen complete matrix: per-turn faults, drain/cancel, pressure/GC, regional/two-host recovery, rescale, compatibility and bounds. A42-02…05, A48-01…05, A48-07. |
+| NI2-075 | `planned` | NI2-074 | M/H | Architect personally reruns every applicable AC, validates source/evidence graph and only then moves individually proven ADRs to `accepted`. A48-04, A48-06. |
+
+The eight sprint shares total 100% of the new epoch-2 profile problem. A task
+state never earns readiness by itself; each sprint remains at its prior earned
+target until its final Principal gate passes. Cross-host work requires a real
+provider/agent stop-witness capability; containers on one kernel are not a
+substitute.
 
 ## Native epoch 1 — Stage 1 implementation
 

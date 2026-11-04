@@ -4,9 +4,9 @@ This directory is the decision log for the Ariadne streaming ETL runtime. ADR
 files are retained historical records: they are superseded or marked
 `rejected`, never deleted. The active cycle is
 [native integration epoch 2](../epochs/epoch-02-native-streaming-completion.md):
-Flink-informed architecture discussion under ADR-0042–0048. The original broad
-streaming ETL objective remains incomplete; this design/prototype cycle earns
-zero new native capability completion.
+explicitly approved implementation under ADR-0042–0048. The original broad
+streaming ETL objective remains incomplete; the new profile has 100% planned
+scope and still earns zero native capability completion.
 
 The preceding bounded native foundation is accepted at **100% of its selected
 scope** under ADR-0037–0041 and the
@@ -75,20 +75,27 @@ earning the next planned +10% and reaching 50% foundation readiness.
 
 ```mermaid
 graph TD
-    A0040 --> A0042[ADR-0042: Flink-informed native completion]
-    A0031 --> A0042
-    A0042 --> A0043[ADR-0043: Physical graph and channels]
-    A0042 --> A0044[ADR-0044: Multi-input turns and state materialization]
+    A0040 --> A0043[ADR-0043: Physical graph and channels]
+    A0031 -. informs .-> A0042[ADR-0042: Flink-informed native completion umbrella]
+    A0042 -. extends .-> A0043
+    A0042 -. extends .-> A0044[ADR-0044: Multi-input turns and state materialization]
+    A0042 -. extends .-> A0045[ADR-0045: Continuous sources and event time]
+    A0042 -. extends .-> A0046[ADR-0046: Pressure and safe retention]
+    A0042 -. extends .-> A0047[ADR-0047: Selective and cross-host recovery]
+    A0042 -. extends .-> A0048[ADR-0048: Rescale and native acceptance]
     A0043 --> A0044
-    A0044 --> A0045[ADR-0045: Continuous sources and event time]
-    A0043 --> A0046[ADR-0046: Pressure and safe retention]
+    A0044 --> A0045
+    A0043 --> A0046
     A0044 --> A0046
     A0045 --> A0046
-    A0043 --> A0047[ADR-0047: Selective and cross-host recovery]
+    A0043 --> A0047
     A0044 --> A0047
-    A0046 --> A0048[ADR-0048: Rescale and native acceptance]
-    A0047 --> A0048
+    A0046 --> A0047
+    A0043 --> A0048
     A0044 --> A0048
+    A0045 --> A0048
+    A0046 --> A0048
+    A0047 --> A0048
     A0000[ADR-0000: ADR lifecycle] --> A0001[ADR-0001: Runtime boundary]
     A0001 -. historical .-> A0005[ADR-0005: Operator contract — rejected]
     A0001 --> A0010[ADR-0010: Durable yield channel]
@@ -217,7 +224,7 @@ graph TD
 ## ADRs
 
 - [ADR-0042: Flink-informed completion of native streaming](ADR-0042-flink-informed-native-streaming-architecture.md) — `progress`
-- [ADR-0043: Physical graph and partitioned durable channels](ADR-0043-physical-graph-and-partitioned-channels.md) — `planning`
+- [ADR-0043: Physical graph and partitioned durable channels](ADR-0043-physical-graph-and-partitioned-channels.md) — `progress`
 - [ADR-0044: Multi-input turns and state materialization](ADR-0044-multi-input-turns-and-state-materialization.md) — `progress`
 - [ADR-0045: Continuous sources, event time and durable timers](ADR-0045-continuous-sources-event-time-and-timers.md) — `planning`
 - [ADR-0046: Continuous backpressure and reference-safe retention](ADR-0046-continuous-pressure-and-safe-retention.md) — `planning`
@@ -229,6 +236,12 @@ The new decisions are linked to the [official Flink comparison](../research/flin
 and [worker review](../evidence/flink-architecture-2026-11-04/worker-architecture-review.json).
 Their planning/progress statuses do not inherit acceptance from earlier
 prototype or foundation ADRs.
+
+The user approved ADR-0042–ADR-0048 for work on 2026-11-04 at revision
+`fae53c90aa3b44dbc45032833b4d193001e5c8bd`; see the
+[source-bound approval](../evidence/flink-architecture-2026-11-04/epoch2-work-approval-2026-11-04.json).
+ADR-0042 is an `extends` umbrella. It is not a `depends_on` prerequisite that
+creates a cycle with the decisions it groups.
 
 - [ADR-0000: Decision lifecycle and evidence](ADR-0000-decision-lifecycle.md) — `progress`
 - [ADR-0001: Streaming runtime boundary](ADR-0001-runtime-boundary.md) — `progress`

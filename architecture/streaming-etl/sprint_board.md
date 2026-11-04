@@ -1,18 +1,52 @@
 # Streaming ETL sprint board
 
 Current product cycle: [Native integration epoch 2](epochs/epoch-02-native-streaming-completion.md),
-architecture discussion and narrow standalone state-materialization experiment.
-The [new decisions](adr/ADR-0042-flink-informed-native-streaming-architecture.md)
-remain `planning`/`progress`; **zero new native capability completion** is earned.
-Task slicing, short sprint weights and cumulative target percentages belong to
-the next planning cycle on command. No new implementation sprint is declared
-complete by writing these documents.
+approved implementation of [ADR-0042](adr/ADR-0042-flink-informed-native-streaming-architecture.md)–[ADR-0048](adr/ADR-0048-rescaling-compatibility-and-native-acceptance.md)
+at version `fae53c90aa3b44dbc45032833b4d193001e5c8bd`. ADR-0042–ADR-0044 are
+`progress`; ADR-0045–ADR-0048 are approved and remain `planning` until their
+implementation sprints start. **Zero new native capability completion** is
+earned. Task states show activity, while readiness moves only at independently
+verified sprint gates.
 
 Historical product cycle: [Native integration epoch 1](epochs/epoch-01-native-prefect.md),
 `accepted`, **100% earned native foundation readiness** for the selected scope. The
 [first-stage ADR](adr/ADR-0032-native-task-stream-contract.md) is accepted for
 its scoped contract gate. Implementation was requested on 2026-11-01 with frequent tests
 against the actual runtime and storage.
+
+## Native epoch 2 board
+
+| Sprint | State | Planned cumulative target | Share | Tasks | Exit |
+| --- | --- | ---: | ---: | --- | --- |
+| N2.1a — Topology and wire | `progress` | 5% | +5% | NI2-001, NI2-002 | Paired topology migrations and immutable plan/subtask DTOs pass real PostgreSQL/SQLite/API controls; no data-plane or runtime claim. |
+| N2.1b — Scoped authority and store | `progress` | 10% | +5% | NI2-003, NI2-004 | Strict subtask-only authentication, existing-store fences, whole-region admission and canonical keys pass cross-resource negatives; codec alone earns 0%. |
+| N2.1c — Physical runtime gate | `planned` | 15% | +5% | NI2-005, NI2-006 | Four ordinary physical TaskRuns run in separate processes, recover 200/201 and keep metadata constant at 500/5000 under the complete real gate. |
+| N2.2a — DAG and routes | `planned` | 21% | +6% | NI2-010, NI2-011 | Typed acyclic graph and four append-materialized exchanges preserve independent edge identities. |
+| N2.2b — Fan-out runtime gate | `planned` | 27% | +6% | NI2-012…014 | Real fan-out SDK/process execution survives retry and branch replacement without route or cursor drift. |
+| N2.3a — State and mailbox | `planned` | 32% | +5% | NI2-020, NI2-021 | Journaled state and deterministic multi-input apply order recover without accepted-body replay. |
+| N2.3b — Join, outcomes and cuts | `planned` | 37% | +5% | NI2-022…024 | OUTPUT/NO_OUTPUT, bounded correlated join and complete barrier cuts compose atomically. |
+| N2.3c — Stateful join gate | `planned` | 42% | +5% | NI2-025 | Native process-loss matrix closes every ADR-0044 criterion. |
+| N2.4a — Split source controls | `planned` | 47% | +5% | NI2-030…032 | Enumerator, readers, ordered controls and drain pass source process faults. |
+| N2.4b — Event time and timers | `planned` | 51% | +4% | NI2-033, NI2-034 | Watermark/idleness/late-data and timer recovery pass keyed-join controls. |
+| N2.4c — Continuous gate | `planned` | 55% | +4% | NI2-035 | Real continuous native matrix closes ADR-0045. |
+| N2.5a — Reservations and credits | `planned` | 59% | +4% | NI2-040, NI2-041 | Full-turn reservations and fair pressure avoid overshoot and slot starvation. |
+| N2.5b — Retention and observability | `planned` | 63% | +4% | NI2-042…044 | Segments/objects retire only beyond every durable root and expose pressure/pins. |
+| N2.5c — Bounded-storage gate | `planned` | 67% | +4% | NI2-045 | Multiple retained-window turnovers reach a measured PostgreSQL plateau. |
+| N2.6a — Region planning | `planned` | 71% | +4% | NI2-050, NI2-051 | Immutable RESTORING plans activate one complete region or none. |
+| N2.6b — Selective local recovery | `planned` | 74% | +3% | NI2-052 | B-only process replacement keeps healthy siblings and one Flow lease. |
+| N2.6c — Cross-host authority | `planned` | 77% | +3% | NI2-053 | A real second host with verified-stop authority and portable references passes; no timeout substitution. |
+| N2.6d — Recovery gate | `planned` | 80% | +3% | NI2-054, NI2-055 | Expansion/cancel/activation faults and both placement profiles close ADR-0047. |
+| N2.7a — Transfer and assignment | `planned` | 84% | +4% | NI2-060, NI2-061 | Complete transfer manifest and two-to-three key-group assignment activate atomically. |
+| N2.7b — Rescale compatibility | `planned` | 87% | +3% | NI2-062, NI2-063 | SDK lifecycle and compatible/incompatible migrations are explicit before user code. |
+| N2.7c — Rescale gate | `planned` | 90% | +3% | NI2-064, NI2-065 | Every transfer cut observes one old or new assignment and closes ADR-0048 rescale criteria. |
+| N2.8a — End-to-end and load | `planned` | 94% | +4% | NI2-070, NI2-071 | Full topology and declared workload publish honest throughput/latency/recovery/resource limits. |
+| N2.8b — Compatibility and operations | `planned` | 97% | +3% | NI2-072, NI2-073 | Regressions, packaging, mixed versions and operator projections pass. |
+| N2.8c — Final acceptance | `planned` | 100% | +3% | NI2-074, NI2-075 | Frozen complete matrix and independent Principal evidence graph close all A42–A48 criteria. |
+
+The shares total 100% of the new profile problem and are separate from epoch
+1's historical 100% bounded-foundation measure. Current epoch-2 earned target:
+**0%**. The standalone materialization experiment and documentation approval do
+not earn a sprint share.
 
 ## Native epoch 1 board
 

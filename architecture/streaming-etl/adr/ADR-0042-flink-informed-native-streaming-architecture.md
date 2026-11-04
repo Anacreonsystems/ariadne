@@ -143,3 +143,24 @@ throughput, latency or connector coverage.
 - [ADR-0046: Pressure and retention](ADR-0046-continuous-pressure-and-safe-retention.md)
 - [ADR-0047: Selective recovery and cross-host authority](ADR-0047-selective-recovery-and-cross-host-authority.md)
 - [ADR-0048: Rescaling, compatibility and native acceptance](ADR-0048-rescaling-compatibility-and-native-acceptance.md)
+
+## Work approval and stable criterion IDs
+
+On 2026-11-04 the user explicitly approved ADR-0042 through ADR-0048 at
+revision `fae53c90aa3b44dbc45032833b4d193001e5c8bd` for implementation through
+full completion. The [approval record](../evidence/flink-architecture-2026-11-04/epoch2-work-approval-2026-11-04.json)
+binds the approved bytes and workflow boundary. `progress` is this repository's
+approved-for-work state; only independent Principal verification of every
+criterion can move the ADR to `accepted`.
+
+ADR-0042 is the umbrella that **extends** the accepted epoch-1 foundation and
+groups ADR-0043 through ADR-0048. It is not a blocking `depends_on` edge for
+their independent implementation slices.
+
+| Stable ID | Existing acceptance criterion |
+| --- | --- |
+| A42-01 | Distinguish epoch-1 acceptance from each newly admitted profile. |
+| A42-02 | Execute source → fan-out → keyed join → sink through native paths. |
+| A42-03 | Preserve accepted cursor/output identities across snapshot intervals without business replay. |
+| A42-04 | Run continuous bounded input with pressure, drain and cancel. |
+| A42-05 | Reproduce process, cross-host, rescale and compatibility gates before readiness. |

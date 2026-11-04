@@ -94,6 +94,82 @@ this active design cycle and retain all completed epoch 1 entries. A later
 sprint must declare its share of the target problem and earn it through native
 criteria; no share is awarded for documentation volume.
 
+## Explicit work approval and workflow adaptation
+
+On 2026-11-04 the user directed the team to slice and implement the full
+ADR-0042–ADR-0048 set. The approved document version is
+`fae53c90aa3b44dbc45032833b4d193001e5c8bd`; the source-bound
+[approval record](../evidence/flink-architecture-2026-11-04/epoch2-work-approval-2026-11-04.json)
+preserves the seven hashes. Approved solution bodies and acceptance criteria
+are immutable. Status, evidence links and appended history/criterion mappings
+may change; a semantic change requires a separately approved decision.
+
+This repository retains its historical status vocabulary:
+
+- `planning`/`pending`: discussion or approval is still open;
+- `progress`: explicitly approved implementation is incomplete;
+- `accepted`: the independent ETL Architect / HighLoad Principal personally
+  ran and reviewed every criterion in the declared scope;
+- `rejected`: an approved replacement and retained rationale exist.
+
+The implementation role writes runtime code and source-bound evidence. The
+architect owns the ADR graph and acceptance, reruns the real checks, and is the
+only role that may change these ADRs to `accepted`. Routine corrections inside
+the approved scope do not require repeated permission; architecture or AC
+changes return to a new decision.
+
+## Dependency graph and delivery order
+
+ADR-0042 is an umbrella that **extends** the accepted epoch-1 foundation. It is
+not a cyclic prerequisite for the other decisions. The executable graph is:
+
+```text
+accepted ADR-0032…ADR-0040 foundation
+                 ↓
+             ADR-0043
+                 ↓
+             ADR-0044
+                 ↓
+             ADR-0045
+          ↘      ↓      ↙
+             ADR-0046
+             ↙     ↘
+        ADR-0047   │
+             ↘     ↓
+             ADR-0048
+                 ↓
+       ADR-0042 umbrella acceptance
+```
+
+ADR-0046 may develop quota primitives beside earlier work, but its complete
+gate requires the routed edges, state/join roots and continuous source controls
+from ADR-0043–ADR-0045. ADR-0047 requires physical ownership, portable state
+frontiers and recovery pins. ADR-0048 converges every preceding native gate.
+
+## Delivery milestones and short-sprint allocation
+
+The milestone percentages below measure the **new epoch-2 profile problem**,
+separately from epoch 1's accepted bounded foundation. The
+[sprint board](../sprint_board.md) divides them into 24 short sub-sprints with
+concrete exits. Planned shares total 100%; earned native readiness is currently
+**0%**.
+
+| Sprint | State | Cumulative target | Share | Tasks | Native exit |
+| --- | --- | ---: | ---: | --- | --- |
+| N2.1 — Fixed physical execution | `progress` | 15% | +15% | NI2-001…006 | Immutable P2 plan, ordinary TaskRun per physical subtask, strict subtask grant, existing PostgreSQL data-plane reuse, separate source/operator processes, input 200/201 recovery, constant metadata at 500/5000, SQLite refusal and independent Principal gate. |
+| N2.2 — Branched DAG and exchanges | `planned` | 27% | +12% | NI2-010…014 | Versioned forward/rebalance/broadcast/keyed exchanges, fan-out, independent subscribers and exact route replay pass real SDK/API/PostgreSQL faults. |
+| N2.3 — Multi-input state and join | `planned` | 42% | +15% | NI2-020…025 | Journaled turn state, mailbox order, OUTPUT/NO_OUTPUT compatibility, correlated join and complete barrier cuts pass native process faults without accepted-body replay. |
+| N2.4 — Continuous source/event time | `planned` | 55% | +13% | NI2-030…035 | Split enumerator/readers, ordered controls, drain, watermarks, idleness and timers pass real continuous native gates. |
+| N2.5 — Pressure and online retention | `planned` | 67% | +12% | NI2-040…045 | Full-turn reservations, fair credits, branch pressure, online segment/object GC and bounded PostgreSQL storage plateau pass. |
+| N2.6 — Selective and cross-host recovery | `planned` | 80% | +13% | NI2-050…055 | Regional RESTORING/activation, healthy-sibling continuity and real two-host verified-stop replacement pass; timeouts alone remain insufficient. |
+| N2.7 — Rescale and compatibility | `planned` | 90% | +10% | NI2-060…065 | Two-to-three subtask rescale transfers the complete manifest atomically; compatible upgrade and incompatible-codec refusals pass. |
+| N2.8 — Full profile acceptance | `planned` | 100% | +10% | NI2-070…075 | Source → fan-out → keyed join → sink, continuous pressure, recovery, rescale, load/resource limits, regressions, packaging/UI and independent evidence graph all pass on frozen source. |
+
+No intermediate task earns a fraction of its sprint. A share moves to earned
+only when that sprint's exit, every mapped ADR criterion, and independent
+source-bound verification pass. Historical or standalone prototype evidence is
+never substituted for a native gate.
+
 The [ADR graph](../adr/README.md), [reference comparison](../research/flink-2.3-architecture.md)
 and [Principal discussion](../evidence/flink-architecture-2026-11-04/principal-discussion.json)
 provide navigation into the design. Each new ADR stays `planning` or `progress`

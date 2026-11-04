@@ -116,3 +116,22 @@ Retention roots increase metadata and lock complexity. Failed materialization,
 expired source retention or a permanently pinned subscriber must have visible
 failure/pressure outcomes. Performance acceptance must include PostgreSQL WAL,
 vacuum, index size and hot partition contention, not just logical record counts.
+
+## Work approval and stable criterion IDs
+
+Approved for work on 2026-11-04 as part of the ADR-0042–0048 set at revision
+`fae53c90aa3b44dbc45032833b4d193001e5c8bd`; see the
+[approval record](../evidence/flink-architecture-2026-11-04/epoch2-work-approval-2026-11-04.json).
+Its complete gate depends on ADR-0043 routed edges, ADR-0044 state/join roots and
+ADR-0045 continuous source controls.
+
+| Stable ID | Existing acceptance criterion |
+| --- | --- |
+| A46-01 | Retained storage plateaus across multiple admitted-window turnovers. |
+| A46-02 | Pause one branch, pressure upstream, resume without a gap. |
+| A46-03 | No quota overshoot, reservation leak or unsafe deletion under faults. |
+| A46-04 | Exact retry before retirement and explicit refusal after horizon. |
+| A46-05 | Every deleted segment/object is unreferenced by durable roots. |
+| A46-06 | Distinguish idle, busy, backpressured and failed execution. |
+| A46-07 | Avoid permanent starvation under task/tag/global slot limits. |
+| A46-08 | Exhaust all quota classes without partial hold, leak or unsafe invocation. |

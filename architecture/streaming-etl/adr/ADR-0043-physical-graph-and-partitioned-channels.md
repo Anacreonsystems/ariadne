@@ -1,6 +1,6 @@
 # ADR-0043: Physical graph and partitioned durable channels
 
-- Status: `planning`
+- Status: `progress`
 - Date: 2026-11-04
 - Owners: ETL Architect / HighLoad Principal, SDK/server/worker maintainers
 - Related: [architecture](ADR-0042-flink-informed-native-streaming-architecture.md), [mixed tasks](ADR-0037-mixed-finite-and-streaming-tasks.md), [recovery](ADR-0047-selective-recovery-and-cross-host-authority.md), [rescaling](ADR-0048-rescaling-compatibility-and-native-acceptance.md)
@@ -195,3 +195,34 @@ Global order can reduce concurrency through head-of-line blocking. Subtask
 representation changes API/UI expectations and cannot be concealed as a worker
 detail. Process isolation and durable edges are both needed for selective
 recovery; changing one without the other leaves an incorrect failure boundary.
+
+## Work approval and stable criterion IDs
+
+Approved for work on 2026-11-04 as part of the ADR-0042–0048 set at revision
+`fae53c90aa3b44dbc45032833b4d193001e5c8bd`; see the
+[approval record](../evidence/flink-architecture-2026-11-04/epoch2-work-approval-2026-11-04.json).
+This is the base implementation decision for epoch 2 and depends on the
+completed ADR-0032–ADR-0040 bounded foundation, not on umbrella ADR-0042.
+
+| Stable ID | Existing acceptance criterion |
+| --- | --- |
+| A43-01 | TaskRun/subtask identity and finite-task compatibility contract. |
+| A43-02 | Seal a real branched DAG and reject unsafe topology before effects. |
+| A43-03 | Stable partition/subscriber identity and independent branch cursor. |
+| A43-04 | Fixed metadata count at 500 and 5000 records. |
+| A43-05 | Separate source/operator processes and isolated replacement. |
+| A43-06 | Stable key-group mapping and explicit partition-order boundary. |
+| A43-07 | Observable slots, pending admission and one FlowRun lease. |
+| A43-08 | Region admission cannot starve downstream task/tag/global slots. |
+| A43-09 | Different branch exchanges retain exact routing and independent acknowledgement. |
+| A43-10 | Canonical-key golden vectors and unsupported-key refusal. |
+
+## Implementation evidence updates
+
+NI2-004 supplies the internal `tagged-key-v1` scalar codec and key-group
+primitive. The [independent component verification](../evidence/flink-architecture-2026-11-04/ni2-004-principal-verification-2026-11-04.json)
+passed 85 tests without skips, including Python 3.11–3.14 child processes and
+four hash seeds. This evidence covers only the pure canonical-key component;
+wire round trips, persisted admission, partition routing and cross-host
+execution remain implementation gates. It earns no readiness and does not
+accept this ADR.

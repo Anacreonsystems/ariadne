@@ -117,3 +117,22 @@ not become active. Schema migration failures, routing mismatch and expired
 input horizons are explicit refusal outcomes. If measured PostgreSQL limits
 miss the target workload, record the result and revisit the affected ADR before
 claiming industrial streaming capacity.
+
+## Work approval and stable criterion IDs
+
+Approved for work on 2026-11-04 as part of the ADR-0042–0048 set at revision
+`fae53c90aa3b44dbc45032833b4d193001e5c8bd`; see the
+[approval record](../evidence/flink-architecture-2026-11-04/epoch2-work-approval-2026-11-04.json).
+It is the final convergence decision and depends on completed native gates for
+ADR-0043 through ADR-0047. It does not make umbrella ADR-0042 a prerequisite
+cycle.
+
+| Stable ID | Existing acceptance criterion |
+| --- | --- |
+| A48-01 | Rescale a real stateful graph two → three without accepted replay. |
+| A48-02 | Recover faults on both sides of atomic assignment activation. |
+| A48-03 | Compatible upgrade and incompatible package/schema/router/codec refusal. |
+| A48-04 | Reproduce every matrix gate from frozen source and raw evidence. |
+| A48-05 | Publish measured load/recovery limits without prototype confusion. |
+| A48-06 | Accept an ADR only after all native criteria are independently reviewed. |
+| A48-07 | Preserve full source/control/state/capacity/retention state through rescale. |
