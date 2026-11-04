@@ -1,0 +1,70 @@
+from pathlib import Path
+import ast
+import hashlib
+import json
+import subprocess
+
+root = Path('/workspace/ariadne')
+base = root / 'architecture/streaming-etl/evidence'
+initial = base / 'native-epoch1-source-freeze-2026-11-04.json'
+closure = base / 'native-epoch1-source-freeze-closure-2026-11-04.json'
+old = json.loads(initial.read_text())['source_sha256']
+new = json.loads(closure.read_text())['source_sha256']
+changed = sorted(p for p in old if old[p] != new[p])
+allowed = {
+    'architecture/streaming-etl/evidence/native-epoch1-gate-runner-2026-11-04.txt',
+    'src/prefect/server/models/native_deployments.py',
+    'tests/test_native_mixed_flow_http.py',
+    'tests/server/api/test_native_deployments.py',
+    'tests/server/models/test_finite_submissions.py',
+    'ui-v2/public/mockServiceWorker.js',
+    'ui-v2/tests/browser/native-stream-live.mjs',
+    'ui-v2/tests/browser/native-stream-progress.mjs',
+}
+assert set(old) == set(new)
+assert set(changed) == allowed, changed
+native = 'src/prefect/server/models/native_deployments.py'
+prior = subprocess.check_output(['git', 'show', 'bbd2a2b:' + native], cwd=root, text=True)
+current = (root / native).read_text()
+assert hashlib.sha256(prior.encode()).hexdigest() == old[native]
+assert current == prior.replace('NATIVE_WORK_POOL_MARKER = {', 'NATIVE_WORK_POOL_MARKER: dict[str, int | str] = {', 1)
+original_ast = ast.parse(prior)
+current_ast = ast.parse(current)
+for index, node in enumerate(current_ast.body):
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == 'NATIVE_WORK_POOL_MARKER':
+        assert ast.unparse(node.annotation) == 'dict[str, int | str]'
+        current_ast.body[index] = ast.Assign(targets=[node.target], value=node.value)
+assert ast.dump(original_ast, include_attributes=False) == ast.dump(current_ast, include_attributes=False)
+assert all(old[p] == new[p] for p in old if p.startswith('src/') and p != native)
+assert all(old[p] == new[p] for p in ('pyproject.toml', 'uv.lock', 'client/pyproject.toml', '.pre-commit-config.yaml', '.github/workflows/python-tests.yaml'))
+reports = {}
+for name, label in (
+    ('kernel', 'final'), ('flow-engine', 'final'), ('worker-http', 'final'), ('ordinary-worker', 'final'),
+    ('logging-cli', 'successor'), ('mixed-http', 'successor'), ('flow-http', 'successor'),
+    ('client', 'successor'), ('code', 'successor'), ('native-client', 'successor'),
+    ('sqlite', 'successor'), ('deployment-sqlite', 'successor'),
+):
+    path = base / f'native-epoch1-{name}-{label}-2026-11-04.json'
+    report = json.loads(path.read_text())
+    assert report['verdict'] == 'PASS' and report['returncode'] == 0 and report['source_drift'] == []
+    for key in ('log', 'junit'):
+        item = report[key]
+        assert hashlib.sha256((base / item['path']).read_bytes()).hexdigest() == item['sha256']
+    assert not any(p in report['command'] for p in ('tests/server/api/test_native_deployments.py', 'tests/server/models/test_finite_submissions.py'))
+    reports[name] = {'report': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'passed': report['passed'], 'skipped': report['skipped']}
+record = {
+    'schema': 'native-epoch1-closure-source-bridge/v1',
+    'verdict': 'PASS_SOURCE_RELEVANCE_BRIDGE',
+    'initial_manifest': {'path': initial.name, 'sha256': hashlib.sha256(initial.read_bytes()).hexdigest()},
+    'closure_manifest': {'path': closure.name, 'sha256': hashlib.sha256(closure.read_bytes()).hexdigest()},
+    'changed_paths': changed,
+    'unchanged_paths': [p for p in old if old[p] == new[p]],
+    'typing_only_delta': {'path': native, 'text_delta_exact': True, 'normalized_full_module_ast_equal': True, 'initializer_and_all_function_class_bodies_equal': True, 'annotation': 'dict[str, int | str]', 'qualification': 'Module __annotations__ changes; the runtime module is not claimed byte-identical. Consumers read the unchanged dictionary value.'},
+    'reused_profiles': reports,
+    'required_fresh_checks': ['strict public verifytypes exit0 and exact completenessScore1/zero unknown/ambiguous', 'full CI types exit0', 'mixed HTTP full15cases already rerun with explicit deadline', 'UI security successor97/33 plus packaged live already rerun', 'fresh server API/store/finite/migration and other remaining profiles', 'hosted successor CI'],
+    'test_only_deltas': {'tests/test_native_mixed_flow_http.py': 'Explicit300s timeout/child240s; full15cases PASS on successor.', 'tests/server/api/test_native_deployments.py': 'Actual PostgreSQL17-only positive tests now use a real major-version predicate; metadata-only controls still execute on PG14/SQLite.', 'tests/server/models/test_finite_submissions.py': 'Release oracle now proves metadata lag preserves receipt, performs normal TaskRun cancellation, then releases.'},
+    'gate_metadata_delta': 'Correct a nonexistent deployment test path to actual ordinary deployment tests and reject missing selections before freezing; immutable manifest selector only. No verdict weakening.',
+    'principal_review': 'Read-only source-relevance bridge approved; annotation-only AST equivalence approved with strict type reruns. Final review waits for remaining reports and hosted CI.',
+}
+(base / 'native-epoch1-source-relevance-closure-2026-11-04.json').write_text(json.dumps(record, indent=2) + '\n')
+print({'reused_profiles': len(reports), 'reused_passed': sum(r['passed'] for r in reports.values()), 'changed_paths': changed})

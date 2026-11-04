@@ -292,3 +292,21 @@ completion recoverable within the enrolled flow. This extends lifecycle and
 storage contracts before relaxing SDK admission. It requires explicit phases,
 finite result bounds and additional signed-event validation. Acceptance of the
 server slice alone leaves the parent ADR in progress and earns no percentage.
+
+## N1.6b implemented runtime and local acceptance
+
+The mixed runtime now uses ordinary Task/Flow engines for finite prefix and
+tail receipts, with stable `stream_key` bindings, bounded JSON results and
+canonical parameter witnesses. Recovery looks up the immutable plan and skips
+completed finite bodies; incomplete attempts retain their normal retry budget.
+Sync and async entrypoints implement the same contract.
+
+The [local epoch ledger](../evidence/native-epoch1-local-acceptance-2026-11-04.json)
+records all 15 mixed HTTP cases passing, including 500-document prefix,
+before/after document-200 yield and tail process cuts, partial-collection TAIL
+refusal and unsupported finite-entrypoint refusals. The 22 actual worker cases
+also exercise the mixed flow through deployment infrastructure. The
+[Principal review](../evidence/native-epoch1-principal-local-2026-11-04.json)
+confirms all N1.6b criteria locally. The [final acceptance and runbook](ADR-0040-native-integration-acceptance-and-operations.md)
+owns hosted CI and final status closure; the preceding planning observations
+remain historical evidence rather than the current implementation state.

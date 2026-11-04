@@ -1,0 +1,31 @@
+from pathlib import Path
+from datetime import UTC, datetime
+import hashlib
+import json
+import runpy
+
+root=Path('/workspace/ariadne')
+base=root/'architecture/streaming-etl/evidence'
+gate=runpy.run_path(str(base/'native-epoch1-gate-runner-2026-11-04.txt'))
+freeze=base/'native-epoch1-source-freeze-closure-2026-11-04.json'
+assert gate['hashes']()==json.loads(freeze.read_text())['source_sha256']
+initial={'kernel','flow-engine','worker-http','ordinary-worker'}
+successor={'logging-cli','mixed-http','flow-http','client','code','native-client','sqlite','deployment-sqlite'}
+profiles={}
+for name in gate['PROFILES']:
+    label='final' if name in initial else 'successor' if name in successor else 'configured' if name=='legacy-contract' else 'closure'
+    path=base/f'native-epoch1-{name}-{label}-2026-11-04.json'
+    report=json.loads(path.read_text())
+    assert report['verdict']=='PASS' and report['returncode']==0 and report['source_drift']==[],name
+    assert report['failure']==0 and report['error']==0 and report['unexpected_skip_or_xfail']==[],name
+    for key in ('log','junit','declared_markers'):
+        artifact=report.get(key)
+        if artifact:
+            assert hashlib.sha256((base/artifact['path']).read_bytes()).hexdigest()==artifact['sha256'],(name,key)
+    if name not in gate['ORDINARY']:
+        assert report['skipped']==0,name
+    profiles[name]={'report':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'tests':report['tests'],'passed':report['passed'],'skipped':report['skipped'],'duration_seconds':report['duration_seconds'],'source_mode':'named_source_relevance_bridge' if name in initial|successor else 'closure_manifest','manifest':report['source_manifest']}
+ui_path=base/'native-stage9-ui-codeql-successor-2026-11-04/acceptance.json'
+record={'schema':'native-epoch1-local-acceptance/v1','captured_at_utc':datetime.now(UTC).isoformat(),'verdict':'PASS_LOCAL_AWAITING_HOSTED_CI_AND_FINAL_REVIEW','runtime_commit':'35dc8d5','source_manifest':{'path':freeze.name,'sha256':hashlib.sha256(freeze.read_bytes()).hexdigest()},'source_bridge':'native-epoch1-source-relevance-closure-2026-11-04.json','profiles':profiles,'totals':{key:sum(p[key]for p in profiles.values())for key in ('tests','passed','skipped')},'native_skip_count':0,'strict_types':'native-epoch1-strict-types-closure-2026-11-04.json','ui':{'report':str(ui_path.relative_to(base)),'sha256':hashlib.sha256(ui_path.read_bytes()).hexdigest(),'unit_cases':97,'browser_cases':33,'real_packaged_ui':'8-document actual PostgreSQL/ProcessWorker flow with fresh bundle and origin guard HTTP byte comparison'},'failed_observations_retained':['mixed-http-final:two global90s timeouts; full15cases rerun at300/240 succeeded','deployment-builder-successor:nonexistent path yielded0cases; correct existing selections now pass','legacy-contract-closure:missing explicit test adapter DSN gave27skips; configured real PostgreSQL rerun36/36passed','initial public types rounded100% statement was incorrect; strict exit0/exact1/zero unknown proof supersedes','initial hosted serverPG14 positives used incorrect version predicate; actualPG14 andPG17 controls verified','three CodeQL findings fixed; hosted successor remains required'],'scope':'100% can close only the explicitly bounded native foundation after final review/hosted CI. Trusted same-host Linux/PID namespace, finite linear graph, max128ACTIVE native runs perpool. Application-owned external effect idempotence. No HA/cross-host/arbitraryDAG/performance or another72hour campaign claim.'}
+(base/'native-epoch1-local-acceptance-2026-11-04.json').write_text(json.dumps(record,indent=2)+'\n')
+print(json.dumps({'profiles':len(profiles),'totals':record['totals'],'native_skips':0,'verdict':record['verdict']}))

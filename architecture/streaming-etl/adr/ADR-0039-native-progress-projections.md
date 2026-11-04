@@ -214,9 +214,11 @@ normal TaskRun `tab=Logs` search parameter is accepted by checking the pathname.
 The raw HTTP asset probe declares `Accept: text/html` to match real browser
 navigation instead of assuming a non-HTML request gets SPA fallback.
 
-This ADR remains `progress` until the common source-bound epoch acceptance and
-independent review described by
-[ADR-0038](ADR-0038-native-deployment-worker-lifecycle.md) pass.
+The common [local epoch acceptance](../evidence/native-epoch1-local-acceptance-2026-11-04.json)
+and [independent review](../evidence/native-epoch1-principal-local-2026-11-04.json)
+now pass. This ADR remains `progress` until hosted CI and the final graph/status
+closure in [ADR-0040](ADR-0040-native-integration-acceptance-and-operations.md)
+pass.
 The [task registry](../todo.md), [sprint board](../sprint_board.md) and
 [epoch criteria](../epochs/epoch-01-native-prefect.md) remain authoritative for
 delivery readiness.

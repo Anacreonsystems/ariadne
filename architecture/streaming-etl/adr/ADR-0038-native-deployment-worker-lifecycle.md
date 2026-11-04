@@ -359,7 +359,36 @@ and ADR-0037 mixed-runtime work are prerequisites, not proof of deployment or
 worker acceptance. Each slice must link real HTTP/PostgreSQL/process records and
 an independent review before its percentage is earned.
 
-## Links
+## Implemented slices and local acceptance
+
+The declaration, deployment binding, enrollment, inherited-FD launch,
+ProcessWorker discovery/replacement and native lifecycle paths are implemented
+in commit `35dc8d5`. The preceding delivery-slice paragraphs describe the
+original plan; implementation is no longer pending.
+
+The [local epoch ledger](../evidence/native-epoch1-local-acceptance-2026-11-04.json)
+and [independent Principal review](../evidence/native-epoch1-principal-local-2026-11-04.json)
+cover the selected N1.7–N1.10 criteria:
+
+- `worker-http`: 22 real deployment/process cases, including sync/async flows,
+  five document/receipt cuts, real 120-second orphan recovery with competing
+  workers, drain, SDK/CLI and orphan cancellation, live launcher refusal,
+  pre-spawn failure, failure before any TaskRun and exhausted retry retirement.
+- `kernel`: exact Linux process identity, PID-reuse/foreign-scope controls and
+  unchanged ordinary runner/task behavior.
+- `deployment-api`: declaration/authority/version/replay/capacity controls,
+  worker registration and actual concurrent work-pool row-lock races.
+- `native-http`, `finite-http`, `store-api`, `recorder`, `lease` and lifecycle
+  profiles: fenced durable progress, signed events, metadata reconciliation,
+  concurrency-slot continuity and release.
+- Paired migration/client/SQLite profiles, strict type checks and the packaged
+  UI gate preserve compatibility and explicit operational bounds.
+
+[ADR-0040](ADR-0040-native-integration-acceptance-and-operations.md) records the
+source bridge, corrected first failures, exact scope and remaining hosted CI
+condition. These observations do not add a general HA or cross-host guarantee.
+
+## Related documents
 
 - [ADR-0024: Control-plane authority and lifecycle](ADR-0024-control-plane-authority-and-lifecycle.md)
 - [ADR-0025: Prefect adapter and operational projections](ADR-0025-prefect-adapter-and-operational-projections.md)

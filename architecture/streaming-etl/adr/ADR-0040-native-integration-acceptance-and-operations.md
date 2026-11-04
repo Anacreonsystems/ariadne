@@ -21,8 +21,12 @@ before creating its child.
 The theory is that the existing FlowRun, TaskRun, deployment, ProcessWorker and
 executor can own the complete bounded streaming lifecycle. Durable channels and
 receipts extend those objects; a separate orchestration service is unnecessary.
-Acceptance requires one reproducible source snapshot, actual system boundaries,
-independent database observations and an independent architecture review.
+Acceptance requires an identified final source snapshot, actual system
+boundaries, independent database observations and an independent architecture
+review. Earlier runs remain attached to their original snapshots. A named
+source-relevance bridge may reuse a run only after proving that its selected
+runtime, configuration and tests are unchanged, or that a reviewed change
+cannot affect that run. Changed runtime behavior requires a fresh run.
 
 ## Solution and agreement
 
@@ -219,6 +223,53 @@ acceptance and does not start another long campaign.
 
 ## Evidence and final review
 
-Pending the common source freeze and its final gate. Discovery successes and
-failures remain recorded in the linked ADRs and the final evidence manifest;
-they do not replace this gate.
+The [local acceptance ledger](../evidence/native-epoch1-local-acceptance-2026-11-04.json)
+records 25 profiles: 3,968 collected cases, 3,942 successful executions and
+26 declared ordinary-profile skips. Selected native cases have zero skips.
+The [independent Principal review](../evidence/native-epoch1-principal-local-2026-11-04.json)
+returns `PASS_LOCAL_SCOPED`: report/log/JUnit/marker hashes, exit statuses,
+counts, all 143 source paths and exact commit `35dc8d5` blobs agree.
+Hosted CI and final graph/status closure remain pending.
+
+The [closure source manifest](../evidence/native-epoch1-source-freeze-closure-2026-11-04.json)
+identifies the final source. The [reviewed source bridge](../evidence/native-epoch1-source-relevance-closure-2026-11-04.json)
+preserves earlier manifests and reports; it accounts for eight changed paths
+and 135 unchanged paths. A marker type annotation changes module annotations
+but preserves the complete executable AST after annotation normalization.
+The selected deployment-SQLite test/helper ASTs are also identical. Relevant
+Python profiles and the complete UI successor were rerun; no old report is
+relabeled as a new execution.
+
+| Criterion group | Actual boundary and evidence |
+| --- | --- |
+| Mixed SDK and deployment | `mixed-http` 15, `worker-http` 22 and `flow-http` 17 cases in the local ledger; actual HTTP/PostgreSQL/ProcessWorker and 500-document flows. |
+| Replacement and lifecycle | Real child/worker exits, competing replacement workers, actual 120-second stale-renewal interval, live launcher refusal, startup/exhaustion retirement, SDK/CLI cancellation and drain in `worker-http`; exact kernel identity controls in `kernel`. |
+| Storage, policy and compatibility | `native-http`, `finite-http`, `store-api`, `deployment-api`, `migrations`, `sqlite`, `deployment-sqlite`, recorder/lifecycle and paired-client profiles. |
+| Existing behavior | Ordinary worker, engine, client, logging/CLI and deployment-builder regressions; skips are preserved and separately qualified in the ledger. |
+| Types | [Strict typing](../evidence/native-epoch1-strict-types-closure-2026-11-04.json): both commands exit zero; exact public completeness 1.0, zero unknown/ambiguous symbols; 1,321 CI files, zero errors. |
+| UI and packaged product | [UI successor](../evidence/native-stage9-ui-codeql-successor-2026-11-04/acceptance.json): 97 unit and 33 browser cases, accessibility/layout checks, production build and a real eight-document deployment through the packaged UI. |
+
+### Retained failures and corrections
+
+The [discovery index](../evidence/native-integration-discovery-2026-11-04/index.json)
+retains failed observations and original output. Two initial 500-document
+cases exceeded a global 90-second deadline under concurrent load; the complete
+15-case mixed suite passed with explicit 300-second test/240-second child
+deadlines. An incorrect deployment test path collected no tests, and an omitted
+legacy adapter DSN skipped 27 cases. The corrected existing selections passed;
+the configured legacy profile ran all 36 cases without skips. Neither failed
+attempt counts toward acceptance.
+
+The earlier public-type PASS statement was incorrect: rounded output displayed
+100% while `verifytypes` exited one for an unannotated exported marker.
+The initial log remains intact. The marker now has an explicit type, and the
+strict successor checks the actual exit status, exact completeness score and
+unknown/ambiguous counters using the Python 3.12 source interpreter.
+
+Initial hosted CI also exposed PostgreSQL-17-only tests admitted on PostgreSQL
+14, and an outdated test expecting release before final TaskRun metadata.
+Backend predicates and the oracle were corrected, with actual PostgreSQL 14/17
+controls. The runtime release guard remains intact. Three CodeQL findings were
+fixed through private temporary artifact directories and worker-message origin
+validation; both valid-origin and foreign-origin browser controls passed.
+Hosted successor results must still confirm these fixes before acceptance.
