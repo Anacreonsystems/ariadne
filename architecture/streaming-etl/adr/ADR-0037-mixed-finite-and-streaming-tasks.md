@@ -144,7 +144,8 @@ DATA may already exist when collection returns.
 - [ ] As a system, I can refuse a TAIL after partial collection before creating
   its TaskRun or entering its body, even when stream DATA already exists.
 - [ ] As a system, I can refuse mid-graph finite calls and unsupported finite
-  entrypoints before graph seal, task creation and stream DATA.
+  entrypoints before creating that call's TaskRun, while the unsealed graph
+  still admits no stream DATA.
 - [ ] As a developer, I got real 500-document HTTP/PostgreSQL/process evidence,
   ordinary finite-flow regression and independent final acceptance before 60%.
 
@@ -276,7 +277,8 @@ or any new readiness percentage. NI1-054…056 remain planned.
 Final review also separates refusal guarantees by phase: partial collection
 already implies DATA, so its refusal cannot promise zero earlier stream DATA.
 Its acceptance criterion now checks no TAIL TaskRun/body; pre-seal unsupported
-calls retain the stronger no-task/no-DATA criterion.
+calls cannot create their own TaskRun or admit DATA. Earlier reserved graph
+TaskRuns may already exist behind the seal gate.
 
 ## Consequences
 
