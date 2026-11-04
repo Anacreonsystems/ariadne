@@ -1,0 +1,19 @@
+uv run python - <<'PY'
+import xml.etree.ElementTree as ET
+
+cases = ET.parse("native-stream-routing.xml").findall(".//testcase")
+assert len(cases) == 85, f"Expected 85 routing cases, got {len(cases)}"
+assert all(case.get("classname") == "tests.test_stream_routing" for case in cases)
+assert not any(case.find(tag) is not None for case in cases for tag in ("skipped", "failure", "error"))
+names = {case.get("name") for case in cases}
+assert len(names) == 85, "Routing cases were duplicated"
+runtime_cases = {
+    name for name in names
+    if name.startswith("test_mapping_across_real_python_processes_and_hash_seeds[")
+}
+assert runtime_cases == {
+    f"test_mapping_across_real_python_processes_and_hash_seeds[python_version{index}]"
+    for index in range(4)
+}, f"Incomplete Python 3.11-3.14 controls: {runtime_cases}"
+print("85 routing cases passed; all four Python minors and 16 child processes executed")
+PY
