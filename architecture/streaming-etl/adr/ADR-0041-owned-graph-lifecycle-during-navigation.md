@@ -1,6 +1,6 @@
 # ADR-0041: Own graph callbacks across FlowRun navigation
 
-- Status: `progress`
+- Status: `accepted`
 - Date: 2026-11-04
 - Owners: UI maintainers; native foundation acceptance owners
 - Depends on: [native projections](ADR-0039-native-progress-projections.md)
@@ -97,22 +97,22 @@ source commits differ. No old failed result is rewritten as a passing run.
 
 ## Acceptance criteria
 
-- [ ] As a developer, I can reproduce the original queued-layout/late-data
+- [x] As a developer, I can reproduce the original queued-layout/late-data
   failure with actual Pixi containers, the real throttle and controlled delayed
   boundaries; the corrected implementation passes meaningful disposal tests.
-- [ ] As a system, I can cancel queued work, fence in-flight layout, destroy
+- [x] As a system, I can cancel queued work, fence in-flight layout, destroy
   late leaves/clusters and release wrapper/low-level emitter subscriptions.
-- [ ] As a system, I can stop during initialization or an outstanding request,
+- [x] As a system, I can stop during initialization or an outstanding request,
   start a new graph and retain only the new owner's callbacks and polling.
-- [ ] As an operator, I got a nonzero result and retained error/timeline from
+- [x] As an operator, I got a nonzero result and retained error/timeline from
   the corrected probe when a real late browser error is deliberately injected.
-- [ ] As a user, I can navigate a fresh actual eight-document packaged
+- [x] As a user, I can navigate a fresh actual eight-document packaged
   PostgreSQL/ProcessWorker flow through TaskRun links with a clean final
   post-close browser error snapshot and exact served bundle-byte proof.
-- [ ] As a developer, I got the complete UI regression suite, selected native
+- [x] As a developer, I got the complete UI regression suite, selected native
   and lifecycle regressions, 33 browser/accessibility cases, types, lint,
   formatting and production build on the successor source.
-- [ ] As a system, I got reviewed source relevance, unchanged Python/backend
+- [x] As a system, I got reviewed source relevance, unchanged Python/backend
   evidence and successful hosted UI/static/CodeQL checks on the actual final
   source before this decision is accepted.
 
@@ -143,6 +143,22 @@ The observed paths include [event collections](../../../ui-v2/src/graphs/factori
 [root artifact ownership](../../../ui-v2/src/graphs/objects/flowRunArtifacts.ts).
 The [real-container regression](../../../ui-v2/tests/graphs/run-graph-teardown.test.tsx)
 and [packaged live probe](../../../ui-v2/tests/browser/native-stream-live.mjs)
-are the executable acceptance boundaries. Final successor reports, first
-failures, source hashes and hosted results are pending; implementation alone
-does not close this decision.
+are the executable acceptance boundaries. The final successor reports, first
+failures, source hashes and hosted results are linked below. All declared
+criteria passed before this decision was accepted.
+
+## Final native foundation acceptance
+
+The [final source-bound acceptance](../evidence/native-epoch1-final-acceptance-2026-11-04.json)
+and its linked independent review, hosted CI and retained first failures
+close the criteria of this decision. All implementation and acceptance
+tasks for this selected scope are complete. Earlier planning and local-only
+observations remain historical records.
+
+The accepted profile is finite versioned top-level Python code, a finite
+prefix and tail around a single-source linear stream graph, PostgreSQL 17
+and trusted same-host Linux/PID-namespace process recovery. There are at
+most 128 ACTIVE native runs per work pool. Application code owns external
+effect idempotency. General DAG/partition support, cross-host recovery,
+production HA, performance SLOs and a new 72-hour native campaign are
+outside this accepted foundation.

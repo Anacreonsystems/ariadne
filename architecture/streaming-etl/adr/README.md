@@ -1,8 +1,11 @@
 # Streaming ETL ADR graph
 
 This directory is the decision log for the Ariadne streaming ETL runtime. ADR
-files are immutable historical records: they are superseded or marked
-`rejected`, never deleted.
+files are retained historical records: they are superseded or marked
+`rejected`, never deleted. The current bounded native foundation is accepted
+at **100%** under ADR-0037–0041 and the
+[final source-bound gate](../evidence/native-epoch1-final-acceptance-2026-11-04.json).
+Earlier percentage observations below describe their recorded historical stages.
 
 ## Status lifecycle
 
@@ -31,9 +34,9 @@ runtime theory and its limits. [Native integration epoch 1](../epochs/epoch-01-n
 starts a separate product-delivery scale. Its
 [first-stage ADR](ADR-0032-native-task-stream-contract.md) is now `accepted` for
 the native SDK/task-engine contract. The bounded storage-only
-[ADR-0033](ADR-0033-native-durable-stream-storage.md) also passes, reaching
-**20% of the planned foundation**. HTTP transport, source and deployment
-stages remain open.
+[ADR-0033](ADR-0033-native-durable-stream-storage.md) reached the historical
+**20% storage milestone**. HTTP transport, source and deployment were still
+open at that gate; the later accepted stages now complete the foundation.
 The [current storage closure](../evidence/native-stage2-closure-acceptance-2026-11-01.json)
 binds the consumer lock-order and hosted test API ownership fixes to the final
 local source. Earlier passing and failed observations remain in ADR-0033;
@@ -139,13 +142,13 @@ graph TD
     A0033 --> A0034[ADR-0034: HTTP adapter - accepted]
     A0034 --> A0035[ADR-0035: Native source runtime - accepted]
     A0035 --> A0036[ADR-0036: Durable submission recovery - accepted]
-    A0036 --> A0037[ADR-0037: Mixed finite tasks - progress]
-    A0037 --> A0038[ADR-0038: Native deployment and worker lifecycle - progress]
-    A0038 --> A0039[ADR-0039: Native progress projections - progress]
-    A0037 --> A0040[ADR-0040: Native integration acceptance and operation - progress]
+    A0036 --> A0037[ADR-0037: Mixed finite tasks - accepted]
+    A0037 --> A0038[ADR-0038: Native deployment and worker lifecycle - accepted]
+    A0038 --> A0039[ADR-0039: Native progress projections - accepted]
+    A0037 --> A0040[ADR-0040: Native integration acceptance and operation - accepted]
     A0038 --> A0040
     A0039 --> A0040
-    A0039 --> A0041[ADR-0041: Owned graph lifecycle - progress]
+    A0039 --> A0041[ADR-0041: Owned graph lifecycle - accepted]
     A0041 --> A0040
     A0037 --> A0097[ADR-0097: Recursive null omission - rejected]
     A0094[ADR-0094: JSONB fidelity - rejected] -. evidence .-> A0033
@@ -259,11 +262,11 @@ records PR 9 merged after 97 successful checks/five conditional skips, identical
 tested/merge source, successful native PostgreSQL and corrected Python 3.14
 logs, and the explicit test-only bridge. This earns no extra percentage.
 
-- [ADR-0037: Finite tasks around a streaming graph](ADR-0037-mixed-finite-and-streaming-tasks.md) — `progress`
-- [ADR-0038: Native deployment, worker enrollment and lifecycle](ADR-0038-native-deployment-worker-lifecycle.md) — `progress`
-- [ADR-0039: Native progress projections](ADR-0039-native-progress-projections.md) — `progress`
-- [ADR-0040: Native integration acceptance and operation](ADR-0040-native-integration-acceptance-and-operations.md) — `progress`
-- [ADR-0041: Own graph callbacks across FlowRun navigation](ADR-0041-owned-graph-lifecycle-during-navigation.md) — `progress`
+- [ADR-0037: Finite tasks around a streaming graph](ADR-0037-mixed-finite-and-streaming-tasks.md) — `accepted`
+- [ADR-0038: Native deployment, worker enrollment and lifecycle](ADR-0038-native-deployment-worker-lifecycle.md) — `accepted`
+- [ADR-0039: Native progress projections](ADR-0039-native-progress-projections.md) — `accepted`
+- [ADR-0040: Native integration acceptance and operation](ADR-0040-native-integration-acceptance-and-operations.md) — `accepted`
+- [ADR-0041: Own graph callbacks across FlowRun navigation](ADR-0041-owned-graph-lifecycle-during-navigation.md) — `accepted`
 
 - [ADR-0097: Recursive null omission in recovery responses](ADR-0097-recursive-null-omission-in-recovery-responses.md) — `rejected`
 
@@ -286,3 +289,7 @@ authenticated projections/compatibility/resource bounds to 90%, and a real
 mixed work-pool deployment gate to 100%. Timeout or lease expiry is explicitly
 not proof of process death. These targets add no earned readiness until their
 code and acceptance criteria pass.
+
+The bounded [native foundation](../epochs/epoch-01-native-prefect.md) is now
+accepted at 100% under ADR-0037–0041 and the
+[final gate](../evidence/native-epoch1-final-acceptance-2026-11-04.json).

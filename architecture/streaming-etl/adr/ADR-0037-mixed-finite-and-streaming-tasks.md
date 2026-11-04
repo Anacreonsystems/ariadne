@@ -1,6 +1,6 @@
 # ADR-0037: Finite tasks around a native streaming graph
 
-- Status: `progress`
+- Status: `accepted`
 - Date: 2026-11-04
 - Epoch: [Native integration epoch 1](../epochs/epoch-01-native-prefect.md)
 - Owners: Task/Flow SDK, native lifecycle and storage maintainers; ETL Architect / HighLoad Principal
@@ -41,7 +41,7 @@ this decision into two short delivery slices. N1.6a implements and accepts the
 server/client authority foundation, earning +0%. N1.6b integrates ordinary sync/
 async Task invocation and the complete mixed-flow process matrix; only the
 combined accepted decision earns the planned +10%, reaching 60% of the bounded
-native foundation. Current earned readiness remains 50%.
+native foundation. N1.6b is now accepted within the final epoch gate.
 
 The first profile is exactly one finite prefix, one finite linear source/operator
 stream graph, and one finite tail. It uses existing `@flow` and `@task` concepts,
@@ -137,19 +137,19 @@ admission. Collection size alone never proves EOF.
 
 ### N1.6b: mixed SDK/runtime, planned +10%
 
-- [ ] As a developer, I can run sync and async finite preparation, incremental
+- [x] As a developer, I can run sync and async finite preparation, incremental
   native processing and finite summary using ordinary Flow/Task engines.
-- [ ] As a user, I got the same four TaskRun identities and two channels after
+- [x] As a user, I got the same four TaskRun identities and two channels after
   prefix receipt loss, document-200 process loss, and tail receipt loss.
-- [ ] As a user, I got the completed prefix skipped, first-incomplete document
+- [x] As a user, I got the completed prefix skipped, first-incomplete document
   replayed, and the tail run or skipped according to its durable receipt.
-- [ ] As a system, I can refuse a TAIL after partial collection while any leaf
+- [x] As a system, I can refuse a TAIL after partial collection while any leaf
   remains OPEN, before creating its TaskRun or entering its body, even when
   prior DATA exists; durable EOF before reservation permits admission.
-- [ ] As a system, I can refuse mid-graph finite calls and unsupported finite
+- [x] As a system, I can refuse mid-graph finite calls and unsupported finite
   entrypoints before creating that call's TaskRun, while the unsealed graph
   still admits no stream DATA.
-- [ ] As a developer, I got real 500-document HTTP/PostgreSQL/process evidence,
+- [x] As a developer, I got real 500-document HTTP/PostgreSQL/process evidence,
   ordinary finite-flow regression and independent final acceptance before 60%.
 
 ## Evidence
@@ -310,3 +310,19 @@ also exercise the mixed flow through deployment infrastructure. The
 confirms all N1.6b criteria locally. The [final acceptance and runbook](ADR-0040-native-integration-acceptance-and-operations.md)
 owns hosted CI and final status closure; the preceding planning observations
 remain historical evidence rather than the current implementation state.
+
+## Final native foundation acceptance
+
+The [final source-bound acceptance](../evidence/native-epoch1-final-acceptance-2026-11-04.json)
+and its linked independent review, hosted CI and retained first failures
+close the criteria of this decision. All implementation and acceptance
+tasks for this selected scope are complete. Earlier planning and local-only
+observations remain historical records.
+
+The accepted profile is finite versioned top-level Python code, a finite
+prefix and tail around a single-source linear stream graph, PostgreSQL 17
+and trusted same-host Linux/PID-namespace process recovery. There are at
+most 128 ACTIVE native runs per work pool. Application code owns external
+effect idempotency. General DAG/partition support, cross-host recovery,
+production HA, performance SLOs and a new 72-hour native campaign are
+outside this accepted foundation.
