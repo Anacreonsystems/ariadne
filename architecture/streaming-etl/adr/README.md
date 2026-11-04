@@ -145,6 +145,8 @@ graph TD
     A0037 --> A0040[ADR-0040: Native integration acceptance and operation - progress]
     A0038 --> A0040
     A0039 --> A0040
+    A0039 --> A0041[ADR-0041: Owned graph lifecycle - progress]
+    A0041 --> A0040
     A0037 --> A0097[ADR-0097: Recursive null omission - rejected]
     A0094[ADR-0094: JSONB fidelity - rejected] -. evidence .-> A0033
     A0095[ADR-0095: Implicit FK lock order - rejected] -. evidence .-> A0033
@@ -261,6 +263,7 @@ logs, and the explicit test-only bridge. This earns no extra percentage.
 - [ADR-0038: Native deployment, worker enrollment and lifecycle](ADR-0038-native-deployment-worker-lifecycle.md) — `progress`
 - [ADR-0039: Native progress projections](ADR-0039-native-progress-projections.md) — `progress`
 - [ADR-0040: Native integration acceptance and operation](ADR-0040-native-integration-acceptance-and-operations.md) — `progress`
+- [ADR-0041: Own graph callbacks across FlowRun navigation](ADR-0041-owned-graph-lifecycle-during-navigation.md) — `progress`
 
 - [ADR-0097: Recursive null omission in recovery responses](ADR-0097-recursive-null-omission-in-recovery-responses.md) — `rejected`
 

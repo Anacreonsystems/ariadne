@@ -35,7 +35,7 @@ export async function artifactFactory(
 		});
 	}
 
-	emitter.on("itemSelected", () => {
+	const offItemSelected = emitter.on("itemSelected", () => {
 		const isCurrentlySelected = isSelected({
 			kind: "artifact",
 			id: internalArtifact.id,
@@ -46,8 +46,12 @@ export async function artifactFactory(
 			render(internalArtifact);
 		}
 	});
+	element.once("destroyed", offItemSelected);
 
 	async function render(artifact: RunGraphArtifact): Promise<void> {
+		if (element.destroyed) {
+			return;
+		}
 		internalArtifact = artifact;
 
 		await renderArtifactNode({

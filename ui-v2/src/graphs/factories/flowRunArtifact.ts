@@ -77,21 +77,30 @@ export async function flowRunArtifactFactory<T extends ArtifactFactoryOptions>(
 		selectItem(selectSettings);
 	});
 
-	emitter.on("scaleUpdated", (updated) => {
+	const offScaleUpdated = emitter.on("scaleUpdated", (updated) => {
 		scale = updated;
 		updatePosition();
 	});
-	emitter.on("viewportMoved", () => updatePosition());
-	emitter.on("eventDataCreated", (data) => {
+	const offViewportMoved = emitter.on("viewportMoved", () => updatePosition());
+	const offEventDataCreated = emitter.on("eventDataCreated", (data) => {
 		flowHasEvents = data.length > 0;
 		updatePosition();
 	});
-	emitter.on("eventDataUpdated", (data) => {
+	const offEventDataUpdated = emitter.on("eventDataUpdated", (data) => {
 		flowHasEvents = data.length > 0;
 		updatePosition();
+	});
+	factory.element.once("destroyed", () => {
+		offScaleUpdated();
+		offViewportMoved();
+		offEventDataCreated();
+		offEventDataUpdated();
 	});
 
 	async function render(props?: RenderPropsType<T>): Promise<void> {
+		if (factory.element.destroyed) {
+			return;
+		}
 		if (isArtifactFactory(factory)) {
 			if (options.type !== "artifact") {
 				throw new Error(
@@ -120,6 +129,9 @@ export async function flowRunArtifactFactory<T extends ArtifactFactoryOptions>(
 	}
 
 	function updatePosition(): void {
+		if (factory.element.destroyed) {
+			return;
+		}
 		const date = factory.getDate();
 
 		if (!date || !layout.isTemporal() || settings.disableArtifacts) {

@@ -49,6 +49,9 @@ export async function artifactNodeFactory({
 	async function render(
 		options: ArtifactNodeFactoryRenderOptions,
 	): Promise<Container> {
+		if (element.destroyed) {
+			return element;
+		}
 		const { selected: newSelected, name: newName, type: newType } = options;
 		selected = newSelected ?? selected;
 		name = newName ?? name;
@@ -68,6 +71,9 @@ export async function artifactNodeFactory({
 			await Promise.all([renderArtifactIcon(), renderArtifactNode()]);
 		}
 
+		if (element.destroyed) {
+			return element;
+		}
 		await renderBg();
 
 		return element;
@@ -88,6 +94,9 @@ export async function artifactNodeFactory({
 
 		const newIcon = await renderIcon(iconName);
 
+		if (element.destroyed) {
+			return newIcon;
+		}
 		newIcon.position = { x: artifactPaddingLeft, y: artifactPaddingY };
 		newIcon.width = artifactIconSize;
 		newIcon.height = artifactIconSize;
@@ -134,6 +143,9 @@ export async function artifactNodeFactory({
 
 		await renderLabel(name);
 
+		if (element.destroyed) {
+			return label;
+		}
 		const {
 			artifactPaddingLeft,
 			artifactPaddingY,

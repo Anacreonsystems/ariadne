@@ -49,8 +49,31 @@ await context.addInitScript(
 );
 const page = await context.newPage();
 const errors = [];
-page.on("pageerror", (error) => errors.push(error.message));
+const errorDetails = [];
+const timeline = [];
+const startedAt = performance.now();
+let phase = "created";
+let result;
+function mark(nextPhase) {
+	phase = nextPhase;
+	timeline.push({
+		phase,
+		elapsed_ms: Math.round(performance.now() - startedAt),
+	});
+}
+page.on("pageerror", (error) => {
+	errors.push(error.message);
+	errorDetails.push({
+		phase,
+		elapsed_ms: Math.round(performance.now() - startedAt),
+		message: error.message,
+		stack: error.stack,
+		url: page.url(),
+	});
+});
+page.on("close", () => mark("page-closed"));
 try {
+	mark("flow-navigation");
 	const responsePromise = page.waitForResponse(
 		(response) =>
 			new URL(response.url()).pathname ===
@@ -103,6 +126,7 @@ try {
 	await expect(
 		page.getByRole("heading", { name: "Streaming progress" }),
 	).toBeVisible();
+	mark("stream-progress-visible");
 	await expect(page.getByText("Generation 1", { exact: true })).toBeVisible();
 	await expect(
 		page.getByText(
@@ -137,6 +161,7 @@ try {
 	assert.equal(context.serviceWorkers().length, 0);
 	await page.screenshot({ path: `${output}/flow-run.png`, fullPage: true });
 	const operator = projection.items.find((item) => item.role === "OPERATOR");
+	mark("task-navigation");
 	await page
 		.getByRole("link", { name: operator.submission_key, exact: true })
 		.click();
@@ -146,8 +171,20 @@ try {
 	await expect(
 		page.getByRole("heading", { name: "Streaming progress" }),
 	).toHaveCount(0);
-	assert.deepEqual(errors, []);
-	const result = {
+	await expect(
+		page.getByRole("tab", { name: "Logs", exact: true }),
+	).toBeVisible();
+	mark("task-visible");
+	await page.evaluate(
+		() =>
+			new Promise((resolve) =>
+				requestAnimationFrame(() => requestAnimationFrame(resolve)),
+			),
+	);
+	// Observe asynchronous graph teardown before closing the page.
+	await page.waitForTimeout(500);
+	mark("task-settled");
+	result = {
 		scope:
 			"Packaged React UI on the real authenticated API/PostgreSQL worker fixture; no MSW or response mocks",
 		flow_run_id: flowRunId,
@@ -164,14 +201,29 @@ try {
 		})),
 		task_links: links,
 		operator_navigation: "PASS",
-		page_errors: errors,
 		service_workers: context.serviceWorkers().length,
 	};
-	await writeFile(
-		`${output}/results.json`,
-		`${JSON.stringify(result, null, 2)}\n`,
-	);
-	console.log(JSON.stringify({ ...result, artifact_directory: output }));
 } finally {
-	await browser.close();
+	try {
+		mark("context-closing");
+		await context.close();
+		mark("context-closed");
+	} finally {
+		mark("browser-closing");
+		await browser.close();
+		mark("browser-closed");
+	}
 }
+const observedResult = {
+	...result,
+	status: errors.length === 0 ? "PASS" : "FAIL",
+	page_errors: [...errors],
+	error_details: errorDetails.map((error) => ({ ...error })),
+	timeline: timeline.map((event) => ({ ...event })),
+};
+await writeFile(
+	`${output}/results.json`,
+	`${JSON.stringify(observedResult, null, 2)}\n`,
+);
+assert.deepEqual(errors, []);
+console.log(JSON.stringify({ ...observedResult, artifact_directory: output }));

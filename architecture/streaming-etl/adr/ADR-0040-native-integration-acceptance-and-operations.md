@@ -274,6 +274,12 @@ fixed through private temporary artifact directories and worker-message origin
 validation; both valid-origin and foreign-origin browser controls passed.
 Hosted successor results must still confirm these fixes before acceptance.
 
+The packaged navigation gate later exposed an existing upstream graphics
+lifecycle defect and an early error-snapshot flaw in the probe. Its confirmed
+diagnosis, implementation agreement and additional acceptance are recorded in
+[ADR-0041](ADR-0041-owned-graph-lifecycle-during-navigation.md). Final native
+foundation acceptance remains blocked until that UI successor also passes.
+
 ### Hosted integration findings after the first local gate
 
 GitHub delayed final job/check statuses even after all their steps had
@@ -306,3 +312,44 @@ the real 120-second renewal horizon. `BOOT_CHANGED` and `WAITPID` do not satisfy
 this scenario. Live-before-horizon/dead-after-replacement, retry/slot/identity
 continuity and all 500 ordered outputs remain mandatory. A full worker-profile
 successor must pass before this changed test oracle is accepted.
+
+An ordinary scheduler case in canonical shard 7 also depended on finishing
+database work before a one-second future anchor expired. Its CI database call
+took 1.107 seconds, leaving one future occurrence rather than the expected two
+within the 100-day bound. The
+[clock correction proof](../evidence/native-integration-discovery-2026-11-04/native-epoch1-scheduler-clock-correction-proof.json)
+injects the same 1.2-second **pre-scheduler** delay before and after the change:
+the old test fails and the corrected test passes. The actual SQL call itself
+is not delayed by this probe. The fix uses the existing frozen UTC fixture for
+the anchor and explicitly patches the scheduler's imported clock alias. Run
+counts, interval and one-second offset are unchanged; the whole real-PostgreSQL
+scheduler module passes 22 cases without skips. Production scheduler code is
+unchanged.
+
+The [completed hosted diagnosis](../evidence/native-integration-discovery-2026-11-04/native-epoch1-ci-status-diagnosis-completed.json)
+records 100 successes, these three failed checks and five conditional skips
+for `35dc8d5`; that run is not final acceptance. The
+[successor source manifest](../evidence/native-epoch1-source-freeze-ci-successor-2026-11-04.json)
+binds 144 paths to commit `ec10b92`. The
+[successor relevance bridge](../evidence/native-epoch1-source-relevance-ci-successor-2026-11-04.json)
+accounts for 140 unchanged paths, three modified paths and the newly inventoried
+scheduler test. All production Python, configuration and dependencies remain
+unchanged. The [narrow independent review](../evidence/native-epoch1-ci-successor-principal-narrow-2026-11-04.json)
+approves that relevance argument while requiring fresh full worker/UI gates,
+the scheduler proof, current-source hosted CI and final acceptance review.
+
+### Hosted native runtime acceptance
+
+The [retained ec10b92 hosted proof](../evidence/native-epoch1-hosted-ec10b92-2026-11-04/index.json)
+records all 107 checks completed: 102 successful, five conditional skips and
+zero failures. Actual selected native XML contains 570 PostgreSQL-17 passes
+(36 task contracts, 76 storage, 359 HTTP/process/package, 54 API and 45
+migration cases) and 107 SQLite passes; both lanes have zero skipped/failed
+cases. Original failed runs remain retained separately. Public/CI typing and
+CodeQL also pass on this commit.
+
+This accepts the tested native/backend source. Full epoch acceptance still
+requires the separately tracked [UI lifecycle successor](ADR-0041-owned-graph-lifecycle-during-navigation.md)
+and its reviewed source bridge: its production changes are confined to the
+UI, so native/backend reports must be bound by byte equality rather than
+described as executions of a different UI source.

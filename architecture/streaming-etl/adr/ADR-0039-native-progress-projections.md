@@ -126,6 +126,9 @@ and its real PostgreSQL controls govern server-side enforcement.
   accessible loading/error states, Storybook cases and a passing UI build.
 - [ ] As a user, I got ordinary FlowRun UI regression coverage and no new
   projection calls for runs without the native capability.
+- [ ] As a user, I can follow TaskRun links while graph work is pending without
+  old callbacks mutating destroyed elements, proven by the full owned-lifecycle
+  gate in [ADR-0041](ADR-0041-owned-graph-lifecycle-during-navigation.md).
 
 ## Implementation
 
@@ -273,3 +276,82 @@ origin guard in the current package.
 These local checks do not stand in for hosted CodeQL. A new hosted analysis
 after publication remains required; the findings have not been dismissed or
 suppressed. Its result belongs to the common epoch's hosted successor record.
+
+## Error compatibility and owned navigation cleanup successor
+
+This stage remains `progress`. The concurrent full suite recorded 3,123
+passing tests, two failed default-deadline observations and two existing TODOs.
+The unchanged failing file passes all nine tests in isolation. The complete
+idle rerun and hosted UI-only CI remain required before acceptance; all other
+local gates below have passed.
+
+The hosted UI shard exposed a compatibility regression in the shared API error
+transport: a JSON object without `detail` acquired a generic status message,
+which hid the variable form's existing contextual fallback. The corrected
+transport preserves an empty error message for absent details. Ordinary string
+details, native `{code, message}` details and the safe malformed-response
+fallback retain their contracts. Existing variable-form assertions remain
+unchanged. A shared transport change requires the complete UI regression suite.
+
+The [pending local UI successor](../evidence/native-stage9-ui-error-compat-successor-2026-11-04/pending.json)
+also records a real navigation defect uncovered by the strengthened packaged-UI
+probe. A queued 250 ms event-clustering callback could access destroyed Pixi
+children after navigation to a TaskRun. Suspended resource creation and event
+fetches could outlive their scene, subscribe after the old event bus was
+cleared, or attach to a destroyed stage. These graph paths were unchanged in
+the earlier runtime branch; their failures remain preserved as discovery.
+[ADR-0041](ADR-0041-owned-graph-lifecycle-during-navigation.md) owns the detailed
+lifecycle agreement and the corresponding navigation criterion.
+
+Each event/artifact container now owns cancellation of its delayed layout and
+its subscriptions. In-flight clustering checks the owner's lifetime after
+awaited work. Late leaf resources are destroyed without attachment, and owned
+renderers stop positioning destroyed children. Cached textures remain shared
+resources. Root scene scopes retain their original stage and reject obsolete
+initialization, fetch results and polling. Pending application initialization
+owns its private Pixi instance; only an initialized current instance becomes
+public. A stopped initialization destroys its obsolete instance after init
+finishes and cannot replace a newer scene or its pending initialization.
+
+As a developer, I want ordinary contextual API errors and native refusals to
+remain readable after a shared transport change. As a user, I want to open the
+operator's TaskRun from streaming progress while the previous graph releases
+its resources. As a system, I want stopped rendering owners to discard delayed
+work and release subscriptions before a new view uses the event bus.
+
+Acceptance criteria:
+
+- As a developer, I got the full UI suite and unchanged variable fallback
+  assertions passing, alongside the native transport and control cases.
+- As a user, I can follow the operator TaskRun on a real eight-document
+  PostgreSQL/ProcessWorker deployment with no page errors through browser close.
+- As a system, I got queued-layout, delayed-leaf, stopped-fetch, new-scene and
+  pending-application regressions passing against the actual ownership code.
+- As a developer, I got a deliberately injected late browser exception reported
+  as `FAIL` with a nonzero exit and no successful report.
+
+The live probe waits for the TaskRun tab, two animation frames and a bounded
+500 ms teardown observation. It closes the context and browser before taking
+its final error snapshot and writing the result. Error details retain the
+stack and lifecycle timeline. Three clean real-API observations, an injected
+late-error control and exact served entry, transport, worker and graph chunk
+bytes accompany the final package. Storybook/MSW browser cases remain a
+separate fixture-based visual/accessibility gate. Unit tests preserve real
+Pixi objects, factory lifetimes and event handlers; graphics initialization
+and primitive texture boundaries are substituted where a DOM test has no GPU.
+The packaged Chromium check exercises the real renderer and API together.
+
+The preserved intermediate 40-path source snapshot and its interrupted full
+suite are discovery evidence. The final named application/closure successor
+binds 42 UI paths and closes the added initialization and obsolete-rejection
+controls. Earlier acceptance records remain unchanged. Cold compiler and
+pre-readiness browser failures are retained; the final browser gate runs after
+compiler readiness with its original data assertions and timeouts.
+
+A stopped `waitForEvent` promise can remain unsettled when its listener is
+cleared. This delivery bounds active callbacks, polling, subscriptions and
+owned renderer resources; it does not promise settlement of every obsolete
+initialization wait. A global promise-rejection protocol is outside this
+agreement. The local result adds no streaming capability or readiness
+percentage; hosted UI-only CI and status closure remain governed by
+[ADR-0040](ADR-0040-native-integration-acceptance-and-operations.md).

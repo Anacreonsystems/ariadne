@@ -1,0 +1,57 @@
+{
+  "schema": "native-epoch1-scheduler-anchor-clock-correction/v1",
+  "captured_at_utc": "2026-11-04T17:55:26.543909+00:00",
+  "ci_head": "35dc8d5b0c84627d2cafe6da252aa84954252f21",
+  "hosted_failure": "Canonical7/18 job126742223363 tests/server/services/test_scheduler.py::TestScheduleRulesWaterfall::test_create_schedule_respects_max_future_time[interval3-2]",
+  "problem": "Anchor is one second ahead of wall clock. CI database creation consumed1.107sec, so scheduler starts after anchor; 60day interval then yields1 run instead of2 within100days.",
+  "fix": "Use existing frozen_time UTC fixture for anchor and explicitly monkeypatch the imported scheduler.now alias to that frozen value. Do not change offset or expected n.",
+  "test_source": {
+    "path": "tests/server/services/test_scheduler.py",
+    "before_sha256": "dd2178dd9f4567309a12c97d5f6c9ae047d121c46e76563d11b33712d2c7ae3b",
+    "after_sha256": "8ecbdbc510e67ffbb8d5c8bd868a3485d082781010daa151b08375bff202cd90"
+  },
+  "runtime_source_changes": false,
+  "controlled_reproduction": {
+    "plugin": "/tmp/native_scheduler_delay.py",
+    "plugin_sha256": "9ef2fdcad7c74c0a52edf2e475266abc73f9c68b2bb9d4af3af18534ba6f50fe",
+    "latency_seconds": 1.2,
+    "same_plugin_before_and_after": true,
+    "qualification": "Delay is injected only in this diagnostic pytest plugin before schedule_deployments; it is not committed or used by the fullfile validation."
+  },
+  "database": "PostgreSQL17.11 localhost55436 isolatednative_ci_scheduler_tests_master; hostednextCI will additionally validatePG14.",
+  "runs": [
+    {
+      "label": "scheduler-anchor-delay-before",
+      "cases": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "junit": "/tmp/native-epoch1-scheduler-anchor-delay-before.xml",
+      "junit_sha256": "739198b607b08f051cc3088cc23867c70d12094c43d6d660bb01e07dcea5737a",
+      "log": "/tmp/native-epoch1-scheduler-anchor-delay-before.log",
+      "log_sha256": "cd0308afe46e6ba595377582aa1110c6e478c102efac3b241a7db55f3d614712"
+    },
+    {
+      "label": "scheduler-anchor-delay-after",
+      "cases": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "junit": "/tmp/native-epoch1-scheduler-anchor-delay-after.xml",
+      "junit_sha256": "56941a1b1a75bdfe1abcef52a5ce7c4c46dbe0ef143162b46cf90f5dc067bd1b",
+      "log": "/tmp/native-epoch1-scheduler-anchor-delay-after.log",
+      "log_sha256": "eaf86b12b4bc1ae93adae7844a214dd48fd4e27c257560be583cb7de41f3bdcb"
+    },
+    {
+      "label": "scheduler-frozen-full-pg",
+      "cases": 22,
+      "passed": 22,
+      "failed": 0,
+      "skipped": 0,
+      "junit": "/tmp/native-epoch1-scheduler-frozen-full-pg.xml",
+      "junit_sha256": "58e5f433741a1fec9934b3b9b8053058fe41d9ab14e0e3eec35cded518734911",
+      "log": "/tmp/native-epoch1-scheduler-frozen-full-pg.log",
+      "log_sha256": "6400da5e560e0e172cf88bbda3acbee99b23bae22f80622220739a33fdd12290"
+    }
+  ]
+}

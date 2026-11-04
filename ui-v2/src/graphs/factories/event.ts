@@ -39,7 +39,7 @@ export async function eventFactory(event: RunGraphEvent) {
 		}
 	});
 
-	emitter.on("itemSelected", () => {
+	const offItemSelected = emitter.on("itemSelected", () => {
 		const isCurrentlySelected = isSelected({
 			kind: "event",
 			id: event.id,
@@ -55,8 +55,12 @@ export async function eventFactory(event: RunGraphEvent) {
 			render();
 		}
 	});
+	element.once("destroyed", offItemSelected);
 
 	function render(): void {
+		if (element.destroyed) {
+			return;
+		}
 		const { eventColor, eventTargetSize, eventSelectedBorderInset } = styles;
 
 		targetArea.alpha = 0;

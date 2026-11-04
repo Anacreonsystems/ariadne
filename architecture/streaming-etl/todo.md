@@ -137,6 +137,7 @@ N1.6b passes.
 | NI1-090 | `progress` | NI1-083 | Actual work-pool mixed deployment in sync and async profiles. As a developer, I can run prefix, source, operator and tail without a test launcher or prototype adapter. |
 | NI1-091 | `progress` | NI1-090 | End-to-end retry, lost-response, confirmed replacement, server restart, drain and cancellation cuts with PostgreSQL oracles. As a user, I got exact first-incomplete continuation and terminal lifecycle. |
 | NI1-092 | `progress` | NI1-091 | Ordinary Flow/Task/generator, package, migration, client/server, UI and resource regression. As a system, I got no native-lane skips and no ordinary-runtime regression. |
+| NI1-092a | `progress` | NI1-080, NI1-092 | [Owned UI graph lifecycle](adr/ADR-0041-owned-graph-lifecycle-during-navigation.md). As a user, I can navigate to a TaskRun without queued layout, late data or stale subscriptions mutating a destroyed scene; real Pixi/throttle, stop/start, full UI and post-close packaged-browser gates pass. No extra foundation percentage. |
 | NI1-093 | `progress` | NI1-092 | Source-bound final evidence, [runbook and independent epoch review](adr/ADR-0040-native-integration-acceptance-and-operations.md). As a user, I got the bounded native-foundation acceptance and its explicit non-HA/non-performance limits before 100%. |
 
 ## Protocol epoch 2 — short experimental delivery — target 100%, earned 100%
