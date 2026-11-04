@@ -1,0 +1,64 @@
+"""Record actual completed PR CI and exact tested source after merge."""
+from pathlib import Path
+from collections import Counter
+from datetime import datetime, timezone
+import hashlib
+import json
+import re
+import subprocess
+
+root = Path('/workspace/ariadne')
+ev = root / 'architecture/streaming-etl/evidence'
+def git(*args):
+    return subprocess.check_output(['git', *args], cwd=root)
+def artifact(name):
+    return {'path': name, 'sha256': hashlib.sha256((ev / name).read_bytes()).hexdigest()}
+pr = json.loads(subprocess.check_output(['gh', 'pr', 'view', '11', '--json', 'number,url,state,headRefOid,mergeCommit,mergedAt,statusCheckRollup'], cwd=root))
+tested = 'd5b781e9d0fe606acbaed96c35aafe593fb2e113'
+assert pr['state'] == 'MERGED' and pr['headRefOid'] == tested
+merge = pr['mergeCommit']['oid']
+assert git('rev-parse', tested + '^{tree}') == git('rev-parse', merge + '^{tree}')
+accepted = json.loads((ev / 'native-stage6a-corrected-acceptance-2026-11-04.json').read_text())
+source = accepted['source_sha256']
+assert len(source) == 76
+for path, digest in source.items():
+    for ref in (tested, merge):
+        assert hashlib.sha256(git('show', ref + ':' + path)).hexdigest() == digest, (path, ref)
+checks = pr['statusCheckRollup']
+assert len(checks) >= 100
+assert all(c['status'] == 'COMPLETED' and c['conclusion'] in ('SUCCESS', 'SKIPPED', 'NEUTRAL') for c in checks)
+def job(name):
+    match = [c for c in checks if c['name'] == name]
+    assert len(match) == 1 and match[0]['conclusion'] == 'SUCCESS', name
+    return match[0]
+native = job('Native stream tasks - python:3.12, postgres:17')
+sqlite = job('Native stream tasks - python:3.12, sqlite')
+types = job('Type Checks')
+execution314 = job('Client Tests: Execution - python:3.14, postgres:14')
+def log_for(check, label):
+    job_id = int(check['detailsUrl'].split('/')[-1])
+    name = f'native-stage6a-hosted-{label}-job-{job_id}-2026-11-04.log'
+    raw = (ev / name).read_text()
+    clean = re.sub(r'\x1b\[[0-9;]*m', '', raw)
+    assert 'Process completed with exit code 1' not in clean
+    return artifact(name), clean, job_id
+native_log, native_text, native_id = log_for(native, 'native')
+sqlite_log, sqlite_text, sqlite_id = log_for(sqlite, 'sqlite')
+type_log, type_text, type_id = log_for(types, 'typecheck')
+execution314_log, execution314_text, execution314_id = log_for(execution314, 'python314')
+def passing_counts(text):
+    return [int(n) for n in re.findall(r'\b(\d+) passed(?:, [^\n]*?)? in \d', text)]
+assert passing_counts(native_text) == [36, 76, 250, 18, 43], passing_counts(native_text)
+assert passing_counts(sqlite_text) == [36, 1, 8, 43], passing_counts(sqlite_text)
+assert not re.search(r'\b\d+ (?:failed|skipped|xfailed|xpassed)\b', native_text)
+assert not re.search(r'\b\d+ (?:failed|skipped|xfailed|xpassed)\b', sqlite_text)
+assert 'Type completeness score: 100%' in type_text
+assert ' - error:' not in type_text
+assert re.search(r'"errorCount": 0', type_text)
+assert re.search(r'"filesAnalyzed": 1308', type_text)
+assert '1617 passed, 176 skipped, 7 xfailed' in execution314_text
+record = {'schema': 'native-stage6a-hosted-successor/v1', 'verdict': 'PASS_N1_6A_HOSTED_SCOPED', 'captured_at_utc': datetime.now(timezone.utc).isoformat(), 'pull_request': pr['url'], 'tested_head': tested, 'merge_commit': merge, 'merged_at': pr['mergedAt'], 'merge_tree_identical': True, 'source_sha256': source, 'corrected_acceptance': artifact('native-stage6a-corrected-acceptance-2026-11-04.json'), 'corrected_principal': artifact('native-stage6a-corrected-principal-2026-11-04.json'), 'original_static_error_retained': artifact('native-stage6a-hosted-typecheck-initial-2026-11-04.log'), 'latest_rollup_counts': dict(Counter(c['conclusion'] for c in checks)), 'checks': checks, 'hosted_job_logs': [native_log, sqlite_log, type_log], 'native_postgresql_job': {'id': native_id, 'url': native['detailsUrl'], 'tests': 423, 'passed': 423, 'skipped': 0, 'steps': {'legacy_contract': 36, 'storage_models': 76, 'sdk_http_process_package': 250, 'api': 18, 'migrations': 43}}, 'native_sqlite_job': {'id': sqlite_id, 'url': sqlite['detailsUrl'], 'tests': 88, 'passed': 88, 'skipped': 0, 'steps': {'legacy_contract': 36, 'storage_refusal': 1, 'api_refusal_and_policy': 8, 'migrations': 43}}, 'static_job': {'id': type_id, 'url': types['detailsUrl'], 'public_type_error_diagnostics': 0, 'ci_files_analyzed': 1308, 'ci_error_count': 0, 'ci_warning_count': 138}, 'earned_native_foundation_percent': 50, 'percentage_delta': 0, 'parent_adr_status': 'progress', 'scope': 'Hosted closure of N1.6a server/client finite authority only, with exact corrected76-path source surviving merge. All selected native cases execute. The original static approval is superseded by the explicit corrected acceptance, not silently repaired. N1.6b mixed SDK execution, arbitrary mixed DAGs, production launcher/HA/performance and online retention remain outside this acceptance. Post-merge main workflow is a separate run and is not claimed complete by this record.'}
+record['hosted_job_logs'].append(execution314_log)
+record['python314_execution_job'] = {'id': execution314_id, 'url': execution314['detailsUrl'], 'passed': 1617, 'skipped': 176, 'xfailed': 7, 'failure': 0, 'qualification': 'Normal execution profile retains known/version skips. The17 new native finite HTTP cases require PostgreSQL17 and add17 declared skips here relative to N1.5; actual native evidence comes from the separate zero-skip423-case PostgreSQL17 job.'}
+(ev / 'native-stage6a-hosted-successor-2026-11-04.json').write_text(json.dumps(record, indent=2) + '\n')
+print(json.dumps({'verdict': record['verdict'], 'checks': record['latest_rollup_counts'], 'native_pg': 423, 'native_sqlite': 88, 'merge': merge}))

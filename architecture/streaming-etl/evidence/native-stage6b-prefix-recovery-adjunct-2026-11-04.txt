@@ -1,0 +1,288 @@
+"""Real HTTP/PostgreSQL control for prefix-only recovery then first gen-2 seal.
+
+This planning adjunct exercises the existing low-level protocol. It does not
+implement or accept the N1.6b mixed-task SDK.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import subprocess
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+import asyncpg
+
+DB_NAME = "native_stage6b_adjunct"
+ADMIN_DSN = "postgresql://native_recovery:native_recovery@127.0.0.1:55436/postgres"
+ASYNC_DSN = (
+    "postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/"
+    + DB_NAME
+)
+
+# This environment is set by the invoking command too; assigning it here makes
+# direct execution deterministic before Prefect helpers read settings.
+os.environ["PREFECT_SERVER_DATABASE_CONNECTION_URL"] = ASYNC_DSN
+os.environ["PREFECT_API_DATABASE_CONNECTION_URL"] = ASYNC_DSN
+
+from prefect._internal.stream_execution import (  # noqa: E402
+    StreamExecutionContext,
+    stream_execution_context,
+)
+from prefect.client.orchestration._streams.client import StreamRequestError  # noqa: E402
+from prefect.states import Completed, Running  # noqa: E402
+from tests.test_native_execution_http import (  # noqa: E402
+    _claim,
+    _takeover_request,
+)
+from tests.test_native_finite_http import _request  # noqa: E402
+from tests.test_native_stream_recovery_http import RestartableAPI  # noqa: E402
+
+
+async def _reset_database() -> None:
+    connection = await asyncpg.connect(ADMIN_DSN)
+    try:
+        await connection.execute(
+            """
+            SELECT pg_terminate_backend(pid)
+            FROM pg_stat_activity
+            WHERE datname = $1 AND pid <> pg_backend_pid()
+            """,
+            DB_NAME,
+        )
+        await connection.execute(f'DROP DATABASE IF EXISTS "{DB_NAME}"')
+        await connection.execute(f'CREATE DATABASE "{DB_NAME}"')
+    finally:
+        await connection.close()
+
+
+def _migrate() -> None:
+    environment = dict(os.environ)
+    completed = subprocess.run(
+        ["uv", "run", "prefect", "server", "database", "upgrade", "-y"],
+        cwd="/workspace/ariadne",
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=120,
+    )
+    print(completed.stdout, end="")
+    assert completed.returncode == 0, completed.stdout
+
+
+def test_prefix_only_recovery_then_first_generation_two_seal(tmp_path: Path) -> None:
+    asyncio.run(_reset_database())
+    _migrate()
+    server = RestartableAPI(tmp_path)
+    server.start()
+    try:
+        launch = _claim(server)
+        with stream_execution_context(launch.context), server.client() as client:
+            assert client.set_flow_run_state(
+                launch.flow_run_id, Running()
+            ).state.is_running()
+            prefix = client.reserve_stream_finite_submission(**_request(launch))
+            launch.context.register_manifest(
+                prefix.task_run_id, prefix.manifest_digest
+            )
+            assert client.set_task_run_state(
+                prefix.task_run_id, Running()
+            ).state.is_running()
+            assert client.read_task_run(prefix.task_run_id).run_count == 1
+            try:
+                client.read_stream_finite_receipt(task_run_id=prefix.task_run_id)
+            except StreamRequestError as exc:
+                assert exc.code == "NOT_FOUND"
+            else:
+                raise AssertionError("prefix unexpectedly had a receipt")
+
+        takeover_request, private_key = _takeover_request(launch)
+        with server.client() as client:
+            replacement = client.takeover_stream_execution(**takeover_request)
+            assert replacement.generation == 2
+            assert client.read_flow_run(launch.flow_run_id).state.name == "AwaitingRetry"
+
+        recovered = StreamExecutionContext(
+            launch.flow_run_id,
+            replacement.generation,
+            replacement.holder_id,
+            server.url,
+            takeover_request["new_holder_capability"],
+            private_key,
+        )
+        recovered.register_manifest(prefix.task_run_id, prefix.manifest_digest)
+        prefix_witness = {
+            "submission_key": prefix.submission_key,
+            "manifest_digest": prefix.manifest_digest,
+            "phase": "PREFIX",
+        }
+        with stream_execution_context(recovered), server.client() as client:
+            prepare_operation = uuid4()
+            prepared = client.prepare_stream_recovery(
+                flow_run_id=launch.flow_run_id,
+                operation_id=prepare_operation,
+                manifests=[],
+                finite_manifests=[prefix_witness],
+            )
+            assert prepared.generation == 2 and prepared.items == []
+            assert prepared.finite_items is not None
+            assert len(prepared.finite_items) == 1
+            prefix_item = prepared.finite_items[0]
+            assert prefix_item.task_run_id == prefix.task_run_id
+            assert prefix_item.receipt is None
+            assert prefix_item.task_state == "AwaitingRetry"
+            assert prefix_item.current_run_count == 1
+            assert prefix_item.next_run_count == 2
+            assert (
+                client.prepare_stream_recovery(
+                    flow_run_id=launch.flow_run_id,
+                    operation_id=prepare_operation,
+                    manifests=[],
+                    finite_manifests=[prefix_witness],
+                )
+                == prepared
+            )
+
+            assert client.set_flow_run_state(
+                launch.flow_run_id, Running()
+            ).state.is_running()
+            assert client.set_task_run_state(
+                prefix.task_run_id, Running()
+            ).state.is_running()
+            prefix_task = client.read_task_run(prefix.task_run_id)
+            assert prefix_task.id == prefix.task_run_id
+            assert prefix_task.run_count == 2
+
+            prefix_receipt = client.complete_stream_finite_task(
+                flow_run_id=launch.flow_run_id,
+                task_run_id=prefix.task_run_id,
+                operation_id=uuid4(),
+                run_count=2,
+                result={"prepared": True, "generation": 2},
+            )
+            assert prefix_receipt.task_run_id == prefix.task_run_id
+            assert prefix_receipt.run_count == 2
+            assert client.set_task_run_state(
+                prefix.task_run_id, Completed()
+            ).state.is_completed()
+
+            source = client.reserve_stream_submission(
+                flow_run_id=launch.flow_run_id,
+                submission_key="documents.ingest",
+                role="SOURCE",
+                protocol="source-v1",
+                task_name="ingest",
+                task_key="ingest-v1",
+                artifact_digest="b" * 64,
+                task_version="generation-v1",
+                flow_version="generation-v1",
+                parameters={"ref": "object://documents"},
+                task_policy={"retries": 2},
+            )
+            recovered.register_manifest(source.task_run_id, source.manifest_digest)
+            seal = client.seal_stream_manifest(
+                flow_run_id=launch.flow_run_id,
+                operation_id=uuid4(),
+                manifests=[
+                    {
+                        "submission_key": source.submission_key,
+                        "manifest_digest": source.manifest_digest,
+                    }
+                ],
+                finite_prefix={
+                    **prefix_witness,
+                    "task_run_id": str(prefix.task_run_id),
+                    "result_digest": prefix_receipt.result_digest,
+                },
+            )
+            assert seal.generation == 2
+            assert seal.manifest_count == 1
+
+            assert client.set_task_run_state(
+                source.task_run_id, Running()
+            ).state.is_running()
+            admission = client.open_stream_source(
+                stream_id=source.stream_id,
+                task_run_id=source.task_run_id,
+                owner_id=uuid4(),
+                attempt=1,
+            )
+            binding = admission.binding
+            assert admission.accepted_source_position == 0
+            client.append_stream_source(
+                **binding.model_dump(), position=1, value={"document": 200}
+            )
+            client.close_stream_source(
+                **binding.model_dump(), expected_position=1
+            )
+            assert client.set_task_run_state(
+                source.task_run_id, Completed()
+            ).state.is_completed()
+
+            tail_request: dict[str, Any] = {
+                **_request(launch),
+                "phase": "TAIL",
+                "submission_key": "documents.summary",
+                "task_name": "summary",
+                "task_key": "summary-v1",
+                "artifact_digest": "c" * 64,
+                "parameters": {"stream_id": str(source.stream_id)},
+            }
+            tail = client.reserve_stream_finite_submission(**tail_request)
+            recovered.register_manifest(tail.task_run_id, tail.manifest_digest)
+            assert client.set_task_run_state(
+                tail.task_run_id, Running()
+            ).state.is_running()
+            tail_receipt = client.complete_stream_finite_task(
+                flow_run_id=launch.flow_run_id,
+                task_run_id=tail.task_run_id,
+                operation_id=uuid4(),
+                run_count=1,
+                result={"processed": 1},
+            )
+            assert tail_receipt.result == {"processed": 1}
+            assert client.set_task_run_state(
+                tail.task_run_id, Completed()
+            ).state.is_completed()
+            assert client.set_flow_run_state(
+                launch.flow_run_id, Completed()
+            ).state.is_completed()
+
+            stream = client.read_stream(source.stream_id)
+            assert stream.state == "COMPLETED"
+            assert stream.record_count == 1 and stream.producer_position == 1
+            records = client.read_stream_prefix(source.stream_id, limit=10)
+            assert [row.value for row in records] == [{"document": 200}]
+            assert client.read_task_run(prefix.task_run_id).run_count == 2
+            assert client.read_task_run(source.task_run_id).run_count == 1
+            assert client.read_task_run(tail.task_run_id).run_count == 1
+
+        with stream_execution_context(launch.context), server.client() as client:
+            try:
+                client.set_flow_run_state(launch.flow_run_id, Completed())
+            except Exception as exc:
+                response = getattr(exc, "response", None)
+                assert response is not None
+                assert response.json()["detail"]["code"] == "STALE_EXECUTION"
+            else:
+                raise AssertionError("old generation unexpectedly mutated final flow")
+
+        print(
+            "ADJUNCT_RESULT",
+            {
+                "flow_run_id": str(launch.flow_run_id),
+                "generation": 2,
+                "prefix_task_run_id": str(prefix.task_run_id),
+                "prefix_run_count": 2,
+                "source_task_run_id": str(source.task_run_id),
+                "tail_task_run_id": str(tail.task_run_id),
+                "records": 1,
+                "flow_state": "COMPLETED",
+            },
+        )
+    finally:
+        server.stop()
+        server.socket.close()
