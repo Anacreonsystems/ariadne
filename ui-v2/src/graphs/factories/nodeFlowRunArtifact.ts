@@ -75,12 +75,16 @@ export async function nodeFlowRunArtifactFactory<
 		selectItem(selectSettings);
 	});
 
-	emitter.on("scaleUpdated", (updated) => {
+	const offScaleUpdated = emitter.on("scaleUpdated", (updated) => {
 		scale = updated;
 		updatePosition();
 	});
+	factory.element.once("destroyed", offScaleUpdated);
 
 	async function render(props?: RenderPropsType<T>): Promise<void> {
+		if (factory.element.destroyed) {
+			return;
+		}
 		if (isArtifactFactory(factory)) {
 			if (options.type !== "artifact") {
 				throw new Error(
@@ -107,6 +111,9 @@ export async function nodeFlowRunArtifactFactory<
 	}
 
 	function updatePosition(): void {
+		if (factory.element.destroyed) {
+			return;
+		}
 		const date = factory.getDate();
 		const { parentStartDate } = options;
 

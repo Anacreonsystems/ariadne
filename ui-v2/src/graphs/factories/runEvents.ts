@@ -29,10 +29,26 @@ export async function runEventsFactory({
 
 	const container = new Container();
 	let internalData: RunGraphEvent[] | null = null;
+	let disposed = false;
 
-	emitter.on("scaleUpdated", () => update());
+	const offScaleUpdated = emitter.on("scaleUpdated", () => update());
+	container.once("destroyed", dispose);
+
+	function isActive(): boolean {
+		return !disposed;
+	}
+
+	function dispose(): void {
+		disposed = true;
+		checkLayout.cancel();
+		offScaleUpdated();
+	}
 
 	async function render(newData?: RunGraphEvent[]): Promise<void> {
+		if (disposed) {
+			return;
+		}
+
 		if (newData) {
 			internalData = newData;
 		}
@@ -53,6 +69,10 @@ export async function runEventsFactory({
 	}
 
 	async function createEvent(event: RunGraphEvent): Promise<void> {
+		if (disposed) {
+			return;
+		}
+
 		if (events.has(event.id)) {
 			return events.get(event.id)!.render();
 		}
@@ -70,6 +90,11 @@ export async function runEventsFactory({
 						parentStartDate,
 					});
 
+			if (disposed) {
+				factory.element.destroy({ children: true });
+				return;
+			}
+
 			events.set(event.id, factory);
 
 			container!.addChild(factory.element);
@@ -81,11 +106,13 @@ export async function runEventsFactory({
 
 		eventsCreationPromises.delete(event.id);
 
-		return events.get(event.id)!.render();
+		if (!disposed) {
+			return events.get(event.id)!.render();
+		}
 	}
 
 	function update(): void {
-		if (settings.disableEvents || !layout.isTemporal()) {
+		if (disposed || settings.disableEvents || !layout.isTemporal()) {
 			return;
 		}
 
@@ -93,12 +120,21 @@ export async function runEventsFactory({
 	}
 
 	const checkLayout = throttle(async () => {
+		if (disposed) {
+			return;
+		}
+
 		availableClusterNodes = [...clusterNodes];
 
 		await clusterHorizontalCollisions({
 			items: events,
 			createCluster,
+			isActive,
 		});
+
+		if (disposed) {
+			return;
+		}
 
 		for (const cluster of availableClusterNodes) {
 			cluster.render();
@@ -113,6 +149,11 @@ export async function runEventsFactory({
 		const newCluster = isRoot
 			? await flowRunEventFactory({ type: "cluster" })
 			: await nodeFlowRunEventFactory({ type: "cluster", parentStartDate });
+
+		if (disposed) {
+			newCluster.element.destroy({ children: true });
+			return newCluster;
+		}
 
 		container!.addChild(newCluster.element);
 		clusterNodes.push(newCluster);

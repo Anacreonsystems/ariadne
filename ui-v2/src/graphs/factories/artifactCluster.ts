@@ -24,7 +24,7 @@ export async function artifactClusterFactory() {
 	element.eventMode = "static";
 	element.cursor = "pointer";
 
-	emitter.on("itemSelected", () => {
+	const offItemSelected = emitter.on("itemSelected", () => {
 		const isCurrentlySelected = isSelected({
 			kind: "artifacts",
 			ids: currentIds,
@@ -35,10 +35,14 @@ export async function artifactClusterFactory() {
 			render({ ids: currentIds, date: currentDate });
 		}
 	});
+	element.once("destroyed", offItemSelected);
 
 	async function render(
 		props?: ArtifactClusterFactoryRenderProps,
 	): Promise<void> {
+		if (element.destroyed) {
+			return;
+		}
 		if (!props) {
 			currentDate = null;
 			currentIds = [];
@@ -55,6 +59,9 @@ export async function artifactClusterFactory() {
 			type: "unknown",
 			name: ids.length.toString(),
 		});
+		if (element.destroyed) {
+			return;
+		}
 		element.visible = true;
 	}
 

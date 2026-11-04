@@ -59,6 +59,13 @@ compatibility and resource bounds; N1.10 performs the real mixed deployment
 acceptance. These are target shares, not earned readiness. Cross-host recovery,
 production HA and throughput SLOs remain outside this bounded epoch objective.
 
+N1.9/N1.10 also includes NI1-092a under
+[ADR-0041](adr/ADR-0041-owned-graph-lifecycle-during-navigation.md): the actual
+TaskRun navigation gate exposed upstream graph callbacks outliving their scene
+and an early browser-error snapshot. Owned teardown and the corrected browser
+gate must pass before final acceptance. This quality closure has +0% beyond
+the existing allocation and does not alter the streaming protocol.
+
 N1.1 follow-up: [final code/CI acceptance](evidence/native-stage1-ci-acceptance-2026-11-01.json)
 records both real PostgreSQL-stream profiles, full finite regression, type
 checking and wheel/source builds after hosted findings. This earns no extra

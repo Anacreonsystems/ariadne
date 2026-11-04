@@ -54,7 +54,7 @@ export async function eventClusterFactory() {
 		}
 	});
 
-	emitter.on("itemSelected", () => {
+	const offItemSelected = emitter.on("itemSelected", () => {
 		const isCurrentlySelected = isSelected({
 			kind: "events",
 			occurred: currentDate,
@@ -72,8 +72,12 @@ export async function eventClusterFactory() {
 			}
 		}
 	});
+	element.once("destroyed", offItemSelected);
 
 	async function render(props?: EventClusterFactoryRenderProps): Promise<void> {
+		if (element.destroyed) {
+			return;
+		}
 		if (!props) {
 			currentDate = null;
 			currentIds = [];
@@ -90,6 +94,9 @@ export async function eventClusterFactory() {
 		renderBorder();
 		await renderLabel(ids.length.toString());
 
+		if (element.destroyed) {
+			return;
+		}
 		element.visible = true;
 	}
 

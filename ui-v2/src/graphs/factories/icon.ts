@@ -19,8 +19,14 @@ export async function iconFactory({
 	}
 
 	async function render(icon: IconName): Promise<Sprite> {
+		if (element.destroyed) {
+			return element;
+		}
 		const texture = await getIconTexture(icon);
 
+		if (element.destroyed) {
+			return element;
+		}
 		element.texture = texture;
 
 		return element;

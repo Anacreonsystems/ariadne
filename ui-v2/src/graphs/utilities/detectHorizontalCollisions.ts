@@ -22,17 +22,27 @@ export function itemIsClusterFactory(
 type ClusterHorizontalCollisionsProps = {
 	items: Map<string, ItemFactory | ClusterFactory>;
 	createCluster: () => Promise<ClusterFactory>;
+	isActive?: () => boolean;
 };
 
 export async function clusterHorizontalCollisions({
 	items,
 	createCluster,
+	isActive = () => true,
 }: ClusterHorizontalCollisionsProps): Promise<void> {
+	if (!isActive()) {
+		return;
+	}
+
 	const visibleItems = [...items.values()].sort(
 		(itemA, itemB) => itemA.element.x - itemB.element.x,
 	);
 
 	async function checkCollisions(startIndex?: number): Promise<void> {
+		if (!isActive()) {
+			return;
+		}
+
 		let xCheckpoint;
 		let prevIndex: number | null = null;
 		let collisionIndex: number | null = null;
@@ -59,13 +69,16 @@ export async function clusterHorizontalCollisions({
 			collisionItem.element.visible = false;
 
 			const cluster = await clusterItems(prevItem, collisionItem);
+			if (!isActive()) {
+				return;
+			}
 
 			if (cluster) {
 				visibleItems.splice(prevIndex, 1, cluster);
 				visibleItems.splice(collisionIndex, 1);
 			}
 
-			checkCollisions(prevIndex);
+			await checkCollisions(prevIndex);
 		}
 	}
 
@@ -95,6 +108,10 @@ export async function clusterHorizontalCollisions({
 			clusterNode = currentItem;
 		} else {
 			clusterNode = await createCluster();
+		}
+
+		if (!isActive()) {
+			return null;
 		}
 
 		const ids = [...prevIds, ...currentIds];

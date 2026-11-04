@@ -76,13 +76,20 @@ export async function flowRunEventFactory<T extends EventFactoryOptions>(
 		selectItem(selectSettings);
 	});
 
-	emitter.on("scaleUpdated", (updated) => {
+	const offScaleUpdated = emitter.on("scaleUpdated", (updated) => {
 		scale = updated;
 		updatePosition();
 	});
-	emitter.on("viewportMoved", () => updatePosition());
+	const offViewportMoved = emitter.on("viewportMoved", () => updatePosition());
+	factory.element.once("destroyed", () => {
+		offScaleUpdated();
+		offViewportMoved();
+	});
 
 	async function render(props?: RenderPropsType<T>): Promise<void> {
+		if (factory.element.destroyed) {
+			return;
+		}
 		await factory.render(props);
 		updatePosition();
 	}
@@ -96,6 +103,9 @@ export async function flowRunEventFactory<T extends EventFactoryOptions>(
 	}
 
 	function updatePosition(): void {
+		if (factory.element.destroyed) {
+			return;
+		}
 		const date = factory.getDate();
 
 		if (!date || settings.disableEvents || !layout.isTemporal()) {

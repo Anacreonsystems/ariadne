@@ -19,23 +19,32 @@ export async function eventDataFactory(
 
 	let interval: ReturnType<typeof setInterval> | undefined;
 	let data: RunGraphEvent[] | null = null;
+	let generation = 0;
 
 	async function start(): Promise<void> {
+		const startedGeneration = ++generation;
+		clearTimeout(interval);
 		try {
-			data = await config.fetchEvents(toValue(context));
+			const response = await config.fetchEvents(toValue(context));
+			if (startedGeneration !== generation) {
+				return;
+			}
+			data = response;
 
 			callback(data);
 		} catch (error) {
-			console.error(error);
+			if (startedGeneration === generation) {
+				console.error(error);
+			}
 		}
 
-		if (!runGraphData.end_time) {
+		if (startedGeneration === generation && !runGraphData.end_time) {
 			interval = setTimeout(() => start(), config.fetchEventsInterval);
 		}
 	}
 
-	// todo: need a global way of stopping this when the graph is stopped
 	function stop(): void {
+		generation++;
 		clearTimeout(interval);
 	}
 

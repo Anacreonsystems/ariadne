@@ -10,28 +10,55 @@ import { layout, waitForSettings } from "@/graphs/objects/settings";
 
 let stopEventData: (() => void) | null = null;
 let rootGraphEvents: RunGraphEvent[] | null = null;
+let scope = 0;
 
 export async function startFlowRunEvents(): Promise<void> {
+	const startedScope = ++scope;
 	const application = await waitForApplication();
+	if (startedScope !== scope) {
+		return;
+	}
+	const stage = application.stage;
+	const isActive = (): boolean => startedScope === scope && !!stage && !stage.destroyed;
+	if (!isActive()) {
+		return;
+	}
 	const config = await waitForConfig();
+	if (!isActive()) {
+		return;
+	}
 	const settings = await waitForSettings();
+	if (!isActive()) {
+		return;
+	}
 	const data = await waitForRunData();
+	if (!isActive()) {
+		return;
+	}
 
 	const {
 		element,
 		render: renderEvents,
 		update,
 	} = await runEventsFactory({ isRoot: true });
+	if (!isActive()) {
+		element.destroy({ children: true });
+		return;
+	}
 
 	element.zIndex = DEFAULT_ROOT_EVENT_Z_INDEX;
+	stopEventData = () => element.destroy({ children: true });
 
 	async function render(data?: RunGraphEvent[]): Promise<void> {
+		if (!isActive()) {
+			return;
+		}
 		if (!layout.isTemporal() || settings.disableEvents) {
-			application.stage.removeChild(element);
+			stage.removeChild(element);
 			return;
 		}
 
-		application.stage.addChild(element);
+		stage.addChild(element);
 
 		await renderEvents(data);
 	}
@@ -43,6 +70,9 @@ export async function startFlowRunEvents(): Promise<void> {
 			until: data.end_time ?? new Date(),
 		}),
 		(data) => {
+			if (!isActive()) {
+				return;
+			}
 			const event: EventKey = rootGraphEvents
 				? "eventDataUpdated"
 				: "eventDataCreated";
@@ -54,17 +84,32 @@ export async function startFlowRunEvents(): Promise<void> {
 			render(data);
 		},
 	);
+	if (!isActive()) {
+		response.stop();
+		element.destroy({ children: true });
+		return;
+	}
 
-	emitter.on("configUpdated", () => render());
-	emitter.on("viewportMoved", () => update());
-	emitter.on("layoutSettingsUpdated", () => render());
+	const offConfigUpdated = emitter.on("configUpdated", () => render());
+	const offViewportMoved = emitter.on("viewportMoved", () => update());
+	const offLayoutUpdated = emitter.on("layoutSettingsUpdated", () => render());
+	element.once("destroyed", () => {
+		response.stop();
+		offConfigUpdated();
+		offViewportMoved();
+		offLayoutUpdated();
+	});
 
-	stopEventData = response.stop;
+	stopEventData = () => {
+		response.stop();
+		element.destroy({ children: true });
+	};
 
 	response.start();
 }
 
 export function stopFlowRunEvents(): void {
+	scope++;
 	stopEventData?.();
 	stopEventData = null;
 	rootGraphEvents = null;

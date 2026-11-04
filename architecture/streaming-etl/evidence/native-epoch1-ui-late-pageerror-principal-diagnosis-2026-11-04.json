@@ -1,0 +1,76 @@
+{
+  "schema": "native-epoch1-ui-late-pageerror-principal-diagnosis/v1",
+  "reviewed_at_utc": "2026-11-04T18:15:21.372439+00:00",
+  "role": "ETL Architect / HighLoad Principal",
+  "supersedes_observation_classification_only": {
+    "path": "native-epoch1-ui-late-pageerror-principal-boundary-2026-11-04.json",
+    "sha256": "4d58fbe2686af085443b2be4ae6958004c341842ad7dfe5ab89a3ee4e4adf441",
+    "note": "The prior boundary and its conditions remain immutable. This addendum replaces the earlier unresolved/intermittent classification with a reproduced, diagnosed blocker."
+  },
+  "verdict": "CONFIRMED_UI_LIFECYCLE_BLOCKER_FIX_REQUIRED",
+  "acceptance_status": "FINAL_100_PERCENT_BLOCKED",
+  "reproduction": {
+    "result_path": "/tmp/ariadne-native-stream-live-VlJirr/results.json",
+    "sha256": "8df96dcd1791372efe2ca2c8974f7a36243a2436beca5657690aa0b5910ce8ff",
+    "status": "FAIL",
+    "flow_state": "COMPLETED",
+    "authority_state": "RELEASED",
+    "documents": 8,
+    "task_visible_elapsed_ms": 2893,
+    "page_error_elapsed_ms": 2896,
+    "context_close_elapsed_ms": 3431,
+    "message": "Cannot read properties of null (reading 'x')",
+    "stack_path": "Pixi position.x -> clusterHorizontalCollisions sort -> throttled runEvents layout callback",
+    "conclusion": "The error occurs three milliseconds after the TaskRun view becomes visible and before context close. The corrected probe therefore reproduces an application teardown race rather than merely observing browser-close noise."
+  },
+  "source_provenance": {
+    "baseline_files": {
+      "ui-v2/src/graphs/factories/runEvents.ts": {
+        "epoch_pre_fix_sha256": "cd71d148ebc786d36d6957a2b7f36ecb6b7054e8513f587bca3a5556c47224b8",
+        "upstream_87b5243_sha256": "cd71d148ebc786d36d6957a2b7f36ecb6b7054e8513f587bca3a5556c47224b8",
+        "byte_equal": true
+      },
+      "ui-v2/src/graphs/factories/runArtifacts.ts": {
+        "epoch_pre_fix_sha256": "7074854402056102db4ab2894c2ad1b886519da81d10280ea8bc70799f8d25a7",
+        "upstream_87b5243_sha256": "7074854402056102db4ab2894c2ad1b886519da81d10280ea8bc70799f8d25a7",
+        "byte_equal": true
+      }
+    },
+    "classification": "The affected graph factory bytes match upstream commit 87b5243 and predate native integration. This provenance does not waive the defect: the integrated UI acceptance exercises the path and requires it to be fixed."
+  },
+  "root_cause": "A trailing lodash.throttle layout callback and/or async factory continuation survives destruction of the owning Pixi container. It later sorts graph elements whose Pixi position is already null. Existing event subscription teardown was also incomplete; the artifacts factory has the analogous lifecycle pattern.",
+  "approved_fix_boundary": [
+    "Track owner/container disposal and make render, update and async continuations fail closed after destruction.",
+    "Cancel pending throttled layout callbacks on destruction.",
+    "Remove registered emitter listeners on destruction.",
+    "Check owner liveness after awaited collision/factory work, not only before awaiting.",
+    "Destroy a factory element that resolves after its owner was disposed instead of attaching it.",
+    "Apply the same lifecycle discipline to runArtifacts where it has the same throttled/async ownership pattern.",
+    "Do not modify backend, streaming protocol or accepted Python runtime to mask the browser error."
+  ],
+  "required_regressions": [
+    "Use real Pixi containers and real lodash.throttle to prove a queued trailing callback cannot read or render destroyed nodes.",
+    "Prove listener removal and throttle cancellation on destroy.",
+    "Prove a factory resolving after owner destruction is destroyed and never attached.",
+    "Preserve the corrected live probe timing/stack report and its injected-late-error negative control.",
+    "Retain the real before-fix failure and run a fresh packaged actual PostgreSQL/ProcessWorker 8-document successor with zero final page errors after context/browser close.",
+    "Repeat full UI unit, browser, typecheck, lint, format, build and exact served-asset checks.",
+    "Bind changed UI and probe paths through a successor source manifest; backend/Python evidence may be reused only through explicit byte relevance.",
+    "Require hosted CI and CodeQL on the final source."
+  ],
+  "acceptance_after_fix": "If all required regressions and hosted gates pass, this defect can close without invalidating the already source-bound native storage, execution or worker evidence. The original failed browser observation remains retained and the final review must cite this addendum.",
+  "not_claimed": [
+    "The cause is not dismissed as harmless teardown noise.",
+    "Twenty-four earlier clean replays do not override the reproduced failure.",
+    "Upstream provenance does not convert a confirmed integrated UI defect into an accepted limitation."
+  ],
+  "conditions_remaining": [
+    "narrow graph lifecycle fix",
+    "real Pixi/throttle regression",
+    "clean corrected live successor",
+    "full UI successor",
+    "source relevance bridge",
+    "hosted CI and CodeQL",
+    "final independent graph/status review"
+  ]
+}

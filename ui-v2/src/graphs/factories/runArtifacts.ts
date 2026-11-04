@@ -28,8 +28,22 @@ export async function runArtifactsFactory({
 
 	const container = new Container();
 	let internalData: RunGraphArtifact[] | null = null;
+	let disposed = false;
+
+	container.once("destroyed", () => {
+		disposed = true;
+		checkLayout.cancel();
+	});
+
+	function isActive(): boolean {
+		return !disposed;
+	}
 
 	async function render(newData?: RunGraphArtifact[]): Promise<void> {
+		if (disposed) {
+			return;
+		}
+
 		if (newData) {
 			internalData = newData;
 		}
@@ -50,6 +64,10 @@ export async function runArtifactsFactory({
 	}
 
 	async function createArtifact(artifact: RunGraphArtifact): Promise<void> {
+		if (disposed) {
+			return;
+		}
+
 		if (artifacts.has(artifact.id)) {
 			return artifacts.get(artifact.id)!.render(artifact);
 		}
@@ -67,6 +85,11 @@ export async function runArtifactsFactory({
 						parentStartDate,
 					});
 
+			if (disposed) {
+				factory.element.destroy({ children: true });
+				return;
+			}
+
 			artifacts.set(artifact.id, factory);
 
 			container.addChild(factory.element);
@@ -78,11 +101,13 @@ export async function runArtifactsFactory({
 
 		artifactCreationPromises.delete(artifact.id);
 
-		return artifacts.get(artifact.id)!.render(artifact);
+		if (!disposed) {
+			return artifacts.get(artifact.id)!.render(artifact);
+		}
 	}
 
 	function update(): void {
-		if (settings.disableArtifacts || !layout.isTemporal()) {
+		if (disposed || settings.disableArtifacts || !layout.isTemporal()) {
 			return;
 		}
 
@@ -97,12 +122,21 @@ export async function runArtifactsFactory({
 	}
 
 	const checkLayout = throttle(async () => {
+		if (disposed) {
+			return;
+		}
+
 		availableClusterNodes = [...clusterNodes];
 
 		await clusterHorizontalCollisions({
 			items: artifacts,
 			createCluster,
+			isActive,
 		});
+
+		if (disposed) {
+			return;
+		}
 
 		for (const cluster of availableClusterNodes) {
 			cluster.render();
@@ -117,6 +151,11 @@ export async function runArtifactsFactory({
 		const newCluster = isRoot
 			? await flowRunArtifactFactory({ type: "cluster" })
 			: await nodeFlowRunArtifactFactory({ type: "cluster", parentStartDate });
+
+		if (disposed) {
+			newCluster.element.destroy({ children: true });
+			return newCluster;
+		}
 
 		container!.addChild(newCluster.element);
 		clusterNodes.push(newCluster);

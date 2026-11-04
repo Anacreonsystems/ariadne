@@ -1,0 +1,17 @@
+"""Inject only the observed scheduler-test wall-clock delay, not DB semantics."""
+
+import anyio
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def observed_scheduler_latency(request, monkeypatch):
+    if request.node.originalname != 'test_create_schedule_respects_max_future_time':
+        return
+    original = request.module.schedule_deployments
+
+    async def schedule_after_observed_latency(*args, **kwargs):
+        await anyio.sleep(1.2)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(request.module, 'schedule_deployments', schedule_after_observed_latency)
