@@ -1,6 +1,14 @@
 # Streaming ETL sprint board
 
-Current product cycle: [Native integration epoch 1](epochs/epoch-01-native-prefect.md),
+Current product cycle: [Native integration epoch 2](epochs/epoch-02-native-streaming-completion.md),
+architecture discussion and narrow standalone state-materialization experiment.
+The [new decisions](adr/ADR-0042-flink-informed-native-streaming-architecture.md)
+remain `planning`/`progress`; **zero new native capability completion** is earned.
+Task slicing, short sprint weights and cumulative target percentages belong to
+the next planning cycle on command. No new implementation sprint is declared
+complete by writing these documents.
+
+Historical product cycle: [Native integration epoch 1](epochs/epoch-01-native-prefect.md),
 `accepted`, **100% earned native foundation readiness** for the selected scope. The
 [first-stage ADR](adr/ADR-0032-native-task-stream-contract.md) is accepted for
 its scoped contract gate. Implementation was requested on 2026-11-01 with frequent tests

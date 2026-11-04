@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-04",
+  "kind": "adversarial_architecture_review_follow_up",
+  "supersedes_findings_in": {
+    "path": "architecture/streaming-etl/evidence/flink-architecture-2026-11-04/adr-review.json",
+    "sha256": "48a14bc40047fb8c26a92ff99d795b4f267becfe338938f49ed8d82ce0f9733c"
+  },
+  "verdict": "PASS_PLANNING_CONTRACT_REVIEW",
+  "blocking_contradictions_remaining": [],
+  "native_acceptance": false,
+  "native_readiness_earned": 0,
+  "implementation_boundary": "The R1-R9 design blockers are resolved in the planning text. Exact wire models, database constraints and transactions, lock ordering, SDK behavior, migrations, and native acceptance evidence remain implementation gates.",
+  "reviewed_files": [
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0042-flink-informed-native-streaming-architecture.md",
+      "sha256": "dcaa572bdbceae3544a30258cd22ab56a725a060a3316de72842c9db6ef7a680"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0043-physical-graph-and-partitioned-channels.md",
+      "sha256": "80b514c31b971f27b0fc69db16e0bd2ea900145979c6388812d5f8aacdfc728a"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0044-multi-input-turns-and-state-materialization.md",
+      "sha256": "e5bb509aff66270fdc7ffb7b701054ec313916b4a41a847cb9ca2cb15903714d"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0045-continuous-sources-event-time-and-timers.md",
+      "sha256": "2cee32253afa182648b815800fc3c76c3eeaf9760d9bd21c389800c8a5258926"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0046-continuous-pressure-and-safe-retention.md",
+      "sha256": "9f127de592ab320ba44c62bd0d292bab3d1bb70eb18df30087ea3073d880e526"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0047-selective-recovery-and-cross-host-authority.md",
+      "sha256": "7e4775ffa12b8cc60eb95238ffef13e99433189fabe8bb83f62e0a839150b134"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0048-rescaling-compatibility-and-native-acceptance.md",
+      "sha256": "5dbe397aeabe936700ebd3349b1f9595776705ae8eef32b6d62e9dffb0b894a5"
+    },
+    {
+      "path": "architecture/streaming-etl/epochs/epoch-02-native-streaming-completion.md",
+      "sha256": "c74788c6bd07d9bce907d57ad1ae18820a0c95136cef6b4312127d2b64315b56"
+    },
+    {
+      "path": "architecture/streaming-etl/research/flink-2.3-architecture.md",
+      "sha256": "65eb461185a68e1df4f2241682c900ee9e08e863e98b65f08ef9021fa1120323"
+    },
+    {
+      "path": "architecture/streaming-etl/evidence/flink-architecture-2026-11-04/official-sources.json",
+      "sha256": "7178cf14d31c89ff189165fe185dd2d820e9750b32eac05f1157b9be57a24c32"
+    }
+  ],
+  "resolution_review": [
+    {
+      "finding": "R1",
+      "status": "RESOLVED_IN_DESIGN_TEXT",
+      "evidence": "ADR-0044 lines 37-47 now separate immutable logical batch/receipt identity from authoring TaskRun, attempt, and physical owner epoch. Owner data is commit-time fencing and audit evidence; replacement resolves the original accepted identity.",
+      "future_gate": "DDL must enforce one logical accepted outcome for the input/apply coordinate while storing the author fence separately. Real lost-response plus owner-replacement tests must prove lookup without duplicate output, state, or cursor movement."
+    },
+    {
+      "finding": "R2",
+      "status": "RESOLVED_IN_DESIGN_TEXT",
+      "evidence": "ADR-0044 lines 81-90 distinguish the proposed versioned OUTPUT(value)/NO_OUTPUT language profile from epoch-1's internal state-only RETURN wire. JSON null remains a value, and old RETURN receipts are not reinterpreted.",
+      "future_gate": "Wire tags, receipt decoding, migration behavior, and real round trips for OUTPUT(null), OUTPUT(value), NO_OUTPUT, and historical RETURN remain unimplemented."
+    },
+    {
+      "finding": "R3",
+      "status": "RESOLVED_IN_DESIGN_TEXT",
+      "evidence": "ADR-0043 lines 47-74 define graph-revision-bound edge identities, distinct producer and edge partitions, append-time materialized forward/rebalance/broadcast/keyed exchanges, persisted route digests, edge-local sequences, exact retry, and independent branch cursors/retention.",
+      "future_gate": "Schema cardinalities, transaction size limits, per-edge uniqueness, route-set exact replay, and different-partitioner branch tests remain native implementation work."
+    },
+    {
+      "finding": "R4",
+      "status": "RESOLVED_IN_DESIGN_TEXT",
+      "evidence": "ADR-0044 lines 96-115 define coordinator/assignment-fenced cut identity, immutable participant/input manifests, DATA and BARRIER in one partition order, pre-cut route durability, participant roots, one global COMPLETE marker, scope rules, and complete-only restore/GC/rescale authority.",
+      "future_gate": "The coordinator API, ordered record schema, participant acknowledgements, pin lifecycle, abort protocol, and crash matrix remain unimplemented."
+    },
+    {
+      "finding": "R5",
+      "status": "RESOLVED_IN_DESIGN_TEXT",
+      "evidence": "ADR-0045 lines 49-67 place DATA, WATERMARK, IDLE, RESUME, EOF, and DRAIN in one fenced split order; bind controls to source positions and digests; persist read permits before external reads; and freeze discovery, assignment, intents, and positions in an immutable drain frontier.",
+      "future_gate": "Connector-specific rewind/acknowledgement adapters, exact control DTOs, reactivation policy, and process-loss tests remain required for every admitted connector profile."
+    },
+    {
+      "finding": "R6",
+      "status": "RESOLVED_IN_DESIGN_TEXT",
+      "evidence": "ADR-0046 lines 49-74 reserve the complete bounded turn vector before user invocation, including output/routes/state/join/inbox/timer/receipt/index/control costs; define fenced reservation identity, atomic all-or-wait acquisition, exact conversion/refund/reclamation, lock/fair-wait order, control headroom, and refusal of unbounded joins/resource cycles.",
+      "future_gate": "Per-profile size accounting, PostgreSQL amplification calibration, lock implementation, fairness, and failure tests must prove that the declared maximum covers the actual transaction."
+    },
+    {
+      "finding": "R7",
+      "status": "RESOLVED_IN_DESIGN_TEXT",
+      "evidence": "ADR-0047 lines 48-69 define one immutable regional recovery plan, RESTORING targets with no business/data authority, participant attestations, one atomic READY activation, unaffected-region continuity, resumable/abortable pre-activation loss, exact lost-response resolution, and cancellation precedence.",
+      "future_gate": "Placement/provider stop witnesses, recovery-plan persistence, atomic capability activation, and real separate-host fault cuts remain mandatory native evidence."
+    },
+    {
+      "finding": "R8",
+      "status": "RESOLVED_IN_DESIGN_TEXT",
+      "evidence": "ADR-0048 lines 46-68 extend the rescale manifest to source enumerator/split/read/append state; edge/mailbox holes; state/join/timer/watermark/idleness state; capacity, refund, and retention pins; capabilities, placement, retry budgets, and leases. Every component must transfer, resolve before cut, or reject admission.",
+      "future_gate": "The transfer schema, ownership CAS, compatibility matrix, pin/refund behavior, and two-to-three-subtask native rescale tests remain unimplemented."
+    },
+    {
+      "finding": "R9",
+      "status": "RESOLVED_IN_DESIGN_TEXT",
+      "evidence": "ADR-0043 lines 76-101 specify bounded tagged-key-v1 canonical bytes for None, exact bool, signed-64 integer, strict UTF-8 string, and bytes; reject floats/structured/custom values; use SHA-256 and persisted routing parameters; and require canonical tagged JSON transport.",
+      "future_gate": "Golden vectors, strict SDK/server decoders, manifest validation, supported-runtime compatibility, and pre-DATA refusal tests remain required."
+    }
+  ],
+  "cross_document_consistency": {
+    "mandatory_per_yield_authority_preserved": true,
+    "accepted_business_turn_replay_forbidden": true,
+    "snapshot_is_derived_materialization_only": true,
+    "client_external_idempotency_preserved": true,
+    "broker_product_required": false,
+    "timeout_treated_as_death_proof": false,
+    "task_run_per_document": false,
+    "logical_operator_and_physical_taskrun_refinement_explicit": true,
+    "state_and_data_identity_survive_owner_replacement": true,
+    "partial_barrier_or_region_activation_allowed": false,
+    "unbounded_join_or_turn_admitted": false,
+    "false_native_readiness_claim_found": false
+  },
+  "standalone_probe_boundary": {
+    "v3_record": {
+      "path": "architecture/streaming-etl/evidence/flink-architecture-2026-11-04/turn-state-materialization-probe-v3.json",
+      "sha256": "f515931d51d4be67f0bf6b431faa139d62b1fdf6a1a4e5d933c429039a09e183"
+    },
+    "independent_repeat": {
+      "path": "architecture/streaming-etl/evidence/flink-architecture-2026-11-04/independent-probe.json",
+      "sha256": "ea9e1a57d0eaa24126e53c788ec127d54c2c2ed4a0aec52c9a4c192071aaf53a"
+    },
+    "assessment": "The probe is consistent with the journaled-state theory and its negative controls. It remains a standalone model and earns no native SDK, HTTP, PostgreSQL, worker, multi-input, rescale, or cross-host acceptance."
+  },
+  "remaining_implementation_gates": [
+    "Freeze versioned public SDK and HTTP DTOs only after translating each identity and refusal in these ADRs into explicit fields and compatibility rules.",
+    "Define paired PostgreSQL and SQLite schemas, uniqueness and CHECK constraints, transaction isolation, row/advisory lock order, and exact retry receipts; SQLite mutations must continue to fail closed where the profile requires PostgreSQL.",
+    "Prove the first fixed finite physical-subtask slice with ordinary Prefect Tasks, real API and PostgreSQL, separate OS processes, stable metadata counts, region admission, stale-owner fencing, and before/after terminal fault cuts.",
+    "Add native fan-out/exchange, multi-input and NO_OUTPUT, continuous source controls, online retention/pressure, regional replacement, rescale, compatibility, and cross-host gates incrementally; no ADR becomes accepted from text or the standalone probe.",
+    "Record capacity and load limits from declared workloads and hardware. No production HA, throughput, connector parity, or Flink-equivalence claim follows from this design review."
+  ],
+  "recommended_next_action": "Publish ADR-0042 through ADR-0048 with their current planning/progress statuses, retain zero new native readiness, and proceed to the epoch's first bounded physical-subtask vertical slice. Treat the exact wire, DDL, lock, migration, and real-system AC work as implementation gates rather than further design-approval blockers."
+}

@@ -1,5 +1,21 @@
 # Prototype protocol epochs
 
+The current [Flink-informed architecture cycle](../epochs/epoch-02-native-streaming-completion.md)
+adds a narrow [state-materialization probe](turn_state_materialization_probe.py)
+and [standalone tests](test_turn_state_materialization_probe.py) under
+[ADR-0044](../adr/ADR-0044-multi-input-turns-and-state-materialization.md).
+It tests state batches and process cuts without changing Prefect runtime code.
+It earns no new native capability completion and does not replace native gates.
+
+Run this one probe with the existing environment, without the Prefect pytest
+fixtures or external services:
+
+```bash
+uv run --no-sync python -m unittest discover \
+  -s architecture/streaming-etl/prototypes \
+  -p test_turn_state_materialization_probe.py -v
+```
+
 Current source-hygiene regression: the
 [2026-10-27 serial gate](../evidence/postgres-ci-style-regression-serial-2026-10-27.json)
 passes 164/164 tests against the published source after repository-hook cleanup.

@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-04",
+  "kind": "architecture_discussion",
+  "status": "planning_only",
+  "verdict": "DISCUSSION_RECORDED_NO_ACCEPTANCE",
+  "scope": {
+    "subject": "Flink mechanisms applicable to the next native streaming epoch",
+    "implementation_reviewed": false,
+    "native_readiness_earned": 0,
+    "historical_epoch_1_acceptance_preserved": true
+  },
+  "mandatory_invariants": [
+    "A terminal platform acceptance atomically binds the input coordinate, output outcome, authoritative managed-state mutation, completion receipt, and consumer progress.",
+    "If durable progress through input 200 is accepted, replacement execution admits business input 201; it does not re-enter Python business calls 101 through 200.",
+    "A snapshot may accelerate state materialization, rescaling, backup, or garbage collection, but it is never the sole authority for accepted business progress.",
+    "Platform-managed output, cursor, and state recovery does not imply exactly-once PostgreSQL, HTTP, filesystem, or other client effects; external-effect idempotency remains client-owned.",
+    "A broker product is not a prerequisite. A source must instead provide a native durable partition log or an explicit versioned split, offset, rewind, and retention contract.",
+    "Lease expiry, heartbeat loss, or network timeout is not proof of process death for cross-host replacement.",
+    "Opaque unjournaled Python, closure, global, or process-local state is unsupported by the mandatory recovery contract unless a different replay contract is explicitly approved."
+  ],
+  "terminal_outcome_correction": {
+    "decision": "Future multi-input and join turns that may emit zero or one output require an explicit tagged NO_OUTPUT outcome or an equivalently explicit new cardinality-0..1 protocol.",
+    "constraints": [
+      "Absence of output must not be inferred from Python None because None is a legitimate JSON value.",
+      "An ordinary Python return remains a value-bearing language outcome and must not be silently reinterpreted as no output.",
+      "The existing internal YIELD/RETURN wire representation is not, by itself, approval for the future public join contract.",
+      "Exact SDK spelling and migration behavior remain undecided and unimplemented."
+    ]
+  },
+  "state_authority": {
+    "supported_classes": [
+      {
+        "name": "INLINE_TURN_STATE",
+        "contract": "The authoritative state postimage or bounded mutation set commits in the terminal transaction."
+      },
+      {
+        "name": "JOURNALED_TURN_STATE_WITH_SNAPSHOTS",
+        "contract": "A versioned platform mutation batch commits in the terminal transaction; snapshots are derived caches reconstructed without invoking user task code."
+      }
+    ],
+    "rejected_inference": "A checkpoint-managed local state snapshot does not authorize replay of already completed Python business inputs.",
+    "materialization_replay": [
+      "Load a complete compatible snapshot at or before the accepted frontier.",
+      "Apply the verified contiguous platform mutation batches in durable apply-ordinal order.",
+      "Do not call the task function, emit output, advance an already advanced cursor, or repeat client effects.",
+      "If the chain is missing, corrupt, incompatible, or cannot reach the accepted frontier, fail closed or select another verified materialization; never rewind completed business progress."
+    ],
+    "terminal_receipt_bindings": [
+      "input coordinate and tagged input port",
+      "deterministic mailbox apply ordinal",
+      "before state version or root",
+      "state mutation batch digest",
+      "after state version or root",
+      "tagged output outcome and immutable output identity when present",
+      "timer registration and cancellation mutations"
+    ]
+  },
+  "task_run_identity_refinement": {
+    "decision_required": true,
+    "reason": "The epoch-1 bounded profile used one TaskRun per logical source or operator. Physical partition parallelism requires a new explicit agreement rather than a silent reinterpretation.",
+    "proposal": [
+      "A logical operator has a stable operator UID.",
+      "A physical subtask identity is bound to FlowRun, graph revision, operator UID, assignment epoch, and subtask index.",
+      "Each physical subtask is one ordinary TaskRun that processes many records and key groups.",
+      "Retry or infrastructure replacement preserves that TaskRun identity and increments its attempt or run_count.",
+      "A planned rescale creates a bounded new subtask TaskRun set only at a completed state-transfer cut."
+    ],
+    "complexity": "O(operators times parallelism times assignment epochs), never O(documents)",
+    "rejected_alternative": "Concurrent physical workers hidden under one jointly owned TaskRun would make Prefect lifecycle ownership and stale-writer fencing ambiguous."
+  },
+  "flink_mechanisms_to_adapt": [
+    "Static graph and revision identity, source splits, operator subtasks, and stable key groups decoupled from current parallelism.",
+    "DATA and checkpoint barriers ordered in each partition log, multi-input barrier alignment, and complete-only snapshot selection.",
+    "Backpressure propagated from downstream capacity, with separate busy, idle, and backpressured observations.",
+    "Per-partition watermarks, minimum-over-active-input advancement, explicit idleness, watermark alignment, and durable timer state.",
+    "Recovery-region reasoning that expands upstream when a required retained partition is unavailable and includes affected consumers when state or outputs roll back."
+  ],
+  "flink_mechanisms_not_to_copy_directly": [
+    "Periodic checkpoint plus source replay as the sole recovery authority.",
+    "A mandatory external replay broker.",
+    "A second JobManager or scheduler beside Prefect server, FlowRun, TaskRun, and worker lifecycle authority.",
+    "Unaligned checkpoints before durable channel-state identity and measured alignment pressure justify them.",
+    "Exactly-once claims for arbitrary Python client effects.",
+    "Java object hashCode or Python hash as a cross-process partition identity.",
+    "Processing-time TTL as correctness authority for event-time join cleanup."
+  ],
+  "current_native_blockers": [
+    {
+      "path": "src/prefect/streams.py",
+      "symbols": [
+        "NativeStreamFlowConfig",
+        "StreamTaskConfig",
+        "StreamSourceConfig"
+      ],
+      "finding": "The accepted public profile is finite bounded-linear-v1, has one stream input, one output cardinality, and a finite positioned source."
+    },
+    {
+      "path": "src/prefect/server/models/stream_executions.py",
+      "symbol": "seal_manifest",
+      "finding": "The server seals exactly one ordered source-to-operator linear manifest."
+    },
+    {
+      "path": "src/prefect/server/models/streams.py",
+      "symbols": [
+        "NativeStreamStore.append",
+        "NativeStreamStore.complete"
+      ],
+      "finding": "Source progress is one scalar contiguous position and the current consumer binding represents one TaskRun input; multi-input ports and partition vectors need new identities."
+    },
+    {
+      "path": "src/prefect/server/schemas/streams.py",
+      "symbol": "StreamLimits",
+      "finding": "Capacity is a hard bounded refusal and retained record and byte counts grow until release; continuous input requires awaitable credit plus online segment retention."
+    },
+    {
+      "path": "src/prefect/server/schemas/native_deployments.py",
+      "symbols": [
+        "NativeStreamDeclaration",
+        "NativeStreamRecoveryCandidate"
+      ],
+      "finding": "The accepted worker profile is bounded-linear-v1 with same-host linux-local-pidfd-v1 recovery, not partitioned cross-host recovery."
+    }
+  ],
+  "candidate_adr_boundaries": [
+    {
+      "adr": "ADR-0042",
+      "topic": "Native distributed-stream execution model and authority boundaries"
+    },
+    {
+      "adr": "ADR-0043",
+      "topic": "Partitioned channels, key groups, physical subtasks, and fan-out"
+    },
+    {
+      "adr": "ADR-0044",
+      "topic": "Multi-input mailbox turns, journaled state authority, joins, and consistent barrier cuts"
+    },
+    {
+      "adr": "ADR-0045",
+      "topic": "Continuous split sources, event time, watermarks, timers, and cleanup"
+    },
+    {
+      "adr": "ADR-0046",
+      "topic": "Durable credits, online retention, fairness, and overload policy"
+    },
+    {
+      "adr": "ADR-0047",
+      "topic": "Recovery regions, subordinate fencing, and verified cross-host replacement"
+    },
+    {
+      "adr": "ADR-0048",
+      "topic": "Rescaling, state compatibility, load, chaos, and production acceptance"
+    }
+  ],
+  "required_counterexamples_and_controls": [
+    "Snapshot 100, durable cursor 200, and missing or corrupt mutation 151 must refuse activation rather than invoke business calls 151 through 200.",
+    "A noncommutative join must rebuild state in persisted mailbox apply-ordinal order, not independent per-input sequence order.",
+    "A state-only terminal turn must remain distinguishable from an output whose JSON value is null.",
+    "Lost acknowledgement after terminal commit must discover the receipt and skip user-code re-entry.",
+    "Timer registration, cancellation, and firing identities must survive cache reconstruction without duplicate callbacks.",
+    "Snapshot garbage collection must refuse incomplete, incompatible, corrupt, or still-pinned materializations.",
+    "A lagging branch must pin required segments and return durable capacity without advancing another consumer's cursor.",
+    "An old cross-host worker that may still be alive must block takeover; only a profile-specific verified death witness may authorize a generation change."
+  ],
+  "first_probe": {
+    "language": "Python",
+    "scope": "standalone protocol counterexample only",
+    "cases": [
+      "Commit business turns 1 through 200 as immutable terminal receipts and state mutation batches.",
+      "Materialize a snapshot at turn 100.",
+      "Rebuild a fresh cache from the snapshot and platform batches 101 through 200 without incrementing the business-call or external-effect counters.",
+      "Verify immutable output and cursor identities remain through 200 and the next business admission is 201.",
+      "Lose the process before and after mutation-batch and snapshot commits.",
+      "Delete or corrupt batch 151 and verify fail-closed recovery without business re-entry."
+    ],
+    "evidence_limit": "This probe earns zero native readiness. Native acceptance requires ordinary Prefect TaskRuns, real HTTP and PostgreSQL transactions, process loss, and the relevant cross-host profile."
+  },
+  "official_release_2_3_references": [
+    "https://nightlies.apache.org/flink/flink-docs-release-2.3/docs/concepts/flink-architecture/",
+    "https://nightlies.apache.org/flink/flink-docs-release-2.3/docs/concepts/stateful-stream-processing/",
+    "https://nightlies.apache.org/flink/flink-docs-release-2.3/docs/internals/sources/",
+    "https://nightlies.apache.org/flink/flink-docs-release-2.3/docs/ops/state/task_failure_recovery/",
+    "https://nightlies.apache.org/flink/flink-docs-release-2.3/docs/ops/state/checkpointing_under_backpressure/",
+    "https://nightlies.apache.org/flink/flink-docs-release-2.3/docs/dev/datastream/event-time/generating_watermarks/",
+    "https://nightlies.apache.org/flink/flink-docs-release-2.3/docs/dev/datastream/fault-tolerance/state/"
+  ],
+  "exploratory_master_source": {
+    "normative": false,
+    "note": "These files corroborated mechanisms during discussion. Normative ADR code citations require a release-2.3.0 commit or tag resolved separately.",
+    "references": [
+      "https://github.com/apache/flink/blob/master/flink-runtime/src/main/java/org/apache/flink/runtime/checkpoint/CheckpointCoordinator.java",
+      "https://github.com/apache/flink/blob/master/flink-runtime/src/main/java/org/apache/flink/streaming/runtime/io/checkpointing/SingleCheckpointBarrierHandler.java",
+      "https://github.com/apache/flink/blob/master/flink-runtime/src/main/java/org/apache/flink/runtime/executiongraph/failover/RestartPipelinedRegionFailoverStrategy.java",
+      "https://github.com/apache/flink/blob/master/flink-runtime/src/main/java/org/apache/flink/runtime/state/KeyGroupRangeAssignment.java",
+      "https://github.com/apache/flink/blob/master/flink-core/src/main/java/org/apache/flink/api/connector/source/SourceReader.java",
+      "https://github.com/apache/flink/blob/master/flink-core/src/main/java/org/apache/flink/api/connector/source/SplitEnumerator.java"
+    ]
+  },
+  "acceptance_boundary": "No theory or ADR in this discussion is accepted by documentation or prototype evidence alone. Historical accepted evidence remains intact; all new ADRs remain planning or progress until their native implementation and named acceptance controls pass."
+}

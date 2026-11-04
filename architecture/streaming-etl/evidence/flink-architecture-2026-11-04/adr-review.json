@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-04",
+  "kind": "adversarial_architecture_review",
+  "verdict": "PASS_AS_PLANNING_WITH_REQUIRED_CONTRACT_REVISIONS",
+  "implementation_gate": "BLOCKED_UNTIL_FINDINGS_ARE_RESOLVED",
+  "scope": {
+    "subject": "ADR-0042 through ADR-0048, native integration epoch 2, Flink 2.3 research, and status tracking",
+    "review_mode": "read_only_text_and_current_native_contract_review",
+    "native_readiness_earned": 0,
+    "historical_epoch_1_acceptance_preserved": true,
+    "user_approval_required_for_this_design_review": false,
+    "standalone_probe_is_native_evidence": false
+  },
+  "reviewed_files": [
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0042-flink-informed-native-streaming-architecture.md",
+      "sha256": "852286a1fff016b253d56b00de3615f7706f11c1db6ed2997f83ce39e3b9986c"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0043-physical-graph-and-partitioned-channels.md",
+      "sha256": "d89f5500062f004ae00712af2e6d4b5be60e88597cf1a4123eace3dfd23c1305"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0044-multi-input-turns-and-state-materialization.md",
+      "sha256": "46f02013ab0d5260f88a1a3052be1d888040362e0af5e4bfd5478c6b8ce7cb36"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0045-continuous-sources-event-time-and-timers.md",
+      "sha256": "1c577bf2a915fbf1eee392be9342511c6d9692276fc35d6ee1e7417cb8baef42"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0046-continuous-pressure-and-safe-retention.md",
+      "sha256": "0c6ee7cd0d841293dd810ccd962dfbeaf4cf6e4de37f04d5d30174231ddcc367"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0047-selective-recovery-and-cross-host-authority.md",
+      "sha256": "cdab7d6b8bbf406a0b8bec83e0ca7b8a160d792c398adb875cf8665f9a95f3e5"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0048-rescaling-compatibility-and-native-acceptance.md",
+      "sha256": "3fd39b08574a8796a0ce40c7cb060df1460608e2b586f3fc40368a9cd589dfef"
+    },
+    {
+      "path": "architecture/streaming-etl/epochs/epoch-02-native-streaming-completion.md",
+      "sha256": "c74788c6bd07d9bce907d57ad1ae18820a0c95136cef6b4312127d2b64315b56"
+    },
+    {
+      "path": "architecture/streaming-etl/research/flink-2.3-architecture.md",
+      "sha256": "65eb461185a68e1df4f2241682c900ee9e08e863e98b65f08ef9021fa1120323"
+    },
+    {
+      "path": "architecture/streaming-etl/evidence/flink-architecture-2026-11-04/official-sources.json",
+      "sha256": "7178cf14d31c89ff189165fe185dd2d820e9750b32eac05f1157b9be57a24c32"
+    },
+    {
+      "path": "architecture/streaming-etl/todo.md",
+      "sha256": "03a05e53b64c1110d6a71555a759c2cb4d86ede6015d19522a6e0b2df19e06a1"
+    },
+    {
+      "path": "architecture/streaming-etl/sprint_board.md",
+      "sha256": "71f806ab6705156e3579855d0d4551a4a06a74b2903b49c2cec515c5b99faeea"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/README.md",
+      "sha256": "32498dcfa96e48ff268a668f13511a097884b044101a952fe0bb0660a1d86af2"
+    }
+  ],
+  "confirmed_strengths": [
+    {
+      "id": "P1",
+      "finding": "The mandatory terminal boundary is preserved: output outcome, authoritative state, receipt, and cursor remain one platform acceptance; durable input 200 resumes business execution at 201. Snapshot lag is explicitly forbidden from replaying accepted Python turns."
+    },
+    {
+      "id": "P2",
+      "finding": "The documents retain client ownership of arbitrary external-effect idempotency, do not introduce a required broker product, and do not treat periodic snapshots as sole recovery authority."
+    },
+    {
+      "id": "P3",
+      "finding": "ADR-0043 now records the discussed physical-subtask recommendation without hiding the semantic refinement: stable StreamOperatorRun grouping, one ordinary TaskRun per physical subtask, stable TaskRun on retry, and bounded new TaskRuns only on an assignment epoch. Aggregate lifecycle, retry hierarchy, timeout semantics, stable business identity, subtask fencing, and tag/global slot starvation are explicitly left as contracts to close."
+    },
+    {
+      "id": "P4",
+      "finding": "The epoch, ADR statuses, TODO, and sprint board do not claim native Flink parity or new readiness. They preserve epoch 1 as a bounded historical acceptance and state that this architecture cycle earns zero new native capability completion."
+    },
+    {
+      "id": "P5",
+      "finding": "Official documentation is release-2.3 scoped and implementation observations are pinned to dereferenced release-2.3.0 commit c0f8d1a1e09f209885a88f9c19ceb9d9e9870283. Master observations are treated as non-normative exploration."
+    },
+    {
+      "id": "P6",
+      "finding": "The standalone state-materialization probe is correctly bounded as a counterexample experiment. Its success cannot accept native SDK, HTTP, PostgreSQL, worker, join, or distributed execution behavior."
+    }
+  ],
+  "required_revisions": [
+    {
+      "id": "R1",
+      "severity": "high",
+      "documents": [
+        "ADR-0044 lines 36-40"
+      ],
+      "title": "Authoritative state-batch identity incorrectly includes a replaceable owner epoch",
+      "problem": "The text says the batch identity binds the physical owner epoch. That makes an accepted batch logically different after ownership replacement. A lost acknowledgement followed by a new owner must discover and replay the same accepted receipt and batch, not create an owner-epoch-specific duplicate or conflict.",
+      "required_correction": "Separate logical mutation identity from fencing evidence. Key the logical batch and terminal outcome by graph revision, assignment epoch, operator/subtask and state owner, input port/partition/sequence, apply ordinal or state version, and output identity. Persist the authoring TaskRun/attempt/owner epoch as an audited fence that must be current when committing, but exclude it from exact accepted-outcome identity.",
+      "acceptance_control": "Commit a turn, lose its response, change the physical owner epoch, and prove the replacement resolves the immutable prior batch/receipt without a second batch, cursor advance, output, or business invocation. A stale prior owner must still be fenced."
+    },
+    {
+      "id": "R2",
+      "severity": "high",
+      "documents": [
+        "ADR-0044 lines 74-78",
+        "src/prefect/_internal/stream_engine.py lines 248-264 and 312-332"
+      ],
+      "title": "The proposed public zero-output rule is conflated with the current internal RETURN wire contract",
+      "problem": "ADR-0044 says existing yield/return are value-bearing, including JSON null. The accepted epoch-1 internal RETURN path has no output envelope and treats its optional value as managed state. The future desired language contract is sound, but the current sentence describes behavior that does not exist and could silently reinterpret old receipts.",
+      "required_correction": "State explicitly that the new cardinality-0..1 profile will treat yielded null and ordinary Python return values as value-bearing language outcomes, while the unchanged epoch-1 internal RETURN wire remains state-only. Define an explicit tagged NO_OUTPUT outcome and a versioned migration/admission boundary; do not reuse or reinterpret old RETURN rows.",
+      "acceptance_control": "Round-trip three distinct terminal outcomes through real native storage: OUTPUT(null), OUTPUT(non-null), and NO_OUTPUT. Read old epoch-1 RETURN receipts without changing their state-only meaning."
+    },
+    {
+      "id": "R3",
+      "severity": "high",
+      "documents": [
+        "ADR-0043 lines 28-45",
+        "ADR-0043 acceptance criteria lines 118-125"
+      ],
+      "title": "The physical edge/exchange model is not defined for fan-out with different routing",
+      "problem": "One immutable producer log can serve multiple subscribers only when the physical exchange contract explains how each edge derives partitions. Forward, rebalance, broadcast, and keyed shuffle cannot all be inferred from one producer partition and one subscriber cursor. Different branches may require different routing versions and edge partition materialization.",
+      "required_correction": "Define versioned exchange kinds and identities for producer partition, logical edge/output port, edge partition, routing version, subscriber/input port, and cursor. State whether routing is materialized at append or read, how exact replay validates the routing digest, and how independent branch retention works when branches use different exchanges.",
+      "acceptance_control": "Run one producer into two branches with different partition counts and partitioners, then retry append/read and replace one branch. Prove stable per-edge routing, no duplicate or omitted record, and no cursor or retention acknowledgement crossing branches."
+    },
+    {
+      "id": "R4",
+      "severity": "high",
+      "documents": [
+        "ADR-0044 lines 79-82",
+        "ADR-0048 lines 27-31"
+      ],
+      "title": "Barrier and complete-snapshot semantics lack an ordered, immutable cut contract",
+      "problem": "The drafts prohibit an incomplete snapshot but do not define how a barrier is identified, ordered with DATA, scoped to immutable participants, or proven globally complete. Without that contract, a per-input snapshot can be selected while another partition still has pre-barrier data, and GC or rescale can treat a partial cut as authoritative.",
+      "required_correction": "Require a coordinator-authorized barrier ID and epoch, DATA and BARRIER in the same ordered partition stream, an immutable participant and input manifest, per-input cursor/apply high-water marks, state roots, and one global complete marker. Only a globally complete compatible cut may authorize materialization selection, GC, or assignment activation. A barrier must never acknowledge a business input.",
+      "acceptance_control": "Crash before and after each participant barrier, snapshot write, and global-complete marker. Refuse all partial cuts and prove that recovery, GC, and rescale select only one complete participant vector without invoking accepted user turns."
+    },
+    {
+      "id": "R5",
+      "severity": "high",
+      "documents": [
+        "ADR-0045 lines 23-47",
+        "ADR-0045 acceptance criteria lines 63-70"
+      ],
+      "title": "Source, watermark, idleness, and drain controls are not ordered strongly enough",
+      "problem": "The text names split vectors, watermarks, idleness, and a drain frontier but does not require control entries to be fenced and ordered with DATA. A watermark or IDLE marker that overtakes an accepted record can fire cleanup early. Drain can omit a newly discovered or in-flight split unless discovery, assignment, reads, append intents, and lost acknowledgements share one enumerator frontier.",
+      "required_correction": "Define monotonic source/split owner epochs and ordered DATA, WATERMARK, IDLE, RESUME, EOF, and DRAIN control identities per partition. Drain must atomically freeze discovery and assignment at an enumerator epoch, include all assigned/in-flight positions and append intents, and reconcile exact lost acknowledgements by split, position, and payload digest. Reactivation must apply an explicit late-data policy.",
+      "acceptance_control": "Inject process loss around discovery, assignment, read, append commit/response, IDLE/RESUME, watermark, and drain freeze. Prove no control overtakes DATA, no split is omitted or duplicated, and late/reactivated input follows the declared policy."
+    },
+    {
+      "id": "R6",
+      "severity": "high",
+      "documents": [
+        "ADR-0046 lines 24-35",
+        "ADR-0046 lines 58-60"
+      ],
+      "title": "Capacity reservation does not yet cover the full authoritative terminal write",
+      "problem": "Pre-invocation output reservation only where output bounds are known is insufficient for a turn that can also grow a state batch, unmatched-join state, mailbox staging, timer mutations, receipts, and routing metadata. Business code may run and then be unable to commit its required terminal transaction, while cyclic operators wait on capacity held by one another.",
+      "required_correction": "Define an admitted maximum or reservation for every authoritative write class of a turn, including state/join/timer and control metadata. Specify reservation identity, owner fence, exact retry, refund after commit/refusal, lost-owner reclamation, fair wait order, and lock order. If a profile cannot bound a turn before invocation, reject that profile or define its explicit weaker effect/retry contract.",
+      "acceptance_control": "Fill cyclic and fan-out graphs to byte/record/state limits, kill owners before and after reservation and commit, and prove bounded overshoot, no leaked credit, no circular wait, and no user invocation for a turn whose admitted maximum cannot fit."
+    },
+    {
+      "id": "R7",
+      "severity": "high",
+      "documents": [
+        "ADR-0047 lines 25-47",
+        "ADR-0048 lines 27-31"
+      ],
+      "title": "Selective recovery lacks an all-or-none region activation protocol",
+      "problem": "The documents freeze recovery inputs and reject old epochs after activation, but they do not define one immutable region plan and atomic transition for all replacement subtasks. Independent activation can expose a mixed old/new region or fence the old assignment before every target has restored and verified its frontier.",
+      "required_correction": "Persist an immutable recovery plan with participants, required inputs/pins, code/state compatibility, target owners, and frontier. Targets remain RESTORING and data-inactive until all verify the same plan. Publish one atomic READY/activation generation; before it the old recoverable assignment remains authoritative, after it every old writer is fenced. Define resumable or abort behavior for partial target failure.",
+      "acceptance_control": "Crash the coordinator and each target before plan persistence, after individual restore, during global activation, and after activation response loss. Observe either the complete old assignment or complete new assignment, never a mixed active region."
+    },
+    {
+      "id": "R8",
+      "severity": "high",
+      "documents": [
+        "ADR-0048 lines 24-35",
+        "ADR-0045 lines 23-47",
+        "ADR-0046 lines 36-45"
+      ],
+      "title": "The rescale transfer cut omits continuous/control-plane state",
+      "problem": "The listed cut covers cursor vectors, apply ordinals, state roots, timers, and retained references, but not source enumerator and split-assignment epochs, watermarks and idleness, mailbox arrival/completion holes, in-flight append intents, outstanding capacity reservations/credits, or retention pins owned by the old assignment. Activating without these can skip input, regress event time, leak capacity, or delete needed data.",
+      "required_correction": "Extend the compatible transfer manifest to include every admitted source, mailbox, event-time, capacity, and retention root plus subordinate capabilities. Define which entries are transferred, resolved before the cut, or explicitly unsupported. Refuse rescale if any required component lacks a portable representation.",
+      "acceptance_control": "Rescale with an idle input, a watermark skew, an unmatched join value, a completion hole, a committed append with lost response, a timer, and held capacity/retention pins. Prove the new assignment preserves each state exactly and the old assignment cannot mutate or release it."
+    },
+    {
+      "id": "R9",
+      "severity": "medium",
+      "documents": [
+        "ADR-0043 lines 42-45",
+        "ADR-0048 lines 24-35"
+      ],
+      "title": "Canonical key encoding is named but its supported domain is not specified",
+      "problem": "A versioned hash name does not prevent collisions between type encodings or cross-runtime drift. Null, booleans, integers, strings, bytes, floating-point negative zero and non-finite values, and structured keys need an exact supported-domain and canonical-byte contract.",
+      "required_correction": "Specify the supported key type algebra, tagged canonical byte encoding, normalization rules, hash and routing version, maximum encoded size, and fail-closed behavior for unsupported or noncanonical keys before DATA admission.",
+      "acceptance_control": "Use golden vectors across supported Python versions, hosts, hash seeds, JSON/SDK round trips, and schema upgrades, including type-collision and negative-zero/non-finite controls."
+    }
+  ],
+  "non_blocking_limits_to_keep_explicit": [
+    "Planning status is appropriate. These required revisions block native schema/API implementation, not publication of the documents as an honest planning record.",
+    "The physical-TaskRun recommendation is not native acceptance. Metadata scale, UI aggregation, region admission, and subtask-scoped authority still require implementation evidence.",
+    "A passing standalone state probe can refute replay theories but cannot validate native PostgreSQL atomicity, SDK semantics, or worker recovery.",
+    "Cross-host replacement remains fail-closed without a provider or old-host verified-stop capability; timeout is only eligibility, never death proof.",
+    "No throughput, latency, online-GC, production-HA, connector-coverage, or Flink-equivalence claim is supported by the reviewed artifacts."
+  ],
+  "final_assessment": {
+    "mandatory_per_yield_contract_preserved": true,
+    "source_semantics_ready_for_implementation": false,
+    "state_and_ordering_semantics_ready_for_implementation": false,
+    "fencing_and_cross_host_boundary_honest": true,
+    "gc_and_capacity_semantics_ready_for_implementation": false,
+    "multi_input_semantics_ready_for_implementation": false,
+    "false_native_readiness_claim_found": false,
+    "recommended_next_action": "Revise R1 through R9 in ADR-0043 through ADR-0048 before freezing storage schemas or public wire contracts. Then implement the epoch's first fixed finite physical-subtask slice with real SDK, HTTP, PostgreSQL, separate processes, fault cuts, and source-bound evidence."
+  }
+}
