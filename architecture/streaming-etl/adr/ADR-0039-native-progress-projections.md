@@ -227,3 +227,47 @@ The browser gains a bounded streaming observation alongside ordinary run
 metadata. This adds one read endpoint for explicitly native runs and a compact
 operational card. Projection availability remains independent of progress
 acceptance: a failed or stale observation grants no execution authority.
+
+## CI security successor: private artifacts and worker message origins
+
+The hosted CodeQL review identified two predictable temporary report paths and
+an unchecked message origin in the generated MSW worker. The
+[local security successor](../evidence/native-stage9-ui-codeql-successor-2026-11-04/acceptance.json)
+changes exactly three UI/test-support files and preserves the earlier
+[complete UI gate](../evidence/native-stage9-ui-complete-2026-11-04/acceptance.json)
+and [initial UI gate](../evidence/native-stage9-ui-2026-11-04/acceptance.json).
+The other seventeen UI source paths remain byte-identical. This correction
+adds no native-foundation readiness percentage or streaming capability.
+
+Both browser probes now create an exclusive random default output directory
+with `mkdtemp` under the operating-system temporary directory. The
+[filesystem checks](../evidence/native-stage9-ui-codeql-successor-2026-11-04/permissions.json)
+verify mode `0700`, current-user ownership and absence of a symlink for both
+defaults. An explicit `NATIVE_BROWSER_OUTPUT` remains an operator-selected path;
+the actual served-UI check also verifies that this override is preserved.
+The probes print the chosen artifact directory in their console reports.
+
+The worker rejects a message whose origin differs from its own origin before
+looking up the source client. It also checks the resolved client's URL origin
+before handling protocol data. The real Chromium worker accepts a native
+`KEEPALIVE_REQUEST` with the expected same origin. A synthetic foreign-origin
+`ExtendableMessageEvent` dispatched through that actual handler reached client
+lookup before the correction and is rejected before lookup afterward. The
+[expected failing regression](../evidence/native-stage9-ui-codeql-successor-2026-11-04/discovery-origin-before.log)
+is retained alongside the passing browser result; the temporary lookup observer
+is restored after the check. The local origin guard must be preserved when the
+upstream MSW worker is regenerated.
+
+The successor passes 97 UI/client-wire regressions, 33 Chromium story cases,
+TypeScript analysis, full lint and a production build. It introduces no unused
+warnings; the 62 existing lint warnings remain recorded. A fresh real
+PostgreSQL/ProcessWorker deployment processes eight documents, and both the
+default-output and explicit-output browser probes read its packaged UI without
+MSW or mocked responses. The
+[actual HTTP asset comparison](../evidence/native-stage9-ui-codeql-successor-2026-11-04/live-bundle.json)
+includes the served `mockServiceWorker.js` bytes and proves delivery of the
+origin guard in the current package.
+
+These local checks do not stand in for hosted CodeQL. A new hosted analysis
+after publication remains required; the findings have not been dismissed or
+suppressed. Its result belongs to the common epoch's hosted successor record.

@@ -56,7 +56,7 @@ from prefect.types import DateTime
 from prefect.types._datetime import now
 
 NATIVE_DECLARATION_JOB_VARIABLE = "prefect_native_streaming"
-NATIVE_WORK_POOL_MARKER = {
+NATIVE_WORK_POOL_MARKER: dict[str, int | str] = {
     "schema_version": 1,
     "profile": "bounded-linear-v1",
 }

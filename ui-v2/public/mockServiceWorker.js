@@ -20,6 +20,11 @@ addEventListener("activate", (event) => {
 });
 
 addEventListener("message", async (event) => {
+	// Only this worker's origin may send protocol messages.
+	if (event.origin !== self.location.origin) {
+		return;
+	}
+
 	const clientId = Reflect.get(event.source || {}, "id");
 
 	if (!clientId || !self.clients) {
@@ -28,7 +33,7 @@ addEventListener("message", async (event) => {
 
 	const client = await self.clients.get(clientId);
 
-	if (!client) {
+	if (!client || new URL(client.url).origin !== self.location.origin) {
 		return;
 	}
 

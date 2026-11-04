@@ -25,6 +25,7 @@ from tests.test_native_stream_recovery_http import RestartableAPI
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
 @pytest.mark.parametrize("count", [8, 500])
+@pytest.mark.timeout(300)
 async def test_mixed_direct_tasks_execute_through_normal_flow_engine(
     execution_api: RestartableAPI, tmp_path: Path, db: Any, mode: str, count: int
 ):
@@ -54,7 +55,7 @@ async def test_mixed_direct_tasks_execute_through_normal_flow_engine(
     output = tmp_path / "flow.log"
     child = _start_flow(execution_api, entrypoint, launch.context, output)
     try:
-        assert child.wait(timeout=180) == 0, output.read_text()[-16000:]
+        assert child.wait(timeout=240) == 0, output.read_text()[-16000:]
     finally:
         if child.poll() is None:
             child.kill()

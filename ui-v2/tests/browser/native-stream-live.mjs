@@ -1,6 +1,8 @@
 /** Read the packaged UI from an owned real server; no mocked responses. */
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { chromium, expect } from "@playwright/test";
 
 const handoff = process.env.NATIVE_UI_HANDOFF
@@ -17,8 +19,9 @@ const separator = apiAuth.indexOf(":");
 assert.ok(separator > 0);
 const expectedCount = handoff.expected_count ?? 8;
 const output =
-	process.env.NATIVE_BROWSER_OUTPUT ?? "/tmp/native-stage9-ui-live";
-await mkdir(output, { recursive: true });
+	process.env.NATIVE_BROWSER_OUTPUT ??
+	(await mkdtemp(join(tmpdir(), "ariadne-native-stream-live-")));
+await mkdir(output, { recursive: true, mode: 0o700 });
 const browser = await chromium.launch({
 	...(process.env.CHROMIUM_EXECUTABLE_PATH
 		? { executablePath: process.env.CHROMIUM_EXECUTABLE_PATH }
@@ -168,7 +171,7 @@ try {
 		`${output}/results.json`,
 		`${JSON.stringify(result, null, 2)}\n`,
 	);
-	console.log(JSON.stringify(result));
+	console.log(JSON.stringify({ ...result, artifact_directory: output }));
 } finally {
 	await browser.close();
 }

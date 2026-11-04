@@ -571,7 +571,23 @@ async def test_release_removes_result_and_retains_finite_horizon_witness(
         )
         await apply_flow_lifecycle_result(session, db, authority, result.state)
     assert result.state is not None and result.state.is_cancelled()
-    assert await NativeStreamStore(db, credentials).release_flow(flow_run.id) == 0
+    store = NativeStreamStore(db, credentials)
+    with pytest.raises(NativeStreamError) as metadata_lag:
+        await store.release_flow(flow_run.id)
+    assert metadata_lag.value.code == "METADATA_NOT_READY"
+    async with db.session_context(begin_transaction=True) as session:
+        assert (
+            await session.scalar(sa.select(sa.func.count(db.StreamFiniteReceipt.id)))
+            == 1
+        )
+        task_result = await models.task_runs.set_task_run_state(
+            session=session,
+            task_run_id=prefix.task_run_id,
+            state=schemas.states.Cancelled(message="bounded finite release"),
+            task_policy=CoreTaskPolicy,
+        )
+        assert task_result.state is not None and task_result.state.is_cancelled()
+    assert await store.release_flow(flow_run.id) == 0
     with pytest.raises(NativeStreamError) as released:
         await finite.receipt(prefix.task_run_id)
     assert released.value.code == "REPLAY_HORIZON_EXPIRED"

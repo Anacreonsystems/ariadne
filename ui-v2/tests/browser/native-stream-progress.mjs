@@ -4,15 +4,18 @@
  * they do not establish server or process-recovery acceptance.
  */
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect } from "@playwright/test";
 
 const storybookUrl =
 	process.env.NATIVE_STORYBOOK_URL ?? "http://127.0.0.1:6008";
 const outputDirectory =
-	process.env.NATIVE_BROWSER_OUTPUT ?? "/tmp/native-stage9-ui-browser";
-await mkdir(outputDirectory, { recursive: true });
+	process.env.NATIVE_BROWSER_OUTPUT ??
+	(await mkdtemp(join(tmpdir(), "ariadne-native-stream-progress-")));
+await mkdir(outputDirectory, { recursive: true, mode: 0o700 });
 const browser = await chromium.launch({
 	...(process.env.CHROMIUM_EXECUTABLE_PATH
 		? { executablePath: process.env.CHROMIUM_EXECUTABLE_PATH }
@@ -20,6 +23,7 @@ const browser = await chromium.launch({
 	args: ["--no-sandbox"],
 });
 const results = [];
+let workerMessageSecurity;
 const profiles = [
 	{
 		name: "desktop-light",
@@ -93,6 +97,13 @@ try {
 						await expect(
 							page.getByText("Cancellation requested"),
 						).toBeVisible();
+				}
+				if (profile.name === "desktop-light" && story === "running") {
+					workerMessageSecurity = await verifyWorkerMessageSecurity(
+						page,
+						context,
+						new URL(storybookUrl).origin,
+					);
 				}
 				await page.screenshot({
 					path: `${outputDirectory}/${profile.name}-${story}.png`,
@@ -189,9 +200,71 @@ try {
 
 	await writeFile(
 		`${outputDirectory}/results.json`,
-		`${JSON.stringify({ scope: "Storybook browser/MSW fixtures", results }, null, 2)}\n`,
+		`${JSON.stringify({ scope: "Storybook browser/MSW fixtures", worker_message_security: workerMessageSecurity, results }, null, 2)}\n`,
 	);
-	console.log(JSON.stringify({ cases: results.length, results }));
+	console.log(
+		JSON.stringify({
+			cases: results.length,
+			artifact_directory: outputDirectory,
+			worker_message_security: workerMessageSecurity,
+			results,
+		}),
+	);
 } finally {
 	await browser.close();
+}
+
+async function verifyWorkerMessageSecurity(page, context, expectedOrigin) {
+	const worker = context.serviceWorkers()[0];
+	assert.ok(worker, "The actual MSW service worker must be active");
+	await worker.evaluate(() => {
+		self.__nativeSecurityOrigins = [];
+		self.addEventListener("message", (event) => {
+			if (event.origin !== self.location.origin) return;
+			if (event.data === "KEEPALIVE_REQUEST")
+				self.__nativeSecurityOrigins.push(event.origin);
+		});
+	});
+	await page.evaluate(() =>
+		navigator.serviceWorker.controller.postMessage("KEEPALIVE_REQUEST"),
+	);
+	await expect
+		.poll(() => worker.evaluate(() => self.__nativeSecurityOrigins))
+		.toContain(expectedOrigin);
+	const rejection = await worker.evaluate(async () => {
+		const client = (await self.clients.matchAll({ type: "window" }))[0];
+		if (!client) throw new Error("The controlled browser client is missing");
+		const original = self.clients.get;
+		let lookups = 0;
+		self.clients.get = function (...args) {
+			lookups += 1;
+			return original.apply(this, args);
+		};
+		try {
+			self.dispatchEvent(
+				new ExtendableMessageEvent("message", {
+					origin: "https://untrusted.invalid",
+					data: "KEEPALIVE_REQUEST",
+					source: client,
+				}),
+			);
+			return {
+				foreign_client_lookups: lookups,
+				worker_origin: self.location.origin,
+			};
+		} finally {
+			self.clients.get = original;
+		}
+	});
+	assert.equal(
+		rejection.foreign_client_lookups,
+		0,
+		"Foreign-origin messages must be rejected before client lookup",
+	);
+	assert.equal(rejection.worker_origin, expectedOrigin);
+	return {
+		...rejection,
+		legitimate_message_origin: expectedOrigin,
+		foreign_message_rejected: true,
+	};
 }

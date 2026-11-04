@@ -15,6 +15,7 @@ ROOT=Path(__file__).resolve().parents[3]
 EVIDENCE=ROOT/'architecture/streaming-etl/evidence'
 BASE_COMMIT='69e4316'
 SELF=Path(__file__).resolve().relative_to(ROOT).as_posix()
+SOURCE_MANIFEST=os.environ.get('ARIADNE_SOURCE_MANIFEST','native-epoch1-source-freeze-2026-11-04.json')
 PREDECESSOR='architecture/streaming-etl/evidence/native-stage6a-gate-runner-2026-11-04.txt'
 PROFILES=runpy.run_path(str(ROOT/PREDECESSOR))['PROFILES'].copy()
 PROFILES.update({
@@ -30,7 +31,7 @@ PROFILES.update({
         'tests/server/api/test_native_worker_registration.py','-k','not test_concurrent_native_bind_preserves_pool_discovery_marker'],
     'ordinary-worker':['tests/workers','tests/runner','--disable-docker-image-builds','--exclude-service','docker','--exclude-service','kubernetes','-n4'],
     'logging-cli':['tests/test_logging.py','tests/logging/test_native_worker_logs.py','tests/cli/test_flow_run.py::TestCancelFlowRun','-n4'],
-    'deployment-builder':['tests/deployments/test_runner.py','-n4'],
+    'deployment-builder':['tests/deployment/test_flow_runs.py','tests/deployment/test_base.py','-n4'],
     'cancellation-cleanup':['tests/server/services/test_cancellation_cleanup.py'],
     'native-client':['tests/client/test_stream_storage_native.py','tests/client/test_native_deployment_schemas.py'],
 })
@@ -69,13 +70,18 @@ def hashes()->dict[str,str]:
 def main()->int:
     os.chdir(ROOT)
     if sys.argv[1]=='freeze':
+        for selected in PROFILES.values():
+            for token in selected:
+                if token.startswith('tests/'):
+                    assert (ROOT/token.split('::',1)[0]).exists(),token
         frozen={'schema':'native-epoch1-source/v1','captured_at_utc':datetime.now(UTC).isoformat(),'base_commit':subprocess.check_output(['git','rev-parse',BASE_COMMIT],text=True).strip(),'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'source_sha256':hashes()}
-        target=EVIDENCE/'native-epoch1-source-freeze-2026-11-04.json'
+        target=EVIDENCE/SOURCE_MANIFEST
+        assert not target.exists(),'A source freeze is immutable; choose a named successor.'
         target.write_text(json.dumps(frozen,indent=2)+'\n')
         print(json.dumps({'frozen':len(frozen['source_sha256']),'manifest_sha256':sha(target)}))
         return 0
     profile,label=sys.argv[1:3]
-    frozen_path=EVIDENCE/'native-epoch1-source-freeze-2026-11-04.json'
+    frozen_path=EVIDENCE/SOURCE_MANIFEST
     frozen=json.loads(frozen_path.read_text())['source_sha256']
     before=hashes()
     assert frozen==before,'Source changed before gate; retain prior freeze and create a named successor.'

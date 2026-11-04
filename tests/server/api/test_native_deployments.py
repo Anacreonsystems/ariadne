@@ -29,6 +29,12 @@ def _declaration() -> NativeStreamDeclaration:
     )
 
 
+async def _postgres_17(db: PrefectDBInterface) -> bool:
+    engine = await db.engine()
+    version = engine.dialect.server_version_info or ()
+    return db.dialect.name == "postgresql" and bool(version) and version[0] == 17
+
+
 async def _native_flow_run(
     session: AsyncSession,
     db: PrefectDBInterface,
@@ -186,7 +192,7 @@ async def test_unstarted_launch_retirement_is_exact_and_leaves_no_child(
     db: PrefectDBInterface,
     deployment: orm_models.Deployment,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL launch cleanup is covered by the PostgreSQL profile")
     flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
     plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()
@@ -252,7 +258,7 @@ async def test_verified_dead_launcher_retires_without_child_or_graph(
     deployment: orm_models.Deployment,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL launcher retirement is covered by its PG profile")
     flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
     plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()
@@ -374,7 +380,7 @@ async def test_process_registration_wins_over_launcher_death_authorization(
     deployment: orm_models.Deployment,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL launcher race is covered by its PG profile")
     flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
     plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()
@@ -465,7 +471,7 @@ async def test_enroll_register_and_public_plan_are_exact_and_secret_free(
     db: PrefectDBInterface,
     deployment: orm_models.Deployment,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL enrollment is covered by the PostgreSQL profile")
     flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
     assert flow_run.flow_version == _declaration().flow_version
@@ -571,7 +577,7 @@ async def test_projection_is_bounded_and_payload_free(
     db: PrefectDBInterface,
     deployment: orm_models.Deployment,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL projection is covered by the PostgreSQL profile")
     ordinary = await client.get(f"/streams/v1/deployments/{uuid4()}/projection")
     assert ordinary.status_code == 404
@@ -606,7 +612,7 @@ async def test_enrollment_drift_and_legacy_takeover_fail_closed(
     db: PrefectDBInterface,
     deployment: orm_models.Deployment,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL enrollment is covered by the PostgreSQL profile")
     flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
     plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()
@@ -871,7 +877,7 @@ async def test_verified_replacement_requires_exact_process_identity(
     deployment: orm_models.Deployment,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL replacement is covered by the PostgreSQL profile")
     (
         flow_run,
@@ -1074,7 +1080,7 @@ async def test_generation_two_unstarted_launch_fails_and_releases_old_graph(
     deployment: orm_models.Deployment,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL replacement cleanup is covered by its PG profile")
     flow_run, worker, work_pool_id, enrollment, _, registration = await _active_launch(
         client, session, db, deployment
@@ -1180,7 +1186,7 @@ async def test_verified_child_before_first_manifest_fails_empty_started_flow(
     deployment: orm_models.Deployment,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL empty-start cleanup is covered by its PG profile")
     flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
     plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()
@@ -1290,7 +1296,7 @@ async def test_terminal_child_cleanup_preserves_final_flow_state(
     deployment: orm_models.Deployment,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL terminal cleanup is covered by its PG profile")
     flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
     plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()
@@ -1407,7 +1413,7 @@ async def test_release_waits_for_bound_task_terminal_metadata(
     db: PrefectDBInterface,
     deployment: orm_models.Deployment,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL release metadata gate is covered by its PG profile")
     flow_run, _, _, _, headers, _ = await _active_launch(
         client, session, db, deployment
@@ -1457,7 +1463,7 @@ async def test_drain_replays_accepted_append_and_cancel_blocks_writes(
     db: PrefectDBInterface,
     deployment: orm_models.Deployment,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL controls are covered by the PostgreSQL profile")
     flow_run, _, _, enrollment, headers, registration = await _active_launch(
         client, session, db, deployment
@@ -1600,7 +1606,7 @@ async def test_orphan_cancellation_uses_authorized_death_witness(
     deployment: orm_models.Deployment,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL orphan cancellation is covered by its PG profile")
     flow_run, worker, work_pool_id, enrollment, _, registration = await _active_launch(
         client, session, db, deployment
@@ -1694,7 +1700,7 @@ async def test_registered_startup_crash_is_verified_and_retired(
     deployment: orm_models.Deployment,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    if db.dialect.name != "postgresql":
+    if not await _postgres_17(db):
         pytest.skip("PostgreSQL verified retirement is covered by its PG profile")
     flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
     plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()

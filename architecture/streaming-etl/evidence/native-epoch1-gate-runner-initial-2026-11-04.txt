@@ -1,0 +1,113 @@
+"""Run final native integration profiles on one frozen repository snapshot."""
+from __future__ import annotations
+import hashlib
+import json
+import os
+import runpy
+import subprocess
+import sys
+import time
+import xml.etree.ElementTree as ET
+from datetime import UTC, datetime
+from pathlib import Path
+
+ROOT=Path(__file__).resolve().parents[3]
+EVIDENCE=ROOT/'architecture/streaming-etl/evidence'
+BASE_COMMIT='69e4316'
+SELF=Path(__file__).resolve().relative_to(ROOT).as_posix()
+PREDECESSOR='architecture/streaming-etl/evidence/native-stage6a-gate-runner-2026-11-04.txt'
+PROFILES=runpy.run_path(str(ROOT/PREDECESSOR))['PROFILES'].copy()
+PROFILES.update({
+    'mixed-http':['tests/test_native_mixed_flow_http.py','-n2'],
+    'worker-http':['tests/test_native_worker_deployment_http.py','tests/test_native_worker_recovery_http.py','tests/runner/test_native_process.py','-n2'],
+    'deployment-api':['tests/server/api/test_native_deployments.py','tests/server/api/test_native_worker_registration.py','tests/server/api/test_stream_finite_plan.py','-k','not sqlite'],
+    'deployment-sqlite':[
+        'tests/server/api/test_native_deployments.py::test_sqlite_enrollment_refuses_before_mutation',
+        'tests/server/api/test_native_deployments.py::test_flow_run_cannot_override_deployment_declaration',
+        'tests/server/api/test_native_deployments.py::test_zero_retry_declaration_rolls_back_flow_run',
+        'tests/server/api/test_native_deployments.py::test_native_local_profile_rejects_custom_launch_configuration',
+        'tests/server/api/test_stream_finite_plan.py::test_finite_plan_fails_closed_on_sqlite',
+        'tests/server/api/test_native_worker_registration.py','-k','not test_concurrent_native_bind_preserves_pool_discovery_marker'],
+    'ordinary-worker':['tests/workers','tests/runner','--disable-docker-image-builds','--exclude-service','docker','--exclude-service','kubernetes','-n4'],
+    'logging-cli':['tests/test_logging.py','tests/logging/test_native_worker_logs.py','tests/cli/test_flow_run.py::TestCancelFlowRun','-n4'],
+    'deployment-builder':['tests/deployments/test_runner.py','-n4'],
+    'cancellation-cleanup':['tests/server/services/test_cancellation_cleanup.py'],
+    'native-client':['tests/client/test_stream_storage_native.py','tests/client/test_native_deployment_schemas.py'],
+})
+PROFILES['native-http']=[p for p in PROFILES['native-http'] if p!='tests/client/test_stream_storage_native.py']
+PROFILES['flow-http'] += ['-n2']
+# Class-level kernel checks already have their own worker-http profile.
+PROFILES['ordinary-worker'] += ['--ignore=tests/runner/test_native_process.py']
+ORDINARY={'kernel','client','flow-engine','ordinary-worker','logging-cli','deployment-builder'}
+PLUGIN="""import json,os
+from pathlib import Path
+def pytest_collection_modifyitems(config,items):
+    declared=[]
+    for item in items:
+        marks=[m for m in item.iter_markers() if m.name in ('skip','skipif','xfail')]
+        if marks:
+            parent=item.parent.nodeid.replace('/', '.').replace('.py','').replace('::','.')
+            declared.append({'classname':parent,'name':item.name,'marks':[{'kind':m.name,'reason':str(m.kwargs.get('reason',''))} for m in marks]})
+    Path(os.environ['ARIADNE_EXPECTED_MARKERS']).write_text(json.dumps(declared,indent=2)+'\\n')
+"""
+
+def sha(path:Path)->str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def inventory()->list[str]:
+    baseline=json.loads((EVIDENCE/'native-stage6a-source-freeze-2026-11-04.json').read_text())['source_sha256']
+    paths=set(baseline)|{SELF,PREDECESSOR,'pyproject.toml','uv.lock','pyrightconfig-ci.json','.pre-commit-config.yaml','ui-v2/package.json','ui-v2/package-lock.json'}
+    for args in (['git','diff','--name-only',BASE_COMMIT],['git','ls-files','--others','--exclude-standard']):
+        for path in subprocess.check_output(args,cwd=ROOT,text=True).splitlines():
+            if path.startswith(('src/','tests/','.github/','scripts/','ui-v2/src/','ui-v2/public/','ui-v2/tests/')):
+                paths.add(path)
+    return sorted(paths)
+
+def hashes()->dict[str,str]:
+    return {p:sha(ROOT/p) for p in inventory()}
+
+def main()->int:
+    os.chdir(ROOT)
+    if sys.argv[1]=='freeze':
+        frozen={'schema':'native-epoch1-source/v1','captured_at_utc':datetime.now(UTC).isoformat(),'base_commit':subprocess.check_output(['git','rev-parse',BASE_COMMIT],text=True).strip(),'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'source_sha256':hashes()}
+        target=EVIDENCE/'native-epoch1-source-freeze-2026-11-04.json'
+        target.write_text(json.dumps(frozen,indent=2)+'\n')
+        print(json.dumps({'frozen':len(frozen['source_sha256']),'manifest_sha256':sha(target)}))
+        return 0
+    profile,label=sys.argv[1:3]
+    frozen_path=EVIDENCE/'native-epoch1-source-freeze-2026-11-04.json'
+    frozen=json.loads(frozen_path.read_text())['source_sha256']
+    before=hashes()
+    assert frozen==before,'Source changed before gate; retain prior freeze and create a named successor.'
+    prefix=EVIDENCE/f'native-epoch1-{profile}-{label}-2026-11-04'
+    log,junit,report=(prefix.with_suffix(ext) for ext in ('.log','.xml','.json'))
+    expected=prefix.with_name(prefix.name+'-markers').with_suffix('.json')
+    plugin_dir=Path('/tmp/native-epoch1-gate-plugin');plugin_dir.mkdir(exist_ok=True)
+    (plugin_dir/'native_epoch_expected.py').write_text(PLUGIN)
+    env=os.environ.copy()
+    env['ARIADNE_EXPECTED_MARKERS']=str(expected)
+    env['PYTHONPATH']=str(plugin_dir)+(os.pathsep+env['PYTHONPATH'] if env.get('PYTHONPATH') else '')
+    command=[sys.executable,'-m','pytest',*PROFILES[profile],'-p','native_epoch_expected','-q','--tb=short',f'--junitxml={junit}']
+    started=datetime.now(UTC).isoformat();timer=time.monotonic()
+    with log.open('w') as output:
+        outcome=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,env=env,timeout=3600)
+    after=hashes()
+    cases=ET.parse(junit).findall('.//testcase') if junit.exists() else []
+    counts={key:sum(c.find(key) is not None for c in cases) for key in ('failure','error','skipped')}
+    observed={(c.get('classname'),c.get('name')) for c in cases if c.find('skipped') is not None}
+    allowed=set()
+    if profile in ORDINARY:
+        markers=json.loads(expected.read_text()) if expected.exists() else []
+        allowed={(m['classname'],m['name']) for m in markers}
+        for old in (EVIDENCE/f'native-stage6a-{profile}-final-2026-11-04.xml', EVIDENCE/f'native-stage5b-{profile}-provisioned-2026-11-03.xml', EVIDENCE/f'native-stage5b-{profile}-successor-2026-11-03.xml'):
+            if old.exists():
+                allowed|={(c.get('classname'),c.get('name')) for c in ET.parse(old).findall('.//testcase') if c.find('skipped') is not None}
+    drift=sorted(p for p in set(before)|set(after) if before.get(p)!=after.get(p))
+    ok=outcome.returncode==0 and bool(cases) and not counts['failure'] and not counts['error'] and not observed-allowed and not drift
+    record={'schema':'native-epoch1-gate/v1','profile':profile,'verdict':'PASS' if ok else 'FAIL','started_at_utc':started,'duration_seconds':round(time.monotonic()-timer,3),'command':command,'returncode':outcome.returncode,'tests':len(cases),'passed':len(cases)-sum(counts.values()),**counts,'source_manifest':{'path':frozen_path.name,'sha256':sha(frozen_path)},'source_drift':drift,'log':{'path':log.name,'sha256':sha(log)},'junit':{'path':junit.name,'sha256':sha(junit)} if junit.exists() else None,'declared_markers':{'path':expected.name,'sha256':sha(expected)} if expected.exists() else None,'allowed_ordinary_skip_or_xfail':sorted(allowed),'unexpected_skip_or_xfail':sorted(observed-allowed),'qualification':'Selected native profiles require zero skips/xfails; ordinary profiles permit only frozen declared markers or exact named accepted predecessor cases. External effects remain client-owned; bounded local native foundation only.'}
+    report.write_text(json.dumps(record,indent=2)+'\n')
+    print(json.dumps({k:record[k] for k in ('profile','verdict','tests','passed','failure','error','skipped','duration_seconds','source_drift')}),flush=True)
+    return 0 if ok else 1
+
+if __name__=='__main__':
+    raise SystemExit(main())
