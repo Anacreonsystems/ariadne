@@ -114,3 +114,22 @@ The scheduler must account for placement and correlated failure, not just graph
 edges. A valid fence protects platform state but does not undo effects made
 before a failed turn. Missing durable data, invalid stop proofs and incompatible
 runtime/state versions all block activation explicitly.
+
+## Work approval and stable criterion IDs
+
+Approved for work on 2026-11-04 as part of the ADR-0042–0048 set at revision
+`fae53c90aa3b44dbc45032833b4d193001e5c8bd`; see the
+[approval record](../evidence/flink-architecture-2026-11-04/epoch2-work-approval-2026-11-04.json).
+It depends on ADR-0043 physical ownership, ADR-0044 portable state/frontiers and
+ADR-0046 recovery pins/capacity. The current environment has no verified
+cross-host provider/agent capability, so A47-04 remains an explicit later gate.
+
+| Stable ID | Existing acceptance criterion |
+| --- | --- |
+| A47-01 | Replace one operator process while healthy identities remain. |
+| A47-02 | Consume an accepted suffix during producer replacement without regeneration. |
+| A47-03 | Reject stale coordinator, assignment and subtask epochs under races. |
+| A47-04 | Real two-host replacement with verified stop and portable artifacts. |
+| A47-05 | Refuse unreachable-host replacement without a valid witness. |
+| A47-06 | Reproduce recovery-region expansion versus isolated failure. |
+| A47-07 | Fault regional plan/restore/activation without mixed assignment. |

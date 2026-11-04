@@ -1,0 +1,92 @@
+{
+  "schema": "ni2-053-readonly-preflight-v1",
+  "observed_at": "2026-11-04T21:36:54.898629+00:00",
+  "repository": "Anacreonsystems/ariadne",
+  "source_commit": "371d9de429d6256c05e7efdbe0a1c2840696792c",
+  "mode": "DISCOVERY_ONLY",
+  "native_completion_credit_percent": 0,
+  "adr_0047_accepted": false,
+  "mutations": [],
+  "runner_inventory": {
+    "repository_status": 403,
+    "organization_status": 403,
+    "message": "Resource not accessible by integration"
+  },
+  "connector_metadata": {
+    "runner_inventory_tool_available": false,
+    "jobs_tool_available": true,
+    "historical_run_jobs_fetched": 40672223609
+  },
+  "workflows": [
+    {
+      "path": ".github/workflows/streaming-etl-soak.yml",
+      "sha256": "7a359fefecaaa9e03299f202e6846943a49329a2ff721210158f8d336e956d7f"
+    },
+    {
+      "path": ".github/workflows/streaming-etl-soak-segment.yml",
+      "sha256": "0a98830c3b436a000bb8fd67b1feaeee12de1360182cf9dff1e081f704a98dfe"
+    },
+    {
+      "path": ".github/workflows/streaming-etl-soak-cleanup.yml",
+      "sha256": "edbf6db15aa58ae4bc01987516cdc926983c1207869085761d12deda9b455380"
+    }
+  ],
+  "historical_run": {
+    "run_id": 40672223609,
+    "commit": "ff4972fb2c6df313056e828f72a3cad41dce9258",
+    "conclusion": "success",
+    "arc_jobs": [
+      {
+        "job_id": 122761609939,
+        "runner_id": 233,
+        "runner_group_id": 1,
+        "labels": [
+          "anacreon-runners"
+        ],
+        "started_at": "2026-10-28T10:27:29Z",
+        "completed_at": "2026-10-31T10:30:19Z"
+      },
+      {
+        "job_id": 124513476015,
+        "runner_id": 301,
+        "runner_group_id": 1,
+        "labels": [
+          "anacreon-runners"
+        ],
+        "started_at": "2026-10-31T10:31:31Z",
+        "completed_at": "2026-10-31T10:31:55Z"
+      }
+    ],
+    "jobs_overlap": false,
+    "proves_current_capacity": false,
+    "proves_distinct_hosts": false
+  },
+  "existing_dispatch_suitability": {
+    "streaming-etl-soak.yml": "UNSUITABLE: Docker campaign lifecycle, global serial concurrency group, collection depends on prepare; static requires a named persistent runner",
+    "streaming-etl-soak-segment.yml": "UNSUITABLE: workflow_call only; observes existing long-running campaign and requires persistent runner",
+    "streaming-etl-soak-cleanup.yml": "EXCLUDED: deletes explicitly selected campaign resources"
+  },
+  "proposed_probe": {
+    "status": "PROPOSAL_NOT_DISPATCHED",
+    "file": ".github/workflows/native-stream-host-preflight.yml",
+    "trigger": "workflow_dispatch only, root coordinates reviewed source ref",
+    "permissions": {
+      "contents": "none",
+      "actions": "read"
+    },
+    "jobs": "Two independent bounded jobs, no needs between them; selectors anacreon-runners twice or explicitly ARC plus [self-hosted,Linux,X64]. Distinct runners/hosts never assumed.",
+    "bounds": "No checkout, dependency installation, Docker, SSH, tunnel, production endpoint mutation, network scanning or historical campaign commands. Per-job timeout 3 minutes; 5-second start/end sampling interval.",
+    "identity": "Per-run domain-separated SHA-256(salt || raw identifier) for /proc/sys/kernel/random/boot_id and /etc/machine-id; salt includes repository/run_id/attempt. Missing/empty identifiers produce available=false, never an empty-ID equality.",
+    "output": "Only hashes, presence booleans, run_id, run_attempt, job key, UTC sampling bounds. Attach actual numeric runner/job IDs via Actions jobs API afterward. Never print raw IDs, hostname, IP, environment, credentials or secrets.",
+    "comparison": "Require overlapping sampling/job intervals. Report same_observed_boot_id, same_observed_machine_id and namespace ambiguity. Different runner IDs or names do not establish independent physical machines.",
+    "network": "NOT_RUN_NO_APPROVED_TARGET. Can report only bounded boolean TCP reachability to an existing allowlisted private service supplied through a secret; that proves service connectivity only. Direct peer reachability needs an approved private rendezvous/endpoint exchange which does not publish plaintext addresses."
+  },
+  "blockers": [
+    "No safe existing dispatch-only two-job identity/reachability workflow.",
+    "Current org/repo runner inventory/capacity/labels are not inspectable with this integration.",
+    "No approved private peer endpoint/rendezvous was found; no direct cross-host reachability measured.",
+    "Kernel boot ID and machine ID may be container/namespace scoped; comparisons are discovery signals, not verified host/death authority.",
+    "Two jobs alone do not prove verified-stop or cross-host replacement; real positive-death and stale-owner acceptance remains separate."
+  ],
+  "scan_limits": "Known incompatible workflows excluded; this is targeted workflow/tool metadata inspection, not an exhaustive skill or infrastructure scan."
+}

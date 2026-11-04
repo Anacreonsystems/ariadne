@@ -102,3 +102,21 @@ Source retention can expire while a consumer is down; recovery must then refuse
 the unsatisfied horizon explicitly. Fast inputs can accumulate unmatched state
 without watermark alignment or pressure. Timer identity must include the state
 owner/assignment and survive replacement without letting old epochs fire.
+
+## Work approval and stable criterion IDs
+
+Approved for work on 2026-11-04 as part of the ADR-0042–0048 set at revision
+`fae53c90aa3b44dbc45032833b4d193001e5c8bd`; see the
+[approval record](../evidence/flink-architecture-2026-11-04/epoch2-work-approval-2026-11-04.json).
+It depends on ADR-0043 physical splits/partitions and ADR-0044 journaled state,
+mailbox order and timer identity.
+
+| Stable ID | Existing acceptance criterion |
+| --- | --- |
+| A45-01 | Recover multiple native source splits without publication gap/duplicate. |
+| A45-02 | Idle, resume, drain every partition and run the tail once. |
+| A45-03 | Refuse a connector that cannot meet its recovery horizon. |
+| A45-04 | Watermark minimum, idleness, alignment and late outcomes in keyed join. |
+| A45-05 | Reconstruct timers without repeating accepted callback. |
+| A45-06 | Observe split, position, event-time, idle, timer and drain state separately. |
+| A45-07 | Fault every source-control boundary without overtaking DATA or losing a split. |

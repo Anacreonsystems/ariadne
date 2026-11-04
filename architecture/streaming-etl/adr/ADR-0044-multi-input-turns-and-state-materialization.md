@@ -186,3 +186,23 @@ verified compatible materialization plus all reader/recovery/rescale pins;
 snapshot failure eventually causes pressure, not silent journal deletion.
 Batch size, materialization cost and state hot keys require measured limits.
 Client idempotency still protects effects attempted before an unaccepted yield.
+
+## Work approval and stable criterion IDs
+
+Approved for work on 2026-11-04 as part of the ADR-0042–0048 set at revision
+`fae53c90aa3b44dbc45032833b4d193001e5c8bd`; see the
+[approval record](../evidence/flink-architecture-2026-11-04/epoch2-work-approval-2026-11-04.json).
+Native multi-input/join completion depends on ADR-0043 physical ports, edges and
+subtask fencing. The standalone materialization probe remains non-native input.
+
+| Stable ID | Existing acceptance criterion |
+| --- | --- |
+| A44-01 | Rebuild state 200 from snapshot 100 plus batches without replay. |
+| A44-02 | Refuse missing/corrupt/incompatible batch 151 without rewind. |
+| A44-03 | Preserve noncommutative multi-port apply order. |
+| A44-04 | Recover input 200 or 201 around terminal acceptance. |
+| A44-05 | Native correlated join with NO_OUTPUT and durable unmatched state. |
+| A44-06 | Distinguish arrival, business progress, complete cuts and watermarks. |
+| A44-07 | Resolve accepted batch after owner replacement and fence stale writes. |
+| A44-08 | Round-trip OUTPUT(null), OUTPUT(value), NO_OUTPUT and old RETURN. |
+| A44-09 | Refuse every partial barrier/snapshot/COMPLETE cut. |

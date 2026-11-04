@@ -1,0 +1,199 @@
+name: Native stream host preflight
+run-name: Native host prerequisites · NO_NATIVE_ACCEPTANCE
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  observe:
+    name: Observe host ${{ matrix.probe }} · NO_NATIVE_ACCEPTANCE
+    runs-on: anacreon-runners
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        probe: [a, b]
+    steps:
+      - name: Record salted identities during a bounded observation interval
+        env:
+          PROBE_SALT: ${{ github.repository }}/${{ github.run_id }}/${{ github.run_attempt }}
+          PROBE_ID: ${{ matrix.probe }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          import time
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          salt = os.environ["PROBE_SALT"].encode("utf-8")
+
+          def salted_identity(path, domain, pattern):
+              try:
+                  with Path(path).open("rb") as source:
+                      value = source.read(257).strip()
+              except OSError:
+                  return None
+              if not re.fullmatch(pattern, value):
+                  return None
+              return hashlib.sha256(domain + b"\0" + salt + b"\0" + value).hexdigest()
+
+          result = {
+              "scope": "NO_NATIVE_ACCEPTANCE",
+              "salt_sha256": hashlib.sha256(salt).hexdigest(),
+              "boot_sha256": salted_identity(
+                  "/proc/sys/kernel/random/boot_id",
+                  b"kernel-boot-v1",
+                  rb"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+              ),
+              "machine_sha256": salted_identity(
+                  "/etc/machine-id", b"machine-v1", rb"[0-9a-f]{32}"
+              ),
+              "started_at_utc": datetime.now(timezone.utc).isoformat(),
+          }
+          # These independently scheduled jobs may queue or share one kernel.
+          # A 45-second hold permits observation of an actual overlapping window.
+          time.sleep(45)
+          result["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
+          encoded = json.dumps(result, sort_keys=True, indent=2) + "\n"
+          Path("native-preflight-" + os.environ["PROBE_ID"] + ".json").write_text(encoded)
+          print(encoded, end="")
+          PY
+      - name: Preserve only the salted observation
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-host-preflight-${{ matrix.probe }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: native-preflight-${{ matrix.probe }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  compare:
+    name: Compare observations · NO_NATIVE_ACCEPTANCE
+    needs: [observe]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    steps:
+      - name: Retrieve this run's two observations
+        id: retrieve
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: native-host-preflight-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: native-host-observations
+          merge-multiple: true
+      - name: Classify infrastructure prerequisites without native acceptance
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          from datetime import datetime
+          from pathlib import Path
+
+          expected_keys = {
+              "scope", "salt_sha256", "boot_sha256", "machine_sha256",
+              "started_at_utc", "completed_at_utc",
+          }
+          expected_salt = "/".join(
+              os.environ[key]
+              for key in ("GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")
+          )
+          expected_salt_digest = hashlib.sha256(expected_salt.encode("utf-8")).hexdigest()
+
+          def observation(probe):
+              path = Path("native-host-observations") / ("native-preflight-" + probe + ".json")
+              try:
+                  if path.stat().st_size > 2048:
+                      return None
+                  value = json.loads(path.read_text())
+                  if type(value) is not dict or set(value) != expected_keys:
+                      return None
+                  if (
+                      value["scope"] != "NO_NATIVE_ACCEPTANCE"
+                      or value["salt_sha256"] != expected_salt_digest
+                  ):
+                      return None
+                  for key in ("boot_sha256", "machine_sha256"):
+                      if value[key] is not None and (
+                          type(value[key]) is not str
+                          or not re.fullmatch(r"[0-9a-f]{64}", value[key])
+                      ):
+                          return None
+                  start = datetime.fromisoformat(value["started_at_utc"])
+                  end = datetime.fromisoformat(value["completed_at_utc"])
+                  if (
+                      start.utcoffset() is None or start.utcoffset().total_seconds() != 0
+                      or end.utcoffset() is None or end.utcoffset().total_seconds() != 0
+                      or not 0 < (end - start).total_seconds() <= 60
+                  ):
+                      return None
+                  return value, start, end
+              except (OSError, ValueError, TypeError, KeyError):
+                  return None
+
+          a, b = observation("a"), observation("b")
+          result = {
+              "scope": "NO_NATIVE_ACCEPTANCE",
+              "classification": "UNPROVEN",
+              "reason": "MISSING_OR_INVALID_OBSERVATION",
+              "overlap_seconds": 0,
+              "same_observed_boot_id": None,
+              "same_observed_machine_id": None,
+              "limits": [
+                  "No network reachability was tested.",
+                  "No process stop witness or native streaming code was tested.",
+                  "Kernel and machine identifiers may be namespace/container scoped.",
+                  "This does not prove independent physical hosts or any ADR-0047 acceptance criterion.",
+              ],
+          }
+          if a is not None and b is not None:
+              av, start_a, end_a = a
+              bv, start_b, end_b = b
+              result["overlap_seconds"] = max(
+                  0, (min(end_a, end_b) - max(start_a, start_b)).total_seconds()
+              )
+              for field, key in (
+                  ("same_observed_boot_id", "boot_sha256"),
+                  ("same_observed_machine_id", "machine_sha256"),
+              ):
+                  if av[key] is not None and bv[key] is not None:
+                      result[field] = av[key] == bv[key]
+              if any(
+                  value[key] is None
+                  for value in (av, bv)
+                  for key in ("boot_sha256", "machine_sha256")
+              ):
+                  result["reason"] = "MISSING_IDENTITY"
+              elif result["overlap_seconds"] <= 0:
+                  result["reason"] = "NO_OBSERVED_OVERLAP_OR_COLD_QUEUE"
+              elif result["same_observed_boot_id"] or result["same_observed_machine_id"]:
+                  result["reason"] = "SHARED_OBSERVED_IDENTITY"
+              else:
+                  result["classification"] = "INFRASTRUCTURE_PREREQUISITE_OBSERVED"
+                  result["reason"] = "DISTINCT_SALTED_IDENTITIES_WITH_UTC_OVERLAP"
+          encoded = json.dumps(result, sort_keys=True, indent=2) + "\n"
+          Path("native-host-preflight-result.json").write_text(encoded)
+          print(encoded, end="")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
+              summary.write("## NO_NATIVE_ACCEPTANCE\n\n")
+              summary.write(result["classification"] + " — " + result["reason"] + "\n\n")
+              summary.write("Infrastructure discovery only; no network, stop witness, native code or ADR-0047 acceptance proof.\n")
+          PY
+      - name: Preserve the explicitly limited comparison
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-host-preflight-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: native-host-preflight-result.json
+          if-no-files-found: error
+          retention-days: 7
