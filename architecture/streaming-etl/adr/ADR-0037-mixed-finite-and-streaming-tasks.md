@@ -95,8 +95,12 @@ witness. No online GC or unbounded retention guarantee is added.
 
 N1.6b initially supports direct finite calls only. Finite submit/map/deferred
 execution, nested tasks, arbitrary finite chains, mid-graph finite calls,
-partial collection, branch/join and production worker automation remain later
-scopes. Unsupported mixed calls must refuse before admission or partial data.
+TAIL admission based only on partial collection, branch/join and production worker automation remain later
+scopes. Unsupported calls before graph seal must refuse before admission and
+DATA. A TAIL call after bounded collection must refuse while any leaf remains
+OPEN, before its TaskRun/body; DATA may already exist when collection returns.
+If all EOFs become durable before TAIL reservation, that EOF condition permits
+admission. Collection size alone never proves EOF.
 
 ## Stories
 
@@ -139,8 +143,12 @@ scopes. Unsupported mixed calls must refuse before admission or partial data.
   prefix receipt loss, document-200 process loss, and tail receipt loss.
 - [ ] As a user, I got the completed prefix skipped, first-incomplete document
   replayed, and the tail run or skipped according to its durable receipt.
-- [ ] As a system, I can refuse partial collection, mid-graph finite calls and
-  unsupported finite entrypoints before task creation or stream DATA.
+- [ ] As a system, I can refuse a TAIL after partial collection while any leaf
+  remains OPEN, before creating its TaskRun or entering its body, even when
+  prior DATA exists; durable EOF before reservation permits admission.
+- [ ] As a system, I can refuse mid-graph finite calls and unsupported finite
+  entrypoints before creating that call's TaskRun, while the unsealed graph
+  still admits no stream DATA.
 - [ ] As a developer, I got real 500-document HTTP/PostgreSQL/process evidence,
   ordinary finite-flow regression and independent final acceptance before 60%.
 
@@ -237,6 +245,45 @@ qualifies the original functional evidence through this explicit source bridge
 and supersedes the erroneous static approval. The original 2,519-case run is
 not relabelled as a full rerun of the successor source. Earned readiness stays
 50%, and this ADR stays `progress` until N1.6b passes.
+
+## Hosted closure and next runtime review
+
+[PR 11](https://github.com/Anacreonsystems/ariadne/pull/11) merged after 96
+successful checks and five conditional skips. The
+[hosted closure](../evidence/native-stage6a-hosted-successor-2026-11-04.json)
+binds all 76 corrected source hashes to the identical tested and merge trees.
+The PostgreSQL 17 job passes 423 cases: 36 retained adapter contracts, 76 native
+storage cases, 250 SDK/HTTP/process/package cases, 18 API cases and 43 migrations.
+The SQLite job passes 88 cases. Both selected jobs have zero skipped cases.
+Hosted public-type verification and whole CI type analysis pass; ordinary
+Python 3.14 execution passes 1,617 cases with its declared skips/expected failures.
+The post-merge main workflow is a separate run, not part of this closure.
+
+The [N1.6b planning review](../evidence/native-stage6b-sdk-design-review-2026-11-04.md)
+and [publication record](../evidence/native-stage6b-planning-evidence-2026-11-04.json)
+retain a withdrawn hypothesis and its correction. A staged server recovery
+protocol was initially proposed for an unfinished PREFIX. Source review showed
+that the existing routes permit prefix-only preparation followed by the first
+stream seal in a recovered generation. The
+[actual HTTP/PostgreSQL control](../evidence/native-stage6b-prefix-recovery-adjunct-2026-11-04.json)
+then passed that path: confirmed process death, same-prefix retry/receipt, first
+generation-2 seal, one DATA record, EOF, TAIL receipt and Flow success. The probe
+and raw output are separately bound; all 76 accepted source paths remain equal.
+
+N1.6b must select first seal versus recovery from durable graph state, discover
+existing tail witnesses before preparing the immutable recovery plan, and
+persist each finite receipt inside the ordinary task engine before success.
+These are planned SDK integration requirements. The additional protocol control
+does not implement direct finite Task calls, the full mixed 500-document matrix,
+or any new readiness percentage. NI1-054…056 remain planned.
+
+Final review also separates refusal guarantees by phase: partial collection
+already implies DATA, so its refusal cannot promise zero earlier stream DATA.
+Its acceptance criterion now checks no TAIL TaskRun/body; pre-seal unsupported
+calls cannot create their own TaskRun or admit DATA. Earlier reserved graph
+TaskRuns may already exist behind the seal gate. If every EOF becomes durable
+before TAIL reservation, admission is allowed: an earlier bounded collection
+neither proves EOF nor permanently prohibits a later TAIL.
 
 ## Consequences
 

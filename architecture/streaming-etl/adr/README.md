@@ -256,7 +256,14 @@ logs, and the explicit test-only bridge. This earns no extra percentage.
 
 - [ADR-0097: Recursive null omission in recovery responses](ADR-0097-recursive-null-omission-in-recovery-responses.md) — `rejected`
 
-N1.6a [scoped acceptance](../evidence/native-stage6a-acceptance-2026-11-04.json)
-and [Principal review](../evidence/native-stage6a-principal-2026-11-04.json) close
+N1.6a [scoped acceptance](../evidence/native-stage6a-corrected-acceptance-2026-11-04.json)
+and [Principal review](../evidence/native-stage6a-corrected-principal-2026-11-04.json) close
 server/client finite authority at +0%. ADR-0037 remains in progress until the
 mixed SDK/runtime gate; earned foundation stays 50%.
+
+The [N1.6a hosted closure](../evidence/native-stage6a-hosted-successor-2026-11-04.json)
+records PR 11 after 96 successful checks/five conditional skips, with identical
+corrected tested/merge source. 423 PostgreSQL and 88 SQLite selected cases execute
+without skips. The [next SDK review](../evidence/native-stage6b-sdk-design-review-2026-11-04.md)
+and its separately bound HTTP/PostgreSQL control remain planning evidence;
+ADR-0037 stays in progress at 50% earned foundation.

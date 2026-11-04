@@ -17,7 +17,7 @@ against the actual runtime and storage.
 | N1.5a — Durable submission identity | `done` | 40% | +0% | NI1-040…042 | [377-case scoped gate](evidence/native-stage5a-acceptance-2026-11-03.json) and independent review pass; exact HTTP replay and drift/limit refusals. No whole-worker claim. |
 | N1.5b — Execution fencing and lifecycle | `done` | 40% | +0% | NI1-043…045 | [1,724-case scoped acceptance](evidence/native-stage5b-acceptance-2026-11-03.json) and independent review: generation fence, signed events and normal retry preparation; no SDK reconstruction. |
 | N1.5c — Whole-worker reconstruction gate | `done` | 50% | +10% | NI1-046…048 | [2,457-case frozen acceptance](evidence/native-stage5c-acceptance-2026-11-03.json) and [Principal review](evidence/native-stage5c-principal-2026-11-03.json) pass; five 500-document whole-process cuts retain the same TaskRuns/channels. Bounded selected-launcher profile, not production worker automation. |
-| N1.6a — Finite authority and receipts | `done` | 50% | +0% | NI1-050…053 | [corrected scoped acceptance](evidence/native-stage6a-corrected-acceptance-2026-11-04.json), SQLite HTTP adjunct and [Principal review](evidence/native-stage6a-principal-2026-11-04.json) pass. Server/client authority only; mixed SDK remains N1.6b. |
+| N1.6a — Finite authority and receipts | `done` | 50% | +0% | NI1-050…053 | [corrected scoped acceptance](evidence/native-stage6a-corrected-acceptance-2026-11-04.json), SQLite HTTP adjunct and [Principal review](evidence/native-stage6a-corrected-principal-2026-11-04.json) pass. Server/client authority only; mixed SDK remains N1.6b. |
 | N1.6b — Mixed finite/stream runtime | `planned` | 60% | +10% | NI1-054…056 | All [ADR-0037](adr/ADR-0037-mixed-finite-and-streaming-tasks.md) criteria, real mixed process matrix and independent review pass. |
 
 The 50% is a planning estimate toward the explicitly bounded native foundation,
@@ -39,6 +39,13 @@ The [N1.5 hosted closure](evidence/native-stage5c-hosted-successor-2026-11-03.js
 records PR 9 merged after 97 successful checks/five conditional skips, with
 identical tested/merge source. The corrected Python 3.14 and native PostgreSQL
 jobs pass; this documentation follow-up earns +0%.
+
+The [N1.6a hosted closure](evidence/native-stage6a-hosted-successor-2026-11-04.json)
+records PR 11 merged after 96 successful checks/five conditional skips. Its
+corrected 76 source paths survive merge; 423 PostgreSQL and 88 SQLite selected
+cases pass without skips. The [N1.6b planning review](evidence/native-stage6b-sdk-design-review-2026-11-04.md)
+includes a passing low-level first-seal-in-generation-2 control. Direct mixed SDK
+execution remains planned; foundation stays 50%.
 
 N1.1 follow-up: [final code/CI acceptance](evidence/native-stage1-ci-acceptance-2026-11-01.json)
 records both real PostgreSQL-stream profiles, full finite regression, type

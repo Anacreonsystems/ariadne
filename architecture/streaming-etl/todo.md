@@ -94,13 +94,19 @@ All tasks trace to [ADR-0037](adr/ADR-0037-mixed-finite-and-streaming-tasks.md).
 N1.6a is a server/client authority slice (+0%, earned readiness stays 50%).
 N1.6b plans +10% only after complete mixed SDK/process acceptance.
 
+The [N1.6a hosted closure](evidence/native-stage6a-hosted-successor-2026-11-04.json)
+records merged PR 11 and 423 PostgreSQL/88 SQLite selected cases with zero skips.
+The [N1.6b review](evidence/native-stage6b-sdk-design-review-2026-11-04.md) and
+[real protocol adjunct](evidence/native-stage6b-prefix-recovery-adjunct-2026-11-04.json)
+refine NI1-054 without claiming that the mixed SDK is implemented.
+
 | ID | State | Depends | Deliverable and acceptance criteria |
 | --- | --- | --- | --- |
 | NI1-050 | `done` | NI1-048 | Bounded mixed-flow design and Principal agreement. As a developer, I can trace finite receipts, prefix recovery and tail admission to ADR-0037. |
 | NI1-051 | `done` | NI1-050 | Separate finite bindings/receipts, staged execution anchor and paired migrations. As a system, I can preserve TaskRun identity without fake stream IDs or EOF. |
 | NI1-052 | `done` | NI1-051 | Fenced reserve/complete/lookup/recovery HTTP API and paired clients. As a user, I can exactly replay finite progress under current generation authority. |
-| NI1-053 | `done` | NI1-051, NI1-052 | Real API/PostgreSQL hostile matrix, migration parity and independent A review. As a system, I got [corrected scoped acceptance](evidence/native-stage6a-corrected-acceptance-2026-11-04.json) and [Principal review](evidence/native-stage6a-principal-2026-11-04.json); earned readiness remains 50%. |
-| NI1-054 | `planned` | NI1-053 | Direct finite Task invocation around the linear graph, sync/async parity and named early refusals. As a developer, I can prepare and summarize the stream in one FlowRun. |
+| NI1-053 | `done` | NI1-051, NI1-052 | Real API/PostgreSQL hostile matrix, migration parity and independent A review. As a system, I got [corrected scoped acceptance](evidence/native-stage6a-corrected-acceptance-2026-11-04.json) and [Principal review](evidence/native-stage6a-corrected-principal-2026-11-04.json); earned readiness remains 50%. |
+| NI1-054 | `planned` | NI1-053 | Direct finite Task invocation around the linear graph, durable-state selection of first seal/recovery, existing-tail witness discovery, sync/async parity and named early refusals. As a developer, I can prepare and summarize the stream in one FlowRun. |
 | NI1-055 | `planned` | NI1-054 | Real mixed 500-document process-loss matrix. As a user, I got four stable TaskRuns, two channels, receipt-based finite bypass and first-incomplete document recovery. |
 | NI1-056 | `planned` | NI1-055 | Ordinary-flow regression, evidence graph and independent combined acceptance. As a system, I can close ADR-0037 and earn the planned 60% milestone only after all criteria pass. |
 
