@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="9.001" timestamp="2026-11-04T16:00:13.586042+00:00" hostname="f8abb611283c"><testcase classname="tests.server.api.test_native_deployments" name="test_orphan_cancellation_uses_authorized_death_witness" time="6.580"><failure message="AssertionError: ('{&quot;detail&quot;:&quot;Data integrity conflict. This usually means a unique or foreign key constraint was violated. See server l...ntegrity conflict. This usually means a unique or foreign key constraint was violated. See server logs for details.&quot;}')&#10;assert 409 == 200&#10; +  where 409 = &lt;Response [409 Conflict]&gt;.status_code">client = &lt;httpx.AsyncClient object at 0x7fcbca47bbc0&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fcbca47b0e0&gt;
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fcbcbc5e7e0&gt;
+deployment = Deployment(id=556fab17-0443-4ab8-8769-8a04cd22a68c)
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7fcbca461dc0&gt;
+
+    async def test_orphan_cancellation_uses_authorized_death_witness(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL orphan cancellation is covered by its PG profile")
+        flow_run, worker, work_pool_id, enrollment, _, registration = await _active_launch(
+            client, session, db, deployment
+        )
+        cancel = await client.post(
+            "/streams/v1/deployments/control/cancel",
+            json={
+                "flow_run_id": str(flow_run.id),
+                "operation_id": str(uuid4()),
+                "expected_generation": 1,
+                "reason": "orphan cancellation",
+            },
+        )
+        assert cancel.status_code == 200
+        monkeypatch.setattr(native_deployments, "LAUNCH_RENEWAL_STALE_AFTER", timedelta(0))
+        candidates = await client.get(
+            "/streams/v1/deployments/replacements/candidates",
+            params={
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+            },
+        )
+        assert candidates.status_code == 200
+        assert len(candidates.json()) == 1
+        operation_id = uuid4()
+        challenge = secrets.token_hex(32)
+        authorized = await client.post(
+            "/streams/v1/deployments/replacements/authorize",
+            json={
+                "flow_run_id": str(flow_run.id),
+                "operation_id": str(operation_id),
+                "expected_generation": 1,
+                "enrollment_operation_id": enrollment["operation_id"],
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+                "identity_kind": "CHILD",
+                "challenge_capability": challenge,
+            },
+        )
+        assert authorized.status_code == 200
+        finalization = {
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(operation_id),
+            "expected_generation": 1,
+            "enrollment_operation_id": enrollment["operation_id"],
+            "challenge_capability": challenge,
+            "death_witness": {
+                "kind": "IDENTITY_GONE",
+                "observed_at": "2026-11-04T15:30:00Z",
+                "host_id": registration["host_id"],
+                "boot_id": registration["boot_id"],
+                "child_process_id": registration["child_process_id"],
+                "process_start_ticks": registration["process_start_ticks"],
+            },
+        }
+        finalized = await client.post(
+            "/streams/v1/deployments/control/finalize-cancel", json=finalization
+        )
+        finalized_replay = await client.post(
+            "/streams/v1/deployments/control/finalize-cancel", json=finalization
+        )
+&gt;       assert finalized.status_code == finalized_replay.status_code == 200, (
+            finalized.text,
+            finalized_replay.text,
+        )
+E       AssertionError: ('{"detail":"Data integrity conflict. This usually means a unique or foreign key constraint was violated. See server l...ntegrity conflict. This usually means a unique or foreign key constraint was violated. See server logs for details."}')
+E       assert 409 == 200
+E        +  where 409 = &lt;Response [409 Conflict]&gt;.status_code
+
+tests/server/api/test_native_deployments.py:1667: AssertionError</failure></testcase><testcase classname="tests.server.api.test_native_deployments" name="test_registered_startup_crash_is_verified_and_retired" time="1.961"><failure message="AssertionError: {&quot;detail&quot;:&quot;Data integrity conflict. This usually means a unique or foreign key constraint was violated. See server logs for details.&quot;}&#10;assert 409 == 200&#10; +  where 409 = &lt;Response [409 Conflict]&gt;.status_code">client = &lt;httpx.AsyncClient object at 0x7fcbc98790a0&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fcbcbdb7da0&gt;
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fcbcbc5e7e0&gt;
+deployment = Deployment(id=1e1af7c2-f998-460b-9b89-7e715cf21be9)
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7fcbc9dd7fe0&gt;
+
+    async def test_registered_startup_crash_is_verified_and_retired(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL verified retirement is covered by its PG profile")
+        flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
+        plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()
+        enrollment = _enrollment_body(
+            flow_run.id, worker.id, work_pool_id, plan["declaration_digest"]
+        )
+        enrolled = await client.post("/streams/v1/deployments/enroll", json=enrollment)
+        assert enrolled.status_code == 200
+        headers = {
+            "X-Prefect-Stream-Execution-Generation": "1",
+            "X-Prefect-Stream-Execution-Holder": enrollment["holder_id"],
+            "X-Prefect-Stream-Execution-Capability": enrollment["holder_capability"],
+        }
+        registration = {
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(uuid4()),
+            "enrollment_operation_id": enrollment["operation_id"],
+            "generation": 1,
+            "launcher_instance_id": enrollment["launcher_instance_id"],
+            "host_id": str(uuid4()),
+            "boot_id": str(uuid4()),
+            "child_process_id": 6789,
+            "process_start_ticks": 456789,
+            "launch_nonce_digest": "d" * 64,
+        }
+        registered = await client.post(
+            "/streams/v1/deployments/launches/register-process",
+            json=registration,
+            headers=headers,
+        )
+        assert registered.status_code == 200
+        monkeypatch.setattr(native_deployments, "LAUNCH_RENEWAL_STALE_AFTER", timedelta(0))
+        candidates = await client.get(
+            "/streams/v1/deployments/replacements/candidates",
+            params={
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+            },
+        )
+        assert len(candidates.json()) == 1
+        operation_id = uuid4()
+        challenge = secrets.token_hex(32)
+        authorized = await client.post(
+            "/streams/v1/deployments/replacements/authorize",
+            json={
+                "flow_run_id": str(flow_run.id),
+                "operation_id": str(operation_id),
+                "expected_generation": 1,
+                "enrollment_operation_id": enrollment["operation_id"],
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+                "identity_kind": "CHILD",
+                "challenge_capability": challenge,
+            },
+        )
+        assert authorized.status_code == 200
+        retirement = {
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(operation_id),
+            "expected_generation": 1,
+            "enrollment_operation_id": enrollment["operation_id"],
+            "challenge_capability": challenge,
+            "death_witness": {
+                "kind": "IDENTITY_GONE",
+                "observed_at": "2026-11-04T16:00:00Z",
+                "host_id": registration["host_id"],
+                "boot_id": registration["boot_id"],
+                "child_process_id": registration["child_process_id"],
+                "process_start_ticks": registration["process_start_ticks"],
+            },
+            "error": "registered child exited before bootstrap",
+        }
+        retired = await client.post(
+            "/streams/v1/deployments/replacements/retire-verified", json=retirement
+        )
+        retired_replay = await client.post(
+            "/streams/v1/deployments/replacements/retire-verified", json=retirement
+        )
+&gt;       assert retired.status_code == retired_replay.status_code == 200, retired.text
+E       AssertionError: {"detail":"Data integrity conflict. This usually means a unique or foreign key constraint was violated. See server logs for details."}
+E       assert 409 == 200
+E        +  where 409 = &lt;Response [409 Conflict]&gt;.status_code
+
+tests/server/api/test_native_deployments.py:1775: AssertionError</failure></testcase></testsuite></testsuites>

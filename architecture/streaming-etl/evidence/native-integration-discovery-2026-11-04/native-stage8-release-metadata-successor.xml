@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="13.354" timestamp="2026-11-04T15:33:18.330057+00:00" hostname="f8abb611283c"><testcase classname="tests.server.api.test_native_deployments" name="test_release_waits_for_bound_task_terminal_metadata" time="12.622"><failure message="assert 409 == 201&#10; +  where 409 = &lt;Response [409 Conflict]&gt;.status_code">client = &lt;httpx.AsyncClient object at 0x7f9cac056210&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7f9cac0b2ab0&gt;
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f9cad884b60&gt;
+deployment = Deployment(id=c43ceaaf-76e8-4304-9351-878e57a1de07)
+
+    async def test_release_waits_for_bound_task_terminal_metadata(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL release metadata gate is covered by its PG profile")
+        flow_run, _, _, _, headers, _ = await _active_launch(
+            client, session, db, deployment
+        )
+        assert (
+            await client.post(
+                f"/flow_runs/{flow_run.id}/set_state",
+                json={
+                    "state": {
+                        "type": "FAILED",
+                        "name": "Failed",
+                        "state_details": {"retriable": False},
+                    }
+                },
+                headers=headers,
+            )
+        ).status_code == 201
+        refused = await client.post(
+            "/streams/v1/release",
+            json={"flow_run_id": str(flow_run.id)},
+            headers=headers,
+        )
+        assert refused.status_code == 409
+        assert refused.json()["detail"] == {
+            "code": "METADATA_NOT_READY",
+            "message": "Bound TaskRun terminal metadata has not been recorded",
+            "retryable": True,
+        }
+        async with db.session_context() as check:
+            task_id = await check.scalar(
+                sa.select(db.StreamSubmission.task_run_id).where(
+                    db.StreamSubmission.flow_run_id == flow_run.id
+                )
+            )
+            snapshot = await check.scalar(
+                sa.select(db.NativeStreamDeploymentSnapshot).where(
+                    db.NativeStreamDeploymentSnapshot.flow_run_id == flow_run.id
+                )
+            )
+        assert task_id is not None
+        assert snapshot is not None and snapshot.state == "ACTIVE"
+        task_failed = await client.post(
+            f"/task_runs/{task_id}/set_state",
+            json={"state": {"type": "FAILED", "name": "Failed"}},
+            headers=headers,
+        )
+&gt;       assert task_failed.status_code == 201
+E       assert 409 == 201
+E        +  where 409 = &lt;Response [409 Conflict]&gt;.status_code
+
+tests/server/api/test_native_deployments.py:1263: AssertionError</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="1" tests="20" time="29.565" timestamp="2026-11-04T15:47:13.759037+00:00" hostname="f8abb611283c"><testcase classname="tests.server.api.test_native_deployments" name="test_unstarted_launch_retirement_is_exact_and_leaves_no_child" time="6.440" /><testcase classname="tests.server.api.test_native_deployments" name="test_verified_dead_launcher_retires_without_child_or_graph" time="0.803" /><testcase classname="tests.server.api.test_native_deployments" name="test_process_registration_wins_over_launcher_death_authorization" time="0.689" /><testcase classname="tests.server.api.test_native_deployments" name="test_enroll_register_and_public_plan_are_exact_and_secret_free" time="0.921" /><testcase classname="tests.server.api.test_native_deployments" name="test_projection_is_bounded_and_payload_free" time="0.808" /><testcase classname="tests.server.api.test_native_deployments" name="test_enrollment_drift_and_legacy_takeover_fail_closed" time="0.641" /><testcase classname="tests.server.api.test_native_deployments" name="test_sqlite_enrollment_refuses_before_mutation" time="0.336"><skipped type="pytest.skip" message="SQLite refusal is covered by the SQLite profile">/workspace/ariadne/tests/server/api/test_native_deployments.py:673: SQLite refusal is covered by the SQLite profile</skipped></testcase><testcase classname="tests.server.api.test_native_deployments" name="test_flow_run_cannot_override_deployment_declaration" time="0.816" /><testcase classname="tests.server.api.test_native_deployments" name="test_bounded_profile_caps_active_native_runs_per_work_pool" time="6.367"><failure message="assert 132 == 128&#10; +  where 128 = native_deployments.MAX_ACTIVE_NATIVE_RUNS_PER_WORK_POOL">client = &lt;httpx.AsyncClient object at 0x7f3d4ec3d010&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7f3d4ec3d820&gt;
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f3d567e3110&gt;
+deployment = Deployment(id=5a8e7576-0d2a-4284-b5bd-424d6bf015f4)
+
+    async def test_bounded_profile_caps_active_native_runs_per_work_pool(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL work-pool capacity is covered by its PG profile")
+        deployment.version = "deployment-v1"
+        deployment.job_variables = {
+            "prefect_native_streaming": _declaration().model_dump(mode="json")
+        }
+        await session.commit()
+        flow_run_ids: list[UUID] = []
+        for _ in range(native_deployments.MAX_ACTIVE_NATIVE_RUNS_PER_WORK_POOL):
+            response = await client.post(
+                f"/deployments/{deployment.id}/create_flow_run", json={}
+            )
+            assert response.status_code == 201, response.text
+            flow_run_ids.append(UUID(response.json()["id"]))
+        refused = await client.post(
+            f"/deployments/{deployment.id}/create_flow_run", json={}
+        )
+        assert refused.status_code == 409
+        assert refused.json()["detail"] == {
+            "code": "CAPACITY_EXCEEDED",
+            "message": (
+                "bounded-default-v1 permits at most 128 active native FlowRuns "
+                "per work pool"
+            ),
+            "retryable": False,
+        }
+        async with db.session_context(begin_transaction=True) as check:
+            active_count = await check.scalar(
+                sa.select(sa.func.count())
+                .select_from(db.NativeStreamDeploymentSnapshot)
+                .where(db.NativeStreamDeploymentSnapshot.state == "ACTIVE")
+            )
+            run_count = await check.scalar(
+                sa.select(sa.func.count())
+                .select_from(db.FlowRun)
+                .where(db.FlowRun.deployment_id == deployment.id)
+            )
+            first = await check.get(db.FlowRun, flow_run_ids[0])
+            assert first is not None
+            replay = await native_deployments.bind_flow_run_snapshot(check, db, first)
+            assert replay is not None and replay.flow_run_id == first.id
+&gt;       assert active_count == native_deployments.MAX_ACTIVE_NATIVE_RUNS_PER_WORK_POOL
+E       assert 132 == 128
+E        +  where 128 = native_deployments.MAX_ACTIVE_NATIVE_RUNS_PER_WORK_POOL
+
+tests/server/api/test_native_deployments.py:771: AssertionError</failure></testcase><testcase classname="tests.server.api.test_native_deployments" name="test_zero_retry_declaration_rolls_back_flow_run" time="0.801" /><testcase classname="tests.server.api.test_native_deployments" name="test_native_local_profile_rejects_custom_launch_configuration[command]" time="0.611" /><testcase classname="tests.server.api.test_native_deployments" name="test_native_local_profile_rejects_custom_launch_configuration[pull_steps]" time="0.620" /><testcase classname="tests.server.api.test_native_deployments" name="test_verified_replacement_requires_exact_process_identity" time="1.000" /><testcase classname="tests.server.api.test_native_deployments" name="test_unclaimed_native_failure_releases_snapshot" time="0.521" /><testcase classname="tests.server.api.test_native_deployments" name="test_generation_two_unstarted_launch_fails_and_releases_old_graph" time="1.055" /><testcase classname="tests.server.api.test_native_deployments" name="test_terminal_child_cleanup_preserves_final_flow_state" time="0.873" /><testcase classname="tests.server.api.test_native_deployments" name="test_release_waits_for_bound_task_terminal_metadata" time="0.885" /><testcase classname="tests.server.api.test_native_deployments" name="test_drain_replays_accepted_append_and_cancel_blocks_writes" time="1.786" /><testcase classname="tests.server.api.test_native_deployments" name="test_orphan_cancellation_uses_authorized_death_witness" time="1.067" /><testcase classname="tests.server.api.test_native_deployments" name="test_registered_startup_crash_is_verified_and_retired" time="2.292" /></testsuite></testsuites>

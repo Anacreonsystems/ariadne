@@ -1,0 +1,53 @@
+.Fs.                                                                     [100%]
+=================================== FAILURES ===================================
+____________ test_enrollment_drift_and_legacy_takeover_fail_closed _____________
+
+client = <httpx.AsyncClient object at 0x7fd7c69070b0>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fd7c6907b60>
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fd7c872b200>
+deployment = Deployment(id=984e0fce-52b2-4c65-ab94-37f5e0a38dcd)
+
+    async def test_enrollment_drift_and_legacy_takeover_fail_closed(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL enrollment is covered by the PostgreSQL profile")
+        flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
+        plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()
+        body = _enrollment_body(
+            flow_run.id, worker.id, work_pool_id, plan["declaration_digest"]
+        )
+        enrolled = await client.post("/streams/v1/deployments/enroll", json=body)
+        assert enrolled.status_code == 200
+    
+        changed = dict(body, worker_id=str(uuid4()))
+        conflict = await client.post("/streams/v1/deployments/enroll", json=changed)
+        assert conflict.status_code == 409
+        assert conflict.json()["detail"]["code"] == "IDENTITY_CONFLICT"
+    
+        legacy_claim = await client.post(
+            "/streams/v1/executions/claim",
+            json={
+                "flow_run_id": str(flow_run.id),
+                "operation_id": str(uuid4()),
+                "expected_generation": 0,
+                "holder_id": str(uuid4()),
+                "holder_capability": secrets.token_hex(32),
+                "holder_event_public_key": secrets.token_hex(32),
+                "supervisor_id": str(uuid4()),
+                "supervisor_capability": secrets.token_hex(32),
+                "protocol_version": 1,
+            },
+        )
+>       assert legacy_claim.status_code == 422
+E       assert 409 == 422
+E        +  where 409 = <Response [409 Conflict]>.status_code
+
+tests/server/api/test_native_deployments.py:222: AssertionError
+=========================== short test summary info ============================
+FAILED tests/server/api/test_native_deployments.py::test_enrollment_drift_and_legacy_takeover_fail_closed
+SKIPPED [1] tests/server/api/test_native_deployments.py:257: SQLite refusal is covered by the SQLite profile
+1 failed, 2 passed, 1 skipped in 9.35s

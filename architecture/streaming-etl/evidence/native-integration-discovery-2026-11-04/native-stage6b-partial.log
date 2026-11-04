@@ -1,0 +1,83 @@
+F
+=================================== FAILURES ===================================
+________ test_partial_collection_does_not_admit_tail_before_durable_eof ________
+
+execution_api = <tests.test_native_stream_recovery_http.RestartableAPI object at 0x7fa6cfb48290>
+tmp_path = PosixPath('/tmp/pytest-of-agent/pytest-63/test_partial_collection_does_n0')
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fa6d53443e0>
+
+    @pytest.mark.timeout(90)
+    async def test_partial_collection_does_not_admit_tail_before_durable_eof(
+        execution_api: RestartableAPI, tmp_path: Path, db: Any
+    ):
+        dataset, coordination = tmp_path / "dataset", tmp_path / "coordination"
+        dataset.mkdir()
+        coordination.mkdir()
+        (coordination / "signed").mkdir()
+        for position in range(1, 501):
+            (dataset / f"{position:04}.json").write_text(json.dumps({"number": position}))
+        entrypoint = "tests/fixtures/native_stream_mixed_flow.py:partial_collection_flow"
+        definition = load_flow_from_entrypoint(entrypoint)
+        with execution_api.client() as client:
+            run = client.create_flow_run(
+                definition,
+                parameters={"dataset": str(dataset), "coordination": str(coordination)},
+                state=Pending(),
+            )
+        launch = _launch(execution_api, run.id)
+        log = tmp_path / "flow.log"
+        child = _start_flow(execution_api, entrypoint, launch.context, log)
+        try:
+>           assert child.wait(timeout=60) != 0
+E           AssertionError: assert 0 != 0
+E            +  where 0 = wait(timeout=60)
+E            +    where wait = <Popen: returncode: 0 args: ['/workspace/ariadne/.venv/bin/python', '-m', 'p...>.wait
+
+tests/test_native_mixed_flow_http.py:356: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_mixed'
+Connecting to postgres at 'postgres://native_recovery:native_recovery@127.0.0.1:55436/postgres'
+Creating test postgres database 'native_mixed_tests_master'
+Using test database connection URL 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_mixed_tests_master'
+Running hosted API server on port 52545
+---------------------------- Captured stderr setup -----------------------------
+15:05:49.168 | INFO    | uvicorn.error - Started server process [38091]
+15:05:49.172 | INFO    | uvicorn.error - Waiting for application startup.
+15:05:49.302 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+15:05:49.309 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+15:05:49.309 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+15:05:49.309 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+15:05:49.310 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+15:05:49.310 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+15:05:49.310 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+15:05:49.310 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+15:05:49.310 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+15:05:49.310 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+15:05:49.310 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+15:05:49.311 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+15:05:49.311 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+15:05:49.311 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+15:05:49.311 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+15:05:49.311 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+15:05:49.312 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+15:05:49.313 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+15:05:49.314 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+15:05:49.316 | INFO    | uvicorn.error - Application startup complete.
+15:05:49.317 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 52545) (Press CTRL+C to quit)
+15:05:49.388 | INFO    | uvicorn.access - 127.0.0.1:38848 - "GET /api/health HTTP/1.1" 200
+----------------------------- Captured stderr call -----------------------------
+Executing <Task finished name='Task-20' coro=<test_partial_collection_does_not_admit_tail_before_durable_eof() done, defined at /workspace/ariadne/tests/test_native_mixed_flow_http.py:334> exception=AssertionError("assert 0 != 0\n +  where 0 = wait(timeout=60)\n +    where wait = <Popen: returncode: 0 args: ['/workspace/ariadne/.venv/bin/python', '-m', 'p...>.wait") created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 5.019 seconds
+15:05:58.261 | WARNING | asyncio - Executing <Task finished name='Task-20' coro=<test_partial_collection_does_not_admit_tail_before_durable_eof() done, defined at /workspace/ariadne/tests/test_native_mixed_flow_http.py:334> exception=AssertionError("assert 0 != 0\n +  where 0 = wait(timeout=60)\n +    where wait = <Popen: returncode: 0 args: ['/workspace/ariadne/.venv/bin/python', '-m', 'p...>.wait") created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 5.019 seconds
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task finished name='Task-20' coro=<test_partial_collection_does_not_admit_tail_before_durable_eof() done, defined at /workspace/ariadne/tests/test_native_mixed_flow_http.py:334> exception=AssertionError("assert 0 != 0\n +  where 0 = wait(timeout=60)\n +    where wait = <Popen: returncode: 0 args: ['/workspace/ariadne/.venv/bin/python', '-m', 'p...>.wait") created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 5.019 seconds
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+15:05:58.571 | INFO    | uvicorn.error - Shutting down
+15:05:58.672 | INFO    | uvicorn.error - Waiting for application shutdown.
+15:05:58.674 | INFO    | uvicorn.error - Application shutdown complete.
+15:05:58.675 | INFO    | uvicorn.error - Finished server process [38091]
+=========================== short test summary info ============================
+FAILED tests/test_native_mixed_flow_http.py::test_partial_collection_does_not_admit_tail_before_durable_eof
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 14 deselected in 16.24s

@@ -1,0 +1,123 @@
+..s....F.                                                                [100%]
+=================================== FAILURES ===================================
+__________ test_verified_replacement_requires_exact_process_identity ___________
+
+client = <httpx.AsyncClient object at 0x7fbc0838fcb0>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbc0838cbc0>
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fbc0b90c6b0>
+deployment = Deployment(id=f27d6fd7-d60e-4ce4-9b10-04f2335a1160)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fbc08bd8560>
+
+    async def test_verified_replacement_requires_exact_process_identity(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL replacement is covered by the PostgreSQL profile")
+        (
+            flow_run,
+            worker,
+            work_pool_id,
+            body,
+            old_headers,
+            registration,
+        ) = await _active_launch(client, session, db, deployment)
+        heartbeat = await client.post(
+            "/streams/v1/deployments/launches/heartbeat",
+            json={
+                "flow_run_id": str(flow_run.id),
+                "generation": 1,
+                "enrollment_operation_id": body["operation_id"],
+            },
+            headers=old_headers,
+        )
+        assert heartbeat.status_code == 200
+        fresh = await client.get(
+            "/streams/v1/deployments/replacements/candidates",
+            params={
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+            },
+        )
+        assert fresh.status_code == 200
+        assert fresh.json() == []
+        monkeypatch.setattr(native_deployments, "LAUNCH_RENEWAL_STALE_AFTER", timedelta(0))
+        candidates = await client.get(
+            "/streams/v1/deployments/replacements/candidates",
+            params={
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+            },
+        )
+        assert candidates.status_code == 200
+        assert len(candidates.json()) == 1
+        candidate = candidates.json()[0]
+        assert candidate["child_process_id"] == registration["child_process_id"]
+    
+        operation_id = uuid4()
+        challenge = secrets.token_hex(32)
+        authorization = {
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(operation_id),
+            "expected_generation": 1,
+            "enrollment_operation_id": body["operation_id"],
+            "worker_id": str(worker.id),
+            "work_pool_id": str(work_pool_id),
+            "host_id": registration["host_id"],
+            "challenge_capability": challenge,
+        }
+        authorized = await client.post(
+            "/streams/v1/deployments/replacements/authorize", json=authorization
+        )
+        authorized_replay = await client.post(
+            "/streams/v1/deployments/replacements/authorize", json=authorization
+        )
+        assert authorized.status_code == authorized_replay.status_code == 200
+        assert authorized.json() == authorized_replay.json()
+        assert challenge not in authorized.text
+    
+        new_holder = uuid4()
+        new_capability = secrets.token_hex(32)
+        new_supervisor = uuid4()
+        new_supervisor_capability = secrets.token_hex(32)
+        new_launcher = uuid4()
+        confirmation = {
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(operation_id),
+            "challenge_capability": challenge,
+            "launcher_instance_id": str(new_launcher),
+            "new_holder_id": str(new_holder),
+            "new_holder_capability": new_capability,
+            "new_holder_event_public_key": secrets.token_hex(32),
+            "new_supervisor_id": str(new_supervisor),
+            "new_supervisor_capability": new_supervisor_capability,
+            "death_witness": {
+                "kind": "IDENTITY_GONE",
+                "observed_at": "2026-11-04T14:30:00+00:00",
+                "host_id": registration["host_id"],
+                "boot_id": registration["boot_id"],
+                "child_process_id": registration["child_process_id"],
+                "process_start_ticks": registration["process_start_ticks"],
+            },
+        }
+        confirmed = await client.post(
+            "/streams/v1/deployments/replacements/confirm-death", json=confirmation
+        )
+        confirmed_replay = await client.post(
+            "/streams/v1/deployments/replacements/confirm-death", json=confirmation
+        )
+        assert confirmed.status_code == confirmed_replay.status_code == 200
+        assert confirmed.json() == confirmed_replay.json()
+>       assert confirmed.json()["generation"] == 2
+E       assert 1 == 2
+
+tests/server/api/test_native_deployments.py:570: AssertionError
+=========================== short test summary info ============================
+FAILED tests/server/api/test_native_deployments.py::test_verified_replacement_requires_exact_process_identity
+SKIPPED [1] tests/server/api/test_native_deployments.py:355: SQLite refusal is covered by the SQLite profile
+1 failed, 7 passed, 1 skipped in 13.04s

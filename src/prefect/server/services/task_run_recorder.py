@@ -277,6 +277,7 @@ async def _authorized_stream_events(
                 or payload_run_count != run_count
                 or type(flow_run_run_count) is not int
                 or flow_run_run_count != authority.flow_run_run_count
+                or (authority.cancel_requested and state_type != "CANCELLED")
             ):
                 raise ValueError("stale execution event")
             finite_receipt = (

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
 from prefect._flow_run_suspension import raise_if_flow_run_suspension_requested
+from prefect.client.orchestration._streams.client import StreamRequestError
 from prefect.states import Failed
 from prefect.streams import (
     SourceContext,
@@ -396,9 +397,19 @@ def execute_source_sync(engine: SyncTaskRunEngine[Any, Any]) -> SourceRunResult:
                 return SourceRunResult(task_run.id, run.output.stream_id, accepted)
             record = _source_record(value, accepted)
             _check_execution(engine)
-            run_coro_as_sync(
-                storage.append_source(admission.binding, record.position, record.value)
-            )
+            try:
+                run_coro_as_sync(
+                    storage.append_source(
+                        admission.binding, record.position, record.value
+                    )
+                )
+            except StreamRequestError as refusal:
+                if refusal.code != "SOURCE_DRAIN_REQUESTED":
+                    raise
+                # A drain rejects only the next unpublished position. The
+                # accepted prefix remains durable and ends at its real EOF.
+                run_coro_as_sync(storage.close_source(admission.binding, accepted))
+                return SourceRunResult(task_run.id, run.output.stream_id, accepted)
             accepted = record.position
             context.accepted_source_position = accepted
     finally:
@@ -432,9 +443,15 @@ async def execute_source_async(engine: AsyncTaskRunEngine[Any, Any]) -> SourceRu
                 return SourceRunResult(task_run.id, run.output.stream_id, accepted)
             record = _source_record(value, accepted)
             _check_execution(engine)
-            await storage.append_source(
-                admission.binding, record.position, record.value
-            )
+            try:
+                await storage.append_source(
+                    admission.binding, record.position, record.value
+                )
+            except StreamRequestError as refusal:
+                if refusal.code != "SOURCE_DRAIN_REQUESTED":
+                    raise
+                await storage.close_source(admission.binding, accepted)
+                return SourceRunResult(task_run.id, run.output.stream_id, accepted)
             accepted = record.position
             context.accepted_source_position = accepted
 

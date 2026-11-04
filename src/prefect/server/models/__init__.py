@@ -14,6 +14,7 @@ from . import (
     flow_runs,
     flows,
     logs,
+    native_deployments,
     saved_searches,
     storage_defaults,
     stream_executions,

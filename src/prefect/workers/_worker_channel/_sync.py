@@ -57,6 +57,7 @@ class WorkPoolWorkerChannel:
         setup_timeout_seconds: float | None = None,
     ):
         self._client = client
+        self._requires_worker_identity: bool = False
         self.work_pool_name = work_pool_name
         self.worker_name = worker_name
         self.worker_type = worker_type
@@ -181,8 +182,10 @@ class WorkPoolWorkerChannel:
                 await self._transport.close_session(session)
             raise
 
-    async def _send_rest_worker_heartbeat(self) -> UUID | None:
-        if not self.state.rest_fallback_enabled:
+    async def _send_rest_worker_heartbeat(
+        self, *, require_identity: bool = False
+    ) -> UUID | None:
+        if not self.state.rest_fallback_enabled and not require_identity:
             self._logger.debug(
                 "Skipping REST worker heartbeat because the worker channel is healthy."
             )
@@ -233,6 +236,17 @@ class WorkPoolWorkerChannel:
             self._protocol.record_worker_id(worker_id)
 
         return worker_id
+
+    async def ensure_worker_identity(self) -> UUID:
+        """Obtain the real backend identity required by native deployment claims."""
+        self._requires_worker_identity = True
+        if self.worker_id is None:
+            # Upgrade identity once on an established channel too; this does
+            # not create another periodic heartbeat owner.
+            await self._send_rest_worker_heartbeat(require_identity=True)
+        if self.worker_id is None:
+            raise RuntimeError("Server does not provide native worker identity")
+        return self.worker_id
 
     async def _run(self, initial_session: WorkerChannelSession | None = None) -> None:
         with anyio.CancelScope() as scope:
@@ -376,5 +390,5 @@ class WorkPoolWorkerChannel:
     def _should_get_worker_id(self) -> bool:
         return (
             self._client.server_type == ServerType.CLOUD
-            and self._protocol.worker_id is None
-        )
+            or self._requires_worker_identity
+        ) and self._protocol.worker_id is None

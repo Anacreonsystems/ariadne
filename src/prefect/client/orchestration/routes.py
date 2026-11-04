@@ -1,6 +1,20 @@
 from typing import Literal
 
 ServerRoutes = Literal[
+    "/streams/v1/deployments/enroll",
+    "/streams/v1/deployments/launches/heartbeat",
+    "/streams/v1/deployments/launches/retire-unstarted",
+    "/streams/v1/deployments/replacements/candidates",
+    "/streams/v1/deployments/replacements/authorize",
+    "/streams/v1/deployments/replacements/confirm-death",
+    "/streams/v1/deployments/replacements/retire-verified",
+    "/streams/v1/deployments/control/drain",
+    "/streams/v1/deployments/control/cancel",
+    "/streams/v1/deployments/control/finalize-cancel",
+    "/streams/v1/deployments/launches/register-process",
+    "/streams/v1/deployments/{flow_run_id}/plan",
+    "/streams/v1/deployments/{flow_run_id}/projection",
+    "/streams/v1/finite/plan",
     "/streams/v1/finite/reserve",
     "/streams/v1/finite/lookup",
     "/streams/v1/finite/complete",

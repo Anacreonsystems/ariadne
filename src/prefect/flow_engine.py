@@ -702,6 +702,9 @@ class FlowRunEngine(BaseFlowRunEngine[P, R]):
         )
 
     def begin_run(self) -> State:
+        from prefect._internal.stream_deployment import validate_native_flow_launch
+
+        run_coro_as_sync(validate_native_flow_launch(self.flow, self.flow_run))
         try:
             self._resolve_parameters()
             self._wait_for_dependencies()
@@ -1443,6 +1446,9 @@ class AsyncFlowRunEngine(BaseFlowRunEngine[P, R]):
         )
 
     async def begin_run(self) -> State:
+        from prefect._internal.stream_deployment import validate_native_flow_launch
+
+        await validate_native_flow_launch(self.flow, self.flow_run)
         try:
             self._resolve_parameters()
             self._wait_for_dependencies()

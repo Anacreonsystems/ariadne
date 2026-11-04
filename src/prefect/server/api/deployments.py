@@ -16,6 +16,7 @@ import prefect.server.models as models
 import prefect.server.schemas as schemas
 from prefect._internal.compatibility.starlette import status
 from prefect.logging import get_logger
+from prefect.server.api.stream_execution_dependencies import execution_http_error
 from prefect.server.api.validation import (
     validate_job_variables_for_deployment,
     validate_job_variables_for_deployment_flow_run,
@@ -24,6 +25,7 @@ from prefect.server.api.workers import WorkerLookups
 from prefect.server.database import PrefectDBInterface, provide_database_interface
 from prefect.server.exceptions import MissingVariableError, ObjectNotFoundError
 from prefect.server.models.deployments import mark_deployments_ready
+from prefect.server.models.streams import NativeStreamError
 from prefect.server.models.workers import DEFAULT_AGENT_WORK_POOL_NAME
 from prefect.server.schemas.responses import (
     DeploymentBulkDeleteResponse,
@@ -980,9 +982,12 @@ async def create_flow_run_from_deployment(
             flow_run.state = schemas.states.Scheduled()
 
         right_now = now("UTC")
-        model = await models.flow_runs.create_flow_run(
-            session=session, flow_run=flow_run
-        )
+        try:
+            model = await models.flow_runs.create_flow_run(
+                session=session, flow_run=flow_run
+            )
+        except NativeStreamError as error:
+            raise execution_http_error(error) from error
         if model.created >= right_now:
             response.status_code = status.HTTP_201_CREATED
         return schemas.responses.FlowRunResponse.model_validate(

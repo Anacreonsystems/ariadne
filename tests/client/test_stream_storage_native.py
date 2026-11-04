@@ -12,7 +12,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from prefect.client.orchestration import PrefectClient
+from prefect.client.orchestration import PrefectClient, SyncPrefectClient
 from prefect.client.orchestration._streams.client import (
     StreamAsyncClient,
     StreamClient,
@@ -51,6 +51,7 @@ REQUEST_SCHEMA_NAMES = (
 )
 
 PUBLIC_WIRE_SCHEMA_NAMES = (
+    "StreamFinitePlan",
     "StreamFiniteManifest",
     "StreamFiniteReceipt",
     "StreamFiniteManifestWitness",
@@ -82,6 +83,20 @@ PUBLIC_WIRE_SCHEMA_NAMES = (
 )
 
 PUBLIC_STREAM_METHODS = (
+    "enroll_native_stream_deployment",
+    "register_native_stream_process",
+    "read_native_stream_deployment_plan",
+    "renew_native_stream_launch",
+    "read_native_stream_recovery_candidates",
+    "authorize_native_stream_replacement",
+    "confirm_native_stream_replacement",
+    "drain_native_stream",
+    "cancel_native_stream",
+    "retire_unstarted_native_stream_launch",
+    "finalize_native_stream_cancellation",
+    "read_native_stream_flow_projection",
+    "retire_verified_native_stream_launch",
+    "read_stream_finite_plan",
     "reserve_stream_finite_submission",
     "read_stream_finite_submission",
     "complete_stream_finite_task",
@@ -600,3 +615,415 @@ async def test_source_records_reuse_one_context_client(
         ("append", 2),
         ("close", 2),
     ]
+
+
+NATIVE_LIFECYCLE_METHODS = (
+    "enroll_native_stream_deployment",
+    "renew_native_stream_launch",
+    "read_native_stream_recovery_candidates",
+    "authorize_native_stream_replacement",
+    "confirm_native_stream_replacement",
+    "drain_native_stream",
+    "cancel_native_stream",
+    "retire_unstarted_native_stream_launch",
+    "finalize_native_stream_cancellation",
+    "read_native_stream_flow_projection",
+    "retire_verified_native_stream_launch",
+)
+
+
+def _native_lifecycle_wire_case(
+    method_name: str,
+) -> tuple[dict[str, Any], str, dict[str, Any] | list[dict[str, Any]]]:
+    flow_id, operation_id, enrollment_id = uuid4(), uuid4(), uuid4()
+    worker_id, pool_id, host_id = uuid4(), uuid4(), uuid4()
+    timestamp = "2026-11-04T12:00:00Z"
+    if method_name == "enroll_native_stream_deployment":
+        holder_id, launcher_id = uuid4(), uuid4()
+        return (
+            {
+                "flow_run_id": flow_id,
+                "operation_id": operation_id,
+                "declaration_digest": "e" * 64,
+                "worker_id": worker_id,
+                "work_pool_id": pool_id,
+                "launcher_instance_id": launcher_id,
+                "launcher_host_id": host_id,
+                "launcher_boot_id": uuid4(),
+                "launcher_process_id": 45678,
+                "launcher_start_ticks": 23456,
+                "holder_id": holder_id,
+                "holder_capability": "b" * 64,
+                "holder_event_public_key": "c" * 64,
+                "supervisor_id": uuid4(),
+                "supervisor_capability": "d" * 64,
+            },
+            "enroll",
+            {
+                "flow_run_id": str(flow_id),
+                "deployment_id": str(uuid4()),
+                "deployment_version": "v1",
+                "work_pool_id": str(pool_id),
+                "worker_id": str(worker_id),
+                "snapshot_digest": "e" * 64,
+                "generation": 1,
+                "holder_id": str(holder_id),
+                "operation_id": str(operation_id),
+                "launcher_instance_id": str(launcher_id),
+                "launch_profile": "linux-local-pidfd-v1",
+                "state": "ENROLLED",
+                "created_at": timestamp,
+            },
+        )
+    if method_name == "renew_native_stream_launch":
+        arguments = {
+            "flow_run_id": flow_id,
+            "generation": 2,
+            "enrollment_operation_id": enrollment_id,
+        }
+        return (
+            arguments,
+            "launches/heartbeat",
+            {
+                "flow_run_id": str(flow_id),
+                "generation": 2,
+                "enrollment_operation_id": str(enrollment_id),
+                "last_renewed_at": timestamp,
+            },
+        )
+    if method_name == "read_native_stream_flow_projection":
+        return (
+            {"flow_run_id": flow_id},
+            f"{flow_id}/projection",
+            {
+                "flow_run_id": str(flow_id),
+                "flow_state": "Running",
+                "observed_at": timestamp,
+                "generation": 2,
+                "authority_state": "ACTIVE",
+                "prepared_generation": 2,
+                "manifest_sealed": True,
+                "source_admission_closed": False,
+                "cancel_requested": False,
+                "launch_state": "PROCESS_REGISTERED",
+                "worker_id": str(worker_id),
+                "items": [],
+                "finite_items": [],
+            },
+        )
+    if method_name == "read_native_stream_recovery_candidates":
+        return (
+            {"worker_id": worker_id, "work_pool_id": pool_id, "host_id": host_id},
+            "replacements/candidates",
+            [
+                {
+                    "flow_run_id": str(flow_id),
+                    "deployment_id": str(uuid4()),
+                    "generation": 2,
+                    "work_pool_id": str(pool_id),
+                    "worker_id": str(worker_id),
+                    "launcher_instance_id": str(uuid4()),
+                    "enrollment_operation_id": str(enrollment_id),
+                    "launch_profile": "linux-local-pidfd-v1",
+                    "identity_kind": "CHILD",
+                    "host_id": str(host_id),
+                    "boot_id": str(uuid4()),
+                    "child_process_id": 34567,
+                    "process_start_ticks": 12345,
+                    "last_renewed_at": timestamp,
+                    "verification_not_before": "2026-11-04T12:02:00Z",
+                }
+            ],
+        )
+    if method_name == "authorize_native_stream_replacement":
+        return (
+            {
+                "flow_run_id": flow_id,
+                "operation_id": operation_id,
+                "expected_generation": 2,
+                "enrollment_operation_id": enrollment_id,
+                "worker_id": worker_id,
+                "work_pool_id": pool_id,
+                "host_id": host_id,
+                "challenge_capability": "a" * 64,
+                "identity_kind": "CHILD",
+            },
+            "replacements/authorize",
+            {
+                "flow_run_id": str(flow_id),
+                "operation_id": str(operation_id),
+                "expected_generation": 2,
+                "worker_id": str(worker_id),
+                "work_pool_id": str(pool_id),
+                "host_id": str(host_id),
+                "state": "AUTHORIZED",
+                "identity_kind": "CHILD",
+                "created_at": timestamp,
+            },
+        )
+    if method_name == "confirm_native_stream_replacement":
+        holder_id, launcher_id = uuid4(), uuid4()
+        return (
+            {
+                "flow_run_id": flow_id,
+                "operation_id": operation_id,
+                "challenge_capability": "a" * 64,
+                "launcher_instance_id": launcher_id,
+                "launcher_host_id": host_id,
+                "launcher_boot_id": uuid4(),
+                "launcher_process_id": 45678,
+                "launcher_start_ticks": 23456,
+                "new_holder_id": holder_id,
+                "new_holder_capability": "b" * 64,
+                "new_holder_event_public_key": "c" * 64,
+                "new_supervisor_id": uuid4(),
+                "new_supervisor_capability": "d" * 64,
+                "death_witness": {
+                    "kind": "WAITPID",
+                    "observed_at": timestamp,
+                    "host_id": str(host_id),
+                    "boot_id": str(uuid4()),
+                    "child_process_id": 34567,
+                    "process_start_ticks": 12345,
+                    "exit_code": 77,
+                },
+            },
+            "replacements/confirm-death",
+            {
+                "flow_run_id": str(flow_id),
+                "deployment_id": str(uuid4()),
+                "deployment_version": "v1",
+                "work_pool_id": str(pool_id),
+                "worker_id": str(worker_id),
+                "snapshot_digest": "e" * 64,
+                "generation": 3,
+                "holder_id": str(holder_id),
+                "operation_id": str(operation_id),
+                "launcher_instance_id": str(launcher_id),
+                "launch_profile": "linux-local-pidfd-v1",
+                "state": "ENROLLED",
+                "created_at": timestamp,
+            },
+        )
+    if method_name == "finalize_native_stream_cancellation":
+        return (
+            {
+                "flow_run_id": flow_id,
+                "operation_id": operation_id,
+                "expected_generation": 2,
+                "enrollment_operation_id": enrollment_id,
+                "death_witness": {
+                    "kind": "WAITPID",
+                    "observed_at": timestamp,
+                    "host_id": str(host_id),
+                    "boot_id": str(uuid4()),
+                    "child_process_id": 34567,
+                    "process_start_ticks": 12345,
+                    "exit_code": -9,
+                },
+            },
+            "control/finalize-cancel",
+            {
+                "flow_run_id": str(flow_id),
+                "operation_id": str(operation_id),
+                "generation": 2,
+                "kind": "CANCEL_FINALIZED",
+                "source_admission_closed": True,
+                "cancel_requested": True,
+                "created_at": timestamp,
+            },
+        )
+    if method_name == "retire_verified_native_stream_launch":
+        return (
+            {
+                "flow_run_id": flow_id,
+                "operation_id": operation_id,
+                "expected_generation": 2,
+                "enrollment_operation_id": enrollment_id,
+                "challenge_capability": "a" * 64,
+                "death_witness": {
+                    "kind": "WAITPID",
+                    "observed_at": timestamp,
+                    "host_id": str(host_id),
+                    "boot_id": str(uuid4()),
+                    "child_process_id": 34567,
+                    "process_start_ticks": 12345,
+                    "exit_code": 1,
+                },
+                "error": "Launch stopped before reconstruction completed",
+            },
+            "replacements/retire-verified",
+            {
+                "flow_run_id": str(flow_id),
+                "operation_id": str(operation_id),
+                "generation": 2,
+                "kind": "VERIFIED_RETIRED",
+                "source_admission_closed": True,
+                "cancel_requested": True,
+                "created_at": timestamp,
+            },
+        )
+    if method_name == "retire_unstarted_native_stream_launch":
+        return (
+            {
+                "flow_run_id": flow_id,
+                "operation_id": operation_id,
+                "enrollment_operation_id": enrollment_id,
+                "error": "Unable to open child executable",
+            },
+            "launches/retire-unstarted",
+            {
+                "flow_run_id": str(flow_id),
+                "operation_id": str(operation_id),
+                "generation": 2,
+                "kind": "SPAWN_FAILED",
+                "source_admission_closed": True,
+                "cancel_requested": True,
+                "created_at": timestamp,
+            },
+        )
+    kind = "DRAIN" if method_name == "drain_native_stream" else "CANCEL"
+    return (
+        {
+            "flow_run_id": flow_id,
+            "operation_id": operation_id,
+            "expected_generation": 2,
+            "reason": "Requested by the operator",
+        },
+        f"control/{kind.lower()}",
+        {
+            "flow_run_id": str(flow_id),
+            "operation_id": str(operation_id),
+            "generation": 2,
+            "kind": kind,
+            "source_admission_closed": True,
+            "cancel_requested": kind == "CANCEL",
+            "created_at": timestamp,
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "method_name,identity_kind",
+    [
+        (method_name, identity_kind)
+        for method_name in NATIVE_LIFECYCLE_METHODS
+        for identity_kind in (
+            ["LAUNCHER", "CHILD"]
+            if method_name
+            in (
+                "read_native_stream_recovery_candidates",
+                "authorize_native_stream_replacement",
+            )
+            else [None]
+        )
+    ],
+)
+@pytest.mark.parametrize("synchronous", [False, True])
+async def test_native_lifecycle_http_payload_and_response(
+    method_name: str, identity_kind: str | None, synchronous: bool
+):
+    # The HTTP boundary protects UUID/datetime encoding, methods and route names,
+    # not just schema construction or matching signatures.
+    arguments, route, response_body = _native_lifecycle_wire_case(method_name)
+    if identity_kind is not None:
+        if method_name == "read_native_stream_recovery_candidates":
+            assert isinstance(response_body, list)
+            response_body[0]["identity_kind"] = identity_kind
+        else:
+            assert isinstance(response_body, dict)
+            arguments["identity_kind"] = identity_kind
+            response_body["identity_kind"] = identity_kind
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/admin/version":
+            return httpx.Response(200, request=request, json="3.0.0")
+        requests.append(request)
+        return httpx.Response(200, request=request, json=response_body)
+
+    with temporary_settings({PREFECT_CLIENT_CSRF_SUPPORT_ENABLED: False}):
+        settings = {"transport": httpx.MockTransport(handler)}
+        if synchronous:
+            with SyncPrefectClient(
+                "http://prefect.test/api", httpx_settings=settings
+            ) as client:
+                result = getattr(client, method_name)(**arguments)
+        else:
+            async with PrefectClient(
+                "http://prefect.test/api", httpx_settings=settings
+            ) as client:
+                result = await getattr(client, method_name)(**arguments)
+
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.url.path == f"/api/streams/v1/deployments/{route}"
+    if method_name == "read_native_stream_recovery_candidates":
+        assert request.method == "GET"
+        assert dict(request.url.params) == {
+            key: str(value) for key, value in arguments.items()
+        }
+        assert [item.model_dump(mode="json") for item in result] == response_body
+    elif method_name == "read_native_stream_flow_projection":
+        assert request.method == "GET"
+        assert not request.url.params
+        assert result.model_dump(mode="json") == response_body
+    else:
+        assert request.method == "POST"
+        expected_body = json.loads(json.dumps(arguments, default=str))
+        if method_name == "enroll_native_stream_deployment":
+            expected_body["launch_profile"] = "linux-local-pidfd-v1"
+            expected_body["expected_generation"] = 0
+        if method_name in (
+            "confirm_native_stream_replacement",
+            "finalize_native_stream_cancellation",
+            "retire_verified_native_stream_launch",
+            "read_native_stream_flow_projection",
+            "retire_verified_native_stream_launch",
+        ):
+            expected_body["death_witness"]["observed_boot_id"] = None
+        if method_name == "finalize_native_stream_cancellation":
+            expected_body["challenge_capability"] = None
+        assert json.loads(request.content) == expected_body
+        assert result.model_dump(mode="json") == response_body
+
+
+@pytest.mark.parametrize(
+    "method_name,integer_key",
+    [
+        ("renew_native_stream_launch", "generation"),
+        ("authorize_native_stream_replacement", "expected_generation"),
+        ("drain_native_stream", "expected_generation"),
+        ("cancel_native_stream", "expected_generation"),
+        ("enroll_native_stream_deployment", "launcher_process_id"),
+        ("enroll_native_stream_deployment", "launcher_start_ticks"),
+        ("confirm_native_stream_replacement", "launcher_process_id"),
+        ("confirm_native_stream_replacement", "launcher_start_ticks"),
+    ],
+)
+@pytest.mark.parametrize("synchronous", [False, True])
+async def test_native_lifecycle_rejects_boolean_metadata_before_transport(
+    method_name: str, integer_key: str, synchronous: bool
+):
+    arguments, _, _ = _native_lifecycle_wire_case(method_name)
+    arguments[integer_key] = True
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/admin/version":
+            return httpx.Response(200, request=request, json="3.0.0")
+        raise AssertionError("Invalid generation reached the HTTP transport")
+
+    with temporary_settings({PREFECT_CLIENT_CSRF_SUPPORT_ENABLED: False}):
+        settings = {"transport": httpx.MockTransport(handler)}
+        if synchronous:
+            with SyncPrefectClient(
+                "http://prefect.test/api", httpx_settings=settings
+            ) as client:
+                with pytest.raises(ValidationError, match="valid integer"):
+                    getattr(client, method_name)(**arguments)
+        else:
+            async with PrefectClient(
+                "http://prefect.test/api", httpx_settings=settings
+            ) as client:
+                with pytest.raises(ValidationError, match="valid integer"):
+                    await getattr(client, method_name)(**arguments)

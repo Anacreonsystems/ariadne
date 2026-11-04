@@ -53,6 +53,12 @@ from prefect._internal.stream_engine import (
     reject_stream_execution,
 )
 from prefect._internal.stream_execution import get_stream_execution
+from prefect._internal.stream_finite import (
+    admit_finite_attempt,
+    complete_finite_result,
+    finite_run,
+    replay_finite_result,
+)
 from prefect._internal.uuid7 import uuid7
 from prefect.cache_policies import CachePolicy
 from prefect.client.orchestration import PrefectClient, SyncPrefectClient, get_client
@@ -1092,6 +1098,14 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
         parameters = self.parameters or {}
         if self.task.stream is not None:
             result = execute_stream_sync(self)
+        elif finite_run(self) is not None:
+            receipt = run_coro_as_sync(replay_finite_result(self))
+            if receipt is not None:
+                result = receipt.result
+            else:
+                run_coro_as_sync(admit_finite_attempt(self))
+                result = call_with_parameters(self.task.fn, parameters)
+                run_coro_as_sync(complete_finite_result(self, result))
         elif transaction.is_committed():
             result = transaction.read()
         else:
@@ -1719,6 +1733,14 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
         parameters = self.parameters or {}
         if self.task.stream is not None:
             result = await execute_stream_async(self)
+        elif finite_run(self) is not None:
+            receipt = await replay_finite_result(self)
+            if receipt is not None:
+                result = receipt.result
+            else:
+                await admit_finite_attempt(self)
+                result = await call_with_parameters(self.task.fn, parameters)
+                await complete_finite_result(self, result)
         elif transaction.is_committed():
             result = await transaction.read()
         else:

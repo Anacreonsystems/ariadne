@@ -1025,6 +1025,12 @@ class StreamExecutionAuthority(Base):
     finite_prefix_manifest_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
     finite_prefix_task_run_id: Mapped[Optional[uuid.UUID]]
     finite_prefix_sealed_at: Mapped[Optional[DateTime]]
+    source_admission_closed: Mapped[bool] = mapped_column(
+        server_default=sa.false(), default=False
+    )
+    cancel_requested: Mapped[bool] = mapped_column(
+        server_default=sa.false(), default=False
+    )
 
     __table_args__: Any = (
         sa.UniqueConstraint("flow_run_id"),
@@ -1070,6 +1076,10 @@ class StreamExecutionAuthority(Base):
             "AND finite_prefix_task_run_id IS NOT NULL "
             "AND finite_prefix_sealed_at IS NOT NULL)",
             name="finite_prefix_anchor_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "cancel_requested = false OR source_admission_closed = true",
+            name="cancel_closes_source",
         ),
     )
 
@@ -1156,6 +1166,229 @@ class StreamExecutionAttempt(Base):
             "ix_stream_execution_attempt__flow_run_id_generation",
             "flow_run_id",
             "generation",
+        ),
+    )
+
+
+class NativeStreamDeploymentSnapshot(Base):
+    """Immutable native capability copied from a deployment to one FlowRun."""
+
+    flow_run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("flow_run.id", ondelete="CASCADE"), index=True
+    )
+    deployment_id: Mapped[uuid.UUID]
+    deployment_version: Mapped[Optional[str]]
+    work_pool_id: Mapped[uuid.UUID]
+    declaration: Mapped[dict[str, Any]] = mapped_column(JSON)
+    declaration_digest: Mapped[str] = mapped_column(sa.String(64))
+    protocol_version: Mapped[int]
+    profile: Mapped[str]
+    flow_version: Mapped[str] = mapped_column(sa.String(255))
+    flow_code_digest: Mapped[str] = mapped_column(sa.String(64))
+    resource_profile: Mapped[str]
+    state: Mapped[str] = mapped_column(server_default="ACTIVE", default="ACTIVE")
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("flow_run_id"),
+        sa.CheckConstraint("protocol_version = 1", name="protocol_version_valid"),
+        sa.CheckConstraint("profile = 'bounded-linear-v1'", name="profile_valid"),
+        sa.CheckConstraint(
+            "resource_profile = 'bounded-default-v1'",
+            name="resource_profile_valid",
+        ),
+        sa.CheckConstraint(
+            "length(flow_version) BETWEEN 1 AND 255", name="flow_version_valid"
+        ),
+        sa.CheckConstraint(
+            "length(declaration_digest) = 64 AND length(flow_code_digest) = 64",
+            name="digest_lengths_valid",
+        ),
+        sa.CheckConstraint("state IN ('ACTIVE', 'RELEASED')", name="state_valid"),
+    )
+
+
+class NativeStreamLaunchIdentity(Base):
+    """Bounded worker and Linux child identity for one execution generation."""
+
+    flow_run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("flow_run.id", ondelete="CASCADE"), index=True
+    )
+    snapshot_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("native_stream_deployment_snapshot.id", ondelete="CASCADE")
+    )
+    generation: Mapped[int]
+    enrollment_operation_id: Mapped[uuid.UUID]
+    enrollment_request_digest: Mapped[str] = mapped_column(sa.String(64))
+    enrollment_outcome_digest: Mapped[str] = mapped_column(sa.String(64))
+    work_pool_id: Mapped[uuid.UUID]
+    worker_id: Mapped[uuid.UUID]
+    launcher_instance_id: Mapped[uuid.UUID]
+    launcher_host_id: Mapped[uuid.UUID]
+    launcher_boot_id: Mapped[uuid.UUID]
+    launcher_process_id: Mapped[int] = mapped_column(sa.BigInteger)
+    launcher_start_ticks: Mapped[int] = mapped_column(sa.BigInteger)
+    launch_profile: Mapped[str]
+    holder_id: Mapped[uuid.UUID]
+    holder_capability_digest: Mapped[str] = mapped_column(sa.String(64))
+    holder_event_public_key: Mapped[str] = mapped_column(sa.String(64))
+    supervisor_id: Mapped[uuid.UUID]
+    supervisor_capability_digest: Mapped[str] = mapped_column(sa.String(64))
+    state: Mapped[str] = mapped_column(server_default="ENROLLED", default="ENROLLED")
+    process_registration_operation_id: Mapped[Optional[uuid.UUID]]
+    process_registration_request_digest: Mapped[Optional[str]] = mapped_column(
+        sa.String(64)
+    )
+    process_registration_outcome_digest: Mapped[Optional[str]] = mapped_column(
+        sa.String(64)
+    )
+    host_id: Mapped[Optional[uuid.UUID]]
+    boot_id: Mapped[Optional[uuid.UUID]]
+    child_process_id: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    process_start_ticks: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    launch_nonce_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    process_registered_at: Mapped[Optional[DateTime]]
+    last_renewed_at: Mapped[Optional[DateTime]]
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("flow_run_id", "generation"),
+        sa.UniqueConstraint("flow_run_id", "enrollment_operation_id"),
+        sa.UniqueConstraint("flow_run_id", "process_registration_operation_id"),
+        sa.CheckConstraint("generation BETWEEN 1 AND 64", name="generation_bounded"),
+        sa.CheckConstraint(
+            "launch_profile = 'linux-local-pidfd-v1'",
+            name="launch_profile_valid",
+        ),
+        sa.CheckConstraint(
+            "state IN ('ENROLLED', 'PROCESS_REGISTERED', 'RELEASED')",
+            name="state_valid",
+        ),
+        sa.CheckConstraint(
+            "length(enrollment_request_digest) = 64 "
+            "AND length(enrollment_outcome_digest) = 64 "
+            "AND length(holder_capability_digest) = 64 "
+            "AND length(holder_event_public_key) = 64 "
+            "AND length(supervisor_capability_digest) = 64",
+            name="identity_lengths_valid",
+        ),
+        sa.CheckConstraint(
+            "launcher_process_id > 0 AND launcher_start_ticks > 0",
+            name="launcher_identity_valid",
+        ),
+        sa.CheckConstraint(
+            "(state IN ('ENROLLED', 'RELEASED') "
+            "AND process_registration_operation_id IS NULL "
+            "AND process_registration_request_digest IS NULL "
+            "AND process_registration_outcome_digest IS NULL "
+            "AND host_id IS NULL AND boot_id IS NULL "
+            "AND child_process_id IS NULL AND process_start_ticks IS NULL "
+            "AND launch_nonce_digest IS NULL AND process_registered_at IS NULL) OR "
+            "(state IN ('PROCESS_REGISTERED', 'RELEASED') "
+            "AND process_registration_operation_id IS NOT NULL "
+            "AND process_registration_request_digest IS NOT NULL "
+            "AND length(process_registration_request_digest) = 64 "
+            "AND process_registration_outcome_digest IS NOT NULL "
+            "AND length(process_registration_outcome_digest) = 64 "
+            "AND host_id IS NOT NULL AND boot_id IS NOT NULL "
+            "AND child_process_id IS NOT NULL AND child_process_id > 0 "
+            "AND process_start_ticks IS NOT NULL AND process_start_ticks > 0 "
+            "AND launch_nonce_digest IS NOT NULL "
+            "AND length(launch_nonce_digest) = 64 "
+            "AND process_registered_at IS NOT NULL)",
+            name="process_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(state IN ('ENROLLED', 'PROCESS_REGISTERED') "
+            "AND last_renewed_at IS NOT NULL) OR "
+            "state = 'RELEASED'",
+            name="renewal_shape_valid",
+        ),
+    )
+
+
+class NativeStreamReplacementOperation(Base):
+    """One server-authorized same-host replacement challenge and outcome."""
+
+    flow_run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("flow_run.id", ondelete="CASCADE"), index=True
+    )
+    operation_id: Mapped[uuid.UUID]
+    expected_generation: Mapped[int]
+    worker_id: Mapped[uuid.UUID]
+    work_pool_id: Mapped[uuid.UUID]
+    host_id: Mapped[uuid.UUID]
+    identity_kind: Mapped[str]
+    challenge_capability_digest: Mapped[str] = mapped_column(sa.String(64))
+    authorization_request_digest: Mapped[str] = mapped_column(sa.String(64))
+    state: Mapped[str] = mapped_column(
+        server_default="AUTHORIZED", default="AUTHORIZED"
+    )
+    confirm_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    confirm_outcome_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    death_witness: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    new_generation: Mapped[Optional[int]]
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("flow_run_id", "operation_id"),
+        sa.CheckConstraint(
+            "expected_generation BETWEEN 1 AND 64",
+            name="generation_valid",
+        ),
+        sa.CheckConstraint(
+            "identity_kind IN ('LAUNCHER', 'CHILD')",
+            name="identity_kind_valid",
+        ),
+        sa.CheckConstraint(
+            "length(challenge_capability_digest) = 64 "
+            "AND length(authorization_request_digest) = 64",
+            name="authorization_valid",
+        ),
+        sa.CheckConstraint(
+            "state IN ('AUTHORIZED', 'CONFIRMED', 'RELEASED')",
+            name="state_valid",
+        ),
+        sa.CheckConstraint(
+            "(state IN ('AUTHORIZED', 'RELEASED') "
+            "AND confirm_request_digest IS NULL "
+            "AND confirm_outcome_digest IS NULL "
+            "AND new_generation IS NULL) OR "
+            "(state IN ('CONFIRMED', 'RELEASED') "
+            "AND confirm_request_digest IS NOT NULL "
+            "AND length(confirm_request_digest) = 64 "
+            "AND confirm_outcome_digest IS NOT NULL "
+            "AND length(confirm_outcome_digest) = 64 "
+            "AND death_witness IS NOT NULL "
+            "AND new_generation = expected_generation + 1)",
+            name="confirmation_valid",
+        ),
+    )
+
+
+class NativeStreamControlOperation(Base):
+    """Idempotent drain or cancel request for one execution generation."""
+
+    flow_run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("flow_run.id", ondelete="CASCADE"), index=True
+    )
+    operation_id: Mapped[uuid.UUID]
+    generation: Mapped[int]
+    kind: Mapped[str]
+    reason: Mapped[str] = mapped_column(sa.String(1024))
+    request_digest: Mapped[str] = mapped_column(sa.String(64))
+    outcome: Mapped[dict[str, Any]] = mapped_column(JSON)
+    outcome_digest: Mapped[str] = mapped_column(sa.String(64))
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("flow_run_id", "operation_id"),
+        sa.CheckConstraint("generation BETWEEN 1 AND 64", name="generation_bounded"),
+        sa.CheckConstraint(
+            "kind IN ('DRAIN', 'CANCEL', 'CANCEL_FINALIZED', 'SPAWN_FAILED', "
+            "'VERIFIED_RETIRED')",
+            name="kind_valid",
+        ),
+        sa.CheckConstraint("length(reason) BETWEEN 1 AND 1024", name="reason_valid"),
+        sa.CheckConstraint(
+            "length(request_digest) = 64 AND length(outcome_digest) = 64",
+            name="digest_valid",
         ),
     )
 

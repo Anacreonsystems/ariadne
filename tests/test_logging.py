@@ -1112,7 +1112,12 @@ class TestWorkerLogging:
             name="test", work_pool_name="test-work-pool"
         ) as worker:
             await worker.sync_with_backend()
-            worker._logger.debug("test-worker-log")
+            with temporary_settings(
+                {
+                    PREFECT_API_URL: "https://api.prefect.cloud/api/accounts/test/workspaces/test"
+                }
+            ):
+                worker._logger.debug("test-worker-log")
 
         log_statement = [
             log
@@ -1135,6 +1140,18 @@ class TestWorkerLogging:
             assert isinstance(worker._logger, logging.Logger)
             worker._logger.debug("test-worker-log")
 
+        mock_log_worker.instance().send.assert_not_called()
+
+    @pytest.mark.usefixtures("worker_handler", "logging_to_api_enabled")
+    async def test_self_hosted_registered_worker_keeps_console_logs_without_shipping(
+        self, mock_log_worker: MagicMock
+    ):
+        async with self.ServerWorkerTestImpl(
+            name="native", work_pool_name="test-work-pool"
+        ) as worker:
+            worker._record_worker_id(WORKER_ID)
+            assert worker._logger.extra["worker_id"] == str(WORKER_ID)
+            worker._logger.debug("native-worker-console-log")
         mock_log_worker.instance().send.assert_not_called()
 
 

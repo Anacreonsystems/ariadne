@@ -1,0 +1,39 @@
+..F
+=================================== FAILURES ===================================
+_____ test_invalid_mixed_calls_refuse_without_unsafe_admission[submit-0-0] _____
+src/prefect/client/orchestration/_flow_runs/client.py:218: in read_flow_run
+    response = self.request(
+src/prefect/client/orchestration/base.py:33: in request
+    return self._client.send(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/base.py:746: in send
+    response.raise_for_status()
+src/prefect/client/base.py:182: in raise_for_status
+    raise PrefectHTTPStatusError.from_httpx_error(exc) from exc.__cause__
+E   prefect.exceptions.PrefectHTTPStatusError: Client error '404 Not Found' for url 'http://127.0.0.1:60653/api/flow_runs/980f6222-eabd-431e-9cae-01285d08f6af' - Response: {'detail': 'Flow run not found'} - For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+
+The above exception was the direct cause of the following exception:
+tests/test_native_mixed_flow_http.py:301: in test_invalid_mixed_calls_refuse_without_unsafe_admission
+    final = client.read_flow_run(run.id)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/orchestration/_flow_runs/client.py:223: in read_flow_run
+    raise ObjectNotFound(http_exc=e) from e
+E   prefect.exceptions.ObjectNotFound: None
+----------------------------- Captured stderr call -----------------------------
+14:12:24.911 | DEBUG   | prefect.client - Received response with retryable status code 503. Another attempt will be made in 2.372680534052287s. This is attempt 1/6.
+Executing <Task finished name='Task-49' coro=<test_invalid_mixed_calls_refuse_without_unsafe_admission() done, defined at /workspace/ariadne/tests/test_native_mixed_flow_http.py:258> exception=ObjectNotFound(None) created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 8.554 seconds
+14:12:27.313 | WARNING | asyncio - Executing <Task finished name='Task-49' coro=<test_invalid_mixed_calls_refuse_without_unsafe_admission() done, defined at /workspace/ariadne/tests/test_native_mixed_flow_http.py:258> exception=ObjectNotFound(None) created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 8.554 seconds
+------------------------------ Captured log call -------------------------------
+DEBUG    prefect.client:base.py:644 Received response with retryable status code 503. Another attempt will be made in 2.372680534052287s. This is attempt 1/6.
+WARNING  asyncio:base_events.py:1994 Executing <Task finished name='Task-49' coro=<test_invalid_mixed_calls_refuse_without_unsafe_admission() done, defined at /workspace/ariadne/tests/test_native_mixed_flow_http.py:258> exception=ObjectNotFound(None) created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 8.554 seconds
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+14:12:27.762 | INFO    | uvicorn.error - Shutting down
+14:12:27.864 | INFO    | uvicorn.error - Waiting for application shutdown.
+14:12:27.867 | INFO    | uvicorn.error - Application shutdown complete.
+14:12:27.867 | INFO    | uvicorn.error - Finished server process [26771]
+=========================== short test summary info ============================
+FAILED tests/test_native_mixed_flow_http.py::test_invalid_mixed_calls_refuse_without_unsafe_admission[submit-0-0]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 2 passed, 9 deselected in 96.48s (0:01:36)

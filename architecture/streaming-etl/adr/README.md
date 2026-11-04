@@ -140,6 +140,11 @@ graph TD
     A0034 --> A0035[ADR-0035: Native source runtime - accepted]
     A0035 --> A0036[ADR-0036: Durable submission recovery - accepted]
     A0036 --> A0037[ADR-0037: Mixed finite tasks - progress]
+    A0037 --> A0038[ADR-0038: Native deployment and worker lifecycle - progress]
+    A0038 --> A0039[ADR-0039: Native progress projections - progress]
+    A0037 --> A0040[ADR-0040: Native integration acceptance and operation - progress]
+    A0038 --> A0040
+    A0039 --> A0040
     A0037 --> A0097[ADR-0097: Recursive null omission - rejected]
     A0094[ADR-0094: JSONB fidelity - rejected] -. evidence .-> A0033
     A0095[ADR-0095: Implicit FK lock order - rejected] -. evidence .-> A0033
@@ -253,6 +258,9 @@ tested/merge source, successful native PostgreSQL and corrected Python 3.14
 logs, and the explicit test-only bridge. This earns no extra percentage.
 
 - [ADR-0037: Finite tasks around a streaming graph](ADR-0037-mixed-finite-and-streaming-tasks.md) — `progress`
+- [ADR-0038: Native deployment, worker enrollment and lifecycle](ADR-0038-native-deployment-worker-lifecycle.md) — `progress`
+- [ADR-0039: Native progress projections](ADR-0039-native-progress-projections.md) — `progress`
+- [ADR-0040: Native integration acceptance and operation](ADR-0040-native-integration-acceptance-and-operations.md) — `progress`
 
 - [ADR-0097: Recursive null omission in recovery responses](ADR-0097-recursive-null-omission-in-recovery-responses.md) — `rejected`
 
@@ -267,3 +275,11 @@ corrected tested/merge source. 423 PostgreSQL and 88 SQLite selected cases execu
 without skips. The [next SDK review](../evidence/native-stage6b-sdk-design-review-2026-11-04.md)
 and its separately bound HTTP/PostgreSQL control remain planning evidence;
 ADR-0037 stays in progress at 50% earned foundation.
+
+[ADR-0038](ADR-0038-native-deployment-worker-lifecycle.md) plans the remaining
+bounded route after N1.6b: public capability and actual deployment launch to
+70%, confirmed Linux local-process replacement plus cancellation/drain to 85%,
+authenticated projections/compatibility/resource bounds to 90%, and a real
+mixed work-pool deployment gate to 100%. Timeout or lease expiry is explicitly
+not proof of process death. These targets add no earned readiness until their
+code and acceptance criteria pass.

@@ -1,0 +1,112 @@
+import { randUuid } from "@ngneat/falso";
+import type { NativeStreamFlowProjection } from "@/api/native-streams";
+
+export const createFakeNativeStreamProjection = (
+	overrides?: Partial<NativeStreamFlowProjection>,
+): NativeStreamFlowProjection => ({
+	flow_run_id: randUuid(),
+	flow_state: "RUNNING",
+	generation: 2,
+	authority_state: "ACTIVE",
+	prepared_generation: 2,
+	manifest_sealed: true,
+	source_admission_closed: false,
+	cancel_requested: false,
+	launch_state: "PROCESS_REGISTERED",
+	worker_id: randUuid(),
+	observed_at: "2026-11-04T12:00:00Z",
+	items: [
+		{
+			task_run_id: randUuid(),
+			submission_key: "documents.ingest",
+			role: "SOURCE",
+			protocol: "source-v1",
+			task_state: "COMPLETED",
+			run_count: 1,
+			output_stream_id: randUuid(),
+			input_stream_id: null,
+			stream_state: "COMPLETED",
+			record_count: 500,
+			byte_count: 32000,
+			record_limit: 10000,
+			byte_limit: 67108864,
+			input_tail_sequence: null,
+			last_sequence: 500,
+			tail_sequence: 500,
+			completed_through: null,
+			inflight_sequence: null,
+			pending_inputs: null,
+		},
+		{
+			task_run_id: randUuid(),
+			submission_key: "documents.sign",
+			role: "OPERATOR",
+			protocol: "yield-v2",
+			task_state: "RUNNING",
+			run_count: 2,
+			output_stream_id: randUuid(),
+			input_stream_id: randUuid(),
+			stream_state: "OPEN",
+			record_count: 199,
+			byte_count: 12736,
+			record_limit: 10000,
+			byte_limit: 67108864,
+			input_tail_sequence: 500,
+			last_sequence: 199,
+			tail_sequence: null,
+			completed_through: 199,
+			inflight_sequence: 200,
+			pending_inputs: 301,
+		},
+	],
+	finite_items: [
+		{
+			task_run_id: randUuid(),
+			submission_key: "documents.prepare",
+			phase: "PREFIX",
+			result_committed: true,
+			task_state: "COMPLETED",
+			run_count: 1,
+		},
+		{
+			task_run_id: randUuid(),
+			submission_key: "documents.summary",
+			phase: "TAIL",
+			result_committed: false,
+			task_state: "PENDING",
+			run_count: 0,
+		},
+	],
+	...overrides,
+});
+
+export const createFakeReleasedNativeStreamProjection =
+	(): NativeStreamFlowProjection => {
+		const projection = createFakeNativeStreamProjection();
+		return {
+			...projection,
+			flow_state: "COMPLETED",
+			authority_state: "RELEASED",
+			launch_state: "RELEASED",
+			source_admission_closed: true,
+			items: projection.items.map((item) => ({
+				...item,
+				task_state: "COMPLETED",
+				stream_state: "COMPLETED",
+				last_sequence: 500,
+				tail_sequence: 500,
+				record_count: 0,
+				byte_count: 0,
+				completed_through: null,
+				inflight_sequence: null,
+				input_tail_sequence: null,
+				pending_inputs: null,
+			})),
+			finite_items: projection.finite_items.map((item) => ({
+				...item,
+				task_state: "COMPLETED",
+				run_count: 1,
+				result_committed: false,
+			})),
+		};
+	};

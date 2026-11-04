@@ -531,7 +531,12 @@ async def test_finite_entrypoint_refuses_before_native_collection_can_start(
     child = _start_flow(server, entrypoint, launch.context, log)
     try:
         assert child.wait(timeout=40) == 0
-        assert "only keyed submit_stream declarations" in log.read_text()
+        expected = (
+            "requires stream_key"
+            if kind == "call"
+            else "only keyed submit_stream declarations"
+        )
+        assert expected in log.read_text()
         assert not (coordination / "source-starts").exists()
         with server.client() as client:
             observed = client.read_flow_run(run.id)

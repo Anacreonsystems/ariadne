@@ -6,6 +6,7 @@ import {
 	type FlowRun,
 	useSetFlowRunState,
 } from "@/api/flow-runs";
+import { NativeStreamControlDialog } from "@/components/flow-runs/native-stream-progress/native-stream-control-dialog";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -26,7 +27,22 @@ type CancelFlowRunDialogProps = {
 	onOpenChange: (open: boolean) => void;
 };
 
-export const CancelFlowRunDialog = ({
+export const CancelFlowRunDialog = (props: CancelFlowRunDialogProps) => {
+	if (props.flowRun.labels?.["prefect.native-streaming"]) {
+		return (
+			<NativeStreamControlDialog
+				flowRunId={props.flowRun.id}
+				kind="cancel"
+				open={props.open}
+				onOpenChange={props.onOpenChange}
+				beforeEnrollmentContent={<OrdinaryCancelFlowRunDialog {...props} />}
+			/>
+		);
+	}
+	return <OrdinaryCancelFlowRunDialog {...props} />;
+};
+
+const OrdinaryCancelFlowRunDialog = ({
 	flowRun,
 	open,
 	onOpenChange,

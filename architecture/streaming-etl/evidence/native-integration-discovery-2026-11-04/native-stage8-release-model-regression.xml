@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="7" time="9.377" timestamp="2026-11-04T15:41:17.503354+00:00" hostname="f8abb611283c"><testcase classname="tests.server.models.test_streams" name="test_whole_flow_release_is_final_only_and_retains_horizon_witness" time="5.919" /><testcase classname="tests.server.models.test_streams" name="test_release_and_append_race_leaves_no_payload_after_horizon" time="0.295" /><testcase classname="tests.server.models.test_streams" name="test_first_open_waits_for_flow_before_task_and_headers_during_release" time="0.389" /><testcase classname="tests.server.models.test_streams" name="test_first_open_commits_before_waiting_finalization_and_release" time="0.360" /><testcase classname="tests.server.models.test_streams" name="test_release_commit_failure_rolls_back_payload_and_horizon_together" time="0.369" /><testcase classname="tests.server.models.test_streams" name="test_terminal_task_admission_precedes_release_horizon_for_old_mutations" time="0.390" /><testcase classname="tests.server.models.test_streams" name="test_release_retains_submission_witness_and_expires_execution" time="1.400"><failure message="prefect.server.models._stream_errors.NativeStreamError: Bound TaskRun terminal metadata has not been recorded">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f05616dd790&gt;
+flow_run = FlowRun(id=38f73593-9082-41cb-a947-10316280b77e)
+
+    async def test_release_retains_submission_witness_and_expires_execution(db, flow_run):
+        await require_postgres_17(db)
+        await _recoverable_flow(db, flow_run)
+        store = NativeStreamStore(db)
+        request = _source_submission(flow_run)
+        manifest = await store.reserve_submission(request)
+        async with db.session_context(begin_transaction=True) as session:
+            result = await models.flow_runs.set_flow_run_state(
+                session=session,
+                flow_run_id=flow_run.id,
+                state=schemas.states.Cancelled(message="bounded release"),
+                flow_policy=CoreFlowPolicy,
+            )
+            assert result.state is not None
+            assert result.state.is_cancelled()
+&gt;       assert await store.release_flow(flow_run.id) == 1
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/server/models/test_streams.py:1694: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect.server.models.streams.NativeStreamStore object at 0x7f05600b5250&gt;
+flow_run_id = UUID('38f73593-9082-41cb-a947-10316280b77e')
+verified_server = False
+
+    async def release_flow(
+        self, flow_run_id: UUID, *, verified_server: bool = False
+    ) -&gt; int:
+        async with self._session() as session:
+            if verified_server:
+                flow = await session.scalar(
+                    sa.select(self.db.FlowRun)
+                    .where(self.db.FlowRun.id == flow_run_id)
+                    .with_for_update()
+                )
+                authority_check = await session.scalar(
+                    sa.select(self.db.StreamExecutionAuthority)
+                    .where(self.db.StreamExecutionAuthority.flow_run_id == flow_run_id)
+                    .with_for_update()
+                )
+                verified_retirement = await session.scalar(
+                    sa.select(self.db.NativeStreamControlOperation.id).where(
+                        self.db.NativeStreamControlOperation.flow_run_id == flow_run_id,
+                        self.db.NativeStreamControlOperation.kind.in_(
+                            ("SPAWN_FAILED", "VERIFIED_RETIRED")
+                        ),
+                    )
+                )
+                if (
+                    flow is None
+                    or authority_check is None
+                    or authority_check.state not in {"TERMINAL", "RELEASED"}
+                    or (
+                        not authority_check.cancel_requested
+                        and verified_retirement is None
+                    )
+                ):
+                    raise NativeStreamError(
+                        "TERMINAL_CONFLICT",
+                        "Verified cancellation is not ready for release",
+                    )
+            else:
+                flow = await self._flow(
+                    session,
+                    flow_run_id,
+                    update=True,
+                    allowed_execution_states=("TERMINAL", "RELEASED"),
+                )
+            if flow.state_type not in TERMINAL_STATES:
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT", "Only a final FlowRun can release payloads"
+                )
+            bound_task_ids = set(
+                (
+                    await session.scalars(
+                        sa.select(self.db.StreamSubmission.task_run_id).where(
+                            self.db.StreamSubmission.flow_run_id == flow_run_id
+                        )
+                    )
+                ).all()
+            )
+            bound_task_ids.update(
+                (
+                    await session.scalars(
+                        sa.select(self.db.StreamFiniteSubmission.task_run_id).where(
+                            self.db.StreamFiniteSubmission.flow_run_id == flow_run_id
+                        )
+                    )
+                ).all()
+            )
+            if bound_task_ids:
+                nonterminal_tasks = await session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(self.db.TaskRun)
+                    .where(
+                        self.db.TaskRun.id.in_(bound_task_ids),
+                        self.db.TaskRun.state_type.not_in(TERMINAL_STATES),
+                    )
+                )
+                if nonterminal_tasks:
+&gt;                   raise NativeStreamError(
+                        "METADATA_NOT_READY",
+                        "Bound TaskRun terminal metadata has not been recorded",
+                    )
+E                   prefect.server.models._stream_errors.NativeStreamError: Bound TaskRun terminal metadata has not been recorded
+
+src/prefect/server/models/streams.py:1756: NativeStreamError</failure></testcase></testsuite></testsuites>

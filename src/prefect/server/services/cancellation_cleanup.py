@@ -243,6 +243,19 @@ async def handle_cancelling_timeout(
                 )
                 return None
 
+            native_authority = await session.scalar(
+                sa.select(db.StreamExecutionAuthority).where(
+                    db.StreamExecutionAuthority.flow_run_id == flow_run.id
+                )
+            )
+            if native_authority is not None and native_authority.cancel_requested:
+                logger.info(
+                    "Native flow run %s requires a verified child-death witness; "
+                    "the generic CANCELLING timeout cannot finalize it",
+                    flow_run.id,
+                )
+                return None
+
             if flow_run.state_timestamp is None:
                 logger.info(
                     "Flow run %s has no CANCELLING state timestamp, skipping timeout",

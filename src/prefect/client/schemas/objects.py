@@ -546,7 +546,7 @@ class FlowRunPolicy(PrefectBaseModel):
         deprecated=True,
     )
     retries: Optional[int] = Field(default=None, description="The number of retries.")
-    retry_delay: Optional[int] = Field(
+    retry_delay: Optional[float] = Field(
         default=None, description="The delay time between retries, in seconds."
     )
     pause_keys: Optional[set[str]] = Field(

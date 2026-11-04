@@ -8,6 +8,7 @@ from pydantic import JsonValue, TypeAdapter
 
 from prefect.client.orchestration.base import HTTP_METHODS, BaseAsyncClient, BaseClient
 from prefect.client.orchestration.routes import ServerRoutes
+from prefect.client.schemas import native_deployments as native_schemas
 from prefect.client.schemas import streams as schemas
 from prefect.exceptions import PrefectException
 
@@ -135,6 +136,352 @@ class StreamClient(BaseClient):
             "POST", "/streams/v1/finite/complete", json=payload
         )
         return schemas.StreamFiniteReceipt.model_validate(response.json())
+
+    def enroll_native_stream_deployment(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        declaration_digest: str,
+        worker_id: UUID,
+        work_pool_id: UUID,
+        launcher_instance_id: UUID,
+        launcher_host_id: UUID,
+        launcher_boot_id: UUID,
+        launcher_process_id: int,
+        launcher_start_ticks: int,
+        holder_id: UUID,
+        holder_capability: str,
+        holder_event_public_key: str,
+        supervisor_id: UUID,
+        supervisor_capability: str,
+        launch_profile: Literal["linux-local-pidfd-v1"] = "linux-local-pidfd-v1",
+        expected_generation: Literal[0] = 0,
+    ) -> native_schemas.NativeStreamWorkerEnrollment:
+        """Enroll a trusted worker before launching the declared Flow."""
+        payload = native_schemas.NativeStreamWorkerEnrollRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            declaration_digest=declaration_digest,
+            worker_id=worker_id,
+            work_pool_id=work_pool_id,
+            launcher_instance_id=launcher_instance_id,
+            launcher_host_id=launcher_host_id,
+            launcher_boot_id=launcher_boot_id,
+            launcher_process_id=launcher_process_id,
+            launcher_start_ticks=launcher_start_ticks,
+            holder_id=holder_id,
+            holder_capability=holder_capability,
+            holder_event_public_key=holder_event_public_key,
+            supervisor_id=supervisor_id,
+            supervisor_capability=supervisor_capability,
+            launch_profile=launch_profile,
+            expected_generation=expected_generation,
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/deployments/enroll", json=payload
+        )
+        return native_schemas.NativeStreamWorkerEnrollment.model_validate(
+            response.json()
+        )
+
+    def register_native_stream_process(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        enrollment_operation_id: UUID,
+        launcher_instance_id: UUID,
+        host_id: UUID,
+        boot_id: UUID,
+        child_process_id: int,
+        process_start_ticks: int,
+        launch_nonce_digest: str,
+        generation: int = 1,
+    ) -> native_schemas.NativeStreamLaunchProjection:
+        """Bind the blocked child identity before delivering its credentials."""
+        payload = native_schemas.NativeStreamProcessRegistrationRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            enrollment_operation_id=enrollment_operation_id,
+            launcher_instance_id=launcher_instance_id,
+            host_id=host_id,
+            boot_id=boot_id,
+            child_process_id=child_process_id,
+            process_start_ticks=process_start_ticks,
+            launch_nonce_digest=launch_nonce_digest,
+            generation=generation,
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/deployments/launches/register-process", json=payload
+        )
+        return native_schemas.NativeStreamLaunchProjection.model_validate(
+            response.json()
+        )
+
+    def renew_native_stream_launch(
+        self,
+        *,
+        flow_run_id: UUID,
+        generation: int,
+        enrollment_operation_id: UUID,
+    ) -> native_schemas.NativeStreamLaunchHeartbeat:
+        """Renew launch eligibility without treating a deadline as process death."""
+        payload = native_schemas.NativeStreamLaunchHeartbeatRequest(
+            flow_run_id=flow_run_id,
+            generation=generation,
+            enrollment_operation_id=enrollment_operation_id,
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/deployments/launches/heartbeat", json=payload
+        )
+        return native_schemas.NativeStreamLaunchHeartbeat.model_validate(
+            response.json()
+        )
+
+    def retire_unstarted_native_stream_launch(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        enrollment_operation_id: UUID,
+        error: str,
+    ) -> native_schemas.NativeStreamControlResult:
+        """Release an enrollment that never admitted a child process."""
+        payload = native_schemas.NativeStreamUnstartedRetireRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            enrollment_operation_id=enrollment_operation_id,
+            error=error,
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/deployments/launches/retire-unstarted", json=payload
+        )
+        return native_schemas.NativeStreamControlResult.model_validate(response.json())
+
+    def read_native_stream_recovery_candidates(
+        self,
+        *,
+        worker_id: UUID,
+        work_pool_id: UUID,
+        host_id: UUID,
+    ) -> list[native_schemas.NativeStreamRecoveryCandidate]:
+        """Read stale launch identities eligible for trusted host verification."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v1/deployments/replacements/candidates",
+            params={
+                "worker_id": str(worker_id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": str(host_id),
+            },
+        )
+        return TypeAdapter(
+            list[native_schemas.NativeStreamRecoveryCandidate]
+        ).validate_python(response.json())
+
+    def authorize_native_stream_replacement(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        expected_generation: int,
+        enrollment_operation_id: UUID,
+        worker_id: UUID,
+        work_pool_id: UUID,
+        host_id: UUID,
+        identity_kind: Literal["LAUNCHER", "CHILD"],
+        challenge_capability: str,
+    ) -> native_schemas.NativeStreamReplacementAuthorization:
+        """Reserve exact replacement intent before inspecting process death."""
+        payload = native_schemas.NativeStreamReplacementAuthorizeRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            expected_generation=expected_generation,
+            enrollment_operation_id=enrollment_operation_id,
+            worker_id=worker_id,
+            work_pool_id=work_pool_id,
+            host_id=host_id,
+            identity_kind=identity_kind,
+            challenge_capability=challenge_capability,
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/deployments/replacements/authorize", json=payload
+        )
+        return native_schemas.NativeStreamReplacementAuthorization.model_validate(
+            response.json()
+        )
+
+    def confirm_native_stream_replacement(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        challenge_capability: str,
+        launcher_instance_id: UUID,
+        launcher_host_id: UUID,
+        launcher_boot_id: UUID,
+        launcher_process_id: int,
+        launcher_start_ticks: int,
+        new_holder_id: UUID,
+        new_holder_capability: str,
+        new_holder_event_public_key: str,
+        new_supervisor_id: UUID,
+        new_supervisor_capability: str,
+        death_witness: dict[str, Any],
+    ) -> native_schemas.NativeStreamWorkerEnrollment:
+        """Confirm verified death and rotate authority with an exact replay key."""
+        payload = native_schemas.NativeStreamReplacementConfirmRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            challenge_capability=challenge_capability,
+            launcher_instance_id=launcher_instance_id,
+            launcher_host_id=launcher_host_id,
+            launcher_boot_id=launcher_boot_id,
+            launcher_process_id=launcher_process_id,
+            launcher_start_ticks=launcher_start_ticks,
+            new_holder_id=new_holder_id,
+            new_holder_capability=new_holder_capability,
+            new_holder_event_public_key=new_holder_event_public_key,
+            new_supervisor_id=new_supervisor_id,
+            new_supervisor_capability=new_supervisor_capability,
+            death_witness=native_schemas.NativeStreamProcessDeathWitness.model_validate(
+                death_witness
+            ),
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/deployments/replacements/confirm-death", json=payload
+        )
+        return native_schemas.NativeStreamWorkerEnrollment.model_validate(
+            response.json()
+        )
+
+    def drain_native_stream(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        expected_generation: int,
+        reason: str,
+    ) -> native_schemas.NativeStreamControlResult:
+        """Close new source admission while allowing accepted records to finish."""
+        payload = native_schemas.NativeStreamControlRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            expected_generation=expected_generation,
+            reason=reason,
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/deployments/control/drain", json=payload
+        )
+        return native_schemas.NativeStreamControlResult.model_validate(response.json())
+
+    def cancel_native_stream(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        expected_generation: int,
+        reason: str,
+    ) -> native_schemas.NativeStreamControlResult:
+        """Fence stream writes for an operator cancellation request."""
+        payload = native_schemas.NativeStreamControlRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            expected_generation=expected_generation,
+            reason=reason,
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/deployments/control/cancel", json=payload
+        )
+        return native_schemas.NativeStreamControlResult.model_validate(response.json())
+
+    def finalize_native_stream_cancellation(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        expected_generation: int,
+        enrollment_operation_id: UUID,
+        death_witness: dict[str, Any],
+        challenge_capability: str | None = None,
+    ) -> native_schemas.NativeStreamControlResult:
+        """Release cancellation only after verified registered process death."""
+        payload = native_schemas.NativeStreamCancelFinalizeRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            expected_generation=expected_generation,
+            enrollment_operation_id=enrollment_operation_id,
+            challenge_capability=challenge_capability,
+            death_witness=native_schemas.NativeStreamProcessDeathWitness.model_validate(
+                death_witness
+            ),
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/deployments/control/finalize-cancel", json=payload
+        )
+        return native_schemas.NativeStreamControlResult.model_validate(response.json())
+
+    def read_native_stream_flow_projection(
+        self,
+        *,
+        flow_run_id: UUID,
+    ) -> native_schemas.NativeStreamFlowProjection:
+        """Read bounded native progress without record payloads or private authority."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v1/deployments/{flow_run_id}/projection",
+            path_params={"flow_run_id": flow_run_id},
+        )
+        return native_schemas.NativeStreamFlowProjection.model_validate(response.json())
+
+    def retire_verified_native_stream_launch(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        expected_generation: int,
+        enrollment_operation_id: UUID,
+        challenge_capability: str,
+        death_witness: dict[str, Any],
+        error: str,
+    ) -> native_schemas.NativeStreamControlResult:
+        """Retire a failed launch only with authorized exact process death."""
+        payload = native_schemas.NativeStreamVerifiedRetireRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            expected_generation=expected_generation,
+            enrollment_operation_id=enrollment_operation_id,
+            challenge_capability=challenge_capability,
+            death_witness=native_schemas.NativeStreamProcessDeathWitness.model_validate(
+                death_witness
+            ),
+            error=error,
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/deployments/replacements/retire-verified", json=payload
+        )
+        return native_schemas.NativeStreamControlResult.model_validate(response.json())
+
+    def read_native_stream_deployment_plan(
+        self,
+        *,
+        flow_run_id: UUID,
+    ) -> native_schemas.NativeStreamDeploymentPlan:
+        """Read public immutable deployment and launch witnesses."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v1/deployments/{flow_run_id}/plan",
+            path_params={"flow_run_id": flow_run_id},
+        )
+        return native_schemas.NativeStreamDeploymentPlan.model_validate(response.json())
+
+    def read_stream_finite_plan(self, *, flow_run_id: UUID) -> schemas.StreamFinitePlan:
+        """Read bounded finite witnesses and the durable stream-seal state."""
+        response = self._stream_request(
+            "GET", "/streams/v1/finite/plan", params={"flow_run_id": str(flow_run_id)}
+        )
+        return schemas.StreamFinitePlan.model_validate(response.json())
 
     def read_stream_finite_receipt(
         self, *, task_run_id: UUID
@@ -887,6 +1234,354 @@ class StreamAsyncClient(BaseAsyncClient):
             "POST", "/streams/v1/finite/complete", json=payload
         )
         return schemas.StreamFiniteReceipt.model_validate(response.json())
+
+    async def enroll_native_stream_deployment(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        declaration_digest: str,
+        worker_id: UUID,
+        work_pool_id: UUID,
+        launcher_instance_id: UUID,
+        launcher_host_id: UUID,
+        launcher_boot_id: UUID,
+        launcher_process_id: int,
+        launcher_start_ticks: int,
+        holder_id: UUID,
+        holder_capability: str,
+        holder_event_public_key: str,
+        supervisor_id: UUID,
+        supervisor_capability: str,
+        launch_profile: Literal["linux-local-pidfd-v1"] = "linux-local-pidfd-v1",
+        expected_generation: Literal[0] = 0,
+    ) -> native_schemas.NativeStreamWorkerEnrollment:
+        """Enroll a trusted worker before launching the declared Flow."""
+        payload = native_schemas.NativeStreamWorkerEnrollRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            declaration_digest=declaration_digest,
+            worker_id=worker_id,
+            work_pool_id=work_pool_id,
+            launcher_instance_id=launcher_instance_id,
+            launcher_host_id=launcher_host_id,
+            launcher_boot_id=launcher_boot_id,
+            launcher_process_id=launcher_process_id,
+            launcher_start_ticks=launcher_start_ticks,
+            holder_id=holder_id,
+            holder_capability=holder_capability,
+            holder_event_public_key=holder_event_public_key,
+            supervisor_id=supervisor_id,
+            supervisor_capability=supervisor_capability,
+            launch_profile=launch_profile,
+            expected_generation=expected_generation,
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/deployments/enroll", json=payload
+        )
+        return native_schemas.NativeStreamWorkerEnrollment.model_validate(
+            response.json()
+        )
+
+    async def register_native_stream_process(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        enrollment_operation_id: UUID,
+        launcher_instance_id: UUID,
+        host_id: UUID,
+        boot_id: UUID,
+        child_process_id: int,
+        process_start_ticks: int,
+        launch_nonce_digest: str,
+        generation: int = 1,
+    ) -> native_schemas.NativeStreamLaunchProjection:
+        """Bind the blocked child identity before delivering its credentials."""
+        payload = native_schemas.NativeStreamProcessRegistrationRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            enrollment_operation_id=enrollment_operation_id,
+            launcher_instance_id=launcher_instance_id,
+            host_id=host_id,
+            boot_id=boot_id,
+            child_process_id=child_process_id,
+            process_start_ticks=process_start_ticks,
+            launch_nonce_digest=launch_nonce_digest,
+            generation=generation,
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/deployments/launches/register-process", json=payload
+        )
+        return native_schemas.NativeStreamLaunchProjection.model_validate(
+            response.json()
+        )
+
+    async def renew_native_stream_launch(
+        self,
+        *,
+        flow_run_id: UUID,
+        generation: int,
+        enrollment_operation_id: UUID,
+    ) -> native_schemas.NativeStreamLaunchHeartbeat:
+        """Renew launch eligibility without treating a deadline as process death."""
+        payload = native_schemas.NativeStreamLaunchHeartbeatRequest(
+            flow_run_id=flow_run_id,
+            generation=generation,
+            enrollment_operation_id=enrollment_operation_id,
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/deployments/launches/heartbeat", json=payload
+        )
+        return native_schemas.NativeStreamLaunchHeartbeat.model_validate(
+            response.json()
+        )
+
+    async def retire_unstarted_native_stream_launch(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        enrollment_operation_id: UUID,
+        error: str,
+    ) -> native_schemas.NativeStreamControlResult:
+        """Release an enrollment that never admitted a child process."""
+        payload = native_schemas.NativeStreamUnstartedRetireRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            enrollment_operation_id=enrollment_operation_id,
+            error=error,
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/deployments/launches/retire-unstarted", json=payload
+        )
+        return native_schemas.NativeStreamControlResult.model_validate(response.json())
+
+    async def read_native_stream_recovery_candidates(
+        self,
+        *,
+        worker_id: UUID,
+        work_pool_id: UUID,
+        host_id: UUID,
+    ) -> list[native_schemas.NativeStreamRecoveryCandidate]:
+        """Read stale launch identities eligible for trusted host verification."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v1/deployments/replacements/candidates",
+            params={
+                "worker_id": str(worker_id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": str(host_id),
+            },
+        )
+        return TypeAdapter(
+            list[native_schemas.NativeStreamRecoveryCandidate]
+        ).validate_python(response.json())
+
+    async def authorize_native_stream_replacement(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        expected_generation: int,
+        enrollment_operation_id: UUID,
+        worker_id: UUID,
+        work_pool_id: UUID,
+        host_id: UUID,
+        identity_kind: Literal["LAUNCHER", "CHILD"],
+        challenge_capability: str,
+    ) -> native_schemas.NativeStreamReplacementAuthorization:
+        """Reserve exact replacement intent before inspecting process death."""
+        payload = native_schemas.NativeStreamReplacementAuthorizeRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            expected_generation=expected_generation,
+            enrollment_operation_id=enrollment_operation_id,
+            worker_id=worker_id,
+            work_pool_id=work_pool_id,
+            host_id=host_id,
+            identity_kind=identity_kind,
+            challenge_capability=challenge_capability,
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/deployments/replacements/authorize", json=payload
+        )
+        return native_schemas.NativeStreamReplacementAuthorization.model_validate(
+            response.json()
+        )
+
+    async def confirm_native_stream_replacement(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        challenge_capability: str,
+        launcher_instance_id: UUID,
+        launcher_host_id: UUID,
+        launcher_boot_id: UUID,
+        launcher_process_id: int,
+        launcher_start_ticks: int,
+        new_holder_id: UUID,
+        new_holder_capability: str,
+        new_holder_event_public_key: str,
+        new_supervisor_id: UUID,
+        new_supervisor_capability: str,
+        death_witness: dict[str, Any],
+    ) -> native_schemas.NativeStreamWorkerEnrollment:
+        """Confirm verified death and rotate authority with an exact replay key."""
+        payload = native_schemas.NativeStreamReplacementConfirmRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            challenge_capability=challenge_capability,
+            launcher_instance_id=launcher_instance_id,
+            launcher_host_id=launcher_host_id,
+            launcher_boot_id=launcher_boot_id,
+            launcher_process_id=launcher_process_id,
+            launcher_start_ticks=launcher_start_ticks,
+            new_holder_id=new_holder_id,
+            new_holder_capability=new_holder_capability,
+            new_holder_event_public_key=new_holder_event_public_key,
+            new_supervisor_id=new_supervisor_id,
+            new_supervisor_capability=new_supervisor_capability,
+            death_witness=native_schemas.NativeStreamProcessDeathWitness.model_validate(
+                death_witness
+            ),
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/deployments/replacements/confirm-death", json=payload
+        )
+        return native_schemas.NativeStreamWorkerEnrollment.model_validate(
+            response.json()
+        )
+
+    async def drain_native_stream(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        expected_generation: int,
+        reason: str,
+    ) -> native_schemas.NativeStreamControlResult:
+        """Close new source admission while allowing accepted records to finish."""
+        payload = native_schemas.NativeStreamControlRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            expected_generation=expected_generation,
+            reason=reason,
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/deployments/control/drain", json=payload
+        )
+        return native_schemas.NativeStreamControlResult.model_validate(response.json())
+
+    async def cancel_native_stream(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        expected_generation: int,
+        reason: str,
+    ) -> native_schemas.NativeStreamControlResult:
+        """Fence stream writes for an operator cancellation request."""
+        payload = native_schemas.NativeStreamControlRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            expected_generation=expected_generation,
+            reason=reason,
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/deployments/control/cancel", json=payload
+        )
+        return native_schemas.NativeStreamControlResult.model_validate(response.json())
+
+    async def finalize_native_stream_cancellation(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        expected_generation: int,
+        enrollment_operation_id: UUID,
+        death_witness: dict[str, Any],
+        challenge_capability: str | None = None,
+    ) -> native_schemas.NativeStreamControlResult:
+        """Release cancellation only after verified registered process death."""
+        payload = native_schemas.NativeStreamCancelFinalizeRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            expected_generation=expected_generation,
+            enrollment_operation_id=enrollment_operation_id,
+            challenge_capability=challenge_capability,
+            death_witness=native_schemas.NativeStreamProcessDeathWitness.model_validate(
+                death_witness
+            ),
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/deployments/control/finalize-cancel", json=payload
+        )
+        return native_schemas.NativeStreamControlResult.model_validate(response.json())
+
+    async def read_native_stream_flow_projection(
+        self,
+        *,
+        flow_run_id: UUID,
+    ) -> native_schemas.NativeStreamFlowProjection:
+        """Read bounded native progress without record payloads or private authority."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v1/deployments/{flow_run_id}/projection",
+            path_params={"flow_run_id": flow_run_id},
+        )
+        return native_schemas.NativeStreamFlowProjection.model_validate(response.json())
+
+    async def retire_verified_native_stream_launch(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        expected_generation: int,
+        enrollment_operation_id: UUID,
+        challenge_capability: str,
+        death_witness: dict[str, Any],
+        error: str,
+    ) -> native_schemas.NativeStreamControlResult:
+        """Retire a failed launch only with authorized exact process death."""
+        payload = native_schemas.NativeStreamVerifiedRetireRequest(
+            flow_run_id=flow_run_id,
+            operation_id=operation_id,
+            expected_generation=expected_generation,
+            enrollment_operation_id=enrollment_operation_id,
+            challenge_capability=challenge_capability,
+            death_witness=native_schemas.NativeStreamProcessDeathWitness.model_validate(
+                death_witness
+            ),
+            error=error,
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/deployments/replacements/retire-verified", json=payload
+        )
+        return native_schemas.NativeStreamControlResult.model_validate(response.json())
+
+    async def read_native_stream_deployment_plan(
+        self,
+        *,
+        flow_run_id: UUID,
+    ) -> native_schemas.NativeStreamDeploymentPlan:
+        """Read public immutable deployment and launch witnesses."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v1/deployments/{flow_run_id}/plan",
+            path_params={"flow_run_id": flow_run_id},
+        )
+        return native_schemas.NativeStreamDeploymentPlan.model_validate(response.json())
+
+    async def read_stream_finite_plan(
+        self, *, flow_run_id: UUID
+    ) -> schemas.StreamFinitePlan:
+        """Read bounded finite witnesses and the durable stream-seal state."""
+        response = await self._stream_request(
+            "GET", "/streams/v1/finite/plan", params={"flow_run_id": str(flow_run_id)}
+        )
+        return schemas.StreamFinitePlan.model_validate(response.json())
 
     async def read_stream_finite_receipt(
         self, *, task_run_id: UUID

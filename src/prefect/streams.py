@@ -41,6 +41,31 @@ class StreamProtocolError(PrefectException):
 
 
 @dataclass(frozen=True)
+class NativeStreamFlowConfig:
+    """Declare native durable streaming before deployment enrollment.
+
+    Use with `@flow(version="v1", retries=2, streaming=NativeStreamFlowConfig())`.
+    The bounded profile supports one finite preparation task, a linear stream
+    graph and a finite summary task on PostgreSQL 17 and Linux ProcessWorkers.
+    Task code owns idempotence of external effects and publishes references to
+    large objects. Process recovery preserves accepted records and task identity.
+    """
+
+    protocol_version: Literal[1] = 1
+    profile: Literal["bounded-linear-v1"] = "bounded-linear-v1"
+    resource_profile: Literal["bounded-default-v1"] = "bounded-default-v1"
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.protocol_version) is not int
+            or self.protocol_version != 1
+            or self.profile != "bounded-linear-v1"
+            or self.resource_profile != "bounded-default-v1"
+        ):
+            raise StreamProtocolError("Unsupported native Flow capability profile")
+
+
+@dataclass(frozen=True)
 class StreamTaskConfig:
     """Declare one input port and the terminal-event execution contract.
 

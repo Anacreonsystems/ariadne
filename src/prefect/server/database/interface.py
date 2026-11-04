@@ -237,6 +237,34 @@ class PrefectDBInterface(metaclass=DBSingleton):
         return orm_models.StreamExecutionAttempt
 
     @property
+    def NativeStreamDeploymentSnapshot(
+        self,
+    ) -> type[orm_models.NativeStreamDeploymentSnapshot]:
+        """An immutable native deployment snapshot orm model"""
+        return orm_models.NativeStreamDeploymentSnapshot
+
+    @property
+    def NativeStreamLaunchIdentity(
+        self,
+    ) -> type[orm_models.NativeStreamLaunchIdentity]:
+        """A native worker launch identity orm model"""
+        return orm_models.NativeStreamLaunchIdentity
+
+    @property
+    def NativeStreamReplacementOperation(
+        self,
+    ) -> type[orm_models.NativeStreamReplacementOperation]:
+        """A verified native worker replacement operation orm model"""
+        return orm_models.NativeStreamReplacementOperation
+
+    @property
+    def NativeStreamControlOperation(
+        self,
+    ) -> type[orm_models.NativeStreamControlOperation]:
+        """A native stream drain or cancel operation orm model"""
+        return orm_models.NativeStreamControlOperation
+
+    @property
     def TaskRun(self) -> type[orm_models.TaskRun]:
         """A task run orm model"""
         return orm_models.TaskRun

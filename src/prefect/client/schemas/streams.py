@@ -402,6 +402,15 @@ class StreamFiniteManifest(BaseModel):
     created_at: DateTime
 
 
+class StreamFinitePlan(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    flow_run_id: UUID
+    generation: int = Field(ge=1, le=64, strict=True)
+    manifest_sealed: bool
+    items: list[StreamFiniteManifest] = Field(max_length=2)
+
+
 class StreamFiniteCompleteRequest(_StreamRequest):
     flow_run_id: UUID
     task_run_id: UUID

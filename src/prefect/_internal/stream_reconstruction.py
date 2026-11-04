@@ -50,6 +50,7 @@ class StreamReconstruction:
         self.execution = execution
         self.flow_attempt = flow_attempt
         self.entries: dict[str, _Submission] = {}
+        self.finite_entries: dict[str, Any] = {}
         self.ready = threading.Event()
         self.lock = threading.RLock()
         self.phase = "OPEN"
@@ -80,17 +81,50 @@ class StreamReconstruction:
             try:
                 self.admission_attempted = True
                 storage = PrefectStreamStorage(self.execution.flow_run_id)
-                method = (
-                    "seal_stream_manifest"
-                    if self.execution.generation == 1
-                    else "prepare_stream_recovery"
+                plan = run_coro_as_sync(
+                    storage._request(
+                        "read_stream_finite_plan",
+                        flow_run_id=self.execution.flow_run_id,
+                    )
                 )
+                recovering = self.execution.generation > 1 and plan.manifest_sealed
+                method = (
+                    "prepare_stream_recovery" if recovering else "seal_stream_manifest"
+                )
+                arguments: dict[str, Any] = {}
+                if recovering and plan.items:
+                    arguments["finite_manifests"] = [
+                        {
+                            "submission_key": item.submission_key,
+                            "manifest_digest": item.manifest_digest,
+                            "phase": item.phase,
+                        }
+                        for item in plan.items
+                    ]
+                elif self.finite_entries:
+                    prefix = next(
+                        entry
+                        for entry in self.finite_entries.values()
+                        if entry.manifest.phase == "PREFIX"
+                    )
+                    if prefix.receipt is None:
+                        raise StreamProtocolError(
+                            "Stream seal requires the finite prefix receipt"
+                        )
+                    arguments["finite_prefix"] = {
+                        "submission_key": prefix.manifest.submission_key,
+                        "manifest_digest": prefix.manifest.manifest_digest,
+                        "phase": "PREFIX",
+                        "task_run_id": str(prefix.manifest.task_run_id),
+                        "result_digest": prefix.receipt.result_digest,
+                    }
                 run_coro_as_sync(
                     storage._request(
                         method,
                         flow_run_id=self.execution.flow_run_id,
                         operation_id=self.operation_id,
                         manifests=self.witnesses(),
+                        **arguments,
                     )
                 )
                 for entry in self.entries.values():
@@ -342,7 +376,7 @@ def submit_reconstructed_stream(
             raise StreamProtocolError(
                 "No submission may be added after the graph barrier"
             )
-        if key in graph.entries:
+        if key in graph.entries or key in graph.finite_entries:
             raise StreamProtocolError(
                 "A submission_key must occur once in the flow declaration"
             )
@@ -430,7 +464,11 @@ def prepare_flow_state(state: Any) -> None:
     graph = reconstruction()
     if (
         graph is not None
-        and (graph.admission_attempted or graph.execution.generation > 1)
+        and (
+            graph.admission_attempted
+            or graph.finite_entries
+            or graph.execution.generation > 1
+        )
         and state.is_failed()
     ):
         # CoreFlowPolicy honors this ordinary StateDetails input. No force or
@@ -446,6 +484,7 @@ def reconcile_unstarted_graph(flow_run: Any) -> None:
         or not graph.entries
         or graph.execution.generation > 1
         or graph.admission_attempted
+        or graph.finite_entries
     ):
         return
     if flow_run is None or flow_run.state is None or not flow_run.state.is_final():

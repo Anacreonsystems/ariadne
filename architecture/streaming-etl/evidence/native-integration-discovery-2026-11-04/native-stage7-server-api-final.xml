@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="1" tests="4" time="9.443" timestamp="2026-11-04T14:11:33.569032+00:00" hostname="f8abb611283c"><testcase classname="tests.server.api.test_native_deployments" name="test_enroll_register_and_public_plan_are_exact_and_secret_free" time="6.188" /><testcase classname="tests.server.api.test_native_deployments" name="test_enrollment_drift_and_legacy_takeover_fail_closed" time="0.625"><failure message="assert 409 == 422&#10; +  where 409 = &lt;Response [409 Conflict]&gt;.status_code">client = &lt;httpx.AsyncClient object at 0x7fd7c69070b0&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fd7c6907b60&gt;
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fd7c872b200&gt;
+deployment = Deployment(id=984e0fce-52b2-4c65-ab94-37f5e0a38dcd)
+
+    async def test_enrollment_drift_and_legacy_takeover_fail_closed(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL enrollment is covered by the PostgreSQL profile")
+        flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
+        plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()
+        body = _enrollment_body(
+            flow_run.id, worker.id, work_pool_id, plan["declaration_digest"]
+        )
+        enrolled = await client.post("/streams/v1/deployments/enroll", json=body)
+        assert enrolled.status_code == 200
+    
+        changed = dict(body, worker_id=str(uuid4()))
+        conflict = await client.post("/streams/v1/deployments/enroll", json=changed)
+        assert conflict.status_code == 409
+        assert conflict.json()["detail"]["code"] == "IDENTITY_CONFLICT"
+    
+        legacy_claim = await client.post(
+            "/streams/v1/executions/claim",
+            json={
+                "flow_run_id": str(flow_run.id),
+                "operation_id": str(uuid4()),
+                "expected_generation": 0,
+                "holder_id": str(uuid4()),
+                "holder_capability": secrets.token_hex(32),
+                "holder_event_public_key": secrets.token_hex(32),
+                "supervisor_id": str(uuid4()),
+                "supervisor_capability": secrets.token_hex(32),
+                "protocol_version": 1,
+            },
+        )
+&gt;       assert legacy_claim.status_code == 422
+E       assert 409 == 422
+E        +  where 409 = &lt;Response [409 Conflict]&gt;.status_code
+
+tests/server/api/test_native_deployments.py:222: AssertionError</failure></testcase><testcase classname="tests.server.api.test_native_deployments" name="test_sqlite_enrollment_refuses_before_mutation" time="0.347"><skipped type="pytest.skip" message="SQLite refusal is covered by the SQLite profile">/workspace/ariadne/tests/server/api/test_native_deployments.py:257: SQLite refusal is covered by the SQLite profile</skipped></testcase><testcase classname="tests.server.api.test_native_deployments" name="test_flow_run_cannot_override_deployment_declaration" time="2.064" /></testsuite></testsuites>
