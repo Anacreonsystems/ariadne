@@ -133,3 +133,13 @@ cross-host provider/agent capability, so A47-04 remains an explicit later gate.
 | A47-05 | Refuse unreachable-host replacement without a valid witness. |
 | A47-06 | Reproduce recovery-region expansion versus isolated failure. |
 | A47-07 | Fault regional plan/restore/activation without mixed assignment. |
+
+## Implementation evidence updates
+
+The [read-only host preflight](../evidence/native-epoch2-host-preflight-2026-11-04/run-41928669274/receipt.json)
+remains `UNPROVEN`. Two ARC jobs ran on distinct runner records, but their
+observations did not overlap and the salted boot/machine identities were equal.
+The run therefore proves neither two hosts nor private peer reachability,
+portable artifacts or verified remote stop. It earns no A47-04 or native
+readiness credit; a timeout, queue separation or distinct runner ID is not a
+death/host witness.

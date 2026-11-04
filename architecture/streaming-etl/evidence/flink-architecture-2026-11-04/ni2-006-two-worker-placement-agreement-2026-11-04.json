@@ -1,0 +1,87 @@
+{
+  "schema": "native-epoch2-two-worker-placement-agreement-v1",
+  "date": "2026-11-04",
+  "status": "AGREED_FOR_IMPLEMENTATION",
+  "approval_basis": {
+    "approved_adr_set_version": "fae53c90aa3b44dbc45032833b4d193001e5c8bd",
+    "approved_epoch_requirement": "Use two registered workers with explicit placement and real HTTP/PostgreSQL storage.",
+    "task_ids": ["NI2-001", "NI2-002", "NI2-003", "NI2-005", "NI2-006"],
+    "mapped_criteria": ["A43-01", "A43-03", "A43-04", "A43-05", "A43-07", "A43-08"]
+  },
+  "boundary": {
+    "profile": "partitioned-fixed-v1",
+    "topology": "SOURCE P2 followed by OPERATOR P2",
+    "workers": 2,
+    "hosts": "same-host allowed for N2.1; cross-host replacement remains ADR-0047",
+    "flow_lease": "one existing FlowRun deployment lease",
+    "data_plane": "existing StreamPartition, StreamRecord, StreamConsumer and completion transactions",
+    "earned_percentage_points_before_gate": 0
+  },
+  "placement": {
+    "selection": "Under sorted Worker row locks, admission selects the current Flow launch worker W0 and one distinct ONLINE worker W1 in the same work pool.",
+    "mapping": {
+      "W0": ["SOURCE[0]", "OPERATOR[0]"],
+      "W1": ["SOURCE[1]", "OPERATOR[1]"]
+    },
+    "persistence": [
+      "assigned_worker_id on every physical subtask",
+      "immutable placement_digest on the admitted graph",
+      "physical_slot_released on every physical subtask"
+    ],
+    "capacity": "At most two unreleased partitioned-fixed-v1 physical slots per worker. Admission counts persisted unreleased slots while Worker rows are locked; it never derives capacity from mutable TaskRun state or timeout expiry.",
+    "replay": "The admission operation returns the same persisted mapping after an unknown acknowledgement. Placement cannot be recomputed on retry."
+  },
+  "authority": {
+    "worker_binding": "ASSIGNED_WORKER",
+    "worker_boundary": "Trusted authenticated ProcessWorker within the existing platform-admin boundary; hostile worker isolation is not claimed in N2.1.",
+    "worker_mutation_order": "Flow -> execution authority -> graph -> assigned Worker shared lock -> physical subtask -> grant -> TaskRun -> streams -> concurrency limit/allocation",
+    "worker_identity": "Every worker control validates persisted assigned_worker_id, work_pool_id and exact launcher host, boot, PID and start ticks.",
+    "child_boundary": "A physical child receives only its PrefectSubtask capability and private event key. It receives neither Basic/API authentication nor a Flow-wide holder capability.",
+    "flow_binding": "Worker claim copies the current Flow generation and holder identity into the grant under server locks; the Flow secret is never sent to the worker or child.",
+    "replacement": "The live assigned worker may authorize, verify and replace only its own exact child. Worker-manager loss, reassignment and cross-host recovery remain ADR-0047."
+  },
+  "worker_protocol": {
+    "poll": "Each ProcessWorker polls a secret-free list of its own admitted current assignments, including WAITING, ACTIVE, ABORTING or RELEASED graph control state. Locator polling does not acquire ownership locks.",
+    "workspace": "For the same-host deployment slice, graph seal freezes an absolute normalized Linux working_directory (strict UTF-8, at most 4096 bytes, no NUL). It is returned only by trusted worker polling, never by the public projection or child bootstrap. The assigned worker resolves that exact directory and validates the imported artifact/code witness before claim. An incompatible or absent workspace refuses before claim and DATA. Equal path text is not cross-host shared-storage proof.",
+    "claim_register": "The worker mints the capability and event key, claims only its persisted assignments, starts each child blocked on a private local GO descriptor, and registers the exact child PID/start ticks.",
+    "activation": "The Flow coordinator activates only when all four current grants are REGISTERED. The server activation row is the global barrier. Each worker observes ACTIVE and atomically releases its own two local GO tokens. Physical data, event and lease routes remain activation-gated.",
+    "supervision": "The assigned worker renews and supervises its own two grants. Child-process loss uses the existing exact death witness and bounded replacement/retirement journal without restarting healthy siblings.",
+    "coordinator": "The Flow coordinator owns seal, admission, activation and TaskRun/output observation. It does not spawn physical children, hold their capabilities or claim their process death."
+  },
+  "preactivation_abort": {
+    "phase_one": "An exact abort operation moves the graph to ABORTING and fences DATA, events and activation. It does not release task slots or declare processes stopped.",
+    "unclaimed": "A placement with no grant has no child process and requires no death receipt.",
+    "claimed_unregistered": "The assigned worker must clean up any local blocked process and submit an immutable unstarted-claim acknowledgement while the grant is still unregistered.",
+    "registered": "The assigned worker kills and waits the exact blocked child and submits the kernel-bound death witness for the registered PID/start ticks.",
+    "dead_before_activation_race": "A worker that observes its blocked child exit requests the same stable graph abort operation. Activate and abort serialize under the graph UPDATE lock: ABORTING makes activation refuse, while ACTIVE makes the dead child follow the ordinary bounded replacement path.",
+    "phase_two": "Only after all four placements are proven safe does one transaction fail the Pending0 TaskRuns and zero-DATA streams, release grants and physical slots, and move the graph to RELEASED.",
+    "failure_boundary": "An unavailable worker leaves the graph ABORTING and its capacity retained until ADR-0047 supplies verified worker replacement. A lease or timeout is never a death witness."
+  },
+  "postactivation_boundary": {
+    "ordinary_application_failure": "For the finite N2.1 profile, the coordinator drains all four already-active physical tasks to durable TaskRun/output terminal metadata before rethrowing the original Flow application error.",
+    "unsupported_in_n2_1": [
+      "unbounded source cancellation",
+      "worker-manager loss",
+      "cross-host reassignment",
+      "timeout-as-death cleanup"
+    ],
+    "cancel_fail_closed": "A Flow-wide cancellation cannot release an unreleased assigned slot while its current registered child lacks an exact stop receipt. The server returns PHYSICAL_STOP_REQUIRED; N2.1 must not alias this to startup abort or infer death from timeout.",
+    "legacy_recovery_fail_closed": "The bounded-linear whole-Flow recovery candidate and action paths omit or typed-refuse partitioned-fixed-v1. Loss of the Flow coordinator cannot advance the Flow generation, kill a sibling worker's child or release its slot through the epoch-1 takeover protocol.",
+    "later_contract": "Cancellation, continuous sources and verified worker/region recovery remain ADR-0045 and ADR-0047 work."
+  },
+  "required_real_controls": [
+    "Two real registered ProcessWorker processes in one work pool receive exactly two persisted assignments each.",
+    "No physical child PID is a descendant of the other worker or the Flow coordinator that does not own its placement.",
+    "All four children remain blocked and DATA is zero until the server activation transaction commits.",
+    "A preactivation launch failure enters ABORTING; no slot releases before exact worker stop receipts; exact abort replay is immutable.",
+    "B0 loss after accepted input 200 resumes at 201 on the same TaskRun and partition while A0, A1 and B1 worker/process identities remain unchanged.",
+    "Insufficient second-worker or per-worker physical capacity refuses admission before grants, user code and DATA.",
+    "A child cannot use its capability against a sibling, worker-control, Flow-control, finite-task or ordinary admin route.",
+    "Killing the Flow coordinator while a W1 child remains live cannot admit the legacy whole-Flow recovery path, change generation or release assigned slots.",
+    "500 and 5000 inputs retain four physical TaskRuns and four output partitions for the fixed graph.",
+    "Postactivation application failure reaches terminal TaskRun/output metadata and releases physical slots without hard-kill metadata gaps.",
+    "SQLite and PostgreSQL versions outside the declared PostgreSQL 17 profile refuse mutation before topology, grant or TaskRun rows."
+  ],
+  "profile_admission_boundary": "The accepted partitioned-fixed-v1 deployment profile requires persisted placement on two registered workers. FLOW_AUTHORITY_LOCAL and the one-worker coordinator launcher remain explicitly qualified discovery/test paths and cannot satisfy NI2-006.",
+  "acceptance_rule": "This agreement authorizes implementation inside the approved ADR body. It is not evidence that the protocol works. NI2-006 and N2.1 remain incomplete until the independent architect freezes the full participating source union and personally runs every real control."
+}

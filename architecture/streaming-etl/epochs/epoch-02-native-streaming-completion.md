@@ -104,13 +104,16 @@ preserves the seven hashes. Approved solution bodies and acceptance criteria
 are immutable. Status, evidence links and appended history/criterion mappings
 may change; a semantic change requires a separately approved decision.
 
-This repository retains its historical status vocabulary:
+This repository uses the following status vocabulary for this approved epoch:
 
-- `planning`/`pending`: discussion or approval is still open;
-- `progress`: explicitly approved implementation is incomplete;
+- `pending`: the decision record exists but has not yet been discussed;
+- `planning`: the solution and criteria are accepted for planning and
+  implementation, but implementation has not started;
+- `progress`: approved implementation is in progress and incomplete;
 - `accepted`: the independent ETL Architect / HighLoad Principal personally
   ran and reviewed every criterion in the declared scope;
-- `rejected`: an approved replacement and retained rationale exist.
+- `rejected`: the theory failed or an approved replacement and retained
+  rationale supersede it.
 
 The implementation role writes runtime code and source-bound evidence. The
 architect owns the ADR graph and acceptance, reruns the real checks, and is the
@@ -169,6 +172,29 @@ No intermediate task earns a fraction of its sprint. A share moves to earned
 only when that sprint's exit, every mapped ADR criterion, and independent
 source-bound verification pass. Historical or standalone prototype evidence is
 never substituted for a native gate.
+
+The [first host preflight](../evidence/native-epoch2-host-preflight-2026-11-04/run-41928669274/receipt.json)
+is retained as an `UNPROVEN` infrastructure observation: its two ARC jobs did
+not overlap and reported equal salted boot/machine identities. It provides no
+cross-host, network or verified-stop acceptance. The fixed-P2 implementation
+must first satisfy the separate [two-worker placement agreement](../evidence/flink-architecture-2026-11-04/ni2-006-two-worker-placement-agreement-2026-11-04.json)
+on two real registered workers; that same-host gate still does not close
+ADR-0047.
+
+The [first physical CI discovery](../evidence/native-epoch2-physical-ci-2026-11-04/discovery.json)
+is also retained without readiness credit. Its initial SQLite run exposed an
+invalid test event fixture and its successor passed the corrected selector,
+but both observations were made while the participating source was changing.
+The final N2.1 gate must bind the complete server, client, runtime, worker,
+migration, test and workflow source union and rerun the selected profiles.
+The current append-only planning tranche has a separate
+[document-graph verification](../evidence/flink-architecture-2026-11-04/ni2-006-planning-graph-2026-11-04.json);
+it records zero earned native credit.
+
+The [combined one-worker transition snapshot](../evidence/native-epoch2-local-process-discovery-2026-11-04/before-worker-placement/inventory.json)
+retains the 46-file WIP source/test inventory before the placement refactor. It
+was not executed as one frozen suite and does not retroactively bind the earlier
+8/500-document discovery runs or satisfy any acceptance criterion.
 
 The [ADR graph](../adr/README.md), [reference comparison](../research/flink-2.3-architecture.md)
 and [Principal discussion](../evidence/flink-architecture-2026-11-04/principal-discussion.json)

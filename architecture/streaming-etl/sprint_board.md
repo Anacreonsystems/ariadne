@@ -20,7 +20,7 @@ against the actual runtime and storage.
 | --- | --- | ---: | ---: | --- | --- |
 | N2.1a — Topology and wire | `progress` | 5% | +5% | NI2-001, NI2-002 | Paired topology migrations and immutable plan/subtask DTOs pass real PostgreSQL/SQLite/API controls; no data-plane or runtime claim. |
 | N2.1b — Scoped authority and store | `progress` | 10% | +5% | NI2-003, NI2-004 | Strict subtask-only authentication, existing-store fences, whole-region admission and canonical keys pass cross-resource negatives; codec alone earns 0%. |
-| N2.1c — Physical runtime gate | `planned` | 15% | +5% | NI2-005, NI2-006 | Four ordinary physical TaskRuns run in separate processes, recover 200/201 and keep metadata constant at 500/5000 under the complete real gate. |
+| N2.1c — Physical runtime gate | `progress` | 15% | +5% | NI2-005, NI2-006 | Four ordinary physical TaskRuns run in separate processes, recover 200/201 and keep metadata constant at 500/5000 under the complete real gate. |
 | N2.2a — DAG and routes | `planned` | 21% | +6% | NI2-010, NI2-011 | Typed acyclic graph and four append-materialized exchanges preserve independent edge identities. |
 | N2.2b — Fan-out runtime gate | `planned` | 27% | +6% | NI2-012…014 | Real fan-out SDK/process execution survives retry and branch replacement without route or cursor drift. |
 | N2.3a — State and mailbox | `planned` | 32% | +5% | NI2-020, NI2-021 | Journaled state and deterministic multi-input apply order recover without accepted-body replay. |
