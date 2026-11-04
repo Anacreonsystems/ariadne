@@ -96,7 +96,9 @@ witness. No online GC or unbounded retention guarantee is added.
 N1.6b initially supports direct finite calls only. Finite submit/map/deferred
 execution, nested tasks, arbitrary finite chains, mid-graph finite calls,
 partial collection, branch/join and production worker automation remain later
-scopes. Unsupported mixed calls must refuse before admission or partial data.
+scopes. Unsupported calls before graph seal must refuse before admission and
+DATA. A partial-collection TAIL call must refuse before its TaskRun/body; stream
+DATA may already exist when collection returns.
 
 ## Stories
 
@@ -139,8 +141,10 @@ scopes. Unsupported mixed calls must refuse before admission or partial data.
   prefix receipt loss, document-200 process loss, and tail receipt loss.
 - [ ] As a user, I got the completed prefix skipped, first-incomplete document
   replayed, and the tail run or skipped according to its durable receipt.
-- [ ] As a system, I can refuse partial collection, mid-graph finite calls and
-  unsupported finite entrypoints before task creation or stream DATA.
+- [ ] As a system, I can refuse a TAIL after partial collection before creating
+  its TaskRun or entering its body, even when stream DATA already exists.
+- [ ] As a system, I can refuse mid-graph finite calls and unsupported finite
+  entrypoints before graph seal, task creation and stream DATA.
 - [ ] As a developer, I got real 500-document HTTP/PostgreSQL/process evidence,
   ordinary finite-flow regression and independent final acceptance before 60%.
 
@@ -268,6 +272,11 @@ persist each finite receipt inside the ordinary task engine before success.
 These are planned SDK integration requirements. The additional protocol control
 does not implement direct finite Task calls, the full mixed 500-document matrix,
 or any new readiness percentage. NI1-054…056 remain planned.
+
+Final review also separates refusal guarantees by phase: partial collection
+already implies DATA, so its refusal cannot promise zero earlier stream DATA.
+Its acceptance criterion now checks no TAIL TaskRun/body; pre-seal unsupported
+calls retain the stronger no-task/no-DATA criterion.
 
 ## Consequences
 
