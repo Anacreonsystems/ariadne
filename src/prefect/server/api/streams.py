@@ -35,6 +35,7 @@ from prefect.server.schemas.streams import (
     StreamFiniteCompleteRequest,
     StreamFiniteLookupRequest,
     StreamFiniteManifest,
+    StreamFinitePlan,
     StreamFiniteReceipt,
     StreamFiniteReserveRequest,
     StreamInfo,
@@ -77,6 +78,7 @@ def _stream_http_error(error: NativeStreamError) -> HTTPException:
         "PAYLOAD_TOO_LARGE": status.HTTP_413_CONTENT_TOO_LARGE,
         "PROTOCOL_ERROR": status.HTTP_422_UNPROCESSABLE_CONTENT,
         "UNSUPPORTED_BACKEND": status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "UNSUPPORTED_PROFILE": status.HTTP_422_UNPROCESSABLE_CONTENT,
     }
     return HTTPException(
         status_code=statuses.get(error.code, status.HTTP_409_CONFLICT),
@@ -199,6 +201,15 @@ async def complete_finite_submission(
     execution: ExecutionCredentials,
 ) -> StreamFiniteReceipt:
     return await _call(NativeFiniteStore(db, execution).complete(request))
+
+
+@router.get("/finite/plan")
+async def read_finite_plan(
+    flow_run_id: Annotated[UUID, Query()],
+    db: Database,
+    execution: ExecutionCredentials,
+) -> StreamFinitePlan:
+    return await _call(NativeFiniteStore(db, execution).plan(flow_run_id))
 
 
 @router.get("/finite/{task_run_id:uuid}/receipt")

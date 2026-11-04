@@ -161,6 +161,26 @@ async def claim_execution(
     db: PrefectDBInterface,
     request: StreamExecutionClaimRequest,
 ) -> StreamExecutionBinding:
+    """Claim a selected-launcher execution outside deployment enrollment."""
+
+    snapshot = await session.scalar(
+        sa.select(db.NativeStreamDeploymentSnapshot.id).where(
+            db.NativeStreamDeploymentSnapshot.flow_run_id == request.flow_run_id
+        )
+    )
+    if snapshot is not None:
+        raise NativeStreamError(
+            "UNSUPPORTED_PROFILE",
+            "Native deployment FlowRuns require worker enrollment",
+        )
+    return await _claim_execution(session, db, request)
+
+
+async def _claim_execution(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: StreamExecutionClaimRequest,
+) -> StreamExecutionBinding:
     """Claim generation one before the trusted launcher starts its child."""
 
     await _require_backend(session, db)
@@ -259,6 +279,16 @@ async def takeover_execution(
     )
     if flow is None:
         raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+    snapshot = await session.scalar(
+        sa.select(db.NativeStreamDeploymentSnapshot.id).where(
+            db.NativeStreamDeploymentSnapshot.flow_run_id == request.flow_run_id
+        )
+    )
+    if snapshot is not None:
+        raise NativeStreamError(
+            "TAKEOVER_NOT_AUTHORIZED",
+            "Native deployment replacement requires verified worker death",
+        )
     _, request_digest = _canonical(_takeover_material(request))
     prior = await _attempt_for_operation(
         session, db, request.flow_run_id, request.operation_id
@@ -288,6 +318,39 @@ async def takeover_execution(
         or authority.state != "ACTIVE"
     ):
         raise NativeStreamError("STALE_EXECUTION", "Execution generation changed")
+    return await _apply_takeover_locked(
+        session,
+        db,
+        flow=flow,
+        authority=authority,
+        operation_id=request.operation_id,
+        request_digest=request_digest,
+        new_holder_id=request.new_holder_id,
+        new_holder_capability=request.new_holder_capability,
+        new_holder_event_public_key=request.new_holder_event_public_key,
+        new_supervisor_id=authority.supervisor_id,
+        new_supervisor_capability_digest=authority.supervisor_capability_digest,
+        death_witness=request.death_witness.model_dump(mode="json"),
+    )
+
+
+async def _apply_takeover_locked(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    *,
+    flow: orm_models.FlowRun,
+    authority: orm_models.StreamExecutionAuthority,
+    operation_id: UUID,
+    request_digest: str,
+    new_holder_id: UUID,
+    new_holder_capability: str,
+    new_holder_event_public_key: str,
+    new_supervisor_id: UUID,
+    new_supervisor_capability_digest: str,
+    death_witness: dict[str, Any],
+) -> StreamExecutionBinding:
+    """Apply a takeover after its caller validated the replacement authority."""
+
     stream_manifest_complete = (
         authority.manifest_set_digest is not None
         and authority.manifest_count is not None
@@ -316,7 +379,7 @@ async def takeover_execution(
 
     result = await flow_run_models.set_flow_run_state(
         session=session,
-        flow_run_id=request.flow_run_id,
+        flow_run_id=flow.id,
         state=schemas.states.Failed(message="Confirmed execution process loss"),
         force=False,
         flow_policy=CoreFlowPolicy,
@@ -331,28 +394,32 @@ async def takeover_execution(
             "FlowRun retry policy did not produce AwaitingRetry",
         )
 
-    new_generation = authority.generation + 1
-    key_id = _event_key_id(request.new_holder_event_public_key)
+    previous_generation = authority.generation
+    previous_holder_id = authority.holder_id
+    new_generation = previous_generation + 1
+    key_id = _event_key_id(new_holder_event_public_key)
     authority.generation = new_generation
-    authority.holder_id = request.new_holder_id
-    authority.holder_capability_digest = _secret_digest(request.new_holder_capability)
-    authority.holder_event_public_key = request.new_holder_event_public_key
+    authority.holder_id = new_holder_id
+    authority.holder_capability_digest = _secret_digest(new_holder_capability)
+    authority.holder_event_public_key = new_holder_event_public_key
     authority.event_key_id = key_id
+    authority.supervisor_id = new_supervisor_id
+    authority.supervisor_capability_digest = new_supervisor_capability_digest
     authority.state = "RECOVERING"
     authority.flow_run_run_count = flow.run_count
     attempt = db.StreamExecutionAttempt(
-        flow_run_id=request.flow_run_id,
+        flow_run_id=flow.id,
         generation=new_generation,
-        operation_id=request.operation_id,
+        operation_id=operation_id,
         kind="TAKEOVER",
         request_digest=request_digest,
         outcome_digest="0" * 64,
-        holder_id=request.new_holder_id,
-        holder_event_public_key=request.new_holder_event_public_key,
+        holder_id=new_holder_id,
+        holder_event_public_key=new_holder_event_public_key,
         event_key_id=key_id,
-        previous_generation=request.expected_generation,
-        previous_holder_id=request.expected_holder_id,
-        death_witness=request.death_witness.model_dump(mode="json"),
+        previous_generation=previous_generation,
+        previous_holder_id=previous_holder_id,
+        death_witness=death_witness,
         state="RECOVERING",
         flow_run_run_count=flow.run_count,
     )
@@ -372,6 +439,7 @@ async def require_execution(
     *,
     allowed_states: Iterable[str] = ("ACTIVE",),
     update: bool = False,
+    allow_unclaimed_snapshot: bool = False,
 ) -> orm_models.StreamExecutionAuthority | None:
     """Validate an enrolled FlowRun after its parent row has been locked."""
 
@@ -381,6 +449,18 @@ async def require_execution(
     query = query.with_for_update() if update else query.with_for_update(read=True)
     authority = await session.scalar(query)
     if authority is None:
+        snapshot = await session.scalar(
+            sa.select(db.NativeStreamDeploymentSnapshot.id).where(
+                db.NativeStreamDeploymentSnapshot.flow_run_id == flow_run_id
+            )
+        )
+        if snapshot is not None:
+            if allow_unclaimed_snapshot:
+                return None
+            raise NativeStreamError(
+                "EXECUTION_BINDING_REQUIRED",
+                "Native deployment FlowRun requires worker enrollment",
+            )
         if credentials is not None:
             raise NativeStreamError(
                 "IDENTITY_CONFLICT", "Execution binding supplied to unenrolled FlowRun"
@@ -430,13 +510,50 @@ async def guard_flow_lifecycle(
         credentials,
         allowed_states=("CLAIMED", "ACTIVE", "RECOVERING"),
         update=True,
+        allow_unclaimed_snapshot=True,
     )
     if authority is None:
+        snapshot = await session.scalar(
+            sa.select(db.NativeStreamDeploymentSnapshot.id).where(
+                db.NativeStreamDeploymentSnapshot.flow_run_id == flow_run_id
+            )
+        )
+        if snapshot is not None and (
+            proposed_state.is_running() or proposed_state.is_completed()
+        ):
+            raise NativeStreamError(
+                "RECOVERY_NOT_READY",
+                "Native deployment FlowRun must enrol its worker before execution",
+            )
         return None
     if force:
         raise NativeStreamError(
             "PROTOCOL_ERROR", "Enrolled FlowRun lifecycle cannot bypass policy"
         )
+    if authority.cancel_requested and not (
+        proposed_state.is_cancelling() or proposed_state.is_cancelled()
+    ):
+        raise NativeStreamError(
+            "CANCEL_REQUESTED", "Cancelled execution refuses later lifecycle writes"
+        )
+    if proposed_state.is_running():
+        snapshot = await session.scalar(
+            sa.select(db.NativeStreamDeploymentSnapshot.id).where(
+                db.NativeStreamDeploymentSnapshot.flow_run_id == flow_run_id
+            )
+        )
+        if snapshot is not None:
+            launch_state = await session.scalar(
+                sa.select(db.NativeStreamLaunchIdentity.state).where(
+                    db.NativeStreamLaunchIdentity.flow_run_id == flow_run_id,
+                    db.NativeStreamLaunchIdentity.generation == authority.generation,
+                )
+            )
+            if launch_state != "PROCESS_REGISTERED":
+                raise NativeStreamError(
+                    "RECOVERY_NOT_READY",
+                    "FlowRun cannot start before its worker process is registered",
+                )
     if (
         proposed_state.is_running()
         and authority.state == "ACTIVE"
@@ -535,8 +652,33 @@ async def apply_flow_lifecycle_result(
     db: PrefectDBInterface,
     authority: orm_models.StreamExecutionAuthority | None,
     result_state: State[Any] | None,
+    *,
+    flow_run_id: UUID | None = None,
 ) -> None:
-    if authority is None or result_state is None:
+    if result_state is None:
+        return
+    if authority is None:
+        if flow_run_id is not None and result_state.is_final():
+            snapshot = await session.scalar(
+                sa.select(db.NativeStreamDeploymentSnapshot)
+                .where(
+                    db.NativeStreamDeploymentSnapshot.flow_run_id == flow_run_id,
+                    db.NativeStreamDeploymentSnapshot.state == "ACTIVE",
+                )
+                .with_for_update()
+            )
+            if snapshot is not None:
+                launch_count = await session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(db.NativeStreamLaunchIdentity)
+                    .where(db.NativeStreamLaunchIdentity.flow_run_id == flow_run_id)
+                )
+                if launch_count:
+                    raise NativeStreamError(
+                        "TERMINAL_CONFLICT",
+                        "Native launch exists without execution authority",
+                    )
+                snapshot.state = "RELEASED"
         return
     flow = await session.get(db.FlowRun, authority.flow_run_id)
     if flow is None:
@@ -581,6 +723,12 @@ async def guard_task_lifecycle(
     )
     if authority is None:
         return None
+    if authority.cancel_requested and (
+        proposed_state is None or not proposed_state.is_cancelled()
+    ):
+        raise NativeStreamError(
+            "CANCEL_REQUESTED", "Cancelled execution refuses later TaskRun writes"
+        )
     if force:
         raise NativeStreamError(
             "PROTOCOL_ERROR", "Enrolled TaskRun lifecycle cannot bypass policy"
@@ -617,6 +765,7 @@ async def guard_task_lifecycle(
             "MANIFEST_NOT_SEALED",
             "Stream TaskRun lifecycle cannot start before its manifest is sealed",
         )
+    receipt: orm_models.StreamFiniteReceipt | None = None
     if finite is not None:
         if finite.phase == "PREFIX" and (
             authority.finite_prefix_manifest_digest != finite.manifest_digest

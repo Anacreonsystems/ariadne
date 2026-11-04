@@ -15,7 +15,7 @@ import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Optional, cast
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import anyio
 import cyclopts
@@ -35,6 +35,7 @@ from prefect.cli._utilities import (
 )
 from prefect.cli.flow_runs_watching import watch_flow_run
 from prefect.client.orchestration import get_client
+from prefect.client.orchestration._streams.client import StreamRequestError
 from prefect.client.schemas.filters import FlowFilter, FlowRunFilter, LogFilter
 from prefect.client.schemas.objects import StateType
 from prefect.client.schemas.responses import SetStateStatus
@@ -366,11 +367,29 @@ async def cancel(id: UUID):
     async with get_client() as client:
         cancelling_state = State(type=StateType.CANCELLING)
         try:
+            flow_run = await client.read_flow_run(id)
+            if (flow_run.labels or {}).get("prefect.native-streaming"):
+                plan = await client.read_native_stream_deployment_plan(flow_run_id=id)
+                if plan.current_launch is not None:
+                    await client.cancel_native_stream(
+                        flow_run_id=id,
+                        operation_id=uuid5(
+                            NAMESPACE_URL,
+                            f"prefect-native-cli-cancel/{id}/{plan.current_launch.generation}",
+                        ),
+                        expected_generation=plan.current_launch.generation,
+                        reason="Cancellation requested through the flow-run CLI",
+                    )
+                    exit_with_success(
+                        f"Flow run '{id}' was successfully scheduled for cancellation."
+                    )
             result = await client.set_flow_run_state(
                 flow_run_id=id, state=cancelling_state
             )
         except ObjectNotFound:
             exit_with_error(f"Flow run '{id}' not found!")
+        except StreamRequestError as refusal:
+            exit_with_error(f"Native cancellation refused ({refusal.code}): {refusal}")
 
     if result.status == SetStateStatus.ABORT:
         exit_with_error(

@@ -940,6 +940,19 @@ class RunnerDeployment(BaseModel):
             return [create_deployment_schedule_create(schedule)]
 
     def _set_defaults_from_flow(self, flow: "Flow[..., Any]"):
+        from prefect._internal.stream_deployment import (
+            NATIVE_DECLARATION_KEY,
+            native_deployment_declaration,
+        )
+
+        declaration = native_deployment_declaration(flow)
+        if declaration is not None:
+            existing = self.job_variables.get(NATIVE_DECLARATION_KEY)
+            if existing is not None and existing != declaration:
+                raise ValueError(
+                    "Deployment overrides a Flow's native streaming declaration"
+                )
+            self.job_variables[NATIVE_DECLARATION_KEY] = declaration
         self._parameter_openapi_schema = parameter_schema(flow)
 
         if not self.version:

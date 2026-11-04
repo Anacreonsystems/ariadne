@@ -337,9 +337,56 @@ async def update_work_pool(
     # the user, ignoring any defaults on the model
     update_data = work_pool.model_dump_for_orm(exclude_unset=True)
 
-    current_work_pool = await read_work_pool(session=session, work_pool_id=work_pool_id)
+    if "base_job_template" in update_data:
+        current_work_pool = await session.scalar(
+            sa.select(db.WorkPool)
+            .where(db.WorkPool.id == work_pool_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    else:
+        current_work_pool = await read_work_pool(
+            session=session, work_pool_id=work_pool_id
+        )
     if not current_work_pool:
         raise ObjectNotFoundError
+
+    if "base_job_template" in update_data:
+        # native_deployments depends on workers; keep this inverse model
+        # boundary deferred until both modules have initialized.
+        from prefect.server.models._stream_errors import NativeStreamError
+        from prefect.server.models.native_deployments import (
+            NATIVE_DECLARATION_JOB_VARIABLE,
+            NATIVE_WORK_POOL_MARKER,
+        )
+
+        active_native = await session.scalar(
+            sa.select(db.NativeStreamDeploymentSnapshot.id)
+            .where(
+                db.NativeStreamDeploymentSnapshot.work_pool_id == work_pool_id,
+                db.NativeStreamDeploymentSnapshot.state == "ACTIVE",
+            )
+            .limit(1)
+        )
+        if active_native is not None:
+            template = update_data["base_job_template"]
+            if (
+                not isinstance(template, dict)
+                or not {"job_configuration", "variables"} <= template.keys()
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "An active native pool requires its complete job template",
+                )
+            supplied = template.get(NATIVE_DECLARATION_JOB_VARIABLE)
+            if supplied is not None and supplied != NATIVE_WORK_POOL_MARKER:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "An active native pool cannot change its capability marker",
+                )
+            update_data["base_job_template"] = dict(template) | {
+                NATIVE_DECLARATION_JOB_VARIABLE: dict(NATIVE_WORK_POOL_MARKER)
+            }
 
     # Remove this from the session so we have a copy of the current state before we
     # update it; this will give us something to compare against when emitting events

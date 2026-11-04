@@ -165,11 +165,14 @@ async def create_flow_run(
 
         flow_run_object.work_queue_id = work_queue_id
 
-        model = await models.flow_runs.create_flow_run(
-            session=session,
-            flow_run=flow_run_object,
-            orchestration_parameters=orchestration_parameters,
-        )
+        try:
+            model = await models.flow_runs.create_flow_run(
+                session=session,
+                flow_run=flow_run_object,
+                orchestration_parameters=orchestration_parameters,
+            )
+        except NativeStreamError as error:
+            raise execution_http_error(error) from error
         created = model.created >= right_now
         timeout_check_state = (
             schemas.states.State.from_orm_without_result(model.state)
@@ -239,9 +242,12 @@ async def update_flow_run(
                 session, deployment, flow_run
             )
 
-        result = await models.flow_runs.update_flow_run(
-            session=session, flow_run=flow_run, flow_run_id=flow_run_id
-        )
+        try:
+            result = await models.flow_runs.update_flow_run(
+                session=session, flow_run=flow_run, flow_run_id=flow_run_id
+            )
+        except NativeStreamError as error:
+            raise execution_http_error(error) from error
     if not result:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Flow run not found")
 
@@ -569,7 +575,11 @@ async def resume_flow_run(
                 client_version=client_version,
             )
             await apply_flow_lifecycle_result(
-                session, db, authority, orchestration_result.state
+                session,
+                db,
+                authority,
+                orchestration_result.state,
+                flow_run_id=flow_run_id,
             )
         except NativeStreamError as error:
             raise execution_http_error(error) from error
@@ -814,7 +824,11 @@ async def bulk_set_flow_run_state(
                     client_version=client_version,
                 )
                 await apply_flow_lifecycle_result(
-                    session, db, authority, orchestration_result.state
+                    session,
+                    db,
+                    authority,
+                    orchestration_result.state,
+                    flow_run_id=flow_run.id,
                 )
                 results.append(
                     FlowRunOrchestrationResult(
@@ -905,7 +919,11 @@ async def set_flow_run_state(
                 client_version=client_version,
             )
             await apply_flow_lifecycle_result(
-                session, db, authority, orchestration_result.state
+                session,
+                db,
+                authority,
+                orchestration_result.state,
+                flow_run_id=flow_run_id,
             )
         except NativeStreamError as error:
             raise execution_http_error(error) from error

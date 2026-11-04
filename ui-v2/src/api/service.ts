@@ -22,8 +22,31 @@ const handleUnauthorized: Middleware = {
 const throwOnError: Middleware = {
 	async onResponse({ response }) {
 		if (!response.ok) {
-			const body = (await response.clone().json()) as Record<string, unknown>;
-			throw new Error(body.detail as string | undefined);
+			let message = `API request failed with status ${response.status}`;
+			try {
+				const body: unknown = await response.clone().json();
+				if (body && typeof body === "object" && !Array.isArray(body)) {
+					const detail = "detail" in body ? body.detail : undefined;
+					// Preserve caller-specific fallbacks when the server provides no detail.
+					if (detail === undefined) message = "";
+					else if (typeof detail === "string") message = detail;
+					else if (
+						detail &&
+						typeof detail === "object" &&
+						!Array.isArray(detail) &&
+						"code" in detail &&
+						"message" in detail &&
+						typeof detail.code === "string" &&
+						/^[A-Z][A-Z0-9_]{0,63}$/.test(detail.code) &&
+						typeof detail.message === "string"
+					) {
+						message = `${detail.code}: ${detail.message}`;
+					}
+				}
+			} catch {
+				// Opaque errors use status only; never serialize validation input.
+			}
+			throw new Error(message);
 		}
 	},
 };

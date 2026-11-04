@@ -1,0 +1,66 @@
+F
+=================================== FAILURES ===================================
+__________ test_mixed_direct_tasks_execute_through_normal_flow_engine __________
+src/prefect/client/orchestration/_streams/client.py:57: in _stream_request
+    return self.request(method, path, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/orchestration/base.py:33: in request
+    return self._client.send(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/base.py:746: in send
+    response.raise_for_status()
+src/prefect/client/base.py:182: in raise_for_status
+    raise PrefectHTTPStatusError.from_httpx_error(exc) from exc.__cause__
+E   prefect.exceptions.PrefectHTTPStatusError: Client error '409 Conflict' for url 'http://127.0.0.1:53497/api/streams/v1/finite/plan?flow_run_id=ebb20410-6e7f-4137-b57a-20face52ab13' - Response: {'detail': {'code': 'EXECUTION_BINDING_REQUIRED', 'message': 'Enrolled FlowRun requires execution binding', 'retryable': False}} - For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/409
+
+The above exception was the direct cause of the following exception:
+tests/test_native_mixed_flow_http.py:48: in test_mixed_direct_tasks_execute_through_normal_flow_engine
+    plan = client.read_stream_finite_plan(flow_run_id=run.id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/orchestration/_streams/client.py:141: in read_stream_finite_plan
+    response = self._stream_request(
+src/prefect/client/orchestration/_streams/client.py:59: in _stream_request
+    raise _refusal(error) from error
+E   prefect.client.orchestration._streams.client.StreamRequestError: Enrolled FlowRun requires execution binding
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_recovery'
+Connecting to postgres at 'postgres://native_recovery:native_recovery@127.0.0.1:55436/postgres'
+Creating test postgres database 'native_recovery_tests_master'
+Using test database connection URL 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_recovery_tests_master'
+Running hosted API server on port 37247
+---------------------------- Captured stderr setup -----------------------------
+13:39:33.959 | INFO    | uvicorn.error - Started server process [23799]
+13:39:33.962 | INFO    | uvicorn.error - Waiting for application startup.
+13:39:34.084 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+13:39:34.089 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+13:39:34.089 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+13:39:34.089 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+13:39:34.090 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+13:39:34.090 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+13:39:34.090 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+13:39:34.090 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+13:39:34.090 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+13:39:34.090 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+13:39:34.090 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+13:39:34.090 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+13:39:34.091 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+13:39:34.091 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+13:39:34.091 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+13:39:34.091 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+13:39:34.091 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+13:39:34.093 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+13:39:34.093 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+13:39:34.095 | INFO    | uvicorn.error - Application startup complete.
+13:39:34.095 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 37247) (Press CTRL+C to quit)
+13:39:34.131 | INFO    | uvicorn.access - 127.0.0.1:55148 - "GET /api/health HTTP/1.1" 200
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+13:39:42.745 | INFO    | uvicorn.error - Shutting down
+13:39:42.847 | INFO    | uvicorn.error - Waiting for application shutdown.
+13:39:42.849 | INFO    | uvicorn.error - Application shutdown complete.
+13:39:42.849 | INFO    | uvicorn.error - Finished server process [23799]
+=========================== short test summary info ============================
+FAILED tests/test_native_mixed_flow_http.py::test_mixed_direct_tasks_execute_through_normal_flow_engine
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 14.08s

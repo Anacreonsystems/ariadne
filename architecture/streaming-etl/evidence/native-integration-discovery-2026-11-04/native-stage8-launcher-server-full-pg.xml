@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="1" tests="19" time="25.713" timestamp="2026-11-04T15:34:00.861384+00:00" hostname="f8abb611283c"><testcase classname="tests.server.api.test_native_deployments" name="test_unstarted_launch_retirement_is_exact_and_leaves_no_child" time="7.247"><failure message="AssertionError: assert (StreamExecutionAuthority(id=919ae3e0-dbb9-4363-acbc-e62e2830a8dd) is not None and 'RELEASED' == 'TERMINAL'&#10;  &#10;  - TERMINAL&#10;  + RELEASED)">client = &lt;httpx.AsyncClient object at 0x7f2c2b671850&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7f2c2b81ec60&gt;
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f2c2ce50fb0&gt;
+deployment = Deployment(id=32082567-5a4c-44d0-a7fe-a047d5caf906)
+
+    async def test_unstarted_launch_retirement_is_exact_and_leaves_no_child(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL launch cleanup is covered by the PostgreSQL profile")
+        flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
+        plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()
+        enrollment = _enrollment_body(
+            flow_run.id, worker.id, work_pool_id, plan["declaration_digest"]
+        )
+        enrolled = await client.post("/streams/v1/deployments/enroll", json=enrollment)
+        assert enrolled.status_code == 200
+        headers = {
+            "X-Prefect-Stream-Execution-Generation": "1",
+            "X-Prefect-Stream-Execution-Holder": enrollment["holder_id"],
+            "X-Prefect-Stream-Execution-Capability": enrollment["holder_capability"],
+        }
+        request = {
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(uuid4()),
+            "enrollment_operation_id": enrollment["operation_id"],
+            "error": "child process could not be started",
+        }
+        retired = await client.post(
+            "/streams/v1/deployments/launches/retire-unstarted",
+            json=request,
+            headers=headers,
+        )
+        replay = await client.post(
+            "/streams/v1/deployments/launches/retire-unstarted",
+            json=request,
+            headers=headers,
+        )
+        assert retired.status_code == replay.status_code == 200
+        assert retired.json() == replay.json()
+        assert retired.json()["kind"] == "SPAWN_FAILED"
+        async with db.session_context() as check:
+            flow = await check.get(db.FlowRun, flow_run.id)
+            authority = await check.scalar(
+                sa.select(db.StreamExecutionAuthority).where(
+                    db.StreamExecutionAuthority.flow_run_id == flow_run.id
+                )
+            )
+            launch = await check.scalar(
+                sa.select(db.NativeStreamLaunchIdentity).where(
+                    db.NativeStreamLaunchIdentity.flow_run_id == flow_run.id
+                )
+            )
+            process_count = await check.scalar(
+                sa.select(sa.func.count())
+                .select_from(db.NativeStreamLaunchIdentity)
+                .where(
+                    db.NativeStreamLaunchIdentity.flow_run_id == flow_run.id,
+                    db.NativeStreamLaunchIdentity.child_process_id.is_not(None),
+                )
+            )
+        assert flow is not None and flow.state_type == "FAILED"
+&gt;       assert authority is not None and authority.state == "TERMINAL"
+E       AssertionError: assert (StreamExecutionAuthority(id=919ae3e0-dbb9-4363-acbc-e62e2830a8dd) is not None and 'RELEASED' == 'TERMINAL'
+E         
+E         - TERMINAL
+E         + RELEASED)
+
+tests/server/api/test_native_deployments.py:243: AssertionError</failure></testcase><testcase classname="tests.server.api.test_native_deployments" name="test_verified_dead_launcher_retires_without_child_or_graph" time="1.211" /><testcase classname="tests.server.api.test_native_deployments" name="test_process_registration_wins_over_launcher_death_authorization" time="0.773" /><testcase classname="tests.server.api.test_native_deployments" name="test_enroll_register_and_public_plan_are_exact_and_secret_free" time="0.885" /><testcase classname="tests.server.api.test_native_deployments" name="test_projection_is_bounded_and_payload_free" time="1.044" /><testcase classname="tests.server.api.test_native_deployments" name="test_enrollment_drift_and_legacy_takeover_fail_closed" time="0.925" /><testcase classname="tests.server.api.test_native_deployments" name="test_sqlite_enrollment_refuses_before_mutation" time="0.375"><skipped type="pytest.skip" message="SQLite refusal is covered by the SQLite profile">/workspace/ariadne/tests/server/api/test_native_deployments.py:673: SQLite refusal is covered by the SQLite profile</skipped></testcase><testcase classname="tests.server.api.test_native_deployments" name="test_flow_run_cannot_override_deployment_declaration" time="1.047" /><testcase classname="tests.server.api.test_native_deployments" name="test_zero_retry_declaration_rolls_back_flow_run" time="0.728" /><testcase classname="tests.server.api.test_native_deployments" name="test_native_local_profile_rejects_custom_launch_configuration[command]" time="0.723" /><testcase classname="tests.server.api.test_native_deployments" name="test_native_local_profile_rejects_custom_launch_configuration[pull_steps]" time="0.704" /><testcase classname="tests.server.api.test_native_deployments" name="test_verified_replacement_requires_exact_process_identity" time="1.186" /><testcase classname="tests.server.api.test_native_deployments" name="test_unclaimed_native_failure_releases_snapshot" time="0.553" /><testcase classname="tests.server.api.test_native_deployments" name="test_generation_two_unstarted_launch_fails_and_releases_old_graph" time="1.187" /><testcase classname="tests.server.api.test_native_deployments" name="test_terminal_child_cleanup_preserves_final_flow_state" time="1.169" /><testcase classname="tests.server.api.test_native_deployments" name="test_release_waits_for_bound_task_terminal_metadata" time="0.870" /><testcase classname="tests.server.api.test_native_deployments" name="test_drain_replays_accepted_append_and_cancel_blocks_writes" time="1.320" /><testcase classname="tests.server.api.test_native_deployments" name="test_orphan_cancellation_uses_authorized_death_witness" time="1.020" /><testcase classname="tests.server.api.test_native_deployments" name="test_registered_startup_crash_is_verified_and_retired" time="2.245" /></testsuite></testsuites>

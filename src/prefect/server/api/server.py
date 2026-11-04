@@ -106,6 +106,7 @@ API_ROUTERS = (
     api.flow_run_states.router,
     api.task_run_states.router,
     api.streams.router,
+    api.native_deployments.router,
     api.deployments.router,
     api.saved_searches.router,
     api.logs.router,

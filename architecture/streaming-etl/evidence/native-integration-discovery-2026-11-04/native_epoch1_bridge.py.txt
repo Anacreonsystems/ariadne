@@ -1,0 +1,50 @@
+from pathlib import Path
+import hashlib
+import json
+import subprocess
+
+base = Path('architecture/streaming-etl/evidence')
+old_path = base / 'native-epoch1-source-freeze-2026-11-04.json'
+new_path = base / 'native-epoch1-source-freeze-successor-2026-11-04.json'
+old = json.loads(old_path.read_text())['source_sha256']
+new = json.loads(new_path.read_text())['source_sha256']
+changed = sorted(p for p in set(old) | set(new) if old.get(p) != new.get(p))
+allowed = {
+    'architecture/streaming-etl/evidence/native-epoch1-gate-runner-2026-11-04.txt',
+    'tests/test_native_mixed_flow_http.py',
+    'ui-v2/public/mockServiceWorker.js',
+    'ui-v2/tests/browser/native-stream-live.mjs',
+    'ui-v2/tests/browser/native-stream-progress.mjs',
+}
+assert set(changed) == allowed, changed
+original = subprocess.check_output(['git', 'show', 'bbd2a2b:tests/test_native_mixed_flow_http.py'], text=True)
+assert hashlib.sha256(original.encode()).hexdigest() == old['tests/test_native_mixed_flow_http.py']
+expected = original.replace('@pytest.mark.parametrize("count", [8, 500])', '@pytest.mark.parametrize("count", [8, 500])\n@pytest.mark.timeout(300)', 1).replace('child.wait(timeout=180)', 'child.wait(timeout=240)', 1)
+assert Path('tests/test_native_mixed_flow_http.py').read_text() == expected
+reused = {}
+for name in ('kernel', 'flow-engine', 'worker-http', 'ordinary-worker'):
+    path = base / f'native-epoch1-{name}-final-2026-11-04.json'
+    report = json.loads(path.read_text())
+    assert report['verdict'] == 'PASS' and report['returncode'] == 0 and report['source_drift'] == []
+    for key in ('log', 'junit'):
+        artifact = report[key]
+        assert hashlib.sha256((base / artifact['path']).read_bytes()).hexdigest() == artifact['sha256']
+    reused[name] = {'report': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'tests': report['tests'], 'passed': report['passed'], 'skipped': report['skipped']}
+unchanged = [p for p in sorted(old) if old[p] == new[p]]
+assert all(old[p] == new[p] for p in old if p.startswith('src/'))
+assert all(old[p] == new[p] for p in old if p.startswith('tests/') and p != 'tests/test_native_mixed_flow_http.py')
+assert all(old[p] == new[p] for p in ('pyproject.toml', 'uv.lock', 'client/pyproject.toml', '.pre-commit-config.yaml', '.github/workflows/python-tests.yaml'))
+record = {
+    'schema': 'native-epoch1-source-relevance-bridge/v1',
+    'verdict': 'PASS_SOURCE_RELEVANCE_BRIDGE',
+    'predecessor_manifest': {'path': old_path.name, 'sha256': hashlib.sha256(old_path.read_bytes()).hexdigest()},
+    'successor_manifest': {'path': new_path.name, 'sha256': hashlib.sha256(new_path.read_bytes()).hexdigest()},
+    'changed_paths': changed,
+    'unchanged_paths': unchanged,
+    'reused_profiles': reused,
+    'mixed_timeout_only_text_verified': True,
+    'conditions': 'All Python runtime, dependency locks/configs and executed tests of reused profiles remain byte-identical. Only the unrelated mixed-profile deadline changes; that full15case profile is rerun. Three UI security paths require all affected UI/browser/build and packaged/live proofs. The runner change selects immutable named manifests without changing selection/verdict rules. Original reports are retained, not relabelled. Remaining profiles bind the successor manifest. Hosted successor CI required.',
+    'principal_review': 'Read-only conditional PASS_SOURCE_RELEVANCE_BRIDGE; final review follows completed successor reports.',
+}
+(base / 'native-epoch1-source-relevance-bridge-2026-11-04.json').write_text(json.dumps(record, indent=2) + '\n')
+print({'changed': changed, 'unchanged': len(unchanged), 'reused_passed': sum(r['passed'] for r in reused.values())})

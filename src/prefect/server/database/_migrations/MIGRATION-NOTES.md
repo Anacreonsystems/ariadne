@@ -8,6 +8,29 @@ Each time a database migration is written, an entry is included here with:
 
 This gives us a history of changes and will create merge conflicts if two migrations are made at once, flagging situations where a branch needs to be updated before merging.
 
+# Add verified native replacement and drain/cancel journals
+SQLite: `d06e2a9f4b53`
+Postgres: `c95d1f8e3a42`
+
+Adds per-launch renewal, server-authorized replacement challenges, exact kernel
+death witnesses, and bounded drain/cancel, cancellation-finalization and
+verified-retirement operation receipts. Replacement intents bind whether the
+verified identity is the launcher or child. Renewal expiry only permits
+same-host verification; it is never a death witness. SQLite keeps schema parity
+while native mutation routes refuse before writing. Downgrade removes the
+journals and authority control flags, then removes launch renewal.
+
+# Add native stream deployment snapshots and worker launch identities
+SQLite: `b84c0e7d2f31`
+Postgres: `f73b9d6a1c20`
+
+Adds the immutable per-FlowRun native declaration snapshot and bounded worker,
+Linux launcher and child identities used by N1.7 enrollment. The launcher
+identity is stored before child creation so a later worker can verify a crash in
+that interval without treating a renewal timeout as death. SQLite retains
+schema parity while native deployment mutation routes fail closed before
+writes. Downgrade removes launch identities before their parent snapshots.
+
 # Add bounded finite Task manifests and receipts
 SQLite: `a12d8e4f6c30`
 Postgres: `e41c7b6d2a90`

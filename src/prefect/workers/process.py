@@ -58,6 +58,7 @@ FR = TypeVar("FR")  # used to capture the return type of a flow
 
 
 class ProcessJobConfiguration(BaseJobConfiguration):
+    prefect_native_streaming: dict[str, Any] | None = Field(default=None)
     stream_output: bool = Field(default=True)
     working_dir: Optional[Path] = Field(default=None)
 
@@ -91,6 +92,10 @@ class ProcessJobConfiguration(BaseJobConfiguration):
             worker_name,
             worker_id=worker_id,
         )
+        if deployment is not None:
+            self.prefect_native_streaming = (deployment.job_variables or {}).get(
+                "prefect_native_streaming"
+            )
 
         self.env: dict[str, str | None] = {**os.environ, **self.env}
         self.command: str | None = (
@@ -109,6 +114,10 @@ class ProcessJobConfiguration(BaseJobConfiguration):
 
 
 class ProcessVariables(BaseVariables):
+    prefect_native_streaming: dict[str, Any] | None = Field(
+        default=None,
+        description="Public native Flow capability; contains no execution credentials.",
+    )
     stream_output: bool = Field(
         default=True,
         description=(
@@ -146,6 +155,18 @@ class ProcessWorker(
     _documentation_url = "https://docs.prefect.io/latest/get-started/quickstart"
     _logo_url = "https://raw.githubusercontent.com/PrefectHQ/prefect/420d0d6a78bb6df1fc18bcf188fdad43c1d22ea9/assets/block-logos/process.png"
 
+    async def get_and_submit_flow_runs(self) -> list["FlowRun"]:
+        runs = await super().get_and_submit_flow_runs()
+        if self._has_successfully_synced and self.work_pool.base_job_template.get(
+            "prefect_native_streaming"
+        ) == {"schema_version": 1, "profile": "bounded-linear-v1"}:
+            # Optional native protocol is discovered from the persisted pool
+            # marker. Ordinary pools keep their existing server compatibility.
+            from prefect.workers._native import recover_native_process_runs
+
+            await recover_native_process_runs(self)
+        return runs
+
     async def run(
         self,
         flow_run: "FlowRun",
@@ -154,6 +175,15 @@ class ProcessWorker(
     ) -> ProcessWorkerResult:
         if task_status is None:
             task_status = anyio.TASK_STATUS_IGNORED
+
+        if configuration.prefect_native_streaming is not None or (
+            flow_run.labels or {}
+        ).get("prefect.native-streaming"):
+            from prefect.workers._native import run_native_process_worker
+
+            return await run_native_process_worker(
+                self, flow_run, configuration, task_status
+            )
 
         working_dir_ctx = (
             tempfile.TemporaryDirectory(suffix="prefect")
@@ -294,6 +324,7 @@ class ProcessWorker(
             logger.debug("Flow run bundle execution complete")
 
     async def __aenter__(self) -> ProcessWorker:
+        self._native_active_run_ids: set[UUID] = set()
         runner = Runner(pause_on_shutdown=False, limit=None)
         self._runner = await runner.__aenter__()
         try:

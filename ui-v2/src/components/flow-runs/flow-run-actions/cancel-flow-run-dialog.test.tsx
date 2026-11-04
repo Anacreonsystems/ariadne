@@ -4,6 +4,7 @@ import { buildApiUrl, createWrapper, server } from "@tests/utils";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeFlowRun, createFakeState } from "@/mocks";
+import { createFakeNativeStreamProjection } from "@/mocks/create-fake-native-stream-projection";
 import { CancelFlowRunDialog } from "./cancel-flow-run-dialog";
 
 describe("CancelFlowRunDialog", () => {
@@ -285,5 +286,96 @@ describe("CancelFlowRunDialog", () => {
 
 		expect(screen.getByText("Paused")).toBeInTheDocument();
 		expect(screen.getByText("Cancelling")).toBeInTheDocument();
+	});
+	it("cancels an enrolled native run through the generation-bound control API", async () => {
+		const genericStateRequest = vi.fn();
+		let nativeBody: unknown;
+		server.use(
+			http.get(buildApiUrl("/streams/v1/deployments/:id/projection"), () =>
+				HttpResponse.json(createFakeNativeStreamProjection()),
+			),
+			http.post(
+				buildApiUrl("/streams/v1/deployments/control/cancel"),
+				async ({ request }) => {
+					nativeBody = await request.json();
+					return HttpResponse.json({
+						flow_run_id: runningFlowRun.id,
+						operation_id: "operation",
+						generation: 2,
+						kind: "CANCEL",
+						source_admission_closed: true,
+						cancel_requested: true,
+						created_at: "2026-11-04T12:00:00Z",
+					});
+				},
+			),
+			http.post(buildApiUrl("/flow_runs/:id/set_state"), () => {
+				genericStateRequest();
+				return HttpResponse.json({ status: "ACCEPT" });
+			}),
+		);
+		render(
+			<CancelFlowRunDialog
+				flowRun={{
+					...runningFlowRun,
+					labels: { "prefect.native-streaming": "bounded-linear-v1" },
+				}}
+				open={true}
+				onOpenChange={mockOnOpenChange}
+			/>,
+			{ wrapper: createWrapper() },
+		);
+		expect(await screen.findByText("Generation 2")).toBeInTheDocument();
+		await userEvent.click(
+			screen.getByRole("button", { name: "Cancel Flow Run" }),
+		);
+		await waitFor(() =>
+			expect(nativeBody).toMatchObject({
+				flow_run_id: runningFlowRun.id,
+				expected_generation: 2,
+				reason: "Requested from the FlowRun page",
+			}),
+		);
+		expect(genericStateRequest).not.toHaveBeenCalled();
+	});
+
+	it("keeps pre-enrollment native runs cancellable through ordinary orchestration", async () => {
+		const genericStateRequest = vi.fn();
+		server.use(
+			http.get(buildApiUrl("/streams/v1/deployments/:id/projection"), () =>
+				HttpResponse.json(
+					createFakeNativeStreamProjection({
+						generation: null,
+						authority_state: null,
+						worker_id: null,
+						launch_state: null,
+					}),
+				),
+			),
+			http.post(buildApiUrl("/flow_runs/:id/set_state"), () => {
+				genericStateRequest();
+				return HttpResponse.json({ status: "ACCEPT" });
+			}),
+		);
+		render(
+			<CancelFlowRunDialog
+				flowRun={{
+					...runningFlowRun,
+					labels: { "prefect.native-streaming": "bounded-linear-v1" },
+				}}
+				open={true}
+				onOpenChange={mockOnOpenChange}
+			/>,
+			{ wrapper: createWrapper() },
+		);
+		await waitFor(() =>
+			expect(
+				screen.getByRole("button", { name: "Cancel Flow Run" }),
+			).toBeEnabled(),
+		);
+		await userEvent.click(
+			screen.getByRole("button", { name: "Cancel Flow Run" }),
+		);
+		await waitFor(() => expect(genericStateRequest).toHaveBeenCalledOnce());
 	});
 });

@@ -102,7 +102,7 @@ class FlowRunClient(BaseClient):
             state=to_state_create(state),
             empirical_policy=FlowRunPolicy(
                 retries=flow.retries,
-                retry_delay=int(flow.retry_delay_seconds or 0),
+                retry_delay=float(flow.retry_delay_seconds or 0),
             ),
         )
 
@@ -629,7 +629,7 @@ class FlowRunAsyncClient(BaseAsyncClient):
             state=to_state_create(state),
             empirical_policy=FlowRunPolicy(
                 retries=flow.retries,
-                retry_delay=int(flow.retry_delay_seconds or 0),
+                retry_delay=float(flow.retry_delay_seconds or 0),
             ),
         )
 

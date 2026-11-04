@@ -32,6 +32,7 @@ from prefect.server.schemas.streams import (
     StreamFiniteCompleteRequest,
     StreamFiniteLookupRequest,
     StreamFiniteManifest,
+    StreamFinitePlan,
     StreamFiniteReceipt,
     StreamFiniteReserveRequest,
 )
@@ -428,6 +429,60 @@ class NativeFiniteStore:
                 )
             )
             return _manifest_response(manifest, completed=receipt is not None)
+
+    async def plan(self, flow_run_id: UUID) -> StreamFinitePlan:
+        """Read the complete finite plan for the current execution holder."""
+
+        async with self.streams._session() as session:
+            await self.streams._flow(
+                session,
+                flow_run_id,
+                allowed_execution_states=("RECOVERING", "ACTIVE"),
+            )
+            authority = await require_execution(
+                session,
+                self.db,
+                flow_run_id,
+                self.execution,
+                allowed_states=("RECOVERING", "ACTIVE"),
+            )
+            assert authority is not None
+            manifests = (
+                await session.scalars(
+                    sa.select(self.db.StreamFiniteSubmission)
+                    .where(self.db.StreamFiniteSubmission.flow_run_id == flow_run_id)
+                    .order_by(self.db.StreamFiniteSubmission.phase)
+                )
+            ).all()
+            if any(manifest.state == "RELEASED" for manifest in manifests):
+                raise NativeStreamError(
+                    "REPLAY_HORIZON_EXPIRED", "Finite submission was released"
+                )
+            manifest_ids = [manifest.id for manifest in manifests]
+            completed = (
+                set(
+                    await session.scalars(
+                        sa.select(
+                            self.db.StreamFiniteReceipt.finite_submission_id
+                        ).where(
+                            self.db.StreamFiniteReceipt.finite_submission_id.in_(
+                                manifest_ids
+                            )
+                        )
+                    )
+                )
+                if manifest_ids
+                else set()
+            )
+            return StreamFinitePlan(
+                flow_run_id=flow_run_id,
+                generation=authority.generation,
+                manifest_sealed=authority.manifest_set_digest is not None,
+                items=[
+                    _manifest_response(manifest, completed=manifest.id in completed)
+                    for manifest in manifests
+                ],
+            )
 
     async def complete(
         self, request: StreamFiniteCompleteRequest

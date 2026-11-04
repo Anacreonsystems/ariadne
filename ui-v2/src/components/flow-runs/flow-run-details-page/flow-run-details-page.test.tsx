@@ -13,6 +13,7 @@ import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Toaster } from "@/components/ui/sonner";
 import { createFakeFlowRun, createFakeState } from "@/mocks";
+import { createFakeNativeStreamProjection } from "@/mocks/create-fake-native-stream-projection";
 import { FlowRunDetailsPage } from ".";
 
 vi.mock("@/components/flow-runs/flow-run-graph", () => ({
@@ -141,6 +142,42 @@ describe("FlowRunDetailsPage", () => {
 		await waitFor(() => {
 			expect(document.title).toBe("Flow Run: test-flow-run • Prefect Server");
 		});
+	});
+
+	it("keeps ordinary runs free of native projection requests", async () => {
+		const projectionRequest = vi.fn();
+		server.use(
+			http.get(buildApiUrl("/streams/v1/deployments/:id/projection"), () => {
+				projectionRequest();
+				return HttpResponse.json(createFakeNativeStreamProjection());
+			}),
+		);
+		renderFlowRunDetailsPage();
+		expect(await screen.findByText("test-flow-run")).toBeInTheDocument();
+		expect(
+			screen.queryByRole("heading", { name: "Streaming progress" }),
+		).not.toBeInTheDocument();
+		expect(projectionRequest).not.toHaveBeenCalled();
+	});
+
+	it("includes native progress beside the existing FlowRun details", async () => {
+		server.use(
+			http.get(buildApiUrl("/flow_runs/:id"), () =>
+				HttpResponse.json({
+					...mockFlowRun,
+					labels: { "prefect.native-streaming": "v1" },
+				}),
+			),
+			http.get(buildApiUrl("/streams/v1/deployments/:id/projection"), () =>
+				HttpResponse.json(createFakeNativeStreamProjection()),
+			),
+		);
+		renderFlowRunDetailsPage();
+		expect(
+			await screen.findByRole("heading", { name: "Streaming progress" }),
+		).toBeInTheDocument();
+		expect(await screen.findByText("Generation 2")).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: "Task Runs" })).toBeInTheDocument();
 	});
 
 	it("displays the flow run state badge", async () => {

@@ -429,10 +429,40 @@ async def test_handle_cancelling_timeout_cancels_and_enqueues_cleanup(
         "flow_run_id": str(flow_run.id),
         "infrastructure_pid": "infra-pid-1",
     }
-
     reserved = await cleanup_queue.reserve(work_pool_id=work_pool.id)
     assert reserved is not None
     assert reserved.message_id == message.message_id
+
+
+async def test_native_cancelling_timeout_requires_verified_process_death(
+    cleanup_queue: WorkerCleanupQueue,
+    cancelling_flow_run_maker: Callable[..., Awaitable[Any]],
+    session: AsyncSession,
+):
+    flow_run = await cancelling_flow_run_maker(infrastructure_pid="native-child")
+    db = provide_database_interface()
+    session.add(
+        db.StreamExecutionAuthority(
+            flow_run_id=flow_run.id,
+            generation=1,
+            prepared_generation=1,
+            holder_id=uuid4(),
+            holder_capability_digest="a" * 64,
+            holder_event_public_key="b" * 64,
+            event_key_id="c" * 64,
+            supervisor_id=uuid4(),
+            supervisor_capability_digest="d" * 64,
+            state="ACTIVE",
+            flow_run_run_count=flow_run.run_count,
+            source_admission_closed=True,
+            cancel_requested=True,
+        )
+    )
+    await session.commit()
+    message, _ = await _handle_cancelling_timeout_for_run(flow_run, cleanup_queue)
+    await session.refresh(flow_run)
+    assert message is None
+    assert flow_run.state_type == states.StateType.CANCELLING
 
 
 async def test_handle_cancelling_timeout_skips_recent_cancelling_run(

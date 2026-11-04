@@ -38,6 +38,7 @@ from prefect.server.schemas.streams import (
     StreamSubmissionManifest,
     StreamSubmissionReserveRequest,
 )
+from prefect.types import DateTime
 from prefect.types._datetime import now
 
 MAX_STREAMS_PER_FLOW = 128
@@ -187,6 +188,15 @@ class NativeStreamStore:
         if authority is not None and authority.state not in execution_states:
             raise NativeStreamError(
                 "RECOVERY_NOT_READY", "Execution generation is not active"
+            )
+        if (
+            authority is not None
+            and authority.cancel_requested
+            and "TERMINAL" not in execution_states
+            and "RELEASED" not in execution_states
+        ):
+            raise NativeStreamError(
+                "CANCEL_REQUESTED", "Native execution no longer accepts data writes"
             )
         return flow
 
@@ -1265,6 +1275,16 @@ class NativeStreamStore:
                         "IDENTITY_CONFLICT", "Source position has different content"
                     )
                 return StreamEnvelope.model_validate(existing)
+            authority = await session.scalar(
+                sa.select(self.db.StreamExecutionAuthority).where(
+                    self.db.StreamExecutionAuthority.flow_run_id == binding.flow_run_id
+                )
+            )
+            if authority is not None and authority.source_admission_closed:
+                raise NativeStreamError(
+                    "SOURCE_DRAIN_REQUESTED",
+                    "Native execution is draining and accepts no new source data",
+                )
             if stream.state != "OPEN":
                 raise NativeStreamError("TERMINAL_CONFLICT", "Cannot append after EOF")
             if position != stream.producer_position + 1:
@@ -1658,18 +1678,113 @@ class NativeStreamStore:
             ).all()
             return [StreamEnvelope.model_validate(row) for row in rows]
 
-    async def release_flow(self, flow_run_id: UUID) -> int:
+    async def release_flow(
+        self, flow_run_id: UUID, *, verified_server: bool = False
+    ) -> int:
         async with self._session() as session:
-            flow = await self._flow(
-                session,
-                flow_run_id,
-                update=True,
-                allowed_execution_states=("TERMINAL", "RELEASED"),
-            )
+            if verified_server:
+                flow = await session.scalar(
+                    sa.select(self.db.FlowRun)
+                    .where(self.db.FlowRun.id == flow_run_id)
+                    .with_for_update()
+                )
+                authority_check = await session.scalar(
+                    sa.select(self.db.StreamExecutionAuthority)
+                    .where(self.db.StreamExecutionAuthority.flow_run_id == flow_run_id)
+                    .with_for_update()
+                )
+                verified_retirement = await session.scalar(
+                    sa.select(self.db.NativeStreamControlOperation.id).where(
+                        self.db.NativeStreamControlOperation.flow_run_id == flow_run_id,
+                        self.db.NativeStreamControlOperation.kind.in_(
+                            ("SPAWN_FAILED", "VERIFIED_RETIRED")
+                        ),
+                    )
+                )
+                if (
+                    flow is None
+                    or authority_check is None
+                    or authority_check.state not in {"TERMINAL", "RELEASED"}
+                    or (
+                        not authority_check.cancel_requested
+                        and verified_retirement is None
+                    )
+                ):
+                    raise NativeStreamError(
+                        "TERMINAL_CONFLICT",
+                        "Verified cancellation is not ready for release",
+                    )
+            else:
+                flow = await self._flow(
+                    session,
+                    flow_run_id,
+                    update=True,
+                    allowed_execution_states=("TERMINAL", "RELEASED"),
+                )
             if flow.state_type not in TERMINAL_STATES:
                 raise NativeStreamError(
                     "TERMINAL_CONFLICT", "Only a final FlowRun can release payloads"
                 )
+            bound_task_ids = set(
+                (
+                    await session.scalars(
+                        sa.select(self.db.StreamSubmission.task_run_id).where(
+                            self.db.StreamSubmission.flow_run_id == flow_run_id
+                        )
+                    )
+                ).all()
+            )
+            bound_task_ids.update(
+                (
+                    await session.scalars(
+                        sa.select(self.db.StreamFiniteSubmission.task_run_id).where(
+                            self.db.StreamFiniteSubmission.flow_run_id == flow_run_id
+                        )
+                    )
+                ).all()
+            )
+            if bound_task_ids:
+                nonterminal_tasks = await session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(self.db.TaskRun)
+                    .where(
+                        self.db.TaskRun.id.in_(bound_task_ids),
+                        self.db.TaskRun.state_type.not_in(TERMINAL_STATES),
+                    )
+                )
+                if nonterminal_tasks:
+                    raise NativeStreamError(
+                        "METADATA_NOT_READY",
+                        "Bound TaskRun terminal metadata has not been recorded",
+                    )
+            deployment_snapshot = await session.scalar(
+                sa.select(self.db.NativeStreamDeploymentSnapshot)
+                .where(
+                    self.db.NativeStreamDeploymentSnapshot.flow_run_id == flow_run_id
+                )
+                .with_for_update()
+            )
+            launches = (
+                await session.scalars(
+                    sa.select(self.db.NativeStreamLaunchIdentity)
+                    .where(
+                        self.db.NativeStreamLaunchIdentity.flow_run_id == flow_run_id
+                    )
+                    .order_by(self.db.NativeStreamLaunchIdentity.generation)
+                    .with_for_update()
+                )
+            ).all()
+            replacements = (
+                await session.scalars(
+                    sa.select(self.db.NativeStreamReplacementOperation)
+                    .where(
+                        self.db.NativeStreamReplacementOperation.flow_run_id
+                        == flow_run_id
+                    )
+                    .order_by(self.db.NativeStreamReplacementOperation.created)
+                    .with_for_update()
+                )
+            ).all()
             manifests = (
                 await session.scalars(
                     sa.select(self.db.StreamSubmission)
@@ -1730,7 +1845,7 @@ class NativeStreamStore:
                         )
                     stream.released = True
                     stream.record_count, stream.byte_count = 0, 0
-            released_at = now("UTC")
+            released_at = cast(DateTime, now("UTC"))
             for manifest in manifests:
                 if manifest.state == "ACTIVE":
                     manifest.state = "RELEASED"
@@ -1746,4 +1861,10 @@ class NativeStreamStore:
             )
             if authority is not None:
                 authority.state = "RELEASED"
+            if deployment_snapshot is not None:
+                deployment_snapshot.state = "RELEASED"
+            for launch in launches:
+                launch.state = "RELEASED"
+            for replacement in replacements:
+                replacement.state = "RELEASED"
         return count

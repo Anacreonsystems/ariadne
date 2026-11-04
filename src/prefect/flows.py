@@ -81,6 +81,7 @@ from prefect.settings import (
     PREFECT_UI_URL,
 )
 from prefect.states import State
+from prefect.streams import NativeStreamFlowConfig, StreamProtocolError
 from prefect.task_runners import TaskRunner, ThreadPoolTaskRunner
 from prefect.types import BANNED_CHARACTERS, WITHOUT_BANNED_CHARACTERS
 from prefect.types.entrypoint import EntrypointType
@@ -198,7 +199,12 @@ class Flow(Generic[P, R]):
         on_cancellation: An optional list of callables to run when the flow enters a cancelling state.
         on_crashed: An optional list of callables to run when the flow enters a crashed state.
         on_running: An optional list of callables to run when the flow enters a running state.
+        streaming: Native durable-stream capability. Requires an explicit version;
+            deployment enrollment also requires a retry budget and the supported
+            PostgreSQL/Linux process profile.
     """
+
+    streaming: NativeStreamFlowConfig | None = None
 
     # NOTE: These parameters (types, defaults, and docstrings) should be duplicated
     #       exactly in the @flow decorator
@@ -226,7 +232,14 @@ class Flow(Generic[P, R]):
         on_cancellation: Optional[list[FlowStateHook[P, R]]] = None,
         on_crashed: Optional[list[FlowStateHook[P, R]]] = None,
         on_running: Optional[list[FlowStateHook[P, R]]] = None,
+        streaming: NativeStreamFlowConfig | None = None,
     ):
+        if streaming is not None and (
+            not isinstance(streaming, NativeStreamFlowConfig) or not version
+        ):
+            raise StreamProtocolError(
+                "Native Flow capabilities require a config and explicit version"
+            )
         if name is not None and not isinstance(name, str):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise TypeError(
                 "Expected string for flow parameter 'name'; got {} instead. {}".format(
@@ -342,6 +355,7 @@ class Flow(Generic[P, R]):
             except (FileNotFoundError, TypeError, OSError):
                 pass  # `getsourcefile` can return null values and "<stdin>" for objects in repls
         self.version = version
+        self.streaming: NativeStreamFlowConfig | None = streaming
 
         self.timeout_seconds: float | None = (
             float(timeout_seconds) if timeout_seconds else None
@@ -474,6 +488,7 @@ class Flow(Generic[P, R]):
         on_cancellation: Optional[list[FlowStateHook[P, R]]] = None,
         on_crashed: Optional[list[FlowStateHook[P, R]]] = None,
         on_running: Optional[list[FlowStateHook[P, R]]] = None,
+        streaming: NativeStreamFlowConfig | None | type[NotSet] = NotSet,
     ) -> "Flow[P, R]":
         """
         Create a new flow from the current object, updating provided options.
@@ -583,6 +598,7 @@ class Flow(Generic[P, R]):
             on_cancellation=on_cancellation or self.on_cancellation_hooks,
             on_crashed=on_crashed or self.on_crashed_hooks,
             on_running=on_running or self.on_running_hooks,
+            streaming=self.streaming if streaming is NotSet else streaming,
         )
         new_flow._storage = self._storage
         new_flow._entrypoint = self._entrypoint
@@ -2150,6 +2166,7 @@ class FlowDecorator:
         on_cancellation: Optional[list[FlowStateHook[..., Any]]] = None,
         on_crashed: Optional[list[FlowStateHook[..., Any]]] = None,
         on_running: Optional[list[FlowStateHook[..., Any]]] = None,
+        streaming: NativeStreamFlowConfig | None = None,
     ) -> Callable[[Callable[P, R]], Flow[P, R]]: ...
 
     @overload
@@ -2176,6 +2193,7 @@ class FlowDecorator:
         on_cancellation: Optional[list[FlowStateHook[..., Any]]] = None,
         on_crashed: Optional[list[FlowStateHook[..., Any]]] = None,
         on_running: Optional[list[FlowStateHook[..., Any]]] = None,
+        streaming: NativeStreamFlowConfig | None = None,
     ) -> Callable[[Callable[P, R]], Flow[P, R]]: ...
 
     def __call__(
@@ -2201,6 +2219,7 @@ class FlowDecorator:
         on_cancellation: Optional[list[FlowStateHook[..., Any]]] = None,
         on_crashed: Optional[list[FlowStateHook[..., Any]]] = None,
         on_running: Optional[list[FlowStateHook[..., Any]]] = None,
+        streaming: NativeStreamFlowConfig | None = None,
     ) -> Union[Flow[P, R], Callable[[Callable[P, R]], Flow[P, R]]]:
         """
         Decorator to designate a function as a Prefect workflow.
@@ -2270,6 +2289,9 @@ class FlowDecorator:
                 final state of the flow run.
             on_running: An optional list of functions to call when the flow run is started. Each
                 function should accept three arguments: the flow, the flow run, and the current state
+            streaming: Native durable-stream capability with explicit flow version
+                and a deployment retry budget. The supported profile uses PostgreSQL
+                and local Linux ProcessWorkers.
 
         Returns:
             A callable `Flow` object which, when called, will run the flow and return its
@@ -2342,6 +2364,7 @@ class FlowDecorator:
                 on_cancellation=on_cancellation,
                 on_crashed=on_crashed,
                 on_running=on_running,
+                streaming=streaming,
             )
         else:
             return cast(
@@ -2367,6 +2390,7 @@ class FlowDecorator:
                     on_cancellation=on_cancellation,
                     on_crashed=on_crashed,
                     on_running=on_running,
+                    streaming=streaming,
                 ),
             )
 
@@ -2814,6 +2838,7 @@ class InfrastructureBoundFlow(Flow[P, R]):
         on_cancellation: Optional[list[FlowStateHook[P, R]]] = None,
         on_crashed: Optional[list[FlowStateHook[P, R]]] = None,
         on_running: Optional[list[FlowStateHook[P, R]]] = None,
+        streaming: NativeStreamFlowConfig | None | type[NotSet] = NotSet,
         job_variables: Optional[dict[str, Any]] = None,
         launcher: BundleLauncher | None = NotSet,  # type: ignore
         include_files: Optional[list[str]] = NotSet,  # type: ignore
@@ -2839,6 +2864,7 @@ class InfrastructureBoundFlow(Flow[P, R]):
             on_cancellation=on_cancellation,
             on_crashed=on_crashed,
             on_running=on_running,
+            streaming=streaming,
         )
         new_infrastructure_bound_flow = bind_flow_to_infrastructure(
             new_flow,

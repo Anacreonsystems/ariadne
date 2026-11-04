@@ -17,7 +17,7 @@ from prefect.server import models, schemas
 from prefect.server.database import PrefectDBInterface
 from prefect.server.events.clients import AssertingEventsClient
 from prefect.server.models.streams import NativeStreamError, NativeStreamStore
-from prefect.server.orchestration.core_policy import CoreFlowPolicy
+from prefect.server.orchestration.core_policy import CoreFlowPolicy, CoreTaskPolicy
 from prefect.server.schemas.streams import (
     ConsumerBinding,
     SourceBinding,
@@ -1691,6 +1691,20 @@ async def test_release_retains_submission_witness_and_expires_execution(db, flow
         )
         assert result.state is not None
         assert result.state.is_cancelled()
+    with pytest.raises(NativeStreamError) as metadata_lag:
+        await store.release_flow(flow_run.id)
+    assert metadata_lag.value.code == "METADATA_NOT_READY"
+    async with db.session_context(begin_transaction=True) as session:
+        stream = await session.get(db.StreamPartition, manifest.stream_id)
+        assert stream is not None and not stream.released
+        task_result = await models.task_runs.set_task_run_state(
+            session=session,
+            task_run_id=manifest.task_run_id,
+            state=schemas.states.Cancelled(message="bounded release"),
+            task_policy=CoreTaskPolicy,
+        )
+        assert task_result.state is not None
+        assert task_result.state.is_cancelled()
     assert await store.release_flow(flow_run.id) == 1
     witness = await store.lookup_submission(
         StreamSubmissionLookupRequest(

@@ -797,4 +797,32 @@ describe("FlowRunHeader", () => {
 
 		expect(screen.queryByText("Cancel")).not.toBeInTheDocument();
 	});
+	it.each(["RUNNING", "COMPLETED"] as const)(
+		"keeps native %s controls on the supported lifecycle path",
+		async (stateType) => {
+			renderFlowRunHeader({
+				state_type: stateType,
+				labels: { "prefect.native-streaming": "bounded-linear-v1" },
+			});
+			await userEvent.click(
+				await screen.findByRole("button", { name: "Open menu" }),
+			);
+			if (stateType === "RUNNING")
+				expect(
+					screen.getByRole("menuitem", { name: "Cancel" }),
+				).toBeInTheDocument();
+			expect(
+				screen.queryByRole("menuitem", { name: "Pause" }),
+			).not.toBeInTheDocument();
+			expect(
+				screen.queryByRole("menuitem", { name: "Retry" }),
+			).not.toBeInTheDocument();
+			expect(
+				screen.queryByRole("menuitem", { name: "Change state" }),
+			).not.toBeInTheDocument();
+			expect(
+				screen.getByRole("menuitem", { name: "Copy to new run" }),
+			).toBeInTheDocument();
+		},
+	);
 });

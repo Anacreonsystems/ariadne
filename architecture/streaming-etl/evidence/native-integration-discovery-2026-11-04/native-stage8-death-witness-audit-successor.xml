@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="8.801" timestamp="2026-11-04T16:01:09.466342+00:00" hostname="f8abb611283c"><testcase classname="tests.server.api.test_native_deployments" name="test_orphan_cancellation_uses_authorized_death_witness" time="6.308"><failure message="sqlalchemy.exc.InvalidRequestError: Incorrect number of values in identifier to formulate primary key for session.get(); primary key columns are 'native_stream_replacement_operation.id'">client = &lt;httpx.AsyncClient object at 0x7f006cd73290&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7f006cd72ae0&gt;
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f006e550290&gt;
+deployment = Deployment(id=0731ab92-b465-46ee-b944-da18c4583c1a)
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7f006cd8f890&gt;
+
+    async def test_orphan_cancellation_uses_authorized_death_witness(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL orphan cancellation is covered by its PG profile")
+        flow_run, worker, work_pool_id, enrollment, _, registration = await _active_launch(
+            client, session, db, deployment
+        )
+        cancel = await client.post(
+            "/streams/v1/deployments/control/cancel",
+            json={
+                "flow_run_id": str(flow_run.id),
+                "operation_id": str(uuid4()),
+                "expected_generation": 1,
+                "reason": "orphan cancellation",
+            },
+        )
+        assert cancel.status_code == 200
+        monkeypatch.setattr(native_deployments, "LAUNCH_RENEWAL_STALE_AFTER", timedelta(0))
+        candidates = await client.get(
+            "/streams/v1/deployments/replacements/candidates",
+            params={
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+            },
+        )
+        assert candidates.status_code == 200
+        assert len(candidates.json()) == 1
+        operation_id = uuid4()
+        challenge = secrets.token_hex(32)
+        authorized = await client.post(
+            "/streams/v1/deployments/replacements/authorize",
+            json={
+                "flow_run_id": str(flow_run.id),
+                "operation_id": str(operation_id),
+                "expected_generation": 1,
+                "enrollment_operation_id": enrollment["operation_id"],
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+                "identity_kind": "CHILD",
+                "challenge_capability": challenge,
+            },
+        )
+        assert authorized.status_code == 200
+        finalization = {
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(operation_id),
+            "expected_generation": 1,
+            "enrollment_operation_id": enrollment["operation_id"],
+            "challenge_capability": challenge,
+            "death_witness": {
+                "kind": "IDENTITY_GONE",
+                "observed_at": "2026-11-04T15:30:00Z",
+                "host_id": registration["host_id"],
+                "boot_id": registration["boot_id"],
+                "child_process_id": registration["child_process_id"],
+                "process_start_ticks": registration["process_start_ticks"],
+            },
+        }
+        finalized = await client.post(
+            "/streams/v1/deployments/control/finalize-cancel", json=finalization
+        )
+        finalized_replay = await client.post(
+            "/streams/v1/deployments/control/finalize-cancel", json=finalization
+        )
+        assert finalized.status_code == finalized_replay.status_code == 200, (
+            finalized.text,
+            finalized_replay.text,
+        )
+        assert finalized.json() == finalized_replay.json()
+        final_flow = await client.get(f"/flow_runs/{flow_run.id}")
+        assert final_flow.json()["state_type"] == "CANCELLED"
+        async with db.session_context() as check:
+&gt;           replacement = await check.get(
+                db.NativeStreamReplacementOperation, (flow_run.id, operation_id)
+            )
+
+tests/server/api/test_native_deployments.py:1675: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py:592: in get
+    return await greenlet_spawn(
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:190: in greenlet_spawn
+    result = context.switch(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:3680: in get
+    return self._get_impl(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;sqlalchemy.orm.session.Session object at 0x7f006c49b9b0&gt;
+entity = &lt;class 'prefect.server.database.orm_models.NativeStreamReplacementOperation'&gt;
+primary_key_identity = [UUID('d83f0ebb-14be-47c1-a435-da6bc4e91605'), UUID('266e2e27-e55b-409c-b36d-f6db9052e42e')]
+db_load_fn = &lt;function load_on_pk_identity at 0x7f00710af6a0&gt;, options = None
+populate_existing = False, with_for_update = None, identity_token = None
+execution_options = immutabledict({}), bind_arguments = None
+
+    def _get_impl(
+        self,
+        entity: _EntityBindKey[_O],
+        primary_key_identity: _PKIdentityArgument,
+        db_load_fn: Callable[..., _O],
+        *,
+        options: Optional[Sequence[ExecutableOption]] = None,
+        populate_existing: bool = False,
+        with_for_update: ForUpdateParameter = None,
+        identity_token: Optional[Any] = None,
+        execution_options: OrmExecuteOptionsParameter = util.EMPTY_DICT,
+        bind_arguments: Optional[_BindArguments] = None,
+    ) -&gt; Optional[_O]:
+        # convert composite types to individual args
+        if (
+            is_composite_class(primary_key_identity)
+            and type(primary_key_identity)
+            in descriptor_props._composite_getters
+        ):
+            getter = descriptor_props._composite_getters[
+                type(primary_key_identity)
+            ]
+            primary_key_identity = getter(primary_key_identity)
+    
+        mapper: Optional[Mapper[_O]] = inspect(entity)
+    
+        if mapper is None or not mapper.is_mapper:
+            raise sa_exc.ArgumentError(
+                "Expected mapped class or mapper, got: %r" % entity
+            )
+    
+        is_dict = isinstance(primary_key_identity, dict)
+        if not is_dict:
+            primary_key_identity = util.to_list(
+                primary_key_identity, default=[None]
+            )
+    
+        if len(primary_key_identity) != len(mapper.primary_key):
+&gt;           raise sa_exc.InvalidRequestError(
+                "Incorrect number of values in identifier to formulate "
+                "primary key for session.get(); primary key columns "
+                "are %s" % ",".join("'%s'" % c for c in mapper.primary_key)
+            )
+E           sqlalchemy.exc.InvalidRequestError: Incorrect number of values in identifier to formulate primary key for session.get(); primary key columns are 'native_stream_replacement_operation.id'
+
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:3780: InvalidRequestError</failure></testcase><testcase classname="tests.server.api.test_native_deployments" name="test_registered_startup_crash_is_verified_and_retired" time="2.130"><failure message="sqlalchemy.exc.InvalidRequestError: Incorrect number of values in identifier to formulate primary key for session.get(); primary key columns are 'native_stream_replacement_operation.id'">client = &lt;httpx.AsyncClient object at 0x7f006c3ceff0&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7f006cd71fa0&gt;
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f006e550290&gt;
+deployment = Deployment(id=369d666e-52aa-4e65-a76a-70d401fdc092)
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7f006cef9700&gt;
+
+    async def test_registered_startup_crash_is_verified_and_retired(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL verified retirement is covered by its PG profile")
+        flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
+        plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()
+        enrollment = _enrollment_body(
+            flow_run.id, worker.id, work_pool_id, plan["declaration_digest"]
+        )
+        enrolled = await client.post("/streams/v1/deployments/enroll", json=enrollment)
+        assert enrolled.status_code == 200
+        headers = {
+            "X-Prefect-Stream-Execution-Generation": "1",
+            "X-Prefect-Stream-Execution-Holder": enrollment["holder_id"],
+            "X-Prefect-Stream-Execution-Capability": enrollment["holder_capability"],
+        }
+        registration = {
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(uuid4()),
+            "enrollment_operation_id": enrollment["operation_id"],
+            "generation": 1,
+            "launcher_instance_id": enrollment["launcher_instance_id"],
+            "host_id": str(uuid4()),
+            "boot_id": str(uuid4()),
+            "child_process_id": 6789,
+            "process_start_ticks": 456789,
+            "launch_nonce_digest": "d" * 64,
+        }
+        registered = await client.post(
+            "/streams/v1/deployments/launches/register-process",
+            json=registration,
+            headers=headers,
+        )
+        assert registered.status_code == 200
+        monkeypatch.setattr(native_deployments, "LAUNCH_RENEWAL_STALE_AFTER", timedelta(0))
+        candidates = await client.get(
+            "/streams/v1/deployments/replacements/candidates",
+            params={
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+            },
+        )
+        assert len(candidates.json()) == 1
+        operation_id = uuid4()
+        challenge = secrets.token_hex(32)
+        authorized = await client.post(
+            "/streams/v1/deployments/replacements/authorize",
+            json={
+                "flow_run_id": str(flow_run.id),
+                "operation_id": str(operation_id),
+                "expected_generation": 1,
+                "enrollment_operation_id": enrollment["operation_id"],
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+                "identity_kind": "CHILD",
+                "challenge_capability": challenge,
+            },
+        )
+        assert authorized.status_code == 200
+        retirement = {
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(operation_id),
+            "expected_generation": 1,
+            "enrollment_operation_id": enrollment["operation_id"],
+            "challenge_capability": challenge,
+            "death_witness": {
+                "kind": "IDENTITY_GONE",
+                "observed_at": "2026-11-04T16:00:00Z",
+                "host_id": registration["host_id"],
+                "boot_id": registration["boot_id"],
+                "child_process_id": registration["child_process_id"],
+                "process_start_ticks": registration["process_start_ticks"],
+            },
+            "error": "registered child exited before bootstrap",
+        }
+        retired = await client.post(
+            "/streams/v1/deployments/replacements/retire-verified", json=retirement
+        )
+        retired_replay = await client.post(
+            "/streams/v1/deployments/replacements/retire-verified", json=retirement
+        )
+        assert retired.status_code == retired_replay.status_code == 200, retired.text
+        assert retired.json() == retired_replay.json()
+        assert retired.json()["kind"] == "VERIFIED_RETIRED"
+        final_flow = await client.get(f"/flow_runs/{flow_run.id}")
+        assert final_flow.json()["state_type"] == "FAILED"
+        async with db.session_context() as check:
+&gt;           replacement = await check.get(
+                db.NativeStreamReplacementOperation, (flow_run.id, operation_id)
+            )
+
+tests/server/api/test_native_deployments.py:1781: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py:592: in get
+    return await greenlet_spawn(
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:190: in greenlet_spawn
+    result = context.switch(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:3680: in get
+    return self._get_impl(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;sqlalchemy.orm.session.Session object at 0x7f006c06a000&gt;
+entity = &lt;class 'prefect.server.database.orm_models.NativeStreamReplacementOperation'&gt;
+primary_key_identity = [UUID('bde48533-d349-4992-bdc9-a1ff6f04acdb'), UUID('1797f8f8-7899-4500-9315-5fa6f4ef52c3')]
+db_load_fn = &lt;function load_on_pk_identity at 0x7f00710af6a0&gt;, options = None
+populate_existing = False, with_for_update = None, identity_token = None
+execution_options = immutabledict({}), bind_arguments = None
+
+    def _get_impl(
+        self,
+        entity: _EntityBindKey[_O],
+        primary_key_identity: _PKIdentityArgument,
+        db_load_fn: Callable[..., _O],
+        *,
+        options: Optional[Sequence[ExecutableOption]] = None,
+        populate_existing: bool = False,
+        with_for_update: ForUpdateParameter = None,
+        identity_token: Optional[Any] = None,
+        execution_options: OrmExecuteOptionsParameter = util.EMPTY_DICT,
+        bind_arguments: Optional[_BindArguments] = None,
+    ) -&gt; Optional[_O]:
+        # convert composite types to individual args
+        if (
+            is_composite_class(primary_key_identity)
+            and type(primary_key_identity)
+            in descriptor_props._composite_getters
+        ):
+            getter = descriptor_props._composite_getters[
+                type(primary_key_identity)
+            ]
+            primary_key_identity = getter(primary_key_identity)
+    
+        mapper: Optional[Mapper[_O]] = inspect(entity)
+    
+        if mapper is None or not mapper.is_mapper:
+            raise sa_exc.ArgumentError(
+                "Expected mapped class or mapper, got: %r" % entity
+            )
+    
+        is_dict = isinstance(primary_key_identity, dict)
+        if not is_dict:
+            primary_key_identity = util.to_list(
+                primary_key_identity, default=[None]
+            )
+    
+        if len(primary_key_identity) != len(mapper.primary_key):
+&gt;           raise sa_exc.InvalidRequestError(
+                "Incorrect number of values in identifier to formulate "
+                "primary key for session.get(); primary key columns "
+                "are %s" % ",".join("'%s'" % c for c in mapper.primary_key)
+            )
+E           sqlalchemy.exc.InvalidRequestError: Incorrect number of values in identifier to formulate primary key for session.get(); primary key columns are 'native_stream_replacement_operation.id'
+
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:3780: InvalidRequestError</failure></testcase></testsuite></testsuites>

@@ -264,6 +264,13 @@ class FlowRunExecutorContext:
     client: PrefectClient
     process_manager: ProcessManager
 
+    def __init__(
+        self,
+        *,
+        cancellation_handler: Callable[[UUID], Awaitable[None]] | None = None,
+    ) -> None:
+        self._cancellation_handler = cancellation_handler
+
     async def __aenter__(self) -> FlowRunExecutorContext:
         self._stack = AsyncExitStack()
         await self._stack.__aenter__()
@@ -283,7 +290,8 @@ class FlowRunExecutorContext:
         # on_cancelling lambda captures self._cancellation_manager (assigned in step 4).
         def _on_cancelling(flow_run_id: UUID) -> None:
             self._cancellation_task_group.start_soon(
-                self._cancellation_manager.cancel_by_id, flow_run_id
+                self._cancellation_handler or self._cancellation_manager.cancel_by_id,
+                flow_run_id,
             )
 
         self._observer = FlowRunCancellingObserver(
@@ -381,6 +389,8 @@ class FlowRunExecutorContext:
         resolve_flow: Callable[[FlowRun], Awaitable[Flow[Any, Any]]] | None = None,
         propose_submitting: bool = True,
         hook_runner: FlowRunHookRunner | None = None,
+        get_attempt_conclusion: Callable[[UUID], AttemptConclusion | None]
+        | None = None,
     ) -> FlowRunExecutor:
         if (resolve_flow is None) == (hook_runner is None):
             raise ValueError("Provide exactly one of resolve_flow or hook_runner.")
@@ -396,5 +406,6 @@ class FlowRunExecutorContext:
             state_proposer=self._state_proposer,
             hook_runner=hook_runner,
             propose_submitting=propose_submitting,
-            get_attempt_conclusion=self.control_channel.get_conclusion,
+            get_attempt_conclusion=get_attempt_conclusion
+            or self.control_channel.get_conclusion,
         )

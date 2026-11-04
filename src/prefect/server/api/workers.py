@@ -13,6 +13,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Path,
+    Response,
     WebSocket,
     status,
 )
@@ -40,6 +41,7 @@ from prefect.client.schemas.worker_channel import (
 from prefect.logging import get_logger
 from prefect.server.api.validation import validate_job_variable_defaults_for_work_pool
 from prefect.server.database import PrefectDBInterface, provide_database_interface
+from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.models.deployments import mark_deployments_ready
 from prefect.server.models.work_queues import (
     emit_work_queue_status_event,
@@ -636,12 +638,18 @@ async def update_work_pool(
         work_pool_id = await worker_lookups._get_work_pool_id_from_name(
             session=session, work_pool_name=work_pool_name
         )
-        updated = await models.workers.update_work_pool(
-            session=session,
-            work_pool_id=work_pool_id,
-            work_pool=work_pool,
-            emit_status_change=emit_work_pool_status_event,
-        )
+        try:
+            updated = await models.workers.update_work_pool(
+                session=session,
+                work_pool_id=work_pool_id,
+                work_pool=work_pool,
+                emit_status_change=emit_work_pool_status_event,
+            )
+        except NativeStreamError as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": error.code, "message": str(error)},
+            ) from error
 
     if updated and worker_channel_utils.work_pool_update_triggers_snapshot(
         update_values
@@ -1214,9 +1222,12 @@ async def worker_heartbeat(
     heartbeat_interval_seconds: Optional[int] = Body(
         None, description="The worker's heartbeat interval in seconds", embed=True
     ),
+    return_id: bool = Body(
+        False, description="Return the registered worker UUID", embed=True
+    ),
     worker_lookups: WorkerLookups = Depends(WorkerLookups),
     db: PrefectDBInterface = Depends(provide_database_interface),
-) -> None:
+) -> Response:
     async with db.session_context(begin_transaction=True) as session:
         work_pool = await models.workers.read_work_pool_by_name(
             session=session,
@@ -1228,13 +1239,22 @@ async def worker_heartbeat(
                 detail=f'Work pool "{work_pool_name}" not found.',
             )
 
-        await models.workers.record_worker_heartbeat(
+        worker = await models.workers.record_worker_heartbeat(
             session=session,
             work_pool=work_pool,
             worker_name=name,
             heartbeat_interval_seconds=heartbeat_interval_seconds,
             emit_status_change=emit_work_pool_status_event,
+            return_worker=return_id,
         )
+        if return_id:
+            assert worker is not None
+            return Response(
+                content=str(worker.id),
+                status_code=status.HTTP_200_OK,
+                media_type="text/plain",
+            )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{work_pool_name}/workers/filter")

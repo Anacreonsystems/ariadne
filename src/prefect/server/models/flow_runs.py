@@ -32,6 +32,7 @@ import prefect.server.schemas as schemas
 from prefect.logging.loggers import get_logger
 from prefect.server.database import PrefectDBInterface, db_injector, orm_models
 from prefect.server.exceptions import ObjectNotFoundError
+from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.orchestration.core_policy import MinimalFlowPolicy
 from prefect.server.orchestration.global_policy import GlobalFlowPolicy
 from prefect.server.orchestration.policies import (
@@ -142,6 +143,10 @@ async def create_flow_run(
             force=True,
             orchestration_parameters=orchestration_parameters,
         )
+    if model.created == right_now:
+        await models.native_deployments.bind_flow_run_snapshot(
+            session=session, db=db, flow_run=model
+        )
     return model
 
 
@@ -163,6 +168,15 @@ async def update_flow_run(
     Returns:
         bool: whether or not matching rows were found to update
     """
+    if (
+        flow_run.job_variables is not None
+        and models.native_deployments.NATIVE_DECLARATION_JOB_VARIABLE
+        in flow_run.job_variables
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT",
+            "FlowRun job variables cannot override prefect_native_streaming",
+        )
     update_stmt = (
         sa.update(db.FlowRun)
         .where(db.FlowRun.id == flow_run_id)

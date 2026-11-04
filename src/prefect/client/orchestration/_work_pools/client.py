@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 
 from httpx import HTTPStatusError
 
-from prefect.client.base import ServerType
 from prefect.client.orchestration.base import BaseAsyncClient, BaseClient
 
 if TYPE_CHECKING:
@@ -68,16 +67,7 @@ class WorkPoolClient(BaseClient):
             path_params={"work_pool_name": work_pool_name},
             json=params,
         )
-        from prefect.settings import get_current_settings
-
-        if (
-            (
-                self.server_type == ServerType.CLOUD
-                or get_current_settings().testing.test_mode
-            )
-            and get_worker_id
-            and resp.status_code == 200
-        ):
+        if get_worker_id and resp.status_code == 200:
             return UUID(resp.text)
         else:
             return None
@@ -396,16 +386,7 @@ class WorkPoolAsyncClient(BaseAsyncClient):
             path_params={"work_pool_name": work_pool_name},
             json=params,
         )
-        from prefect.settings import get_current_settings
-
-        if (
-            (
-                self.server_type == ServerType.CLOUD
-                or get_current_settings().testing.test_mode
-            )
-            and get_worker_id
-            and resp.status_code == 200
-        ):
+        if get_worker_id and resp.status_code == 200:
             return UUID(resp.text)
         else:
             return None

@@ -982,6 +982,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/streams/v1/finite/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Finite Plan */
+        get: operations["read_finite_plan_streams_v1_finite_plan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/streams/v1/finite/{task_run_id}/receipt": {
         parameters: {
             query?: never;
@@ -1314,6 +1331,227 @@ export interface paths {
         };
         /** Read Stream Prefix */
         get: operations["read_stream_prefix_streams_v1__stream_id__prefix_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/deployments/enroll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enroll Native Stream Worker */
+        post: operations["enroll_native_stream_worker_streams_v1_deployments_enroll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/deployments/launches/register-process": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register Native Stream Process */
+        post: operations["register_native_stream_process_streams_v1_deployments_launches_register_process_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/deployments/launches/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Renew Native Stream Launch */
+        post: operations["renew_native_stream_launch_streams_v1_deployments_launches_heartbeat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/deployments/launches/retire-unstarted": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retire Unstarted Native Stream Launch */
+        post: operations["retire_unstarted_native_stream_launch_streams_v1_deployments_launches_retire_unstarted_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/deployments/replacements/retire-verified": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retire Verified Native Stream Launch */
+        post: operations["retire_verified_native_stream_launch_streams_v1_deployments_replacements_retire_verified_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/deployments/replacements/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Native Stream Recovery Candidates */
+        get: operations["read_native_stream_recovery_candidates_streams_v1_deployments_replacements_candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/deployments/replacements/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Authorize Native Stream Replacement */
+        post: operations["authorize_native_stream_replacement_streams_v1_deployments_replacements_authorize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/deployments/replacements/confirm-death": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Native Stream Replacement */
+        post: operations["confirm_native_stream_replacement_streams_v1_deployments_replacements_confirm_death_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/deployments/control/drain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Drain Native Stream Sources */
+        post: operations["drain_native_stream_sources_streams_v1_deployments_control_drain_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/deployments/control/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Native Stream Writes */
+        post: operations["cancel_native_stream_writes_streams_v1_deployments_control_cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/deployments/control/finalize-cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finalize Native Stream Cancellation */
+        post: operations["finalize_native_stream_cancellation_streams_v1_deployments_control_finalize_cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/deployments/{flow_run_id}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Native Stream Deployment Plan */
+        get: operations["read_native_stream_deployment_plan_streams_v1_deployments__flow_run_id__plan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/deployments/{flow_run_id}/projection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Native Stream Flow Projection */
+        get: operations["read_native_stream_flow_projection_streams_v1_deployments__flow_run_id__projection_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5752,6 +5990,12 @@ export interface components {
              * @description The worker's heartbeat interval in seconds
              */
             heartbeat_interval_seconds?: number | null;
+            /**
+             * Return Id
+             * @description Return the registered worker UUID
+             * @default false
+             */
+            return_id: boolean;
         };
         /**
          * CLISettings
@@ -9389,6 +9633,809 @@ export interface components {
             /** Limit */
             limit: number;
         };
+        /** NativeStreamCancelFinalizeRequest */
+        NativeStreamCancelFinalizeRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Expected Generation */
+            expected_generation: number;
+            /**
+             * Enrollment Operation Id
+             * Format: uuid
+             */
+            enrollment_operation_id: string;
+            /** Challenge Capability */
+            challenge_capability?: string | null;
+            death_witness: components["schemas"]["NativeStreamProcessDeathWitness"];
+        };
+        /** NativeStreamControlRequest */
+        NativeStreamControlRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Expected Generation */
+            expected_generation: number;
+            /** Reason */
+            reason: string;
+        };
+        /** NativeStreamControlResult */
+        NativeStreamControlResult: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "DRAIN" | "CANCEL" | "CANCEL_FINALIZED" | "SPAWN_FAILED" | "VERIFIED_RETIRED";
+            /** Source Admission Closed */
+            source_admission_closed: boolean;
+            /** Cancel Requested */
+            cancel_requested: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * NativeStreamDeclaration
+         * @description Secret-free native capability persisted in deployment job variables.
+         */
+        NativeStreamDeclaration: {
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /**
+             * Protocol Version
+             * @default 1
+             * @constant
+             */
+            protocol_version: 1;
+            /**
+             * Profile
+             * @constant
+             */
+            profile: "bounded-linear-v1";
+            /** Flow Version */
+            flow_version: string;
+            /** Flow Code Digest */
+            flow_code_digest: string;
+            /**
+             * Resource Profile
+             * @constant
+             */
+            resource_profile: "bounded-default-v1";
+            /** Flow Retries */
+            flow_retries: number;
+            /** Flow Retry Delay Seconds */
+            flow_retry_delay_seconds?: number | null;
+        };
+        /** NativeStreamDeploymentPlan */
+        NativeStreamDeploymentPlan: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Deployment Id
+             * Format: uuid
+             */
+            deployment_id: string;
+            /** Deployment Version */
+            deployment_version: string | null;
+            /**
+             * Work Pool Id
+             * Format: uuid
+             */
+            work_pool_id: string;
+            declaration: components["schemas"]["NativeStreamDeclaration"];
+            /** Declaration Digest */
+            declaration_digest: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "ACTIVE" | "RELEASED";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            current_launch: components["schemas"]["NativeStreamLaunchProjection"] | null;
+            /** Source Admission Closed */
+            source_admission_closed: boolean;
+            /** Cancel Requested */
+            cancel_requested: boolean;
+        };
+        /** NativeStreamFiniteProjection */
+        NativeStreamFiniteProjection: {
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /** Submission Key */
+            submission_key: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "PREFIX" | "TAIL";
+            /** Task State */
+            task_state: string;
+            /** Run Count */
+            run_count: number;
+            /** Result Committed */
+            result_committed: boolean;
+        };
+        /** NativeStreamFlowProjection */
+        NativeStreamFlowProjection: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Flow State */
+            flow_state: string;
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /** Generation */
+            generation?: number | null;
+            /** Authority State */
+            authority_state: string | null;
+            /** Prepared Generation */
+            prepared_generation?: number | null;
+            /** Manifest Sealed */
+            manifest_sealed: boolean;
+            /** Source Admission Closed */
+            source_admission_closed: boolean;
+            /** Cancel Requested */
+            cancel_requested: boolean;
+            /** Launch State */
+            launch_state: ("ENROLLED" | "PROCESS_REGISTERED" | "RELEASED") | null;
+            /** Worker Id */
+            worker_id: string | null;
+            /** Items */
+            items: components["schemas"]["NativeStreamTaskProjection"][];
+            /** Finite Items */
+            finite_items: components["schemas"]["NativeStreamFiniteProjection"][];
+        };
+        /** NativeStreamLaunchHeartbeat */
+        NativeStreamLaunchHeartbeat: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Enrollment Operation Id
+             * Format: uuid
+             */
+            enrollment_operation_id: string;
+            /**
+             * Last Renewed At
+             * Format: date-time
+             */
+            last_renewed_at: string;
+        };
+        /** NativeStreamLaunchHeartbeatRequest */
+        NativeStreamLaunchHeartbeatRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Enrollment Operation Id
+             * Format: uuid
+             */
+            enrollment_operation_id: string;
+        };
+        /** NativeStreamLaunchProjection */
+        NativeStreamLaunchProjection: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Deployment Id
+             * Format: uuid
+             */
+            deployment_id: string;
+            /**
+             * Work Pool Id
+             * Format: uuid
+             */
+            work_pool_id: string;
+            /**
+             * Worker Id
+             * Format: uuid
+             */
+            worker_id: string;
+            /** Snapshot Digest */
+            snapshot_digest: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Enrollment Operation Id
+             * Format: uuid
+             */
+            enrollment_operation_id: string;
+            /**
+             * Launcher Instance Id
+             * Format: uuid
+             */
+            launcher_instance_id: string;
+            /**
+             * Launch Profile
+             * @constant
+             */
+            launch_profile: "linux-local-pidfd-v1";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "ENROLLED" | "PROCESS_REGISTERED" | "RELEASED";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Process Registered At */
+            process_registered_at: string | null;
+            /** Last Renewed At */
+            last_renewed_at: string | null;
+        };
+        /** NativeStreamProcessDeathWitness */
+        NativeStreamProcessDeathWitness: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "WAITPID" | "PIDFD_EXIT" | "IDENTITY_GONE" | "BOOT_CHANGED";
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /**
+             * Host Id
+             * Format: uuid
+             */
+            host_id: string;
+            /**
+             * Boot Id
+             * Format: uuid
+             */
+            boot_id: string;
+            /** Child Process Id */
+            child_process_id: number;
+            /** Process Start Ticks */
+            process_start_ticks: number;
+            /** Exit Code */
+            exit_code?: number | null;
+            /** Observed Boot Id */
+            observed_boot_id?: string | null;
+        };
+        /** NativeStreamProcessRegistrationRequest */
+        NativeStreamProcessRegistrationRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Enrollment Operation Id
+             * Format: uuid
+             */
+            enrollment_operation_id: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Launcher Instance Id
+             * Format: uuid
+             */
+            launcher_instance_id: string;
+            /**
+             * Host Id
+             * Format: uuid
+             */
+            host_id: string;
+            /**
+             * Boot Id
+             * Format: uuid
+             */
+            boot_id: string;
+            /** Child Process Id */
+            child_process_id: number;
+            /** Process Start Ticks */
+            process_start_ticks: number;
+            /** Launch Nonce Digest */
+            launch_nonce_digest: string;
+        };
+        /**
+         * NativeStreamRecoveryCandidate
+         * @description Secret-free process identity available to a trusted same-host worker.
+         */
+        NativeStreamRecoveryCandidate: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Deployment Id
+             * Format: uuid
+             */
+            deployment_id: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Work Pool Id
+             * Format: uuid
+             */
+            work_pool_id: string;
+            /**
+             * Worker Id
+             * Format: uuid
+             */
+            worker_id: string;
+            /**
+             * Launcher Instance Id
+             * Format: uuid
+             */
+            launcher_instance_id: string;
+            /**
+             * Enrollment Operation Id
+             * Format: uuid
+             */
+            enrollment_operation_id: string;
+            /**
+             * Launch Profile
+             * @constant
+             */
+            launch_profile: "linux-local-pidfd-v1";
+            /**
+             * Identity Kind
+             * @enum {string}
+             */
+            identity_kind: "LAUNCHER" | "CHILD";
+            /**
+             * Host Id
+             * Format: uuid
+             */
+            host_id: string;
+            /**
+             * Boot Id
+             * Format: uuid
+             */
+            boot_id: string;
+            /** Child Process Id */
+            child_process_id: number;
+            /** Process Start Ticks */
+            process_start_ticks: number;
+            /**
+             * Last Renewed At
+             * Format: date-time
+             */
+            last_renewed_at: string;
+            /**
+             * Verification Not Before
+             * Format: date-time
+             */
+            verification_not_before: string;
+        };
+        /** NativeStreamReplacementAuthorization */
+        NativeStreamReplacementAuthorization: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Expected Generation */
+            expected_generation: number;
+            /**
+             * Worker Id
+             * Format: uuid
+             */
+            worker_id: string;
+            /**
+             * Work Pool Id
+             * Format: uuid
+             */
+            work_pool_id: string;
+            /**
+             * Host Id
+             * Format: uuid
+             */
+            host_id: string;
+            /**
+             * Identity Kind
+             * @enum {string}
+             */
+            identity_kind: "LAUNCHER" | "CHILD";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "AUTHORIZED" | "CONFIRMED" | "RELEASED";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** NativeStreamReplacementAuthorizeRequest */
+        NativeStreamReplacementAuthorizeRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Expected Generation */
+            expected_generation: number;
+            /**
+             * Enrollment Operation Id
+             * Format: uuid
+             */
+            enrollment_operation_id: string;
+            /**
+             * Worker Id
+             * Format: uuid
+             */
+            worker_id: string;
+            /**
+             * Work Pool Id
+             * Format: uuid
+             */
+            work_pool_id: string;
+            /**
+             * Host Id
+             * Format: uuid
+             */
+            host_id: string;
+            /**
+             * Identity Kind
+             * @enum {string}
+             */
+            identity_kind: "LAUNCHER" | "CHILD";
+            /** Challenge Capability */
+            challenge_capability: string;
+        };
+        /** NativeStreamReplacementConfirmRequest */
+        NativeStreamReplacementConfirmRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Challenge Capability */
+            challenge_capability: string;
+            /**
+             * Launcher Instance Id
+             * Format: uuid
+             */
+            launcher_instance_id: string;
+            /**
+             * Launcher Host Id
+             * Format: uuid
+             */
+            launcher_host_id: string;
+            /**
+             * Launcher Boot Id
+             * Format: uuid
+             */
+            launcher_boot_id: string;
+            /** Launcher Process Id */
+            launcher_process_id: number;
+            /** Launcher Start Ticks */
+            launcher_start_ticks: number;
+            /**
+             * New Holder Id
+             * Format: uuid
+             */
+            new_holder_id: string;
+            /** New Holder Capability */
+            new_holder_capability: string;
+            /** New Holder Event Public Key */
+            new_holder_event_public_key: string;
+            /**
+             * New Supervisor Id
+             * Format: uuid
+             */
+            new_supervisor_id: string;
+            /** New Supervisor Capability */
+            new_supervisor_capability: string;
+            death_witness: components["schemas"]["NativeStreamProcessDeathWitness"];
+        };
+        /** NativeStreamTaskProjection */
+        NativeStreamTaskProjection: {
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /** Submission Key */
+            submission_key: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "SOURCE" | "OPERATOR";
+            /**
+             * Protocol
+             * @enum {string}
+             */
+            protocol: "source-v1" | "yield-v2";
+            /** Task State */
+            task_state: string;
+            /** Run Count */
+            run_count: number;
+            /** Input Stream Id */
+            input_stream_id: string | null;
+            /**
+             * Output Stream Id
+             * Format: uuid
+             */
+            output_stream_id: string;
+            /**
+             * Stream State
+             * @enum {string}
+             */
+            stream_state: "OPEN" | "COMPLETED" | "FAILED";
+            /** Record Count */
+            record_count: number;
+            /** Byte Count */
+            byte_count: number;
+            /** Record Limit */
+            record_limit: number;
+            /** Byte Limit */
+            byte_limit: number;
+            /** Last Sequence */
+            last_sequence: number;
+            /** Tail Sequence */
+            tail_sequence?: number | null;
+            /** Completed Through */
+            completed_through?: number | null;
+            /** Inflight Sequence */
+            inflight_sequence?: number | null;
+            /** Input Tail Sequence */
+            input_tail_sequence?: number | null;
+            /** Pending Inputs */
+            pending_inputs?: number | null;
+        };
+        /** NativeStreamUnstartedRetireRequest */
+        NativeStreamUnstartedRetireRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Enrollment Operation Id
+             * Format: uuid
+             */
+            enrollment_operation_id: string;
+            /** Error */
+            error: string;
+        };
+        /** NativeStreamVerifiedRetireRequest */
+        NativeStreamVerifiedRetireRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Expected Generation */
+            expected_generation: number;
+            /**
+             * Enrollment Operation Id
+             * Format: uuid
+             */
+            enrollment_operation_id: string;
+            /** Challenge Capability */
+            challenge_capability: string;
+            death_witness: components["schemas"]["NativeStreamProcessDeathWitness"];
+            /** Error */
+            error: string;
+        };
+        /** NativeStreamWorkerEnrollRequest */
+        NativeStreamWorkerEnrollRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Expected Generation
+             * @default 0
+             * @constant
+             */
+            expected_generation: 0;
+            /** Declaration Digest */
+            declaration_digest: string;
+            /**
+             * Worker Id
+             * Format: uuid
+             */
+            worker_id: string;
+            /**
+             * Work Pool Id
+             * Format: uuid
+             */
+            work_pool_id: string;
+            /**
+             * Launcher Instance Id
+             * Format: uuid
+             */
+            launcher_instance_id: string;
+            /**
+             * Launcher Host Id
+             * Format: uuid
+             */
+            launcher_host_id: string;
+            /**
+             * Launcher Boot Id
+             * Format: uuid
+             */
+            launcher_boot_id: string;
+            /** Launcher Process Id */
+            launcher_process_id: number;
+            /** Launcher Start Ticks */
+            launcher_start_ticks: number;
+            /**
+             * Launch Profile
+             * @constant
+             */
+            launch_profile: "linux-local-pidfd-v1";
+            /**
+             * Holder Id
+             * Format: uuid
+             */
+            holder_id: string;
+            /** Holder Capability */
+            holder_capability: string;
+            /** Holder Event Public Key */
+            holder_event_public_key: string;
+            /**
+             * Supervisor Id
+             * Format: uuid
+             */
+            supervisor_id: string;
+            /** Supervisor Capability */
+            supervisor_capability: string;
+        };
+        /** NativeStreamWorkerEnrollment */
+        NativeStreamWorkerEnrollment: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Deployment Id
+             * Format: uuid
+             */
+            deployment_id: string;
+            /** Deployment Version */
+            deployment_version: string | null;
+            /**
+             * Work Pool Id
+             * Format: uuid
+             */
+            work_pool_id: string;
+            /**
+             * Worker Id
+             * Format: uuid
+             */
+            worker_id: string;
+            /** Snapshot Digest */
+            snapshot_digest: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Holder Id
+             * Format: uuid
+             */
+            holder_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Launcher Instance Id
+             * Format: uuid
+             */
+            launcher_instance_id: string;
+            /**
+             * Launch Profile
+             * @constant
+             */
+            launch_profile: "linux-local-pidfd-v1";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "ENROLLED" | "PROCESS_REGISTERED" | "RELEASED";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** Node */
         Node: {
             /**
@@ -11934,6 +12981,20 @@ export interface components {
              * @enum {string}
              */
             phase: "PREFIX" | "TAIL";
+        };
+        /** StreamFinitePlan */
+        StreamFinitePlan: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Generation */
+            generation: number;
+            /** Manifest Sealed */
+            manifest_sealed: boolean;
+            /** Items */
+            items: components["schemas"]["StreamFiniteManifest"][];
         };
         /** StreamFiniteReceipt */
         StreamFiniteReceipt: {
@@ -16449,6 +17510,42 @@ export interface operations {
             };
         };
     };
+    read_finite_plan_streams_v1_finite_plan_get: {
+        parameters: {
+            query: {
+                flow_run_id: string;
+            };
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamFinitePlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     read_finite_receipt_streams_v1_finite__task_run_id__receipt_get: {
         parameters: {
             query?: never;
@@ -17177,6 +18274,478 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StreamEnvelope"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enroll_native_stream_worker_streams_v1_deployments_enroll_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeStreamWorkerEnrollRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeStreamWorkerEnrollment"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_native_stream_process_streams_v1_deployments_launches_register_process_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeStreamProcessRegistrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeStreamLaunchProjection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    renew_native_stream_launch_streams_v1_deployments_launches_heartbeat_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeStreamLaunchHeartbeatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeStreamLaunchHeartbeat"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retire_unstarted_native_stream_launch_streams_v1_deployments_launches_retire_unstarted_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeStreamUnstartedRetireRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeStreamControlResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retire_verified_native_stream_launch_streams_v1_deployments_replacements_retire_verified_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeStreamVerifiedRetireRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeStreamControlResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_native_stream_recovery_candidates_streams_v1_deployments_replacements_candidates_get: {
+        parameters: {
+            query: {
+                worker_id: string;
+                work_pool_id: string;
+                host_id: string;
+            };
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeStreamRecoveryCandidate"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    authorize_native_stream_replacement_streams_v1_deployments_replacements_authorize_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeStreamReplacementAuthorizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeStreamReplacementAuthorization"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_native_stream_replacement_streams_v1_deployments_replacements_confirm_death_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeStreamReplacementConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeStreamWorkerEnrollment"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    drain_native_stream_sources_streams_v1_deployments_control_drain_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeStreamControlRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeStreamControlResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_native_stream_writes_streams_v1_deployments_control_cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeStreamControlRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeStreamControlResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finalize_native_stream_cancellation_streams_v1_deployments_control_finalize_cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NativeStreamCancelFinalizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeStreamControlResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_native_stream_deployment_plan_streams_v1_deployments__flow_run_id__plan_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                flow_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeStreamDeploymentPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_native_stream_flow_projection_streams_v1_deployments__flow_run_id__projection_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                flow_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeStreamFlowProjection"];
                 };
             };
             /** @description Validation Error */

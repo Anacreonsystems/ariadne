@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import inspect
+import re
 from contextvars import copy_context
 from copy import copy
 from functools import partial, update_wrapper
@@ -176,6 +177,7 @@ class TaskOptions(TypedDict, total=False):
     viz_return_value: Any
     asset_deps: Optional[list[Union[Asset, str]]]
     stream: StreamTaskConfig | StreamSourceConfig | None
+    stream_key: str | None
 
 
 def task_input_hash(
@@ -400,11 +402,13 @@ class Task(Generic[P, R]):
             to its retry policy.
         viz_return_value: An optional value to return when the task dependency tree is visualized.
         asset_deps: An optional list of upstream assets that this task depends on.
+        stream_key: Stable finite-submission identity for direct tasks in a native flow.
         stream: An explicit native stream contract. Submit with `submit_stream()`;
             storage and finite collection boundaries must be supplied explicitly.
     """
 
     stream: StreamTaskConfig | StreamSourceConfig | None = None
+    stream_key: str | None = None
 
     # NOTE: These parameters (types, defaults, and docstrings) should be duplicated
     #       exactly in the @task decorator
@@ -448,6 +452,7 @@ class Task(Generic[P, R]):
         viz_return_value: Optional[Any] = None,
         asset_deps: Optional[list[Union[str, Asset]]] = None,
         stream: StreamTaskConfig | StreamSourceConfig | None = None,
+        stream_key: str | None = None,
     ):
         # Validate if hook passed is list and contains callables
         hook_categories = [on_completion, on_failure, on_running]
@@ -490,6 +495,16 @@ class Task(Generic[P, R]):
         update_wrapper(self, fn)
         self.fn = fn
         self.stream = stream
+        if stream_key is not None:
+            if (
+                not isinstance(stream_key, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", stream_key)
+                or stream is not None
+            ):
+                raise StreamProtocolError(
+                    "stream_key requires a finite task and a valid stable submission key"
+                )
+        self.stream_key = stream_key
         if stream is not None:
             stream.validate_function(fn)
             if (
@@ -748,6 +763,7 @@ class Task(Generic[P, R]):
         viz_return_value: Optional[Any] = None,
         asset_deps: Optional[list[Union[str, Asset]]] = None,
         stream: StreamTaskConfig | StreamSourceConfig | None | type[NotSet] = NotSet,
+        stream_key: str | None | type[NotSet] = NotSet,
     ) -> "Task[P, R]":
         """
         Create a new task from the current object, updating provided options.
@@ -896,6 +912,7 @@ class Task(Generic[P, R]):
             viz_return_value=viz_return_value or self.viz_return_value,
             asset_deps=asset_deps or self.asset_deps,
             stream=self.stream if stream is NotSet else stream,
+            stream_key=self.stream_key if stream_key is NotSet else stream_key,
         )
 
     def on_completion(self, fn: StateHookCallable) -> StateHookCallable:
@@ -1255,7 +1272,10 @@ class Task(Generic[P, R]):
         Run the task and return the result. If `return_state` is True returns
         the result is wrapped in a Prefect State which provides error handling.
         """
-        _require_unenrolled_task_entrypoint()
+        if get_stream_execution() is not None:
+            from prefect._internal.stream_finite import call_finite_task
+
+            return call_finite_task(self, args, kwargs, return_state, wait_for)
         from prefect.utilities.visualization import (
             get_task_viz_tracker,
             track_viz_task,
@@ -2116,6 +2136,7 @@ def task(
     viz_return_value: Any = None,
     asset_deps: Optional[list[Union[str, Asset]]] = None,
     stream: StreamTaskConfig | StreamSourceConfig | None = None,
+    stream_key: str | None = None,
 ) -> Callable[[Callable[P, R]], Task[P, R]]: ...
 
 
@@ -2154,6 +2175,7 @@ def task(
     viz_return_value: Any = None,
     asset_deps: Optional[list[Union[str, Asset]]] = None,
     stream: StreamTaskConfig | StreamSourceConfig | None = None,
+    stream_key: str | None = None,
 ) -> Callable[[Callable[P, R]], Task[P, R]]: ...
 
 
@@ -2193,6 +2215,7 @@ def task(
     viz_return_value: Any = None,
     asset_deps: Optional[list[Union[str, Asset]]] = None,
     stream: StreamTaskConfig | StreamSourceConfig | None = None,
+    stream_key: str | None = None,
 ) -> Callable[[Callable[P, R]], Task[P, R]]: ...
 
 
@@ -2229,6 +2252,7 @@ def task(
     viz_return_value: Any = None,
     asset_deps: Optional[list[Union[str, Asset]]] = None,
     stream: StreamTaskConfig | StreamSourceConfig | None = None,
+    stream_key: str | None = None,
 ):
     """
     Decorator to designate a function as a task in a Prefect workflow.
@@ -2294,6 +2318,7 @@ def task(
             to its retry policy.
         viz_return_value: An optional value to return when the task dependency tree is visualized.
         asset_deps: An optional list of upstream assets that this task depends on.
+        stream_key: Stable finite-submission identity for direct tasks in a native flow.
         stream: An explicit native stream contract. Submit with `submit_stream()`;
             storage and finite collection boundaries must be supplied explicitly.
 
@@ -2387,6 +2412,7 @@ def task(
             viz_return_value=viz_return_value,
             asset_deps=asset_deps,
             stream=stream,
+            stream_key=stream_key,
         )
     else:
         return cast(
@@ -2419,6 +2445,7 @@ def task(
                 viz_return_value=viz_return_value,
                 asset_deps=asset_deps,
                 stream=stream,
+                stream_key=stream_key,
             ),
         )
 

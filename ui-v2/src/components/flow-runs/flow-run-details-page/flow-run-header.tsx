@@ -67,16 +67,24 @@ export function FlowRunHeader({ flowRun, onDeleteClick }: FlowRunHeaderProps) {
 	const [isRetryOpen, setIsRetryOpen] = useState(false);
 	const { setFlowRunState, isPending: isChangingState } = useSetFlowRunState();
 
+	const isNative = Boolean(flowRun.labels?.["prefect.native-streaming"]);
 	const canChangeState =
+		!isNative &&
 		flowRun.state_type &&
 		["COMPLETED", "FAILED", "CANCELLED", "CRASHED"].includes(
 			flowRun.state_type,
 		);
 
-	const canCancel = isStuckState(flowRun.state_type) && flowRun.deployment_id;
-	const canPause = isRunningState(flowRun.state_type) && flowRun.deployment_id;
-	const canResume = isPausedState(flowRun.state_type);
-	const canRetry = isTerminalState(flowRun.state_type) && flowRun.deployment_id;
+	const canCancel =
+		(isNative
+			? !isTerminalState(flowRun.state_type) &&
+				flowRun.state_type !== "CANCELLING"
+			: isStuckState(flowRun.state_type)) && flowRun.deployment_id;
+	const canPause =
+		!isNative && isRunningState(flowRun.state_type) && flowRun.deployment_id;
+	const canResume = !isNative && isPausedState(flowRun.state_type);
+	const canRetry =
+		!isNative && isTerminalState(flowRun.state_type) && flowRun.deployment_id;
 
 	const handleChangeState = (newState: { type: string; message?: string }) => {
 		setFlowRunState(

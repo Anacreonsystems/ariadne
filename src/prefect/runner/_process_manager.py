@@ -285,6 +285,22 @@ class ProcessHandle:
     def close(self) -> None:
         self.termination_scope.close()
 
+    def replace_process(
+        self,
+        process: anyio.abc.Process,
+        termination_scope: ProcessTerminationScope,
+    ) -> None:
+        """Replace a reaped child while preserving its registered run handle.
+
+        Native replacement retains the same executor and cancellation observer.
+        This synchronous handoff has no cancellation point between identities.
+        """
+        if self.is_alive():
+            raise RuntimeError("A live process cannot be replaced")
+        self.termination_scope.close()
+        self._process = process
+        self.termination_scope = termination_scope
+
 
 class ProcessManager:
     def __init__(

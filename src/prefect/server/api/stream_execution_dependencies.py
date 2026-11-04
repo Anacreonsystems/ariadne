@@ -18,6 +18,7 @@ def execution_http_error(error: NativeStreamError) -> HTTPException:
         "PAYLOAD_TOO_LARGE": status.HTTP_413_CONTENT_TOO_LARGE,
         "PROTOCOL_ERROR": status.HTTP_422_UNPROCESSABLE_CONTENT,
         "UNSUPPORTED_BACKEND": status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "UNSUPPORTED_PROFILE": status.HTTP_422_UNPROCESSABLE_CONTENT,
     }
     return HTTPException(
         status_code=statuses.get(error.code, status.HTTP_409_CONFLICT),

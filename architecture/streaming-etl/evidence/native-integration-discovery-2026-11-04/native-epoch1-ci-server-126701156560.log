@@ -1,0 +1,1633 @@
+﻿2026-11-04T16:36:11.0309796Z Current runner version: '2.338.2'
+2026-11-04T16:36:11.0334675Z ##[group]Runner Image Provisioner
+2026-11-04T16:36:11.0335901Z Hosted Compute Agent
+2026-11-04T16:36:11.0336545Z Version: 20261021.618
+2026-11-04T16:36:11.0337272Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-11-04T16:36:11.0338014Z Build Date: 2026-10-21T00:45:21Z
+2026-11-04T16:36:11.0338688Z Worker ID: {74681a15-e256-4207-966b-021d7af86ad2}
+2026-11-04T16:36:11.0339456Z Region: eastus
+2026-11-04T16:36:11.0340038Z Cloud: Azure
+2026-11-04T16:36:11.0340603Z ##[endgroup]
+2026-11-04T16:36:11.0342608Z ##[group]Operating System
+2026-11-04T16:36:11.0343279Z Ubuntu
+2026-11-04T16:36:11.0343939Z 24.04.5
+2026-11-04T16:36:11.0344503Z LTS
+2026-11-04T16:36:11.0345417Z ##[endgroup]
+2026-11-04T16:36:11.0346116Z ##[group]Runner Image
+2026-11-04T16:36:11.0346736Z Image: ubuntu-24.04
+2026-11-04T16:36:11.0347370Z Version: 20261025.353.1
+2026-11-04T16:36:11.0348682Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261025.353/images/ubuntu/Ubuntu2404-Readme.md
+2026-11-04T16:36:11.0350360Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261025.353
+2026-11-04T16:36:11.0351349Z ##[endgroup]
+2026-11-04T16:36:11.0352668Z ##[group]GITHUB_TOKEN Permissions
+2026-11-04T16:36:11.0354832Z Actions: write
+2026-11-04T16:36:11.0356050Z Contents: read
+2026-11-04T16:36:11.0356656Z Metadata: read
+2026-11-04T16:36:11.0357206Z ##[endgroup]
+2026-11-04T16:36:11.0359547Z Secret source: Actions
+2026-11-04T16:36:11.0360477Z Cache mode: write
+2026-11-04T16:36:11.0361656Z Prepare workflow directory
+2026-11-04T16:36:11.0962140Z Prepare all required actions
+2026-11-04T16:36:11.1010959Z Getting action download info
+2026-11-04T16:36:11.6275632Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-11-04T16:36:11.7441382Z Download action repository 'astral-sh/setup-uv@v10.0.1' (SHA:20cfd1bf945f4377ade1205e4dbc17946fc9a30d)
+2026-11-04T16:36:11.9285934Z Download action repository 'actions/download-artifact@v8' (SHA:9000827ccba6bdab643e8b6fd33ac0654aef8333)
+2026-11-04T16:36:12.0820908Z Download action repository 'actions/upload-artifact@v7' (SHA:cf430e030ddbb5b0abf93d22962f4752f3646cd9)
+2026-11-04T16:36:12.3061228Z Complete job name: Canonical Tests: group 1/18 - python:3.12, postgres:14
+2026-11-04T16:36:12.3660217Z ##[group]Checking docker version
+2026-11-04T16:36:12.3678625Z ##[command]/usr/bin/docker version --format '{{.Server.APIVersion}}'
+2026-11-04T16:36:12.4701797Z '1.48'
+2026-11-04T16:36:12.4720531Z Docker daemon API version: '1.48'
+2026-11-04T16:36:12.4721406Z ##[command]/usr/bin/docker version --format '{{.Client.APIVersion}}'
+2026-11-04T16:36:12.4906965Z '1.48'
+2026-11-04T16:36:12.4922395Z Docker client API version: '1.48'
+2026-11-04T16:36:12.4928654Z ##[endgroup]
+2026-11-04T16:36:12.4932149Z ##[group]Clean up resources from previous jobs
+2026-11-04T16:36:12.4938055Z ##[command]/usr/bin/docker ps --all --quiet --no-trunc --filter "label=d05a77"
+2026-11-04T16:36:12.5101150Z ##[command]/usr/bin/docker network prune --force --filter "label=d05a77"
+2026-11-04T16:36:12.5254225Z ##[endgroup]
+2026-11-04T16:36:12.5254797Z ##[group]Create local container network
+2026-11-04T16:36:12.5264795Z ##[command]/usr/bin/docker network create --label d05a77 github_network_31bb9fb92b724f73a2b409d5c5b751bb
+2026-11-04T16:36:12.5802397Z dca046eeb46941dacaeb18648e92b2a26a57617d173e464ebb824b478dd926b1
+2026-11-04T16:36:12.5822690Z ##[endgroup]
+2026-11-04T16:36:12.5847521Z ##[group]Starting redis service container
+2026-11-04T16:36:12.5868986Z ##[command]/usr/bin/docker pull redis:latest
+2026-11-04T16:36:12.8399934Z latest: Pulling from library/redis
+2026-11-04T16:36:12.9148430Z 6fc242d221a6: Pulling fs layer
+2026-11-04T16:36:12.9150010Z b8720a38ca9f: Pulling fs layer
+2026-11-04T16:36:12.9151203Z bc7279d6ce3b: Pulling fs layer
+2026-11-04T16:36:12.9152197Z 19e360b01586: Pulling fs layer
+2026-11-04T16:36:12.9153376Z d6fa8912a888: Pulling fs layer
+2026-11-04T16:36:12.9154342Z 4f4fb700ef54: Pulling fs layer
+2026-11-04T16:36:12.9156404Z 551d0d9b4145: Pulling fs layer
+2026-11-04T16:36:12.9157766Z d6fa8912a888: Waiting
+2026-11-04T16:36:12.9158997Z 4f4fb700ef54: Waiting
+2026-11-04T16:36:12.9160167Z 551d0d9b4145: Waiting
+2026-11-04T16:36:12.9161187Z 19e360b01586: Waiting
+2026-11-04T16:36:12.9431702Z bc7279d6ce3b: Verifying Checksum
+2026-11-04T16:36:12.9433892Z bc7279d6ce3b: Download complete
+2026-11-04T16:36:12.9456898Z b8720a38ca9f: Verifying Checksum
+2026-11-04T16:36:12.9459001Z b8720a38ca9f: Download complete
+2026-11-04T16:36:12.9736308Z d6fa8912a888: Verifying Checksum
+2026-11-04T16:36:12.9738255Z d6fa8912a888: Download complete
+2026-11-04T16:36:13.0129697Z 4f4fb700ef54: Verifying Checksum
+2026-11-04T16:36:13.0134495Z 4f4fb700ef54: Download complete
+2026-11-04T16:36:13.0409257Z 551d0d9b4145: Verifying Checksum
+2026-11-04T16:36:13.0413634Z 551d0d9b4145: Download complete
+2026-11-04T16:36:13.0571575Z 6fc242d221a6: Verifying Checksum
+2026-11-04T16:36:13.0574587Z 6fc242d221a6: Download complete
+2026-11-04T16:36:13.0761483Z 19e360b01586: Verifying Checksum
+2026-11-04T16:36:13.0763152Z 19e360b01586: Download complete
+2026-11-04T16:36:14.0194247Z 6fc242d221a6: Pull complete
+2026-11-04T16:36:14.0993683Z b8720a38ca9f: Pull complete
+2026-11-04T16:36:14.1112250Z bc7279d6ce3b: Pull complete
+2026-11-04T16:36:14.4449373Z 19e360b01586: Pull complete
+2026-11-04T16:36:14.4528139Z d6fa8912a888: Pull complete
+2026-11-04T16:36:14.4600660Z 4f4fb700ef54: Pull complete
+2026-11-04T16:36:14.4684523Z 551d0d9b4145: Pull complete
+2026-11-04T16:36:14.4725903Z Digest: sha256:de1068af6f552240dfab67bcc9bfef99bfc60f776bb4580ef077ea4c8c97e848
+2026-11-04T16:36:14.4740735Z Status: Downloaded newer image for redis:latest
+2026-11-04T16:36:14.4747347Z docker.io/library/redis:latest
+2026-11-04T16:36:14.4797520Z ##[command]/usr/bin/docker create --name 5abe412e33254283b30965c9b0e386b0_redislatest_85ef20 --label d05a77 --network github_network_31bb9fb92b724f73a2b409d5c5b751bb --network-alias redis -p 6379:6379 --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5 -e GITHUB_ACTIONS=true -e CI=true redis:latest
+2026-11-04T16:36:14.5070667Z 2477aa706716a75e88ac9e25f30865738f89e6376f4bb2139ab1423652fe188b
+2026-11-04T16:36:14.5101462Z ##[command]/usr/bin/docker start 2477aa706716a75e88ac9e25f30865738f89e6376f4bb2139ab1423652fe188b
+2026-11-04T16:36:14.8162086Z 2477aa706716a75e88ac9e25f30865738f89e6376f4bb2139ab1423652fe188b
+2026-11-04T16:36:14.8191880Z ##[command]/usr/bin/docker ps --all --filter id=2477aa706716a75e88ac9e25f30865738f89e6376f4bb2139ab1423652fe188b --filter status=running --no-trunc --format "{{.ID}} {{.Status}}"
+2026-11-04T16:36:14.8372765Z 2477aa706716a75e88ac9e25f30865738f89e6376f4bb2139ab1423652fe188b Up Less than a second (health: starting)
+2026-11-04T16:36:14.8392497Z ##[command]/usr/bin/docker port 2477aa706716a75e88ac9e25f30865738f89e6376f4bb2139ab1423652fe188b
+2026-11-04T16:36:14.8562564Z 6379/tcp -> 0.0.0.0:6379
+2026-11-04T16:36:14.8563814Z 6379/tcp -> [::]:6379
+2026-11-04T16:36:14.8612397Z ##[endgroup]
+2026-11-04T16:36:14.8617738Z ##[group]Starting postgres service container
+2026-11-04T16:36:14.8620502Z ##[command]/usr/bin/docker pull postgres:14
+2026-11-04T16:36:15.0782786Z 14: Pulling from library/postgres
+2026-11-04T16:36:15.1486965Z 6fc242d221a6: Already exists
+2026-11-04T16:36:15.1509701Z f2d9f3c89b3e: Pulling fs layer
+2026-11-04T16:36:15.1510991Z d89d6434da4d: Pulling fs layer
+2026-11-04T16:36:15.1512021Z 654c8c1e6c0f: Pulling fs layer
+2026-11-04T16:36:15.1513096Z 5b3a40e6f9bd: Pulling fs layer
+2026-11-04T16:36:15.1514073Z 206f0269b087: Pulling fs layer
+2026-11-04T16:36:15.1515194Z 53954b30841e: Pulling fs layer
+2026-11-04T16:36:15.1516354Z 9260dc02f30c: Pulling fs layer
+2026-11-04T16:36:15.1516926Z 9c8c5658ea37: Pulling fs layer
+2026-11-04T16:36:15.1517960Z 750078bcd965: Pulling fs layer
+2026-11-04T16:36:15.1518990Z c72692bb033c: Pulling fs layer
+2026-11-04T16:36:15.1519929Z 7747f52a8147: Pulling fs layer
+2026-11-04T16:36:15.1520364Z 6bfc0d2eba1b: Pulling fs layer
+2026-11-04T16:36:15.1520694Z 4a0e921cbcd8: Pulling fs layer
+2026-11-04T16:36:15.1521706Z 9c8c5658ea37: Waiting
+2026-11-04T16:36:15.1521977Z 5b3a40e6f9bd: Waiting
+2026-11-04T16:36:15.1527990Z 206f0269b087: Waiting
+2026-11-04T16:36:15.1529154Z 53954b30841e: Waiting
+2026-11-04T16:36:15.1529984Z 9260dc02f30c: Waiting
+2026-11-04T16:36:15.1530761Z 750078bcd965: Waiting
+2026-11-04T16:36:15.1531513Z c72692bb033c: Waiting
+2026-11-04T16:36:15.1532257Z 7747f52a8147: Waiting
+2026-11-04T16:36:15.1533005Z 4a0e921cbcd8: Waiting
+2026-11-04T16:36:15.1829609Z f2d9f3c89b3e: Verifying Checksum
+2026-11-04T16:36:15.1835867Z f2d9f3c89b3e: Download complete
+2026-11-04T16:36:15.2016279Z 654c8c1e6c0f: Verifying Checksum
+2026-11-04T16:36:15.2018569Z 654c8c1e6c0f: Download complete
+2026-11-04T16:36:15.2158888Z f2d9f3c89b3e: Pull complete
+2026-11-04T16:36:15.2209801Z d89d6434da4d: Verifying Checksum
+2026-11-04T16:36:15.2211634Z d89d6434da4d: Download complete
+2026-11-04T16:36:15.2448125Z 206f0269b087: Verifying Checksum
+2026-11-04T16:36:15.2448987Z 206f0269b087: Download complete
+2026-11-04T16:36:15.2506677Z 53954b30841e: Verifying Checksum
+2026-11-04T16:36:15.2507586Z 53954b30841e: Download complete
+2026-11-04T16:36:15.2572677Z 5b3a40e6f9bd: Verifying Checksum
+2026-11-04T16:36:15.2574265Z 5b3a40e6f9bd: Download complete
+2026-11-04T16:36:15.2788244Z 9260dc02f30c: Verifying Checksum
+2026-11-04T16:36:15.2788792Z 9260dc02f30c: Download complete
+2026-11-04T16:36:15.2861206Z 750078bcd965: Verifying Checksum
+2026-11-04T16:36:15.2862022Z 750078bcd965: Download complete
+2026-11-04T16:36:15.3083689Z c72692bb033c: Verifying Checksum
+2026-11-04T16:36:15.3084600Z c72692bb033c: Download complete
+2026-11-04T16:36:15.3144761Z 7747f52a8147: Verifying Checksum
+2026-11-04T16:36:15.3146201Z 7747f52a8147: Download complete
+2026-11-04T16:36:15.3433970Z 6bfc0d2eba1b: Verifying Checksum
+2026-11-04T16:36:15.3435863Z 6bfc0d2eba1b: Download complete
+2026-11-04T16:36:15.3461908Z 4a0e921cbcd8: Verifying Checksum
+2026-11-04T16:36:15.3462976Z 4a0e921cbcd8: Download complete
+2026-11-04T16:36:15.4781767Z d89d6434da4d: Pull complete
+2026-11-04T16:36:15.5267490Z 654c8c1e6c0f: Pull complete
+2026-11-04T16:36:15.7220152Z 9c8c5658ea37: Verifying Checksum
+2026-11-04T16:36:15.7221122Z 9c8c5658ea37: Download complete
+2026-11-04T16:36:15.8765691Z 5b3a40e6f9bd: Pull complete
+2026-11-04T16:36:15.9348906Z 206f0269b087: Pull complete
+2026-11-04T16:36:15.9428408Z 53954b30841e: Pull complete
+2026-11-04T16:36:15.9512598Z 9260dc02f30c: Pull complete
+2026-11-04T16:36:18.7255437Z 9c8c5658ea37: Pull complete
+2026-11-04T16:36:18.7373274Z 750078bcd965: Pull complete
+2026-11-04T16:36:18.7463829Z c72692bb033c: Pull complete
+2026-11-04T16:36:18.7557091Z 7747f52a8147: Pull complete
+2026-11-04T16:36:18.7674193Z 6bfc0d2eba1b: Pull complete
+2026-11-04T16:36:18.7766334Z 4a0e921cbcd8: Pull complete
+2026-11-04T16:36:18.7805554Z Digest: sha256:a26d06e6878f114ab53aace021fd9c599b498cca4c5ba2c18b34aee472f20148
+2026-11-04T16:36:18.7820643Z Status: Downloaded newer image for postgres:14
+2026-11-04T16:36:18.7850305Z docker.io/library/postgres:14
+2026-11-04T16:36:18.7898421Z ##[command]/usr/bin/docker create --name 2d84b553aee04fba94bf4be1b451046b_postgres14_1cb002 --label d05a77 --network github_network_31bb9fb92b724f73a2b409d5c5b751bb --network-alias postgres -p 5432:5432 --health-cmd "pg_isready" --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data -e "POSTGRES_USER=prefect" -e "POSTGRES_PASSWORD=prefect" -e "POSTGRES_DB=prefect" -e "LANG=C.UTF-8" -e "LANGUAGE=C.UTF-8" -e "LC_ALL=C.UTF-8" -e "LC_COLLATE=C.UTF-8" -e "LC_CTYPE=C.UTF-8" -e GITHUB_ACTIONS=true -e CI=true postgres:14
+2026-11-04T16:36:18.8132995Z bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920
+2026-11-04T16:36:18.8149882Z ##[command]/usr/bin/docker start bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920
+2026-11-04T16:36:18.9617105Z bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920
+2026-11-04T16:36:18.9648893Z ##[command]/usr/bin/docker ps --all --filter id=bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920 --filter status=running --no-trunc --format "{{.ID}} {{.Status}}"
+2026-11-04T16:36:18.9809053Z bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920 Up Less than a second (health: starting)
+2026-11-04T16:36:18.9826279Z ##[command]/usr/bin/docker port bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920
+2026-11-04T16:36:19.0048993Z 5432/tcp -> 0.0.0.0:5432
+2026-11-04T16:36:19.0050319Z 5432/tcp -> [::]:5432
+2026-11-04T16:36:19.0064573Z ##[endgroup]
+2026-11-04T16:36:19.0075217Z ##[group]Waiting for all services to be ready
+2026-11-04T16:36:19.0089625Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" 2477aa706716a75e88ac9e25f30865738f89e6376f4bb2139ab1423652fe188b
+2026-11-04T16:36:19.0261525Z starting
+2026-11-04T16:36:19.0286241Z redis service is starting, waiting 2 seconds before checking again.
+2026-11-04T16:36:21.0285787Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" 2477aa706716a75e88ac9e25f30865738f89e6376f4bb2139ab1423652fe188b
+2026-11-04T16:36:21.0427875Z starting
+2026-11-04T16:36:21.0444222Z redis service is starting, waiting 3 seconds before checking again.
+2026-11-04T16:36:24.9602158Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" 2477aa706716a75e88ac9e25f30865738f89e6376f4bb2139ab1423652fe188b
+2026-11-04T16:36:24.9753102Z healthy
+2026-11-04T16:36:24.9774177Z redis service is healthy.
+2026-11-04T16:36:24.9775812Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920
+2026-11-04T16:36:24.9918163Z starting
+2026-11-04T16:36:24.9935199Z postgres service is starting, waiting 2 seconds before checking again.
+2026-11-04T16:36:26.9940806Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920
+2026-11-04T16:36:27.0088913Z starting
+2026-11-04T16:36:27.0106580Z postgres service is starting, waiting 4 seconds before checking again.
+2026-11-04T16:36:31.2224442Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920
+2026-11-04T16:36:31.2376308Z healthy
+2026-11-04T16:36:31.2393316Z postgres service is healthy.
+2026-11-04T16:36:31.2394069Z ##[endgroup]
+2026-11-04T16:36:31.2684852Z ##[group]Run actions/checkout@v7
+2026-11-04T16:36:31.2685652Z with:
+2026-11-04T16:36:31.2685880Z   persist-credentials: false
+2026-11-04T16:36:31.2686133Z   fetch-depth: 0
+2026-11-04T16:36:31.2686345Z   filter: blob:none
+2026-11-04T16:36:31.2686573Z   repository: Anacreonsystems/ariadne
+2026-11-04T16:36:31.2688854Z   token: ***
+2026-11-04T16:36:31.2689063Z   ssh-strict: true
+2026-11-04T16:36:31.2689265Z   ssh-user: git
+2026-11-04T16:36:31.2689460Z   clean: true
+2026-11-04T16:36:31.2689667Z   sparse-checkout-cone-mode: true
+2026-11-04T16:36:31.2689938Z   fetch-tags: false
+2026-11-04T16:36:31.2690148Z   show-progress: true
+2026-11-04T16:36:31.2690353Z   lfs: false
+2026-11-04T16:36:31.2690540Z   submodules: false
+2026-11-04T16:36:31.2690747Z   set-safe-directory: true
+2026-11-04T16:36:31.2690998Z   allow-unsafe-pr-checkout: false
+2026-11-04T16:36:31.2691438Z env:
+2026-11-04T16:36:31.2691625Z   PY_COLORS: 1
+2026-11-04T16:36:31.2691831Z ##[endgroup]
+2026-11-04T16:36:31.5359258Z Syncing repository: Anacreonsystems/ariadne
+2026-11-04T16:36:31.5361478Z ##[group]Getting Git version info
+2026-11-04T16:36:31.5362015Z Working directory is '/home/runner/work/ariadne/ariadne'
+2026-11-04T16:36:31.5362596Z [command]/usr/bin/git version
+2026-11-04T16:36:31.5438454Z git version 2.56.0
+2026-11-04T16:36:31.5464232Z ##[endgroup]
+2026-11-04T16:36:31.5477187Z Temporarily overriding HOME='/home/runner/work/_temp/84519388-923d-4ed9-a180-1eaf086ab43c' before making global git config changes
+2026-11-04T16:36:31.5478696Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-04T16:36:31.5485898Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ariadne/ariadne
+2026-11-04T16:36:31.5541385Z Deleting the contents of '/home/runner/work/ariadne/ariadne'
+2026-11-04T16:36:31.5547112Z ##[group]Determining repository object format
+2026-11-04T16:36:31.5548076Z ##[endgroup]
+2026-11-04T16:36:31.5548889Z ##[group]Initializing the repository
+2026-11-04T16:36:31.5552286Z [command]/usr/bin/git init /home/runner/work/ariadne/ariadne
+2026-11-04T16:36:31.5651200Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-04T16:36:31.5652677Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-11-04T16:36:31.5653486Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-11-04T16:36:31.5654128Z hint: call:
+2026-11-04T16:36:31.5654490Z hint:
+2026-11-04T16:36:31.5655241Z hint: 	git config --global init.defaultBranch <name>
+2026-11-04T16:36:31.5656005Z hint:
+2026-11-04T16:36:31.5656537Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-04T16:36:31.5657336Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-04T16:36:31.5658241Z hint:
+2026-11-04T16:36:31.5658655Z hint: 	git branch -m <name>
+2026-11-04T16:36:31.5659093Z hint:
+2026-11-04T16:36:31.5659687Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-11-04T16:36:31.5662572Z Initialized empty Git repository in /home/runner/work/ariadne/ariadne/.git/
+2026-11-04T16:36:31.5676352Z [command]/usr/bin/git remote add origin https://github.com/Anacreonsystems/ariadne
+2026-11-04T16:36:31.5733054Z ##[endgroup]
+2026-11-04T16:36:31.5733504Z ##[group]Disabling automatic garbage collection
+2026-11-04T16:36:31.5733931Z [command]/usr/bin/git config --local gc.auto 0
+2026-11-04T16:36:31.5776175Z ##[endgroup]
+2026-11-04T16:36:31.5776807Z ##[group]Setting up auth
+2026-11-04T16:36:31.5777319Z Removing SSH command configuration
+2026-11-04T16:36:31.5778010Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-04T16:36:31.5815987Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-04T16:36:31.6219938Z Removing HTTP extra header
+2026-11-04T16:36:31.6221794Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-04T16:36:31.6268334Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-04T16:36:31.6516510Z Removing includeIf entries pointing to credentials config files
+2026-11-04T16:36:31.6522420Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-04T16:36:31.6570158Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-04T16:36:31.6824384Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-8ccdb9b9-5793-4184-9c47-1519dbacf166.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-04T16:36:31.6876301Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/ariadne/ariadne/.git.path /home/runner/work/_temp/git-credentials-8ccdb9b9-5793-4184-9c47-1519dbacf166.config
+2026-11-04T16:36:31.6922124Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/ariadne/ariadne/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-8ccdb9b9-5793-4184-9c47-1519dbacf166.config
+2026-11-04T16:36:31.6969456Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-8ccdb9b9-5793-4184-9c47-1519dbacf166.config
+2026-11-04T16:36:31.7015864Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-8ccdb9b9-5793-4184-9c47-1519dbacf166.config
+2026-11-04T16:36:31.7058777Z ##[endgroup]
+2026-11-04T16:36:31.7059434Z ##[group]Fetching the repository
+2026-11-04T16:36:31.7067417Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --filter=blob:none origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +087702e152018dec8cfbfa8d323a123b724017db:refs/remotes/pull/13/merge
+2026-11-04T16:36:33.2172692Z From https://github.com/Anacreonsystems/ariadne
+2026-11-04T16:36:33.2173423Z  * [new branch]          main                                     -> origin/main
+2026-11-04T16:36:33.2174214Z  * [new branch]          native-prefect-epoch-1                   -> origin/native-prefect-epoch-1
+2026-11-04T16:36:33.2175368Z  * [new branch]          native-stream-storage                    -> origin/native-stream-storage
+2026-11-04T16:36:33.2176293Z  * [new branch]          native-stream-task-contract              -> origin/native-stream-task-contract
+2026-11-04T16:36:33.2177717Z  * [new branch]          streaming-etl-adrs                       -> origin/streaming-etl-adrs
+2026-11-04T16:36:33.2178705Z  * [new branch]          streaming-soak-arc                       -> origin/streaming-soak-arc
+2026-11-04T16:36:33.2179920Z  * [new branch]          streaming-soak-execution                 -> origin/streaming-soak-execution
+2026-11-04T16:36:33.2181192Z  * [new ref]             087702e152018dec8cfbfa8d323a123b724017db -> pull/13/merge
+2026-11-04T16:36:33.2182540Z ##[endgroup]
+2026-11-04T16:36:33.2183058Z ##[group]Determining the checkout info
+2026-11-04T16:36:33.2183645Z ##[endgroup]
+2026-11-04T16:36:33.2185602Z [command]/usr/bin/git sparse-checkout disable
+2026-11-04T16:36:33.2255420Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-04T16:36:33.2300213Z ##[group]Checking out the ref
+2026-11-04T16:36:33.2304468Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/13/merge
+2026-11-04T16:36:35.7976369Z Updating files:   0% (1/7114)
+2026-11-04T16:36:35.8036128Z Updating files:   1% (72/7114)
+2026-11-04T16:36:35.8162168Z Updating files:   2% (143/7114)
+2026-11-04T16:36:35.8217531Z Updating files:   3% (214/7114)
+2026-11-04T16:36:35.8252886Z Updating files:   4% (285/7114)
+2026-11-04T16:36:35.8286244Z Updating files:   5% (356/7114)
+2026-11-04T16:36:35.8321944Z Updating files:   6% (427/7114)
+2026-11-04T16:36:35.8369180Z Updating files:   7% (498/7114)
+2026-11-04T16:36:35.8437914Z Updating files:   8% (570/7114)
+2026-11-04T16:36:35.8483725Z Updating files:   9% (641/7114)
+2026-11-04T16:36:35.8541403Z Updating files:  10% (712/7114)
+2026-11-04T16:36:35.8719816Z Updating files:  11% (783/7114)
+2026-11-04T16:36:35.8821263Z Updating files:  12% (854/7114)
+2026-11-04T16:36:35.8867703Z Updating files:  13% (925/7114)
+2026-11-04T16:36:35.8909013Z Updating files:  14% (996/7114)
+2026-11-04T16:36:35.8947897Z Updating files:  15% (1068/7114)
+2026-11-04T16:36:35.9018147Z Updating files:  16% (1139/7114)
+2026-11-04T16:36:35.9058643Z Updating files:  17% (1210/7114)
+2026-11-04T16:36:35.9160043Z Updating files:  18% (1281/7114)
+2026-11-04T16:36:35.9232374Z Updating files:  19% (1352/7114)
+2026-11-04T16:36:35.9290146Z Updating files:  20% (1423/7114)
+2026-11-04T16:36:35.9360386Z Updating files:  21% (1494/7114)
+2026-11-04T16:36:35.9436755Z Updating files:  22% (1566/7114)
+2026-11-04T16:36:35.9502801Z Updating files:  23% (1637/7114)
+2026-11-04T16:36:35.9895059Z Updating files:  24% (1708/7114)
+2026-11-04T16:36:36.0214986Z Updating files:  25% (1779/7114)
+2026-11-04T16:36:36.0259070Z Updating files:  26% (1850/7114)
+2026-11-04T16:36:36.0309244Z Updating files:  27% (1921/7114)
+2026-11-04T16:36:36.0343448Z Updating files:  28% (1992/7114)
+2026-11-04T16:36:36.0386303Z Updating files:  29% (2064/7114)
+2026-11-04T16:36:36.0430330Z Updating files:  30% (2135/7114)
+2026-11-04T16:36:36.0475023Z Updating files:  31% (2206/7114)
+2026-11-04T16:36:36.0528175Z Updating files:  32% (2277/7114)
+2026-11-04T16:36:36.0567332Z Updating files:  33% (2348/7114)
+2026-11-04T16:36:36.0602623Z Updating files:  34% (2419/7114)
+2026-11-04T16:36:36.0633044Z Updating files:  35% (2490/7114)
+2026-11-04T16:36:36.0655501Z Updating files:  36% (2562/7114)
+2026-11-04T16:36:36.0704186Z Updating files:  37% (2633/7114)
+2026-11-04T16:36:36.0756226Z Updating files:  38% (2704/7114)
+2026-11-04T16:36:36.0877435Z Updating files:  39% (2775/7114)
+2026-11-04T16:36:36.1113854Z Updating files:  40% (2846/7114)
+2026-11-04T16:36:36.1630087Z Updating files:  41% (2917/7114)
+2026-11-04T16:36:36.1680161Z Updating files:  42% (2988/7114)
+2026-11-04T16:36:36.1742654Z Updating files:  43% (3060/7114)
+2026-11-04T16:36:36.1796795Z Updating files:  44% (3131/7114)
+2026-11-04T16:36:36.1838033Z Updating files:  45% (3202/7114)
+2026-11-04T16:36:36.1907267Z Updating files:  46% (3273/7114)
+2026-11-04T16:36:36.1963480Z Updating files:  47% (3344/7114)
+2026-11-04T16:36:36.2011742Z Updating files:  48% (3415/7114)
+2026-11-04T16:36:36.2149577Z Updating files:  49% (3486/7114)
+2026-11-04T16:36:36.2201316Z Updating files:  50% (3557/7114)
+2026-11-04T16:36:36.2245164Z Updating files:  51% (3629/7114)
+2026-11-04T16:36:36.2282836Z Updating files:  52% (3700/7114)
+2026-11-04T16:36:36.2333972Z Updating files:  53% (3771/7114)
+2026-11-04T16:36:36.2384783Z Updating files:  54% (3842/7114)
+2026-11-04T16:36:36.2412495Z Updating files:  55% (3913/7114)
+2026-11-04T16:36:36.2436824Z Updating files:  55% (3946/7114)
+2026-11-04T16:36:36.2497196Z Updating files:  56% (3984/7114)
+2026-11-04T16:36:36.2551896Z Updating files:  57% (4055/7114)
+2026-11-04T16:36:36.2592864Z Updating files:  58% (4127/7114)
+2026-11-04T16:36:36.2625574Z Updating files:  59% (4198/7114)
+2026-11-04T16:36:36.2654031Z Updating files:  60% (4269/7114)
+2026-11-04T16:36:36.2692633Z Updating files:  61% (4340/7114)
+2026-11-04T16:36:36.2750628Z Updating files:  62% (4411/7114)
+2026-11-04T16:36:36.2790185Z Updating files:  63% (4482/7114)
+2026-11-04T16:36:36.2846035Z Updating files:  64% (4553/7114)
+2026-11-04T16:36:36.2893926Z Updating files:  65% (4625/7114)
+2026-11-04T16:36:36.2959438Z Updating files:  66% (4696/7114)
+2026-11-04T16:36:36.3008262Z Updating files:  67% (4767/7114)
+2026-11-04T16:36:36.3062854Z Updating files:  68% (4838/7114)
+2026-11-04T16:36:36.3117576Z Updating files:  69% (4909/7114)
+2026-11-04T16:36:36.3181859Z Updating files:  70% (4980/7114)
+2026-11-04T16:36:36.3246879Z Updating files:  71% (5051/7114)
+2026-11-04T16:36:36.3304838Z Updating files:  72% (5123/7114)
+2026-11-04T16:36:36.3369926Z Updating files:  73% (5194/7114)
+2026-11-04T16:36:36.3436845Z Updating files:  74% (5265/7114)
+2026-11-04T16:36:36.3483795Z Updating files:  75% (5336/7114)
+2026-11-04T16:36:36.3533111Z Updating files:  76% (5407/7114)
+2026-11-04T16:36:36.3567597Z Updating files:  77% (5478/7114)
+2026-11-04T16:36:36.3602495Z Updating files:  78% (5549/7114)
+2026-11-04T16:36:36.3637410Z Updating files:  79% (5621/7114)
+2026-11-04T16:36:36.3669565Z Updating files:  80% (5692/7114)
+2026-11-04T16:36:36.3704778Z Updating files:  81% (5763/7114)
+2026-11-04T16:36:36.3738221Z Updating files:  82% (5834/7114)
+2026-11-04T16:36:36.3772721Z Updating files:  83% (5905/7114)
+2026-11-04T16:36:36.3814041Z Updating files:  84% (5976/7114)
+2026-11-04T16:36:36.3847286Z Updating files:  85% (6047/7114)
+2026-11-04T16:36:36.3884518Z Updating files:  86% (6119/7114)
+2026-11-04T16:36:36.3914771Z Updating files:  87% (6190/7114)
+2026-11-04T16:36:36.3948968Z Updating files:  88% (6261/7114)
+2026-11-04T16:36:36.3984010Z Updating files:  89% (6332/7114)
+2026-11-04T16:36:36.4018717Z Updating files:  90% (6403/7114)
+2026-11-04T16:36:36.4053283Z Updating files:  91% (6474/7114)
+2026-11-04T16:36:36.4087703Z Updating files:  92% (6545/7114)
+2026-11-04T16:36:36.4121093Z Updating files:  93% (6617/7114)
+2026-11-04T16:36:36.4154827Z Updating files:  94% (6688/7114)
+2026-11-04T16:36:36.4184480Z Updating files:  95% (6759/7114)
+2026-11-04T16:36:36.4228676Z Updating files:  96% (6830/7114)
+2026-11-04T16:36:36.4264620Z Updating files:  97% (6901/7114)
+2026-11-04T16:36:36.4321998Z Updating files:  98% (6972/7114)
+2026-11-04T16:36:36.4391417Z Updating files:  99% (7043/7114)
+2026-11-04T16:36:36.4392149Z Updating files: 100% (7114/7114)
+2026-11-04T16:36:36.4392890Z Updating files: 100% (7114/7114), done.
+2026-11-04T16:36:36.4479386Z Note: switching to 'refs/remotes/pull/13/merge'.
+2026-11-04T16:36:36.4480142Z 
+2026-11-04T16:36:36.4480795Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-11-04T16:36:36.4481902Z changes and commit them, and you can discard any commits you make in this
+2026-11-04T16:36:36.4482863Z state without impacting any branches by switching back to a branch.
+2026-11-04T16:36:36.4483438Z 
+2026-11-04T16:36:36.4483801Z If you want to create a new branch to retain commits you create, you may
+2026-11-04T16:36:36.4484700Z do so (now or later) by using -c with the switch command. Example:
+2026-11-04T16:36:36.4485649Z 
+2026-11-04T16:36:36.4485855Z   git switch -c <new-branch-name>
+2026-11-04T16:36:36.4486219Z 
+2026-11-04T16:36:36.4486416Z Or undo this operation with:
+2026-11-04T16:36:36.4486730Z 
+2026-11-04T16:36:36.4486896Z   git switch -
+2026-11-04T16:36:36.4487129Z 
+2026-11-04T16:36:36.4487550Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-11-04T16:36:36.4488124Z 
+2026-11-04T16:36:36.4488713Z HEAD is now at 087702e15 Merge bbd2a2be56e9fb7afa557e504256df0db1fc9cee into 69e43167bcfd56546f7e0f80f5c9805065b9dd72
+2026-11-04T16:36:36.4518832Z ##[endgroup]
+2026-11-04T16:36:36.4580422Z [command]/usr/bin/git log -1 --format=%H
+2026-11-04T16:36:36.4619979Z 087702e152018dec8cfbfa8d323a123b724017db
+2026-11-04T16:36:36.4630679Z ##[group]Removing auth
+2026-11-04T16:36:36.4631171Z Removing SSH command configuration
+2026-11-04T16:36:36.4635484Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-04T16:36:36.4681007Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-04T16:36:36.4942221Z Removing HTTP extra header
+2026-11-04T16:36:36.4947160Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-04T16:36:36.4996287Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-04T16:36:36.5250009Z Removing includeIf entries pointing to credentials config files
+2026-11-04T16:36:36.5254411Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-04T16:36:36.5294721Z includeif.gitdir:/home/runner/work/ariadne/ariadne/.git.path
+2026-11-04T16:36:36.5295634Z includeif.gitdir:/home/runner/work/ariadne/ariadne/.git/worktrees/*.path
+2026-11-04T16:36:36.5296434Z includeif.gitdir:/github/workspace/.git.path
+2026-11-04T16:36:36.5297127Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-04T16:36:36.5312714Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/ariadne/ariadne/.git.path
+2026-11-04T16:36:36.5348909Z /home/runner/work/_temp/git-credentials-8ccdb9b9-5793-4184-9c47-1519dbacf166.config
+2026-11-04T16:36:36.5358886Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/ariadne/ariadne/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-8ccdb9b9\-5793\-4184\-9c47\-1519dbacf166\.config
+2026-11-04T16:36:36.5410625Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/ariadne/ariadne/.git/worktrees/*.path
+2026-11-04T16:36:36.5445697Z /home/runner/work/_temp/git-credentials-8ccdb9b9-5793-4184-9c47-1519dbacf166.config
+2026-11-04T16:36:36.5453785Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/ariadne/ariadne/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-8ccdb9b9\-5793\-4184\-9c47\-1519dbacf166\.config
+2026-11-04T16:36:36.5502648Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-11-04T16:36:36.5543431Z /github/runner_temp/git-credentials-8ccdb9b9-5793-4184-9c47-1519dbacf166.config
+2026-11-04T16:36:36.5551040Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-8ccdb9b9\-5793\-4184\-9c47\-1519dbacf166\.config
+2026-11-04T16:36:36.5596791Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-04T16:36:36.5632799Z /github/runner_temp/git-credentials-8ccdb9b9-5793-4184-9c47-1519dbacf166.config
+2026-11-04T16:36:36.5640097Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-8ccdb9b9\-5793\-4184\-9c47\-1519dbacf166\.config
+2026-11-04T16:36:36.5685791Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-04T16:36:36.5941373Z Removing credentials config '/home/runner/work/_temp/git-credentials-8ccdb9b9-5793-4184-9c47-1519dbacf166.config'
+2026-11-04T16:36:36.5952414Z ##[endgroup]
+2026-11-04T16:36:36.6224303Z ##[group]Run astral-sh/setup-uv@v10.0.1
+2026-11-04T16:36:36.6224626Z with:
+2026-11-04T16:36:36.6224825Z   enable-cache: true
+2026-11-04T16:36:36.6225382Z   python-version: 3.12
+2026-11-04T16:36:36.6225641Z   cache-dependency-glob: pyproject.toml
+2026-11-04T16:36:36.6225940Z   activate-environment: false
+2026-11-04T16:36:36.6226188Z   no-project: false
+2026-11-04T16:36:36.6226454Z   working-directory: /home/runner/work/ariadne/ariadne
+2026-11-04T16:36:36.6228770Z   github-token: ***
+2026-11-04T16:36:36.6228988Z   restore-cache: true
+2026-11-04T16:36:36.6229200Z   save-cache: true
+2026-11-04T16:36:36.6229402Z   prune-cache: false
+2026-11-04T16:36:36.6229608Z   cache-python: false
+2026-11-04T16:36:36.6229833Z   ignore-nothing-to-cache: false
+2026-11-04T16:36:36.6230119Z   ignore-empty-workdir: false
+2026-11-04T16:36:36.6230379Z   download-from-astral-mirror: true
+2026-11-04T16:36:36.6230644Z   add-problem-matchers: true
+2026-11-04T16:36:36.6230873Z   quiet: false
+2026-11-04T16:36:36.6231110Z   resolution-strategy: highest
+2026-11-04T16:36:36.6231344Z env:
+2026-11-04T16:36:36.6231520Z   PY_COLORS: 1
+2026-11-04T16:36:36.6231715Z ##[endgroup]
+2026-11-04T16:36:36.8135453Z Trying to find version for uv in: /home/runner/work/ariadne/ariadne/uv.toml
+2026-11-04T16:36:36.8136666Z Could not find file: /home/runner/work/ariadne/ariadne/uv.toml
+2026-11-04T16:36:36.8137654Z Trying to find version for uv in: /home/runner/work/ariadne/ariadne/pyproject.toml
+2026-11-04T16:36:36.8150625Z Found version for uv in /home/runner/work/ariadne/ariadne/pyproject.toml: >=0.6.15
+2026-11-04T16:36:36.8154656Z Found minimum version specifier, using latest version
+2026-11-04T16:36:36.8158136Z Fetching manifest data from https://raw.githubusercontent.com/astral-sh/versions/main/v1/uv.ndjson ...
+2026-11-04T16:36:36.8849991Z Downloading uv from "https://releases.astral.sh/github/uv/releases/download/0.13.7/uv-x86_64-unknown-linux-gnu.tar.gz" ...
+2026-11-04T16:36:37.0383763Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/f53800cf-2dcd-45fe-a603-4dbff44ee4d9 -f /home/runner/work/_temp/06cc961c-eae3-4d13-99e6-f27cb8ee4e63
+2026-11-04T16:36:37.3359061Z Added /home/runner/.local/bin to the path
+2026-11-04T16:36:37.3362860Z Added /opt/hostedtoolcache/uv/0.13.7/x86_64 to the path
+2026-11-04T16:36:37.3364838Z Set UV_PYTHON_INSTALL_DIR to /home/runner/work/_temp/uv-python-dir
+2026-11-04T16:36:37.3366234Z Added /home/runner/work/_temp/uv-python-dir to the path
+2026-11-04T16:36:37.3367086Z Set UV_PYTHON to 3.12
+2026-11-04T16:36:37.3386666Z Set UV_CACHE_DIR to /home/runner/work/_temp/setup-uv-cache
+2026-11-04T16:36:37.3387176Z Successfully installed uv version 0.13.7
+2026-11-04T16:36:37.3387783Z Searching files using cache dependency glob: /home/runner/work/ariadne/ariadne/pyproject.toml
+2026-11-04T16:36:37.3428113Z /home/runner/work/ariadne/ariadne/pyproject.toml
+2026-11-04T16:36:37.3443497Z Found 1 files to hash.
+2026-11-04T16:36:37.3523374Z Trying to restore cache from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12-9e06d9a3968dc101ac959f7724336c27a18a907ce2be6d2464bcd88ff250b91a
+2026-11-04T16:36:37.4231272Z Cache hit for: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12-9e06d9a3968dc101ac959f7724336c27a18a907ce2be6d2464bcd88ff250b91a
+2026-11-04T16:36:38.4721152Z Received 217199531 of 217199531 (100.0%), 208.2 MBs/sec
+2026-11-04T16:36:38.4722325Z Cache Size: ~207 MB (217199531 B)
+2026-11-04T16:36:38.4756571Z [command]/usr/bin/tar -xf /home/runner/work/_temp/4f80fa52-2e01-44fe-abe0-ba92db987d23/cache.tzst -P -C /home/runner/work/ariadne/ariadne --use-compress-program unzstd
+2026-11-04T16:36:40.9981472Z Cache restored successfully
+2026-11-04T16:36:41.0086764Z cache restored from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12-9e06d9a3968dc101ac959f7724336c27a18a907ce2be6d2464bcd88ff250b91a
+2026-11-04T16:36:41.1418218Z ##[group]Run uv sync --locked
+2026-11-04T16:36:41.1418579Z [36;1muv sync --locked[0m
+2026-11-04T16:36:41.1444341Z shell: /usr/bin/bash -e {0}
+2026-11-04T16:36:41.1444620Z env:
+2026-11-04T16:36:41.1444814Z   PY_COLORS: 1
+2026-11-04T16:36:41.1445318Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-11-04T16:36:41.1445681Z   UV_PYTHON: 3.12
+2026-11-04T16:36:41.1446128Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-11-04T16:36:41.1446455Z ##[endgroup]
+2026-11-04T16:36:41.1596750Z Using CPython 3.12.3 interpreter at: /usr/bin/python3.12
+2026-11-04T16:36:41.1597270Z Creating virtual environment at: .venv
+2026-11-04T16:36:41.1687381Z Resolved 358 packages in 2ms
+2026-11-04T16:36:41.1793089Z    Building prefect @ file:///home/runner/work/ariadne/ariadne
+2026-11-04T16:36:42.1680775Z       Built prefect @ file:///home/runner/work/ariadne/ariadne
+2026-11-04T16:36:42.1699417Z Prepared 1 package in 991ms
+2026-11-04T16:36:42.6677890Z Installed 222 packages in 497ms
+2026-11-04T16:36:42.6680084Z  + aiosqlite==0.22.1
+2026-11-04T16:36:42.6680499Z  + alembic==1.18.5
+2026-11-04T16:36:42.6680925Z  + amplitude-analytics==1.2.3
+2026-11-04T16:36:42.6681387Z  + annotated-doc==0.0.4
+2026-11-04T16:36:42.6681817Z  + annotated-types==0.7.0
+2026-11-04T16:36:42.6682398Z  + anyio==4.14.2
+2026-11-04T16:36:42.6682779Z  + apprise==1.13.0
+2026-11-04T16:36:42.6685744Z  + asgi-lifespan==2.1.0
+2026-11-04T16:36:42.6686188Z  + asgiref==3.11.0
+2026-11-04T16:36:42.6686560Z  + ast-serialize==0.6.0
+2026-11-04T16:36:42.6686947Z  + asttokens==3.0.1
+2026-11-04T16:36:42.6687302Z  + asyncpg==0.31.0
+2026-11-04T16:36:42.6687656Z  + attrs==25.4.0
+2026-11-04T16:36:42.6687991Z  + babel==2.17.0
+2026-11-04T16:36:42.6688327Z  + backrefs==6.1
+2026-11-04T16:36:42.6688665Z  + beartype==0.22.9
+2026-11-04T16:36:42.6689020Z  + boto3==1.42.19
+2026-11-04T16:36:42.6689362Z  + botocore==1.42.19
+2026-11-04T16:36:42.6689755Z  + burner-redis==0.1.7
+2026-11-04T16:36:42.6690129Z  + cachetools==7.1.6
+2026-11-04T16:36:42.6690487Z  + cairocffi==1.7.1
+2026-11-04T16:36:42.6690856Z  + cairosvg==2.9.1
+2026-11-04T16:36:42.6691216Z  + certifi==2026.1.4
+2026-11-04T16:36:42.6691563Z  + cffi==2.0.0
+2026-11-04T16:36:42.6691899Z  + cfgv==3.5.0
+2026-11-04T16:36:42.6692257Z  + charset-normalizer==3.4.4
+2026-11-04T16:36:42.6692723Z  + click==8.4.2
+2026-11-04T16:36:42.6695529Z  + cloudpickle==3.1.2
+2026-11-04T16:36:42.6695923Z  + codespell==2.4.3
+2026-11-04T16:36:42.6696151Z  + colorama==0.4.6
+2026-11-04T16:36:42.6696360Z  + coolname==5.0.0
+2026-11-04T16:36:42.6696569Z  + coverage==7.13.1
+2026-11-04T16:36:42.6696768Z  + cronsim==2.7
+2026-11-04T16:36:42.6696977Z  + cryptography==50.0.0
+2026-11-04T16:36:42.6697198Z  + cssselect2==0.8.0
+2026-11-04T16:36:42.6697411Z  + cyclopts==4.22.2
+2026-11-04T16:36:42.6697840Z  + dataclasses-json==0.5.7
+2026-11-04T16:36:42.6698340Z  + dateparser==1.4.1
+2026-11-04T16:36:42.6698912Z  + decorator==5.2.1
+2026-11-04T16:36:42.6699733Z  + defusedxml==0.7.1
+2026-11-04T16:36:42.6700195Z  + distlib==0.4.0
+2026-11-04T16:36:42.6700686Z  + docker==7.2.0
+2026-11-04T16:36:42.6701090Z  + docstring-parser==0.17.0
+2026-11-04T16:36:42.6701523Z  + docutils==0.22.4
+2026-11-04T16:36:42.6701912Z  + exceptiongroup==1.3.1
+2026-11-04T16:36:42.6702321Z  + execnet==2.1.2
+2026-11-04T16:36:42.6702681Z  + executing==2.2.1
+2026-11-04T16:36:42.6703030Z  + fastapi==0.141.1
+2026-11-04T16:36:42.6703365Z  + filelock==3.25.2
+2026-11-04T16:36:42.6703707Z  + fsspec==2026.7.0
+2026-11-04T16:36:42.6704073Z  + ghp-import==2.1.0
+2026-11-04T16:36:42.6704483Z  + googleapis-common-protos==1.72.0
+2026-11-04T16:36:42.6704928Z  + graphviz==0.21
+2026-11-04T16:36:42.6705537Z  + greenlet==3.3.0
+2026-11-04T16:36:42.6705881Z  + griffe==2.1.0
+2026-11-04T16:36:42.6706216Z  + griffecli==2.1.0
+2026-11-04T16:36:42.6706561Z  + griffelib==2.1.0
+2026-11-04T16:36:42.6706897Z  + grpcio==1.76.0
+2026-11-04T16:36:42.6707269Z  + h11==0.16.0
+2026-11-04T16:36:42.6707583Z  + h2==4.4.1
+2026-11-04T16:36:42.6707914Z  + hpack==4.2.0
+2026-11-04T16:36:42.6708248Z  + httpcore==1.0.9
+2026-11-04T16:36:42.6708874Z  + httpx==0.28.1
+2026-11-04T16:36:42.6709236Z  + humanize==4.16.0
+2026-11-04T16:36:42.6709587Z  + hyperframe==6.1.0
+2026-11-04T16:36:42.6709942Z  + identify==2.6.16
+2026-11-04T16:36:42.6710279Z  + idna==3.15
+2026-11-04T16:36:42.6710608Z  + iniconfig==2.3.0
+2026-11-04T16:36:42.6710949Z  + ipython==8.39.0
+2026-11-04T16:36:42.6711284Z  + jedi==0.19.2
+2026-11-04T16:36:42.6711613Z  + jinja2==3.1.6
+2026-11-04T16:36:42.6712004Z  + jinja2-humanize-extension==0.4.0
+2026-11-04T16:36:42.6712448Z  + jmespath==1.0.1
+2026-11-04T16:36:42.6712788Z  + jsonpatch==1.33
+2026-11-04T16:36:42.6713131Z  + jsonpointer==3.0.0
+2026-11-04T16:36:42.6713494Z  + jsonschema==4.26.0
+2026-11-04T16:36:42.6713902Z  + jsonschema-specifications==2025.9.1
+2026-11-04T16:36:42.6714352Z  + libcst==1.8.6
+2026-11-04T16:36:42.6714678Z  + librt==0.13.0
+2026-11-04T16:36:42.6715208Z  + mako==1.4.2
+2026-11-04T16:36:42.6715550Z  + markdown==3.10
+2026-11-04T16:36:42.6715912Z  + markdown-it-py==3.0.0
+2026-11-04T16:36:42.6716305Z  + markupsafe==3.0.3
+2026-11-04T16:36:42.6716670Z  + marshmallow==3.26.2
+2026-11-04T16:36:42.6717055Z  + marshmallow-enum==1.5.1
+2026-11-04T16:36:42.6717464Z  + matplotlib-inline==0.2.1
+2026-11-04T16:36:42.6717848Z  + mdurl==0.1.2
+2026-11-04T16:36:42.6718176Z  + mergedeep==1.3.4
+2026-11-04T16:36:42.6718512Z  + mkdocs==1.6.1
+2026-11-04T16:36:42.6718870Z  + mkdocs-autorefs==1.4.3
+2026-11-04T16:36:42.6719262Z  + mkdocs-gen-files==0.6.1
+2026-11-04T16:36:42.6719656Z  + mkdocs-get-deps==0.2.0
+2026-11-04T16:36:42.6720046Z  + mkdocs-material==9.7.7
+2026-11-04T16:36:42.6720467Z  + mkdocs-material-extensions==1.3.1
+2026-11-04T16:36:42.6720917Z  + mkdocstrings==1.0.0
+2026-11-04T16:36:42.6721301Z  + mkdocstrings-python==2.0.1
+2026-11-04T16:36:42.6721705Z  + moto==5.2.2
+2026-11-04T16:36:42.6722028Z  + mypy==2.3.0
+2026-11-04T16:36:42.6722586Z  + mypy-extensions==1.1.0
+2026-11-04T16:36:42.6723118Z  + nodeenv==1.10.0
+2026-11-04T16:36:42.6723863Z  + numpy==2.4.1
+2026-11-04T16:36:42.6724365Z  + oauthlib==4.0.0
+2026-11-04T16:36:42.6725154Z  + opentelemetry-api==1.44.0
+2026-11-04T16:36:42.6725747Z  + opentelemetry-distro==0.65b0
+2026-11-04T16:36:42.6726244Z  + opentelemetry-exporter-otlp==1.44.0
+2026-11-04T16:36:42.6726921Z  + opentelemetry-exporter-otlp-proto-common==1.44.0
+2026-11-04T16:36:42.6727598Z  + opentelemetry-exporter-otlp-proto-grpc==1.44.0
+2026-11-04T16:36:42.6728234Z  + opentelemetry-exporter-otlp-proto-http==1.44.0
+2026-11-04T16:36:42.6728829Z  + opentelemetry-instrumentation==0.65b0
+2026-11-04T16:36:42.6729405Z  + opentelemetry-instrumentation-logging==0.65b0
+2026-11-04T16:36:42.6730066Z  + opentelemetry-instrumentation-system-metrics==0.65b0
+2026-11-04T16:36:42.6730695Z  + opentelemetry-proto==1.44.0
+2026-11-04T16:36:42.6731164Z  + opentelemetry-sdk==1.44.0
+2026-11-04T16:36:42.6731658Z  + opentelemetry-semantic-conventions==0.65b0
+2026-11-04T16:36:42.6732206Z  + opentelemetry-test-utils==0.65b0
+2026-11-04T16:36:42.6732667Z  + orjson==3.11.9
+2026-11-04T16:36:42.6733296Z  + packaging==26.3
+2026-11-04T16:36:42.6733653Z  + paginate==0.5.7
+2026-11-04T16:36:42.6733992Z  + parso==0.8.5
+2026-11-04T16:36:42.6734344Z  + pathspec==1.0.4
+2026-11-04T16:36:42.6734809Z  + pendulum==3.1.0
+2026-11-04T16:36:42.6735428Z  + pexpect==4.9.0
+2026-11-04T16:36:42.6735961Z  + pillow==12.3.0
+2026-11-04T16:36:42.6736756Z  + platformdirs==4.5.1
+2026-11-04T16:36:42.6737141Z  + pluggy==1.6.0
+2026-11-04T16:36:42.6737514Z  + pre-commit==4.6.1
+2026-11-04T16:36:42.6738210Z  + prefect==3.6.24+22251.g087702e15 (from file:///home/runner/work/ariadne/ariadne)
+2026-11-04T16:36:42.6738932Z  + prometheus-client==0.26.0
+2026-11-04T16:36:42.6739400Z  + prompt-toolkit==3.0.52
+2026-11-04T16:36:42.6739804Z  + properdocs==1.6.7
+2026-11-04T16:36:42.6740173Z  + protobuf==6.33.5
+2026-11-04T16:36:42.6740517Z  + psutil==7.2.1
+2026-11-04T16:36:42.6740865Z  + ptyprocess==0.7.0
+2026-11-04T16:36:42.6741218Z  + pure-eval==0.2.3
+2026-11-04T16:36:42.6741590Z  + py-key-value-aio==0.3.0
+2026-11-04T16:36:42.6742015Z  + py-key-value-shared==0.3.0
+2026-11-04T16:36:42.6742638Z  + pycparser==2.23
+2026-11-04T16:36:42.6743004Z  + pydantic==2.13.4
+2026-11-04T16:36:42.6743371Z  + pydantic-core==2.46.4
+2026-11-04T16:36:42.6743775Z  + pydantic-extra-types==2.11.1
+2026-11-04T16:36:42.6744216Z  + pydantic-settings==2.14.2
+2026-11-04T16:36:42.6744707Z  + pydocket==0.23.1
+2026-11-04T16:36:42.6745250Z  + pygments==2.20.0
+2026-11-04T16:36:42.6745798Z  + pymdown-extensions==11.0.1
+2026-11-04T16:36:42.6746893Z  + pyre-check==0.9.23
+2026-11-04T16:36:42.6747311Z  + pyre-extensions==0.0.32
+2026-11-04T16:36:42.6747736Z  + pyright==1.1.411
+2026-11-04T16:36:42.6748115Z  + pytest==9.1.1
+2026-11-04T16:36:42.6748495Z  + pytest-asyncio==1.4.0
+2026-11-04T16:36:42.6748907Z  + pytest-cov==7.1.0
+2026-11-04T16:36:42.6749293Z  + pytest-env==1.6.0
+2026-11-04T16:36:42.6749708Z  + pytest-flakefinder==1.1.0
+2026-11-04T16:36:42.6750144Z  + pytest-split==0.11.0
+2026-11-04T16:36:42.6750550Z  + pytest-timeout==2.4.0
+2026-11-04T16:36:42.6750962Z  + pytest-xdist==3.8.0
+2026-11-04T16:36:42.6751388Z  + python-dateutil==2.9.0.post0
+2026-11-04T16:36:42.6751850Z  + python-discovery==1.6.1
+2026-11-04T16:36:42.6752276Z  + python-dotenv==1.2.2
+2026-11-04T16:36:42.6752686Z  + python-json-logger==4.0.0
+2026-11-04T16:36:42.6753136Z  + python-slugify==9.0.0
+2026-11-04T16:36:42.6753541Z  + pytz==2026.3.post1
+2026-11-04T16:36:42.6753919Z  + pyyaml==6.0.3
+2026-11-04T16:36:42.6754291Z  + pyyaml-env-tag==1.1
+2026-11-04T16:36:42.6754696Z  + readchar==4.2.2
+2026-11-04T16:36:42.6755224Z  + redis==8.1.0
+2026-11-04T16:36:42.6755604Z  + referencing==0.37.0
+2026-11-04T16:36:42.6755984Z  + regex==2025.11.3
+2026-11-04T16:36:42.6756357Z  + requests==2.33.0
+2026-11-04T16:36:42.6756746Z  + requests-oauthlib==2.0.0
+2026-11-04T16:36:42.6757169Z  + responses==0.25.8
+2026-11-04T16:36:42.6757530Z  + respx==0.23.1
+2026-11-04T16:36:42.6757897Z  + rfc3339-validator==0.1.4
+2026-11-04T16:36:42.6758310Z  + rich==15.0.0
+2026-11-04T16:36:42.6758643Z  + rich-rst==1.3.2
+2026-11-04T16:36:42.6759017Z  + rpds-py==0.30.0
+2026-11-04T16:36:42.6759389Z  + ruamel-yaml==0.19.1
+2026-11-04T16:36:42.6759788Z  + ruamel-yaml-clib==0.2.15
+2026-11-04T16:36:42.6760201Z  + ruff==0.16.2
+2026-11-04T16:36:42.6760550Z  + s3transfer==0.16.0
+2026-11-04T16:36:42.6760940Z  + semver==3.0.4
+2026-11-04T16:36:42.6761352Z  + setuptools==83.0.0
+2026-11-04T16:36:42.6761752Z  + shellingham==1.5.4
+2026-11-04T16:36:42.6762134Z  + six==1.17.0
+2026-11-04T16:36:42.6762676Z  + sniffio==1.3.1
+2026-11-04T16:36:42.6763078Z  + sqlalchemy==2.0.45
+2026-11-04T16:36:42.6763475Z  + stack-data==0.6.3
+2026-11-04T16:36:42.6763839Z  + starlette==1.3.1
+2026-11-04T16:36:42.6764195Z  + tabulate==0.9.0
+2026-11-04T16:36:42.6764698Z  + testslide==2.7.1
+2026-11-04T16:36:42.6765292Z  + text-unidecode==1.3
+2026-11-04T16:36:42.6765697Z  + time-machine==3.2.0
+2026-11-04T16:36:42.6766126Z  + tinycss2==1.5.1
+2026-11-04T16:36:42.6766584Z  + toml==0.10.2
+2026-11-04T16:36:42.6778402Z  + traitlets==5.14.3
+2026-11-04T16:36:42.6778652Z  + ty==0.0.10
+2026-11-04T16:36:42.6779074Z  + typeguard==2.13.3
+2026-11-04T16:36:42.6779303Z  + typer==0.20.1
+2026-11-04T16:36:42.6779546Z  + types-cachetools==7.0.0.20260713
+2026-11-04T16:36:42.6779835Z  + types-dateparser==1.4.1.20260617
+2026-11-04T16:36:42.6780093Z  + types-pyyaml==6.0.12.20260724
+2026-11-04T16:36:42.6780354Z  + typing-extensions==4.16.0
+2026-11-04T16:36:42.6780614Z  + typing-inspect==0.9.0
+2026-11-04T16:36:42.6780859Z  + typing-inspection==0.4.2
+2026-11-04T16:36:42.6781104Z  + typsht==0.0.1a5
+2026-11-04T16:36:42.6781312Z  + tzdata==2025.3
+2026-11-04T16:36:42.6781511Z  + tzlocal==5.3.1
+2026-11-04T16:36:42.6781726Z  + uncalled-for==0.3.2
+2026-11-04T16:36:42.6781943Z  + urllib3==2.8.0
+2026-11-04T16:36:42.6782131Z  + uv==0.12.0
+2026-11-04T16:36:42.6782323Z  + uvicorn==0.52.0
+2026-11-04T16:36:42.6782527Z  + vale==3.13.0.0
+2026-11-04T16:36:42.6782720Z  + virtualenv==21.7.13
+2026-11-04T16:36:42.6782929Z  + watchdog==6.0.0
+2026-11-04T16:36:42.6783131Z  + watchfiles==1.2.0
+2026-11-04T16:36:42.6783350Z  + wcwidth==0.2.14
+2026-11-04T16:36:42.6783559Z  + webencodings==0.5.1
+2026-11-04T16:36:42.6783775Z  + websockets==16.1.1
+2026-11-04T16:36:42.6784101Z  + werkzeug==3.1.9
+2026-11-04T16:36:42.6784316Z  + whenever==0.10.3
+2026-11-04T16:36:42.6784526Z  + wrapt==1.17.3
+2026-11-04T16:36:42.6784723Z  + xmltodict==1.0.2
+2026-11-04T16:36:42.6784926Z  + yamllint==1.38.0
+2026-11-04T16:36:42.6944081Z ##[group]Run actions/download-artifact@v8
+2026-11-04T16:36:42.6944400Z with:
+2026-11-04T16:36:42.6944632Z   name: canonical-test-duration-baseline
+2026-11-04T16:36:42.6944933Z   merge-multiple: false
+2026-11-04T16:36:42.6945591Z   repository: Anacreonsystems/ariadne
+2026-11-04T16:36:42.6945869Z   run-id: 41866120832
+2026-11-04T16:36:42.6946100Z   skip-decompress: false
+2026-11-04T16:36:42.6946337Z   digest-mismatch: error
+2026-11-04T16:36:42.6946555Z env:
+2026-11-04T16:36:42.6946742Z   PY_COLORS: 1
+2026-11-04T16:36:42.6947028Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-11-04T16:36:42.6947382Z   UV_PYTHON: 3.12
+2026-11-04T16:36:42.6947652Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-11-04T16:36:42.6947957Z ##[endgroup]
+2026-11-04T16:36:42.8387955Z Downloading single artifact
+2026-11-04T16:36:42.9529412Z Preparing to download the following artifacts:
+2026-11-04T16:36:42.9530975Z - canonical-test-duration-baseline (ID: 13342791000, Size: 383406, Expected Digest: sha256:7e6ed3e9afe6d0ac947e844798e52aaa6f831e5fa278fcfe70859a6da5ab54f7)
+2026-11-04T16:36:43.1496395Z Redirecting to blob download url: https://productionresultssa6.blob.core.windows.net/actions-results/813c11cb-ba42-8ccf-a5a0-3715944edffe/workflow-job-run-690cc5ef-52b9-552e-962f-f8245e37da7d/artifacts/da5067e40b861ad1ea19d4bed5dfb52a37b54c505eae4a788e7747a94af02c27.zip
+2026-11-04T16:36:43.1500265Z Starting download of artifact to: /home/runner/work/ariadne/ariadne
+2026-11-04T16:36:43.2110132Z (node:3201) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+2026-11-04T16:36:43.2112049Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-04T16:36:43.2397240Z SHA256 digest of downloaded artifact is 7e6ed3e9afe6d0ac947e844798e52aaa6f831e5fa278fcfe70859a6da5ab54f7
+2026-11-04T16:36:43.2398244Z Artifact download completed successfully.
+2026-11-04T16:36:43.2398634Z Total of 1 artifact(s) downloaded
+2026-11-04T16:36:43.2401718Z Download artifact has finished successfully
+2026-11-04T16:36:43.2535681Z ##[group]Run echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=***localhost/prefect" >> $GITHUB_ENV
+2026-11-04T16:36:43.2536715Z [36;1mecho "PREFECT_SERVER_DATABASE_CONNECTION_URL=***localhost/prefect" >> $GITHUB_ENV[0m
+2026-11-04T16:36:43.2557206Z shell: /usr/bin/bash -e {0}
+2026-11-04T16:36:43.2557477Z env:
+2026-11-04T16:36:43.2557685Z   PY_COLORS: 1
+2026-11-04T16:36:43.2558011Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-11-04T16:36:43.2558390Z   UV_PYTHON: 3.12
+2026-11-04T16:36:43.2558689Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-11-04T16:36:43.2559205Z ##[endgroup]
+2026-11-04T16:36:43.2634750Z ##[group]Run # Start every group from the same baseline. Cleaning leaves only this
+2026-11-04T16:36:43.2635797Z [36;1m# Start every group from the same baseline. Cleaning leaves only this[0m
+2026-11-04T16:36:43.2636340Z [36;1m# group's observations for the single-writer merge job below.[0m
+2026-11-04T16:36:43.2636773Z [36;1mduration_path="test-durations-1.json"[0m
+2026-11-04T16:36:43.2637202Z [36;1m# A normal pytest session replaces this sentinel when it stores clean[0m
+2026-11-04T16:36:43.2637750Z [36;1m# group timings. If pytest is interrupted before session finish, the[0m
+2026-11-04T16:36:43.2638304Z [36;1m# untouched input cannot be mistaken for a valid group result.[0m
+2026-11-04T16:36:43.2638745Z [36;1mjq '."__pytest_split_incomplete__" = -1' \[0m
+2026-11-04T16:36:43.2639121Z [36;1m  test-durations.json > "$duration_path"[0m
+2026-11-04T16:36:43.2639436Z [36;1mset +e[0m
+2026-11-04T16:36:43.2639741Z [36;1muv run pytest tests --ignore=tests/typesafety \[0m
+2026-11-04T16:36:43.2640119Z [36;1m-m "not windows" \[0m
+2026-11-04T16:36:43.2640393Z [36;1m--numprocesses logical \[0m
+2026-11-04T16:36:43.2640679Z [36;1m--maxprocesses 6 \[0m
+2026-11-04T16:36:43.2640936Z [36;1m--dist worksteal \[0m
+2026-11-04T16:36:43.2641213Z [36;1m--disable-docker-image-builds \[0m
+2026-11-04T16:36:43.2641538Z [36;1m--exclude-service kubernetes \[0m
+2026-11-04T16:36:43.2641839Z [36;1m--exclude-service docker \[0m
+2026-11-04T16:36:43.2642113Z [36;1m--durations 26 \[0m
+2026-11-04T16:36:43.2642363Z [36;1m--splits 18 \[0m
+2026-11-04T16:36:43.2642597Z [36;1m--group "1" \[0m
+2026-11-04T16:36:43.2642875Z [36;1m--splitting-algorithm least_duration \[0m
+2026-11-04T16:36:43.2643222Z [36;1m--durations-path "$duration_path" \[0m
+2026-11-04T16:36:43.2643527Z [36;1m--store-durations \[0m
+2026-11-04T16:36:43.2643788Z [36;1m--clean-durations[0m
+2026-11-04T16:36:43.2644036Z [36;1mpytest_exit_code=$?[0m
+2026-11-04T16:36:43.2644284Z [36;1mset -e[0m
+2026-11-04T16:36:43.2644587Z [36;1mecho "exit_code=${pytest_exit_code}" >> "$GITHUB_OUTPUT"[0m
+2026-11-04T16:36:43.2645178Z [36;1mexit "$pytest_exit_code"[0m
+2026-11-04T16:36:43.2662905Z shell: /usr/bin/bash -e {0}
+2026-11-04T16:36:43.2663169Z env:
+2026-11-04T16:36:43.2663372Z   PY_COLORS: 1
+2026-11-04T16:36:43.2663679Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-11-04T16:36:43.2664047Z   UV_PYTHON: 3.12
+2026-11-04T16:36:43.2664331Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-11-04T16:36:43.2665179Z   PREFECT_SERVER_DATABASE_CONNECTION_URL: ***localhost/prefect
+2026-11-04T16:36:43.2665626Z ##[endgroup]
+2026-11-04T16:37:51.0737252Z [1m============================= test session starts ==============================[0m
+2026-11-04T16:37:51.0737843Z platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0
+2026-11-04T16:37:51.0738247Z rootdir: /home/runner/work/ariadne/ariadne
+2026-11-04T16:37:51.0738588Z configfile: pyproject.toml
+2026-11-04T16:37:51.0739332Z plugins: xdist-3.8.0, timeout-2.4.0, split-0.11.0, env-1.6.0, cov-7.1.0, respx-0.23.1, asyncio-1.4.0, typsht-0.0.1a5, anyio-4.14.2, flakefinder-1.1.0, time-machine-3.2.0, typeguard-2.13.3
+2026-11-04T16:37:51.0740057Z timeout: 90.0s
+2026-11-04T16:37:51.0740283Z timeout method: signal
+2026-11-04T16:37:51.0740519Z timeout func_only: False
+2026-11-04T16:37:51.0741043Z asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=session, asyncio_default_test_loop_scope=function
+2026-11-04T16:37:51.0741605Z created: 4/4 workers
+2026-11-04T16:37:51.0741822Z 4 workers [1037 items]
+2026-11-04T16:37:51.0741960Z 
+2026-11-04T16:37:57.3200951Z [32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [  6%]
+2026-11-04T16:38:04.3138664Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 13%]
+2026-11-04T16:38:10.9710084Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 20%]
+2026-11-04T16:38:21.3518035Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 27%]
+2026-11-04T16:38:29.5592213Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 34%]
+2026-11-04T16:38:44.7175503Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[33ms[0m[32m.[0m[33ms[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 41%]
+2026-11-04T16:38:55.9918911Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 48%]
+2026-11-04T16:39:06.4480820Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33mx[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 55%]
+2026-11-04T16:39:13.2621475Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 62%]
+2026-11-04T16:39:18.9914885Z [0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33mX[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33m [ 69%]
+2026-11-04T16:39:26.6026401Z [0m[32m.[0m[32m.[0m[31mF[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[31m [ 76%]
+2026-11-04T16:39:35.4770535Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[31m [ 83%]
+2026-11-04T16:39:49.1392231Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[31m [ 90%]
+2026-11-04T16:40:03.6425443Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33ms[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[33mx[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[31m [ 97%]
+2026-11-04T16:40:22.0988079Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[31m                                            [100%][0m
+2026-11-04T16:40:22.0990983Z 
+2026-11-04T16:40:22.0991591Z [pytest-split] Stored test durations in test-durations-1.json
+2026-11-04T16:40:22.0992501Z 
+2026-11-04T16:40:22.0992956Z =================================== FAILURES ===================================
+2026-11-04T16:40:22.0994893Z [31m[1m_______ test_process_registration_wins_over_launcher_death_authorization _______[0m
+2026-11-04T16:40:22.0996671Z [gw1] linux -- Python 3.12.3 /home/runner/work/ariadne/ariadne/.venv/bin/python
+2026-11-04T16:40:22.0997032Z 
+2026-11-04T16:40:22.0997210Z client = <httpx.AsyncClient object at 0x7fa2a75e1fa0>
+2026-11-04T16:40:22.0997689Z session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fa2a40d83b0>
+2026-11-04T16:40:22.0998303Z db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fa2ab891d60>
+2026-11-04T16:40:22.0998875Z deployment = Deployment(id=e94c1b4b-f7de-41f7-a446-4d3f3b430757)
+2026-11-04T16:40:22.0999360Z monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fa2aba94dd0>
+2026-11-04T16:40:22.0999675Z 
+2026-11-04T16:40:22.1000258Z     [0m[94masync[39;49;00m [94mdef[39;49;00m[90m [39;49;00m[92mtest_process_registration_wins_over_launcher_death_authorization[39;49;00m([90m[39;49;00m
+2026-11-04T16:40:22.1000955Z         client: AsyncClient,[90m[39;49;00m
+2026-11-04T16:40:22.1001332Z         session: AsyncSession,[90m[39;49;00m
+2026-11-04T16:40:22.1001691Z         db: PrefectDBInterface,[90m[39;49;00m
+2026-11-04T16:40:22.1002101Z         deployment: orm_models.Deployment,[90m[39;49;00m
+2026-11-04T16:40:22.1004905Z         monkeypatch: pytest.MonkeyPatch,[90m[39;49;00m
+2026-11-04T16:40:22.1005865Z     ):[90m[39;49;00m
+2026-11-04T16:40:22.1006747Z         [94mif[39;49;00m db.dialect.name != [33m"[39;49;00m[33mpostgresql[39;49;00m[33m"[39;49;00m:[90m[39;49;00m
+2026-11-04T16:40:22.1008226Z             pytest.skip([33m"[39;49;00m[33mPostgreSQL launcher race is covered by its PG profile[39;49;00m[33m"[39;49;00m)[90m[39;49;00m
+2026-11-04T16:40:22.1009707Z         flow_run, worker, work_pool_id = [94mawait[39;49;00m _native_flow_run(session, db, deployment)[90m[39;49;00m
+2026-11-04T16:40:22.1011481Z         plan = ([94mawait[39;49;00m client.get([33mf[39;49;00m[33m"[39;49;00m[33m/streams/v1/deployments/[39;49;00m[33m{[39;49;00mflow_run.id[33m}[39;49;00m[33m/plan[39;49;00m[33m"[39;49;00m)).json()[90m[39;49;00m
+2026-11-04T16:40:22.1012381Z         enrollment = _enrollment_body([90m[39;49;00m
+2026-11-04T16:40:22.1013113Z             flow_run.id, worker.id, work_pool_id, plan[[33m"[39;49;00m[33mdeclaration_digest[39;49;00m[33m"[39;49;00m][90m[39;49;00m
+2026-11-04T16:40:22.1013708Z         )[90m[39;49;00m
+2026-11-04T16:40:22.1014016Z >       [94massert[39;49;00m ([90m[39;49;00m
+2026-11-04T16:40:22.1014756Z             [94mawait[39;49;00m client.post([33m"[39;49;00m[33m/streams/v1/deployments/enroll[39;49;00m[33m"[39;49;00m, json=enrollment)[90m[39;49;00m
+2026-11-04T16:40:22.1015755Z         ).status_code == [94m200[39;49;00m[90m[39;49;00m
+2026-11-04T16:40:22.1016122Z [1m[31mE       assert 422 == 200[0m
+2026-11-04T16:40:22.1016571Z [1m[31mE        +  where 422 = <Response [422 Unprocessable Entity]>.status_code[0m
+2026-11-04T16:40:22.1016887Z 
+2026-11-04T16:40:22.1017158Z [1m[31mtests/server/api/test_native_deployments.py[0m:384: AssertionError
+2026-11-04T16:40:22.1017618Z ============================= slowest 26 durations =============================
+2026-11-04T16:40:22.1018191Z 27.90s call     tests/server/api/test_server.py::TestSubprocessASGIServer::test_run_with_temp_db
+2026-11-04T16:40:22.1018894Z 12.35s call     tests/test_task_runners.py::TestProcessPoolTaskRunner::test_cached_context_cleared_on_cancel_all
+2026-11-04T16:40:22.1019698Z 9.58s setup    tests/server/orchestration/api/test_flow_runs.py::TestReadFlowRuns::test_read_flow_runs_filter_exclude_state_name
+2026-11-04T16:40:22.1020547Z 9.26s setup    tests/events/server/actions/test_jinja_templated_action.py::test_resource_labels_may_be_accessed_as_object
+2026-11-04T16:40:22.1021455Z 8.99s setup    tests/_experimental/bundles/test_bundles.py::TestCreateBundleForFlowRunIncludeFiles::test_files_key_none_when_include_files_empty
+2026-11-04T16:40:22.1022441Z 8.63s setup    tests/test_logging.py::test_setup_logging_extra_loggers_does_not_modify_external_logger_level[logger='foo'-level='CRITICAL']
+2026-11-04T16:40:22.1023231Z 7.98s call     tests/cli/test_start_server.py::TestIPv6Support::test_server_starts_with_ipv6_host
+2026-11-04T16:40:22.1023830Z 6.38s call     tests/runner/test_runner.py::test_runner_emits_cancelled_event
+2026-11-04T16:40:22.1024461Z 6.26s setup    tests/cli/test_worker.py::TestWorkerSignalForwarding::test_sigint_sends_sigterm_then_sigkill
+2026-11-04T16:40:22.1025453Z 6.18s call     tests/cli/test_flow_run.py::TestFlowRunExecute::test_execute_flow_run_uses_resolved_pull_step_workspace
+2026-11-04T16:40:22.1026193Z 5.89s setup    tests/test_native_stream_http.py::test_native_retry_repeats_only_unaccepted_input[sync]
+2026-11-04T16:40:22.1026944Z 5.81s setup    tests/test_stream_sources.py::TestSourceHTTP::test_task_retry_resumes_before_or_after_document_200[True-async]
+2026-11-04T16:40:22.1027688Z 5.73s call     tests/logging/test_logs_subscriber.py::test_constructs_client_when_ephemeral_enabled
+2026-11-04T16:40:22.1028312Z 5.17s call     tests/test_task_runs.py::TestTaskRunWaiter::test_wait_for_task_run_with_timeout
+2026-11-04T16:40:22.1028893Z 4.62s call     tests/server/database/test_migrations.py::test_backfill_state_name
+2026-11-04T16:40:22.1029789Z 3.51s call     tests/test_flow_engine.py::TestRunFlowInSubprocess::test_flow_is_aborted[sync]
+2026-11-04T16:40:22.1030519Z 3.50s setup    tests/infrastructure/provisioners/test_ecs.py::TestVpcResource::test_requires_provisioning_no_default_vpc
+2026-11-04T16:40:22.1031311Z 3.46s call     tests/test_flow_engine.py::TestRunFlowInSubprocess::test_flow_raises_a_base_exception[sync]
+2026-11-04T16:40:22.1031926Z 3.41s call     tests/test_flow_engine.py::TestRunFlowInSubprocess::test_basic[async]
+2026-11-04T16:40:22.1032570Z 3.33s setup    tests/infrastructure/provisioners/test_ecs.py::TestVpcResource::test_provision_existing_vpc
+2026-11-04T16:40:22.1033350Z 3.27s call     tests/test_subprocess_logging.py::TestWithContextProcessPoolExecutor::test_get_run_logger_works_in_executor
+2026-11-04T16:40:22.1034103Z 2.96s call     tests/test_flow_engine.py::TestRunFlowInSubprocess::test_flow_process_is_killed[sync]
+2026-11-04T16:40:22.1035223Z 2.81s teardown tests/server/orchestration/api/test_deployments.py::TestGetScheduledFlowRuns::test_get_scheduled_flow_runs_updates_last_polled_time_and_status
+2026-11-04T16:40:22.1036313Z 2.44s teardown tests/server/orchestration/api/test_deployments.py::TestCreateFlowRunFromDeployment::test_create_flow_run_basic_parameters
+2026-11-04T16:40:22.1037175Z 2.43s call     tests/blocks/test_core.py::TestRegisterBlockTypeAndSchema::test_register_nested_block_type_nested
+2026-11-04T16:40:22.1038035Z 2.35s call     tests/runner/test_control_channel_e2e.py::test_acknowledged_intent_records_delegation_before_real_process_termination[relinquish]
+2026-11-04T16:40:22.1038844Z [36m[1m=========================== short test summary info ============================[0m
+2026-11-04T16:40:22.1040300Z [31mFAILED[0m tests/server/api/test_native_deployments.py::[1mtest_process_registration_wins_over_launcher_death_authorization[0m - assert 422 == 200
+2026-11-04T16:40:22.1041060Z  +  where 422 = <Response [422 Unprocessable Entity]>.status_code
+2026-11-04T16:40:22.1041724Z [33mSKIPPED[0m [1] tests/test_native_flow_recovery_http.py:131: Native HTTP integration requires PostgreSQL 17
+2026-11-04T16:40:22.1042531Z [33mSKIPPED[0m [1] tests/test_native_flow_recovery_http.py:507: Native HTTP integration requires PostgreSQL 17
+2026-11-04T16:40:22.1043307Z [33mSKIPPED[0m [1] tests/test_native_stream_http.py:167: Native HTTP integration requires PostgreSQL 17
+2026-11-04T16:40:22.1044049Z [33mSKIPPED[0m [1] tests/test_native_stream_http.py:213: Native HTTP integration requires PostgreSQL 17
+2026-11-04T16:40:22.1044875Z [33mSKIPPED[0m [1] tests/test_native_worker_deployment_http.py:32: Native HTTP integration requires PostgreSQL 17
+2026-11-04T16:40:22.1045985Z [33mSKIPPED[0m [1] tests/test_native_worker_recovery_http.py:285: Native HTTP integration requires PostgreSQL 17
+2026-11-04T16:40:22.1046768Z [33mSKIPPED[0m [1] tests/test_stream_sources.py:210: Native source data plane requires PostgreSQL 17
+2026-11-04T16:40:22.1047496Z [33mSKIPPED[0m [2] tests/test_stream_sources.py:245: Native source data plane requires PostgreSQL 17
+2026-11-04T16:40:22.1048219Z [33mSKIPPED[0m [1] tests/test_stream_sources.py:353: Native source data plane requires PostgreSQL 17
+2026-11-04T16:40:22.1049204Z [33mSKIPPED[0m [1] tests/public/flows/test_flow_crashes.py:260: Relies explicitly on the old engine's subprocess handling. Consider rewriting for the new engine.
+2026-11-04T16:40:22.1050193Z [33mSKIPPED[0m [1] tests/test_stream_tasks.py:446: Set ARIADNE_NATIVE_STREAM_TEST_DSN to run real PostgreSQL tests
+2026-11-04T16:40:22.1050935Z [33mSKIPPED[0m [1] tests/public/flows/test_flow_timeouts.py:110: Not supported by new engine
+2026-11-04T16:40:22.1051682Z [33mSKIPPED[0m [1] tests/server/utilities/test_connection_leak_warnings.py:37: Skipping connection leak tests
+2026-11-04T16:40:22.1052413Z [33mSKIPPED[0m [1] tests/utilities/test_asyncutils.py:208: Not supported with new engine
+2026-11-04T16:40:22.1053083Z [33mSKIPPED[0m [1] tests/docker/test_image_builds.py: Excluding tests for service(s): 'docker'.
+2026-11-04T16:40:22.1054258Z [33mSKIPPED[0m [1] tests/server/models/test_finite_submissions.py:233: Native finite Task authority requires PostgreSQL 17
+2026-11-04T16:40:22.1055378Z [33mSKIPPED[0m [1] tests/server/models/test_finite_submissions.py:304: Native finite Task authority requires PostgreSQL 17
+2026-11-04T16:40:22.1056237Z [33mSKIPPED[0m [1] tests/server/models/test_streams.py:1028: Native stream data plane requires PostgreSQL 17
+2026-11-04T16:40:22.1057013Z [33mSKIPPED[0m [1] tests/server/models/test_streams.py:118: Native stream data plane requires PostgreSQL 17
+2026-11-04T16:40:22.1057709Z [33mSKIPPED[0m [1] tests/test_flows.py:1262: Fails with new engine, passed on old engine
+2026-11-04T16:40:22.1058537Z [31m= [31m[1m1 failed[0m, [32m1012 passed[0m, [33m21 skipped[0m, [33m2 xfailed[0m, [33m1 xpassed[0m[31m in 210.14s (0:03:30)[0m[31m =[0m
+2026-11-04T16:40:22.8967883Z ##[error]Process completed with exit code 1.
+2026-11-04T16:40:22.9076120Z ##[group]Run duration_path="test-durations-1.json"
+2026-11-04T16:40:22.9076605Z [36;1mduration_path="test-durations-1.json"[0m
+2026-11-04T16:40:22.9076939Z [36;1mjq -e '[0m
+2026-11-04T16:40:22.9077166Z [36;1m  type == "object"[0m
+2026-11-04T16:40:22.9077435Z [36;1m  and length > 0[0m
+2026-11-04T16:40:22.9077735Z [36;1m  and (has("__pytest_split_incomplete__") | not)[0m
+2026-11-04T16:40:22.9078060Z [36;1m  and all([0m
+2026-11-04T16:40:22.9078290Z [36;1m    to_entries[];[0m
+2026-11-04T16:40:22.9078537Z [36;1m    (.key | length > 0)[0m
+2026-11-04T16:40:22.9078826Z [36;1m    and (.value | type == "number")[0m
+2026-11-04T16:40:22.9079119Z [36;1m    and (.value >= 0)[0m
+2026-11-04T16:40:22.9079354Z [36;1m  )[0m
+2026-11-04T16:40:22.9079578Z [36;1m' "$duration_path" > /dev/null[0m
+2026-11-04T16:40:22.9099487Z shell: /usr/bin/bash -e {0}
+2026-11-04T16:40:22.9099758Z env:
+2026-11-04T16:40:22.9099958Z   PY_COLORS: 1
+2026-11-04T16:40:22.9100293Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-11-04T16:40:22.9100645Z   UV_PYTHON: 3.12
+2026-11-04T16:40:22.9100922Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-11-04T16:40:22.9101670Z   PREFECT_SERVER_DATABASE_CONNECTION_URL: ***localhost/prefect
+2026-11-04T16:40:22.9102035Z ##[endgroup]
+2026-11-04T16:40:22.9260912Z ##[group]Run actions/upload-artifact@v7
+2026-11-04T16:40:22.9261231Z with:
+2026-11-04T16:40:22.9261460Z   name: canonical-test-durations-1
+2026-11-04T16:40:22.9261752Z   path: test-durations-1.json
+2026-11-04T16:40:22.9262020Z   retention-days: 7
+2026-11-04T16:40:22.9262255Z   overwrite: true
+2026-11-04T16:40:22.9262478Z   if-no-files-found: warn
+2026-11-04T16:40:22.9262727Z   compression-level: 6
+2026-11-04T16:40:22.9262959Z   include-hidden-files: false
+2026-11-04T16:40:22.9263200Z   archive: true
+2026-11-04T16:40:22.9263410Z env:
+2026-11-04T16:40:22.9263597Z   PY_COLORS: 1
+2026-11-04T16:40:22.9263883Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-11-04T16:40:22.9264238Z   UV_PYTHON: 3.12
+2026-11-04T16:40:22.9264505Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-11-04T16:40:22.9265469Z   PREFECT_SERVER_DATABASE_CONNECTION_URL: ***localhost/prefect
+2026-11-04T16:40:22.9265833Z ##[endgroup]
+2026-11-04T16:40:23.0741983Z With the provided path, there will be 1 file uploaded
+2026-11-04T16:40:23.1838146Z Artifact name is valid!
+2026-11-04T16:40:23.1838649Z Root directory input is valid!
+2026-11-04T16:40:23.3991476Z Uploading artifact: canonical-test-durations-1.zip
+2026-11-04T16:40:23.4052940Z Beginning upload of artifact content to blob storage
+2026-11-04T16:40:23.5210195Z Uploaded bytes 34242
+2026-11-04T16:40:23.5379267Z Finished uploading artifact content to blob storage!
+2026-11-04T16:40:23.5381199Z SHA256 digest of uploaded artifact is 1b01b666a5bc2b9f4a74163ee086633d0d4b3ad9c37bee15a769e2fd84520fc2
+2026-11-04T16:40:23.5382771Z Finalizing artifact upload
+2026-11-04T16:40:23.9906261Z Artifact canonical-test-durations-1 successfully finalized. Artifact ID 13343408009
+2026-11-04T16:40:23.9907633Z Artifact canonical-test-durations-1 has been successfully uploaded! Final size is 34242 bytes. Artifact ID is 13343408009
+2026-11-04T16:40:23.9910669Z Artifact download URL: https://github.com/Anacreonsystems/ariadne/actions/runs/41866120832/artifacts/13343408009
+2026-11-04T16:40:24.0056788Z ##[group]Run docker container inspect bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920 \
+2026-11-04T16:40:24.0057655Z [36;1mdocker container inspect bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920 \[0m
+2026-11-04T16:40:24.0058423Z [36;1m&& docker container logs bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920 \[0m
+2026-11-04T16:40:24.0058974Z [36;1m|| echo "Ignoring bad exit code"[0m
+2026-11-04T16:40:24.0078821Z shell: /usr/bin/bash -e {0}
+2026-11-04T16:40:24.0079094Z env:
+2026-11-04T16:40:24.0079297Z   PY_COLORS: 1
+2026-11-04T16:40:24.0079625Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-11-04T16:40:24.0079982Z   UV_PYTHON: 3.12
+2026-11-04T16:40:24.0080278Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-11-04T16:40:24.0080959Z   PREFECT_SERVER_DATABASE_CONNECTION_URL: ***localhost/prefect
+2026-11-04T16:40:24.0081334Z ##[endgroup]
+2026-11-04T16:40:24.0260512Z [
+2026-11-04T16:40:24.0260935Z     {
+2026-11-04T16:40:24.0261553Z         "Id": "bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920",
+2026-11-04T16:40:24.0262342Z         "Created": "2026-11-04T16:36:18.803876121Z",
+2026-11-04T16:40:24.0262891Z         "Path": "docker-entrypoint.sh",
+2026-11-04T16:40:24.0263370Z         "Args": [
+2026-11-04T16:40:24.0263728Z             "postgres"
+2026-11-04T16:40:24.0264098Z         ],
+2026-11-04T16:40:24.0264414Z         "State": {
+2026-11-04T16:40:24.0264784Z             "Status": "running",
+2026-11-04T16:40:24.0265420Z             "Running": true,
+2026-11-04T16:40:24.0265847Z             "Paused": false,
+2026-11-04T16:40:24.0266390Z             "Restarting": false,
+2026-11-04T16:40:24.0266831Z             "OOMKilled": false,
+2026-11-04T16:40:24.0267265Z             "Dead": false,
+2026-11-04T16:40:24.0267664Z             "Pid": 2644,
+2026-11-04T16:40:24.0268061Z             "ExitCode": 0,
+2026-11-04T16:40:24.0268450Z             "Error": "",
+2026-11-04T16:40:24.0268899Z             "StartedAt": "2026-11-04T16:36:18.832785118Z",
+2026-11-04T16:40:24.0269451Z             "FinishedAt": "0001-01-01T00:00:00Z",
+2026-11-04T16:40:24.0269941Z             "Health": {
+2026-11-04T16:40:24.0270331Z                 "Status": "healthy",
+2026-11-04T16:40:24.0270798Z                 "FailingStreak": 0,
+2026-11-04T16:40:24.0271245Z                 "Log": [
+2026-11-04T16:40:24.0271622Z                     {
+2026-11-04T16:40:24.0272052Z                         "Start": "2026-11-04T16:39:41.117064124Z",
+2026-11-04T16:40:24.0272644Z                         "End": "2026-11-04T16:39:41.251201645Z",
+2026-11-04T16:40:24.0273162Z                         "ExitCode": 0,
+2026-11-04T16:40:24.0273832Z                         "Output": "/var/run/postgresql:5432 - accepting connections\n"
+2026-11-04T16:40:24.0274534Z                     },
+2026-11-04T16:40:24.0274906Z                     {
+2026-11-04T16:40:24.0275531Z                         "Start": "2026-11-04T16:39:51.251688731Z",
+2026-11-04T16:40:24.0276055Z                         "End": "2026-11-04T16:39:51.428252464Z",
+2026-11-04T16:40:24.0276524Z                         "ExitCode": 0,
+2026-11-04T16:40:24.0277185Z                         "Output": "/var/run/postgresql:5432 - accepting connections\n"
+2026-11-04T16:40:24.0277839Z                     },
+2026-11-04T16:40:24.0278205Z                     {
+2026-11-04T16:40:24.0278635Z                         "Start": "2026-11-04T16:40:01.429762823Z",
+2026-11-04T16:40:24.0279211Z                         "End": "2026-11-04T16:40:01.537754437Z",
+2026-11-04T16:40:24.0279717Z                         "ExitCode": 0,
+2026-11-04T16:40:24.0280257Z                         "Output": "/var/run/postgresql:5432 - accepting connections\n"
+2026-11-04T16:40:24.0280825Z                     },
+2026-11-04T16:40:24.0281505Z                     {
+2026-11-04T16:40:24.0281904Z                         "Start": "2026-11-04T16:40:11.539196885Z",
+2026-11-04T16:40:24.0282423Z                         "End": "2026-11-04T16:40:11.654322267Z",
+2026-11-04T16:40:24.0283223Z                         "ExitCode": 0,
+2026-11-04T16:40:24.0283858Z                         "Output": "/var/run/postgresql:5432 - accepting connections\n"
+2026-11-04T16:40:24.0284267Z                     },
+2026-11-04T16:40:24.0284496Z                     {
+2026-11-04T16:40:24.0284765Z                         "Start": "2026-11-04T16:40:21.655415648Z",
+2026-11-04T16:40:24.0285383Z                         "End": "2026-11-04T16:40:21.719824511Z",
+2026-11-04T16:40:24.0285709Z                         "ExitCode": 0,
+2026-11-04T16:40:24.0286088Z                         "Output": "/var/run/postgresql:5432 - accepting connections\n"
+2026-11-04T16:40:24.0286461Z                     }
+2026-11-04T16:40:24.0286681Z                 ]
+2026-11-04T16:40:24.0286897Z             }
+2026-11-04T16:40:24.0287099Z         },
+2026-11-04T16:40:24.0287462Z         "Image": "sha256:bba45ff25c7494631b579ef011c26c99758e8ae7ef8fbc0c69775188e303a860",
+2026-11-04T16:40:24.0288231Z         "ResolvConfPath": "/var/lib/docker/containers/bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920/resolv.conf",
+2026-11-04T16:40:24.0289125Z         "HostnamePath": "/var/lib/docker/containers/bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920/hostname",
+2026-11-04T16:40:24.0289975Z         "HostsPath": "/var/lib/docker/containers/bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920/hosts",
+2026-11-04T16:40:24.0291052Z         "LogPath": "/var/lib/docker/containers/bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920/bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920-json.log",
+2026-11-04T16:40:24.0291940Z         "Name": "/2d84b553aee04fba94bf4be1b451046b_postgres14_1cb002",
+2026-11-04T16:40:24.0292308Z         "RestartCount": 0,
+2026-11-04T16:40:24.0292565Z         "Driver": "overlay2",
+2026-11-04T16:40:24.0292835Z         "Platform": "linux",
+2026-11-04T16:40:24.0293089Z         "MountLabel": "",
+2026-11-04T16:40:24.0293341Z         "ProcessLabel": "",
+2026-11-04T16:40:24.0293623Z         "AppArmorProfile": "docker-default",
+2026-11-04T16:40:24.0293933Z         "ExecIDs": null,
+2026-11-04T16:40:24.0294178Z         "HostConfig": {
+2026-11-04T16:40:24.0294418Z             "Binds": null,
+2026-11-04T16:40:24.0294669Z             "ContainerIDFile": "",
+2026-11-04T16:40:24.0294944Z             "LogConfig": {
+2026-11-04T16:40:24.0295461Z                 "Type": "json-file",
+2026-11-04T16:40:24.0295738Z                 "Config": {}
+2026-11-04T16:40:24.0295977Z             },
+2026-11-04T16:40:24.0296305Z             "NetworkMode": "github_network_31bb9fb92b724f73a2b409d5c5b751bb",
+2026-11-04T16:40:24.0296701Z             "PortBindings": {
+2026-11-04T16:40:24.0296956Z                 "5432/tcp": [
+2026-11-04T16:40:24.0297200Z                     {
+2026-11-04T16:40:24.0297434Z                         "HostIp": "",
+2026-11-04T16:40:24.0297719Z                         "HostPort": "5432"
+2026-11-04T16:40:24.0297993Z                     }
+2026-11-04T16:40:24.0298212Z                 ]
+2026-11-04T16:40:24.0298422Z             },
+2026-11-04T16:40:24.0298640Z             "RestartPolicy": {
+2026-11-04T16:40:24.0298894Z                 "Name": "no",
+2026-11-04T16:40:24.0299157Z                 "MaximumRetryCount": 0
+2026-11-04T16:40:24.0299418Z             },
+2026-11-04T16:40:24.0299630Z             "AutoRemove": false,
+2026-11-04T16:40:24.0299891Z             "VolumeDriver": "",
+2026-11-04T16:40:24.0300152Z             "VolumesFrom": null,
+2026-11-04T16:40:24.0300409Z             "ConsoleSize": [
+2026-11-04T16:40:24.0300651Z                 0,
+2026-11-04T16:40:24.0300859Z                 0
+2026-11-04T16:40:24.0301066Z             ],
+2026-11-04T16:40:24.0301272Z             "CapAdd": null,
+2026-11-04T16:40:24.0301522Z             "CapDrop": null,
+2026-11-04T16:40:24.0301968Z             "CgroupnsMode": "private",
+2026-11-04T16:40:24.0302241Z             "Dns": [],
+2026-11-04T16:40:24.0302473Z             "DnsOptions": [],
+2026-11-04T16:40:24.0302729Z             "DnsSearch": [],
+2026-11-04T16:40:24.0303111Z             "ExtraHosts": null,
+2026-11-04T16:40:24.0303385Z             "GroupAdd": null,
+2026-11-04T16:40:24.0303641Z             "IpcMode": "private",
+2026-11-04T16:40:24.0303905Z             "Cgroup": "",
+2026-11-04T16:40:24.0304141Z             "Links": null,
+2026-11-04T16:40:24.0304387Z             "OomScoreAdj": 0,
+2026-11-04T16:40:24.0304640Z             "PidMode": "",
+2026-11-04T16:40:24.0304882Z             "Privileged": false,
+2026-11-04T16:40:24.0305379Z             "PublishAllPorts": false,
+2026-11-04T16:40:24.0305673Z             "ReadonlyRootfs": false,
+2026-11-04T16:40:24.0305950Z             "SecurityOpt": null,
+2026-11-04T16:40:24.0306200Z             "Tmpfs": {
+2026-11-04T16:40:24.0306458Z                 "/var/lib/postgresql/data": ""
+2026-11-04T16:40:24.0306750Z             },
+2026-11-04T16:40:24.0306961Z             "UTSMode": "",
+2026-11-04T16:40:24.0307201Z             "UsernsMode": "",
+2026-11-04T16:40:24.0307449Z             "ShmSize": 67108864,
+2026-11-04T16:40:24.0307703Z             "Runtime": "runc",
+2026-11-04T16:40:24.0307952Z             "Isolation": "",
+2026-11-04T16:40:24.0308191Z             "CpuShares": 0,
+2026-11-04T16:40:24.0308431Z             "Memory": 0,
+2026-11-04T16:40:24.0308663Z             "NanoCpus": 0,
+2026-11-04T16:40:24.0308904Z             "CgroupParent": "",
+2026-11-04T16:40:24.0309154Z             "BlkioWeight": 0,
+2026-11-04T16:40:24.0309414Z             "BlkioWeightDevice": [],
+2026-11-04T16:40:24.0309695Z             "BlkioDeviceReadBps": [],
+2026-11-04T16:40:24.0309980Z             "BlkioDeviceWriteBps": [],
+2026-11-04T16:40:24.0310261Z             "BlkioDeviceReadIOps": [],
+2026-11-04T16:40:24.0310554Z             "BlkioDeviceWriteIOps": [],
+2026-11-04T16:40:24.0310830Z             "CpuPeriod": 0,
+2026-11-04T16:40:24.0311079Z             "CpuQuota": 0,
+2026-11-04T16:40:24.0311340Z             "CpuRealtimePeriod": 0,
+2026-11-04T16:40:24.0311630Z             "CpuRealtimeRuntime": 0,
+2026-11-04T16:40:24.0311907Z             "CpusetCpus": "",
+2026-11-04T16:40:24.0312172Z             "CpusetMems": "",
+2026-11-04T16:40:24.0312424Z             "Devices": [],
+2026-11-04T16:40:24.0312682Z             "DeviceCgroupRules": null,
+2026-11-04T16:40:24.0312973Z             "DeviceRequests": null,
+2026-11-04T16:40:24.0313248Z             "MemoryReservation": 0,
+2026-11-04T16:40:24.0313523Z             "MemorySwap": 0,
+2026-11-04T16:40:24.0313786Z             "MemorySwappiness": null,
+2026-11-04T16:40:24.0314066Z             "OomKillDisable": null,
+2026-11-04T16:40:24.0314338Z             "PidsLimit": null,
+2026-11-04T16:40:24.0314601Z             "Ulimits": [],
+2026-11-04T16:40:24.0314942Z             "CpuCount": 0,
+2026-11-04T16:40:24.0315574Z             "CpuPercent": 0,
+2026-11-04T16:40:24.0316005Z             "IOMaximumIOps": 0,
+2026-11-04T16:40:24.0316488Z             "IOMaximumBandwidth": 0,
+2026-11-04T16:40:24.0316852Z             "MaskedPaths": [
+2026-11-04T16:40:24.0317113Z                 "/proc/asound",
+2026-11-04T16:40:24.0317373Z                 "/proc/acpi",
+2026-11-04T16:40:24.0317764Z                 "/proc/interrupts",
+2026-11-04T16:40:24.0318043Z                 "/proc/kcore",
+2026-11-04T16:40:24.0318294Z                 "/proc/keys",
+2026-11-04T16:40:24.0318542Z                 "/proc/latency_stats",
+2026-11-04T16:40:24.0318949Z                 "/proc/timer_list",
+2026-11-04T16:40:24.0319241Z                 "/proc/timer_stats",
+2026-11-04T16:40:24.0319510Z                 "/proc/sched_debug",
+2026-11-04T16:40:24.0319764Z                 "/proc/scsi",
+2026-11-04T16:40:24.0320151Z                 "/sys/firmware",
+2026-11-04T16:40:24.0320474Z                 "/sys/devices/virtual/powercap"
+2026-11-04T16:40:24.0320777Z             ],
+2026-11-04T16:40:24.0320998Z             "ReadonlyPaths": [
+2026-11-04T16:40:24.0321559Z                 "/proc/bus",
+2026-11-04T16:40:24.0321819Z                 "/proc/fs",
+2026-11-04T16:40:24.0322069Z                 "/proc/irq",
+2026-11-04T16:40:24.0322410Z                 "/proc/sys",
+2026-11-04T16:40:24.0322854Z                 "/proc/sysrq-trigger"
+2026-11-04T16:40:24.0323271Z             ]
+2026-11-04T16:40:24.0323627Z         },
+2026-11-04T16:40:24.0323975Z         "GraphDriver": {
+2026-11-04T16:40:24.0324222Z             "Data": {
+2026-11-04T16:40:24.0324599Z                 "ID": "bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920",
+2026-11-04T16:40:24.0331755Z                 "LowerDir": "/var/lib/docker/overlay2/187c68f4fc2a7f9da503672d156440f84bcaae40686451d8400dae7c61579ba8-init/diff:/var/lib/docker/overlay2/1bebbb742d00871071738788e85e0b398ac2ab5906c29b69c27c877de2aa9245/diff:/var/lib/docker/overlay2/a73ff038b1f4a88a2ddf25a0f2f3617a4c9707936ad089706c26bd1e3190532c/diff:/var/lib/docker/overlay2/73eae2b78ec4e687384975073a3487edfa07471cbcb7b9a582a8094ee32cdd7b/diff:/var/lib/docker/overlay2/6b85bb563a0f6cb801276a18e644d2e2343b9b0dc830ba4d5cc2021b03ae82af/diff:/var/lib/docker/overlay2/2adec4d9f079981084578e5d39d093e34b66f17b08a9280a73fe1c6e2499549d/diff:/var/lib/docker/overlay2/527f38b49f93ef075d5087e89c57e4181df1e9b36ec9c0ee17058992a075af41/diff:/var/lib/docker/overlay2/552969db544ce3711260f86a9b7e68860a8e2b0a1c6da738518a7a6ede5fb759/diff:/var/lib/docker/overlay2/8273809d5cb93415066711ed42dc9ee84a41021428e2870620ac5cd43afec6ea/diff:/var/lib/docker/overlay2/52328876a8f7ca3ca4ce412049578d112633734c7b0ef4a814978c727279844a/diff:/var/lib/docker/overlay2/6bd7ec2c562ad3f800ad510862692435c5d04fd1da76a1fd692f11656105c996/diff:/var/lib/docker/overlay2/d631512cccaafb9d700562c1d1c68445fbea58b38a563d542ff5f2670c6a07b5/diff:/var/lib/docker/overlay2/95dc33200afdf5ec65e2b35403e3d1d2c5d76630087e6b033d792e301b618a31/diff:/var/lib/docker/overlay2/d21dd740c308884d092828ff9d8bdb6123c5d8cff4a666a60e80364e4793598f/diff:/var/lib/docker/overlay2/3cfd5cafaaabc022c827dd1153912d65e576eaff4d79b994bed94abd06f7b124/diff",
+2026-11-04T16:40:24.0338660Z                 "MergedDir": "/var/lib/docker/overlay2/187c68f4fc2a7f9da503672d156440f84bcaae40686451d8400dae7c61579ba8/merged",
+2026-11-04T16:40:24.0339612Z                 "UpperDir": "/var/lib/docker/overlay2/187c68f4fc2a7f9da503672d156440f84bcaae40686451d8400dae7c61579ba8/diff",
+2026-11-04T16:40:24.0340425Z                 "WorkDir": "/var/lib/docker/overlay2/187c68f4fc2a7f9da503672d156440f84bcaae40686451d8400dae7c61579ba8/work"
+2026-11-04T16:40:24.0341104Z             },
+2026-11-04T16:40:24.0341326Z             "Name": "overlay2"
+2026-11-04T16:40:24.0341572Z         },
+2026-11-04T16:40:24.0341847Z         "Mounts": [],
+2026-11-04T16:40:24.0342126Z         "Config": {
+2026-11-04T16:40:24.0342364Z             "Hostname": "bc745d07bd2d",
+2026-11-04T16:40:24.0342653Z             "Domainname": "",
+2026-11-04T16:40:24.0342952Z             "User": "",
+2026-11-04T16:40:24.0343272Z             "AttachStdin": false,
+2026-11-04T16:40:24.0343547Z             "AttachStdout": true,
+2026-11-04T16:40:24.0343815Z             "AttachStderr": true,
+2026-11-04T16:40:24.0344123Z             "ExposedPorts": {
+2026-11-04T16:40:24.0344450Z                 "5432/tcp": {}
+2026-11-04T16:40:24.0344691Z             },
+2026-11-04T16:40:24.0344898Z             "Tty": false,
+2026-11-04T16:40:24.0345397Z             "OpenStdin": false,
+2026-11-04T16:40:24.0345746Z             "StdinOnce": false,
+2026-11-04T16:40:24.0345994Z             "Env": [
+2026-11-04T16:40:24.0346240Z                 "POSTGRES_PASSWORD=prefect",
+2026-11-04T16:40:24.0346616Z                 "POSTGRES_DB=prefect",
+2026-11-04T16:40:24.0347005Z                 "LANG=C.UTF-8",
+2026-11-04T16:40:24.0347254Z                 "LC_ALL=C.UTF-8",
+2026-11-04T16:40:24.0347517Z                 "LC_CTYPE=C.UTF-8",
+2026-11-04T16:40:24.0347901Z                 "GITHUB_ACTIONS=true",
+2026-11-04T16:40:24.0348196Z                 "POSTGRES_USER=prefect",
+2026-11-04T16:40:24.0348477Z                 "LANGUAGE=C.UTF-8",
+2026-11-04T16:40:24.0349044Z                 "LC_COLLATE=C.UTF-8",
+2026-11-04T16:40:24.0349359Z                 "CI=true",
+2026-11-04T16:40:24.0349810Z                 "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/postgresql/14/bin",
+2026-11-04T16:40:24.0350559Z                 "GOSU_VERSION=1.19",
+2026-11-04T16:40:24.0350851Z                 "PG_MAJOR=14",
+2026-11-04T16:40:24.0351124Z                 "PG_VERSION=14.24-1.pgdg13+2",
+2026-11-04T16:40:24.0351587Z                 "PGDATA=/var/lib/postgresql/data"
+2026-11-04T16:40:24.0351882Z             ],
+2026-11-04T16:40:24.0352088Z             "Cmd": [
+2026-11-04T16:40:24.0366723Z                 "postgres"
+2026-11-04T16:40:24.0367181Z             ],
+2026-11-04T16:40:24.0367572Z             "Healthcheck": {
+2026-11-04T16:40:24.0368000Z                 "Test": [
+2026-11-04T16:40:24.0368428Z                     "CMD-SHELL",
+2026-11-04T16:40:24.0368886Z                     "pg_isready"
+2026-11-04T16:40:24.0369312Z                 ],
+2026-11-04T16:40:24.0369731Z                 "Interval": 10000000000,
+2026-11-04T16:40:24.0370232Z                 "Timeout": 5000000000,
+2026-11-04T16:40:24.0370712Z                 "Retries": 5
+2026-11-04T16:40:24.0371118Z             },
+2026-11-04T16:40:24.0371514Z             "Image": "postgres:14",
+2026-11-04T16:40:24.0371983Z             "Volumes": {
+2026-11-04T16:40:24.0372421Z                 "/var/lib/postgresql/data": {}
+2026-11-04T16:40:24.0372913Z             },
+2026-11-04T16:40:24.0373278Z             "WorkingDir": "",
+2026-11-04T16:40:24.0373704Z             "Entrypoint": [
+2026-11-04T16:40:24.0374210Z                 "docker-entrypoint.sh"
+2026-11-04T16:40:24.0374675Z             ],
+2026-11-04T16:40:24.0376220Z             "OnBuild": null,
+2026-11-04T16:40:24.0376686Z             "Labels": {
+2026-11-04T16:40:24.0377080Z                 "d05a77": ""
+2026-11-04T16:40:24.0377464Z             },
+2026-11-04T16:40:24.0377852Z             "StopSignal": "SIGINT"
+2026-11-04T16:40:24.0378315Z         },
+2026-11-04T16:40:24.0378689Z         "NetworkSettings": {
+2026-11-04T16:40:24.0379121Z             "Bridge": "",
+2026-11-04T16:40:24.0379867Z             "SandboxID": "632754883a320fb430d638e11c9a5ac7da8f7aa9b4c8030e9fa261d1a540a51f",
+2026-11-04T16:40:24.0380613Z             "SandboxKey": "/var/run/docker/netns/632754883a32",
+2026-11-04T16:40:24.0380978Z             "Ports": {
+2026-11-04T16:40:24.0381407Z                 "5432/tcp": [
+2026-11-04T16:40:24.0381855Z                     {
+2026-11-04T16:40:24.0382176Z                         "HostIp": "0.0.0.0",
+2026-11-04T16:40:24.0382485Z                         "HostPort": "5432"
+2026-11-04T16:40:24.0382847Z                     },
+2026-11-04T16:40:24.0383144Z                     {
+2026-11-04T16:40:24.0383416Z                         "HostIp": "::",
+2026-11-04T16:40:24.0383705Z                         "HostPort": "5432"
+2026-11-04T16:40:24.0383999Z                     }
+2026-11-04T16:40:24.0384295Z                 ]
+2026-11-04T16:40:24.0384509Z             },
+2026-11-04T16:40:24.0384744Z             "HairpinMode": false,
+2026-11-04T16:40:24.0385287Z             "LinkLocalIPv6Address": "",
+2026-11-04T16:40:24.0385703Z             "LinkLocalIPv6PrefixLen": 0,
+2026-11-04T16:40:24.0386013Z             "SecondaryIPAddresses": null,
+2026-11-04T16:40:24.0386325Z             "SecondaryIPv6Addresses": null,
+2026-11-04T16:40:24.0386631Z             "EndpointID": "",
+2026-11-04T16:40:24.0386883Z             "Gateway": "",
+2026-11-04T16:40:24.0387146Z             "GlobalIPv6Address": "",
+2026-11-04T16:40:24.0387433Z             "GlobalIPv6PrefixLen": 0,
+2026-11-04T16:40:24.0387714Z             "IPAddress": "",
+2026-11-04T16:40:24.0387966Z             "IPPrefixLen": 0,
+2026-11-04T16:40:24.0388221Z             "IPv6Gateway": "",
+2026-11-04T16:40:24.0388472Z             "MacAddress": "",
+2026-11-04T16:40:24.0388718Z             "Networks": {
+2026-11-04T16:40:24.0389018Z                 "github_network_31bb9fb92b724f73a2b409d5c5b751bb": {
+2026-11-04T16:40:24.0389372Z                     "IPAMConfig": null,
+2026-11-04T16:40:24.0389841Z                     "Links": null,
+2026-11-04T16:40:24.0390108Z                     "Aliases": [
+2026-11-04T16:40:24.0390373Z                         "postgres"
+2026-11-04T16:40:24.0390641Z                     ],
+2026-11-04T16:40:24.0391008Z                     "MacAddress": "f2:23:98:86:9a:c0",
+2026-11-04T16:40:24.0391555Z                     "DriverOpts": null,
+2026-11-04T16:40:24.0392010Z                     "GwPriority": 0,
+2026-11-04T16:40:24.0392760Z                     "NetworkID": "dca046eeb46941dacaeb18648e92b2a26a57617d173e464ebb824b478dd926b1",
+2026-11-04T16:40:24.0393861Z                     "EndpointID": "747d66c6d534a3a8bdf8b57a7e1c3e41bf89810bbec1923698e9a3dbc9b54230",
+2026-11-04T16:40:24.0394671Z                     "Gateway": "172.18.0.1",
+2026-11-04T16:40:24.0395379Z                     "IPAddress": "172.18.0.3",
+2026-11-04T16:40:24.0395885Z                     "IPPrefixLen": 16,
+2026-11-04T16:40:24.0396360Z                     "IPv6Gateway": "",
+2026-11-04T16:40:24.0396855Z                     "GlobalIPv6Address": "",
+2026-11-04T16:40:24.0397396Z                     "GlobalIPv6PrefixLen": 0,
+2026-11-04T16:40:24.0397909Z                     "DNSNames": [
+2026-11-04T16:40:24.0398499Z                         "2d84b553aee04fba94bf4be1b451046b_postgres14_1cb002",
+2026-11-04T16:40:24.0399155Z                         "postgres",
+2026-11-04T16:40:24.0399445Z                         "bc745d07bd2d"
+2026-11-04T16:40:24.0399710Z                     ]
+2026-11-04T16:40:24.0399936Z                 }
+2026-11-04T16:40:24.0400148Z             }
+2026-11-04T16:40:24.0400355Z         }
+2026-11-04T16:40:24.0400548Z     }
+2026-11-04T16:40:24.0400749Z ]
+2026-11-04T16:40:24.0435444Z The files belonging to this database system will be owned by user "postgres".
+2026-11-04T16:40:24.0436279Z This user must also own the server process.
+2026-11-04T16:40:24.0436657Z 
+2026-11-04T16:40:24.0436966Z The database cluster will be initialized with locale "C.UTF-8".
+2026-11-04T16:40:24.0437778Z The default database encoding has accordingly been set to "UTF8".
+2026-11-04T16:40:24.0438588Z The default text search configuration will be set to "english".
+2026-11-04T16:40:24.0439051Z 
+2026-11-04T16:40:24.0439255Z Data page checksums are disabled.
+2026-11-04T16:40:24.0439582Z 
+2026-11-04T16:40:24.0439963Z fixing permissions on existing directory /var/lib/postgresql/data ... ok
+2026-11-04T16:40:24.0440691Z creating subdirectories ... ok
+2026-11-04T16:40:24.0441322Z selecting dynamic shared memory implementation ... posix
+2026-11-04T16:40:24.0441957Z selecting default max_connections ... 100
+2026-11-04T16:40:24.0442558Z selecting default shared_buffers ... 128MB
+2026-11-04T16:40:24.0442959Z selecting default time zone ... Etc/UTC
+2026-11-04T16:40:24.0443276Z creating configuration files ... ok
+2026-11-04T16:40:24.0443637Z running bootstrap script ... ok
+2026-11-04T16:40:24.0444166Z performing post-bootstrap initialization ... ok
+2026-11-04T16:40:24.0444603Z syncing data to disk ... ok
+2026-11-04T16:40:24.0444859Z 
+2026-11-04T16:40:24.0444866Z 
+2026-11-04T16:40:24.0445314Z Success. You can now start the database server using:
+2026-11-04T16:40:24.0445715Z 
+2026-11-04T16:40:24.0445882Z     pg_ctl -D /var/lib/postgresql/data -l logfile start
+2026-11-04T16:40:24.0446132Z 
+2026-11-04T16:40:24.0446406Z initdb: warning: enabling "trust" authentication for local connections
+2026-11-04T16:40:24.0446901Z You can change this by editing pg_hba.conf or using the option -A, or
+2026-11-04T16:40:24.0447358Z --auth-local and --auth-host, the next time you run initdb.
+2026-11-04T16:40:24.0448081Z 2026-11-04 16:36:19.869 UTC [1] LOG:  starting PostgreSQL 14.24 (Debian 14.24-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-04T16:40:24.0448837Z 2026-11-04 16:36:19.870 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+2026-11-04T16:40:24.0449361Z 2026-11-04 16:36:19.870 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+2026-11-04T16:40:24.0449929Z 2026-11-04 16:36:19.870 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-11-04T16:40:24.0450761Z 2026-11-04 16:36:19.872 UTC [64] LOG:  database system was shut down at 2026-11-04 16:36:19 UTC
+2026-11-04T16:40:24.0451414Z 2026-11-04 16:36:19.876 UTC [1] LOG:  database system is ready to accept connections
+2026-11-04T16:40:24.0451919Z 2026-11-04 16:36:29.021 UTC [78] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0452348Z 2026-11-04 16:36:39.104 UTC [85] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0452767Z 2026-11-04 16:36:49.176 UTC [93] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0453183Z 2026-11-04 16:36:59.337 UTC [101] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0453610Z 2026-11-04 16:37:09.451 UTC [109] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0454059Z 2026-11-04 16:37:19.556 UTC [116] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0454469Z 2026-11-04 16:37:29.785 UTC [124] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0454874Z 2026-11-04 16:37:39.894 UTC [132] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0455575Z 2026-11-04 16:37:50.020 UTC [148] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0456000Z 2026-11-04 16:38:00.143 UTC [166] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0456413Z 2026-11-04 16:38:10.250 UTC [177] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0456827Z 2026-11-04 16:38:20.384 UTC [188] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0457226Z 2026-11-04 16:38:30.495 UTC [198] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0457631Z 2026-11-04 16:38:40.619 UTC [213] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0458027Z 2026-11-04 16:38:50.721 UTC [222] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0458435Z 2026-11-04 16:39:00.813 UTC [238] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0458845Z 2026-11-04 16:39:10.915 UTC [250] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0459241Z 2026-11-04 16:39:21.018 UTC [259] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0459647Z 2026-11-04 16:39:31.114 UTC [267] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0460746Z 2026-11-04 16:39:36.724 UTC [167] ERROR:  insert or update on table "deployment" violates foreign key constraint "fk_deployment__concurrency_limit_id__concurrency_limit_v2"
+2026-11-04T16:40:24.0461964Z 2026-11-04 16:39:36.724 UTC [167] DETAIL:  Key (concurrency_limit_id)=(caf0af40-d90f-4e5b-b73d-1aeb0636d119) is not present in table "concurrency_limit_v2".
+2026-11-04T16:40:24.0465863Z 2026-11-04 16:39:36.724 UTC [167] STATEMENT:  INSERT INTO deployment (name, infra_overrides, status, flow_id, paused, concurrency_limit_id, tags, labels, parameters, pull_steps, parameter_openapi_schema, enforce_parameter_schema, id, created, updated) VALUES ($1::VARCHAR, $2::JSONB, $3::deployment_status, $4::UUID, $5::BOOLEAN, $6::UUID, $7::JSONB, $8::JSONB, $9::JSONB, $10::JSONB, $11::JSONB, $12::BOOLEAN, $13::UUID, $14::TIMESTAMP WITH TIME ZONE, $15::TIMESTAMP WITH TIME ZONE) ON CONFLICT (flow_id, name) DO UPDATE SET name = $16::VARCHAR, flow_id = $17::UUID, concurrency_limit_id = $18::UUID, labels = $19::JSONB, updated = $20::TIMESTAMP WITH TIME ZONE
+2026-11-04T16:40:24.0468223Z 2026-11-04 16:39:40.348 UTC [155] ERROR:  duplicate key value violates unique constraint "pk_flow_run"
+2026-11-04T16:40:24.0468869Z 2026-11-04 16:39:40.348 UTC [155] DETAIL:  Key (id)=(d325b0ad-cc2f-4f60-a074-149ab349bbb7) already exists.
+2026-11-04T16:40:24.0472499Z 2026-11-04 16:39:40.348 UTC [155] STATEMENT:  INSERT INTO flow_run (flow_id, deployment_id, work_queue_name, flow_version, deployment_version, parameters, idempotency_key, context, empirical_policy, tags, labels, created_by, infrastructure_pid, job_variables, infrastructure_document_id, parent_task_run_id, auto_scheduled, state_id, work_queue_id, name, state_type, state_name, state_timestamp, run_count, expected_start_time, next_scheduled_start_time, start_time, end_time, total_run_time, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::JSONB, $7::VARCHAR, $8::JSONB, $9, $10::JSONB, $11::JSONB, $12, $13::VARCHAR, $14::JSONB, $15::UUID, $16::UUID, $17::BOOLEAN, $18::UUID, $19::UUID, $20::VARCHAR, $21::state_type, $22::VARCHAR, $23::TIMESTAMP WITH TIME ZONE, $24::INTEGER, $25::TIMESTAMP WITH TIME ZONE, $26::TIMESTAMP WITH TIME ZONE, $27::TIMESTAMP WITH TIME ZONE, $28::TIMESTAMP WITH TIME ZONE, $29::INTERVAL, $30::UUID, $31::TIMESTAMP WITH TIME ZONE, $32::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0476472Z 2026-11-04 16:39:41.247 UTC [276] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0477253Z 2026-11-04 16:39:46.559 UTC [155] ERROR:  update or delete on table "work_queue" violates foreign key constraint "fk_work_pool__default_queue_id__work_queue" on table "work_pool"
+2026-11-04T16:40:24.0478255Z 2026-11-04 16:39:46.559 UTC [155] DETAIL:  Key (id)=(701ba7d2-62e6-4d52-b104-8f09716a103a) is still referenced from table "work_pool".
+2026-11-04T16:40:24.0478980Z 2026-11-04 16:39:46.559 UTC [155] STATEMENT:  DELETE FROM work_queue WHERE work_queue.id = $1::UUID
+2026-11-04T16:40:24.0479515Z 2026-11-04 16:39:51.424 UTC [285] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0480020Z 2026-11-04 16:39:55.790 UTC [169] FATAL:  terminating connection due to administrator command
+2026-11-04T16:40:24.0480596Z 2026-11-04 16:39:55.790 UTC [231] FATAL:  terminating connection due to administrator command
+2026-11-04T16:40:24.0481098Z 2026-11-04 16:40:01.532 UTC [300] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0481879Z 2026-11-04 16:40:02.775 UTC [293] ERROR:  new row for relation "native_stream_launch_identity" violates check constraint "ck_native_stream_launch_identity__process_shape_valid"
+2026-11-04T16:40:24.0486285Z 2026-11-04 16:40:02.775 UTC [293] DETAIL:  Failing row contains (aab01607-57e2-44c0-8c2d-448fcb8c0040, eaa3196e-1c2a-4ea6-ba52-bde8b550e393, 1, c942efdb-da11-4ef9-b726-349c0cd47fe8, cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd, 6aaa44bc-7706-4831-bceb-64905b5d9308, 01f4e123-15df-452e-9d4b-e95a58736bf0, 68558ed3-3223-4fe4-af74-eaa0812fd904, bbf2137a-4bd7-418c-ab68-5748ac1dd2a3, 1b820e20-0cc7-47fc-8050-57ba9191bca1, 111, 222, linux-local-pidfd-v1, ae834de4-c576-49f5-85bd-91d464ddf662, eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee, ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 3ccc4725-8dc2-47a9-9558-99cdd3139030, 0000000000000000000000000000000000000000000000000000000000000000, PROCESS_REGISTERED, null, null, null, null, null, null, null, null, null, 5055db21-52d4-41cb-9fd8-d6179b8c6dbf, 2026-11-04 16:40:02.772118+00, 2026-11-04 16:40:02.772124+00, 2026-11-04 16:40:02.768047+00).
+2026-11-04T16:40:24.0492543Z 2026-11-04 16:40:02.775 UTC [293] STATEMENT:  INSERT INTO native_stream_launch_identity (flow_run_id, snapshot_id, generation, enrollment_operation_id, enrollment_request_digest, enrollment_outcome_digest, work_pool_id, worker_id, launcher_instance_id, launcher_host_id, launcher_boot_id, launcher_process_id, launcher_start_ticks, launch_profile, holder_id, holder_capability_digest, holder_event_public_key, supervisor_id, supervisor_capability_digest, state, last_renewed_at, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::UUID, $5::VARCHAR, $6::VARCHAR, $7::UUID, $8::UUID, $9::UUID, $10::UUID, $11::UUID, $12::BIGINT, $13::BIGINT, $14::VARCHAR, $15::UUID, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::TIMESTAMP WITH TIME ZONE, $22::UUID, $23::TIMESTAMP WITH TIME ZONE, $24::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0496031Z 2026-11-04 16:40:02.783 UTC [293] ERROR:  new row for relation "native_stream_launch_identity" violates check constraint "ck_native_stream_launch_identity__launcher_identity_valid"
+2026-11-04T16:40:24.0500304Z 2026-11-04 16:40:02.783 UTC [293] DETAIL:  Failing row contains (aab01607-57e2-44c0-8c2d-448fcb8c0040, eaa3196e-1c2a-4ea6-ba52-bde8b550e393, 1, 09770756-6d36-4a49-83e6-31cd90d973f6, cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd, 6aaa44bc-7706-4831-bceb-64905b5d9308, 01f4e123-15df-452e-9d4b-e95a58736bf0, 68558ed3-3223-4fe4-af74-eaa0812fd904, bbf2137a-4bd7-418c-ab68-5748ac1dd2a3, 1b820e20-0cc7-47fc-8050-57ba9191bca1, 0, 222, linux-local-pidfd-v1, ae834de4-c576-49f5-85bd-91d464ddf662, eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee, ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 3ccc4725-8dc2-47a9-9558-99cdd3139030, 0000000000000000000000000000000000000000000000000000000000000000, ENROLLED, null, null, null, null, null, null, null, null, null, 9028046d-3a7e-4462-826e-998fc5e22575, 2026-11-04 16:40:02.782002+00, 2026-11-04 16:40:02.782008+00, 2026-11-04 16:40:02.768047+00).
+2026-11-04T16:40:24.0506815Z 2026-11-04 16:40:02.783 UTC [293] STATEMENT:  INSERT INTO native_stream_launch_identity (flow_run_id, snapshot_id, generation, enrollment_operation_id, enrollment_request_digest, enrollment_outcome_digest, work_pool_id, worker_id, launcher_instance_id, launcher_host_id, launcher_boot_id, launcher_process_id, launcher_start_ticks, launch_profile, holder_id, holder_capability_digest, holder_event_public_key, supervisor_id, supervisor_capability_digest, state, last_renewed_at, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::UUID, $5::VARCHAR, $6::VARCHAR, $7::UUID, $8::UUID, $9::UUID, $10::UUID, $11::UUID, $12::BIGINT, $13::BIGINT, $14::VARCHAR, $15::UUID, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::TIMESTAMP WITH TIME ZONE, $22::UUID, $23::TIMESTAMP WITH TIME ZONE, $24::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0509996Z 2026-11-04 16:40:02.789 UTC [293] ERROR:  new row for relation "native_stream_launch_identity" violates check constraint "ck_native_stream_launch_identity__renewal_shape_valid"
+2026-11-04T16:40:24.0514042Z 2026-11-04 16:40:02.789 UTC [293] DETAIL:  Failing row contains (aab01607-57e2-44c0-8c2d-448fcb8c0040, eaa3196e-1c2a-4ea6-ba52-bde8b550e393, 1, 0cac9080-5608-40e7-af6e-46a23efb8cd6, cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd, 6aaa44bc-7706-4831-bceb-64905b5d9308, 01f4e123-15df-452e-9d4b-e95a58736bf0, 68558ed3-3223-4fe4-af74-eaa0812fd904, bbf2137a-4bd7-418c-ab68-5748ac1dd2a3, 1b820e20-0cc7-47fc-8050-57ba9191bca1, 111, 222, linux-local-pidfd-v1, ae834de4-c576-49f5-85bd-91d464ddf662, eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee, ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 3ccc4725-8dc2-47a9-9558-99cdd3139030, 0000000000000000000000000000000000000000000000000000000000000000, ENROLLED, null, null, null, null, null, null, null, null, null, 446925e0-e180-4223-9e5f-5477207b7dc3, 2026-11-04 16:40:02.787879+00, 2026-11-04 16:40:02.787885+00, null).
+2026-11-04T16:40:24.0520311Z 2026-11-04 16:40:02.789 UTC [293] STATEMENT:  INSERT INTO native_stream_launch_identity (flow_run_id, snapshot_id, generation, enrollment_operation_id, enrollment_request_digest, enrollment_outcome_digest, work_pool_id, worker_id, launcher_instance_id, launcher_host_id, launcher_boot_id, launcher_process_id, launcher_start_ticks, launch_profile, holder_id, holder_capability_digest, holder_event_public_key, supervisor_id, supervisor_capability_digest, state, last_renewed_at, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::UUID, $5::VARCHAR, $6::VARCHAR, $7::UUID, $8::UUID, $9::UUID, $10::UUID, $11::UUID, $12::BIGINT, $13::BIGINT, $14::VARCHAR, $15::UUID, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::TIMESTAMP WITH TIME ZONE, $22::UUID, $23::TIMESTAMP WITH TIME ZONE, $24::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0523464Z 2026-11-04 16:40:02.797 UTC [293] ERROR:  new row for relation "native_stream_launch_identity" violates check constraint "ck_native_stream_launch_identity__process_shape_valid"
+2026-11-04T16:40:24.0528078Z 2026-11-04 16:40:02.797 UTC [293] DETAIL:  Failing row contains (aab01607-57e2-44c0-8c2d-448fcb8c0040, eaa3196e-1c2a-4ea6-ba52-bde8b550e393, 1, c20325fa-63fd-4917-ab8b-9a212dc86fb5, cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd, 6aaa44bc-7706-4831-bceb-64905b5d9308, 01f4e123-15df-452e-9d4b-e95a58736bf0, 68558ed3-3223-4fe4-af74-eaa0812fd904, bbf2137a-4bd7-418c-ab68-5748ac1dd2a3, 1b820e20-0cc7-47fc-8050-57ba9191bca1, 111, 222, linux-local-pidfd-v1, ae834de4-c576-49f5-85bd-91d464ddf662, eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee, ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 3ccc4725-8dc2-47a9-9558-99cdd3139030, 0000000000000000000000000000000000000000000000000000000000000000, ENROLLED, null, null, null, 0d34d4df-ef99-4809-826e-f6df8d9f48f6, null, null, null, null, null, 53f6ac94-0800-4e02-94e8-3a48edc0e596, 2026-11-04 16:40:02.794965+00, 2026-11-04 16:40:02.79497+00, 2026-11-04 16:40:02.768047+00).
+2026-11-04T16:40:24.0534715Z 2026-11-04 16:40:02.797 UTC [293] STATEMENT:  INSERT INTO native_stream_launch_identity (flow_run_id, snapshot_id, generation, enrollment_operation_id, enrollment_request_digest, enrollment_outcome_digest, work_pool_id, worker_id, launcher_instance_id, launcher_host_id, launcher_boot_id, launcher_process_id, launcher_start_ticks, launch_profile, holder_id, holder_capability_digest, holder_event_public_key, supervisor_id, supervisor_capability_digest, state, host_id, last_renewed_at, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::UUID, $5::VARCHAR, $6::VARCHAR, $7::UUID, $8::UUID, $9::UUID, $10::UUID, $11::UUID, $12::BIGINT, $13::BIGINT, $14::VARCHAR, $15::UUID, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::UUID, $22::TIMESTAMP WITH TIME ZONE, $23::UUID, $24::TIMESTAMP WITH TIME ZONE, $25::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0538177Z 2026-11-04 16:40:02.805 UTC [293] ERROR:  new row for relation "native_stream_launch_identity" violates check constraint "ck_native_stream_launch_identity__process_shape_valid"
+2026-11-04T16:40:24.0543319Z 2026-11-04 16:40:02.805 UTC [293] DETAIL:  Failing row contains (aab01607-57e2-44c0-8c2d-448fcb8c0040, eaa3196e-1c2a-4ea6-ba52-bde8b550e393, 1, f2fe6c82-4f02-4a20-a1a8-3638dc30b826, cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd, 6aaa44bc-7706-4831-bceb-64905b5d9308, 01f4e123-15df-452e-9d4b-e95a58736bf0, 68558ed3-3223-4fe4-af74-eaa0812fd904, bbf2137a-4bd7-418c-ab68-5748ac1dd2a3, 1b820e20-0cc7-47fc-8050-57ba9191bca1, 111, 222, linux-local-pidfd-v1, ae834de4-c576-49f5-85bd-91d464ddf662, eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee, ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 3ccc4725-8dc2-47a9-9558-99cdd3139030, 0000000000000000000000000000000000000000000000000000000000000000, PROCESS_REGISTERED, 1fd98729-0b56-4d08-ac9b-f8417af7e414, 1111111111111111111111111111111111111111111111111111111111111111, 2222222222222222222222222222222222222222222222222222222222222222, 2a6e541f-0511-4f27-bfd5-7be5d517ad10, ab754076-a3cb-4779-81ca-f4a7927a9c52, -1, 1, 3333333333333333333333333333333333333333333333333333333333333333, 2026-11-04 16:40:02.768077+00, 24181f6e-daa9-4a52-9063-784b7d011a78, 2026-11-04 16:40:02.803526+00, 2026-11-04 16:40:02.803533+00, 2026-11-04 16:40:02.768047+00).
+2026-11-04T16:40:24.0552114Z 2026-11-04 16:40:02.805 UTC [293] STATEMENT:  INSERT INTO native_stream_launch_identity (flow_run_id, snapshot_id, generation, enrollment_operation_id, enrollment_request_digest, enrollment_outcome_digest, work_pool_id, worker_id, launcher_instance_id, launcher_host_id, launcher_boot_id, launcher_process_id, launcher_start_ticks, launch_profile, holder_id, holder_capability_digest, holder_event_public_key, supervisor_id, supervisor_capability_digest, state, process_registration_operation_id, process_registration_request_digest, process_registration_outcome_digest, host_id, boot_id, child_process_id, process_start_ticks, launch_nonce_digest, process_registered_at, last_renewed_at, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::UUID, $5::VARCHAR, $6::VARCHAR, $7::UUID, $8::UUID, $9::UUID, $10::UUID, $11::UUID, $12::BIGINT, $13::BIGINT, $14::VARCHAR, $15::UUID, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::UUID, $22::VARCHAR, $23::VARCHAR, $24::UUID, $25::UUID, $26::BIGINT, $27::BIGINT, $28::VARCHAR, $29::TIMESTAMP WITH TIME ZONE, $30::TIMESTAMP WITH TIME ZONE, $31::UUID, $32::TIMESTAMP WITH TIME ZONE, $33::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0556938Z 2026-11-04 16:40:03.073 UTC [293] ERROR:  new row for relation "stream_execution_authority" violates check constraint "ck_stream_execution_authority__finite_prefix_anchor_shape_valid"
+2026-11-04T16:40:24.0559652Z 2026-11-04 16:40:03.073 UTC [293] DETAIL:  Failing row contains (f31f9e1f-81e5-4b80-854e-71c331dd0103, 1, 0, 0412de98-71ad-4e84-8581-432fa0972515, 0000000000000000000000000000000000000000000000000000000000000000, 1111111111111111111111111111111111111111111111111111111111111111, 2222222222222222222222222222222222222222222222222222222222222222, 64794550-de52-4621-8e5f-cb21b0ebcb35, 3333333333333333333333333333333333333333333333333333333333333333, CLAIMED, 0, null, null, null, null, null, be54bc3d-26cb-41f1-b302-9ba26e3f1d18, 2026-11-04 16:40:03.069985+00, 2026-11-04 16:40:03.069993+00, 0000000000000000000000000000000000000000000000000000000000000000, null, null, f, f).
+2026-11-04T16:40:24.0564648Z 2026-11-04 16:40:03.073 UTC [293] STATEMENT:  INSERT INTO stream_execution_authority (flow_run_id, generation, prepared_generation, holder_id, holder_capability_digest, holder_event_public_key, event_key_id, supervisor_id, supervisor_capability_digest, state, flow_run_run_count, manifest_set_digest, manifest_count, manifest_sealed_at, manifest_seal_operation_id, manifest_seal_request_digest, finite_prefix_manifest_digest, finite_prefix_task_run_id, finite_prefix_sealed_at, source_admission_closed, cancel_requested, id, created, updated) VALUES ($1::UUID, $2::BIGINT, $3::BIGINT, $4::UUID, $5::VARCHAR, $6::VARCHAR, $7::VARCHAR, $8::UUID, $9::VARCHAR, $10::VARCHAR, $11::BIGINT, $12::VARCHAR, $13::INTEGER, $14::TIMESTAMP WITH TIME ZONE, $15::UUID, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::TIMESTAMP WITH TIME ZONE, $20::BOOLEAN, $21::BOOLEAN, $22::UUID, $23::TIMESTAMP WITH TIME ZONE, $24::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0568174Z 2026-11-04 16:40:03.372 UTC [293] ERROR:  new row for relation "stream_execution_attempt" violates check constraint "ck_stream_execution_attempt__recovery_shape_valid"
+2026-11-04T16:40:24.0571103Z 2026-11-04 16:40:03.372 UTC [293] DETAIL:  Failing row contains (b8974601-8bd7-4ec6-b66f-5d6a0b9d85d2, 1, 88408723-dec1-4155-a49b-36a2aeb356d3, CLAIM, 0000000000000000000000000000000000000000000000000000000000000000, 1111111111111111111111111111111111111111111111111111111111111111, 9272f304-e9ab-485a-b5ce-5b867df2a2c8, 2222222222222222222222222222222222222222222222222222222222222222, 3333333333333333333333333333333333333333333333333333333333333333, null, null, null, CLAIMED, 0, f9f9f3f5-c19b-444c-8e30-fd84da7dd773, null, {"state": "prepared"}, 4444444444444444444444444444444444444444444444444444444444444444, 2b10c5ea-f12f-4051-8066-5b551ae0bf29, 2026-11-04 16:40:03.369176+00, 2026-11-04 16:40:03.369184+00, null, null, null, null).
+2026-11-04T16:40:24.0576119Z 2026-11-04 16:40:03.372 UTC [293] STATEMENT:  INSERT INTO stream_execution_attempt (flow_run_id, generation, operation_id, kind, request_digest, outcome_digest, holder_id, holder_event_public_key, event_key_id, previous_generation, previous_holder_id, death_witness, state, flow_run_run_count, recovery_operation_id, recovery_request_digest, recovery_outcome, recovery_outcome_digest, abort_operation_id, abort_request_digest, abort_outcome, abort_outcome_digest, id, created, updated) VALUES ($1::UUID, $2::BIGINT, $3::UUID, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR, $7::UUID, $8::VARCHAR, $9::VARCHAR, $10::BIGINT, $11::UUID, $12::JSONB, $13::VARCHAR, $14::BIGINT, $15::UUID, $16::VARCHAR, $17::JSONB, $18::VARCHAR, $19::UUID, $20::VARCHAR, $21::JSONB, $22::VARCHAR, $23::UUID, $24::TIMESTAMP WITH TIME ZONE, $25::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0579450Z 2026-11-04 16:40:03.707 UTC [293] ERROR:  new row for relation "stream_submission" violates check constraint "ck_stream_submission__digest_lengths_valid"
+2026-11-04T16:40:24.0581886Z 2026-11-04 16:40:03.707 UTC [293] DETAIL:  Failing row contains (11e96571-c7aa-47ec-9b7d-41391ee6330f, source.documents, short, 1111111111111111111111111111111111111111111111111111111111111111, 1, {"negative_zero": -0.0}, 2222222222222222222222222222222222222222222222222222222222222222, SOURCE, source-v1, null, null, ecb1afb8-bd7b-450d-a9da-9e403f49fcce, 965ae815-18ad-4ea3-96fd-311cb8acc5bb, documents, documents-key, v1, v1, null, null, null, stream-documents, {}, {"retries": 1}, [], {}, ACTIVE, null, 746e6e5c-c987-445b-8eb5-89e0f6512a2e, 2026-11-04 16:40:03.702768+00, 2026-11-04 16:40:03.702779+00).
+2026-11-04T16:40:24.0586702Z 2026-11-04 16:40:03.707 UTC [293] STATEMENT:  INSERT INTO stream_submission (flow_run_id, submission_key, request_digest, manifest_digest, canonical_size, parameters, parameters_digest, role, protocol, input_key, upstream_stream_id, task_run_id, stream_id, task_name, task_key, task_version, flow_version, deployment_id, deployment_version, artifact_digest, dynamic_key, limits, task_policy, tags, labels, state, released_at, id, created, updated) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::INTEGER, $6::JSON, $7::VARCHAR, $8::VARCHAR, $9::VARCHAR, $10::VARCHAR, $11::UUID, $12::UUID, $13::UUID, $14::VARCHAR, $15::VARCHAR, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::VARCHAR, $22::JSONB, $23::JSONB, $24::JSONB, $25::JSONB, $26::VARCHAR, $27::TIMESTAMP WITH TIME ZONE, $28::UUID, $29::TIMESTAMP WITH TIME ZONE, $30::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0589845Z 2026-11-04 16:40:04.033 UTC [293] ERROR:  new row for relation "stream_submission" violates check constraint "ck_stream_submission__release_shape_valid"
+2026-11-04T16:40:24.0592460Z 2026-11-04 16:40:04.033 UTC [293] DETAIL:  Failing row contains (0166d54e-40d7-4f32-a02d-83e39b1264f1, source.documents, 0000000000000000000000000000000000000000000000000000000000000000, 1111111111111111111111111111111111111111111111111111111111111111, 1, {"negative_zero": -0.0}, 2222222222222222222222222222222222222222222222222222222222222222, SOURCE, source-v1, null, null, d4faecad-abf7-4cd8-b2af-e886e7f11c1f, 9e800245-317a-4653-aafa-14b23394544c, documents, documents-key, v1, v1, null, null, null, stream-documents, {}, {"retries": 1}, [], {}, RELEASED, null, eceb6fab-22c3-4956-b4ab-05276768cb2c, 2026-11-04 16:40:04.032626+00, 2026-11-04 16:40:04.032634+00).
+2026-11-04T16:40:24.0597336Z 2026-11-04 16:40:04.033 UTC [293] STATEMENT:  INSERT INTO stream_submission (flow_run_id, submission_key, request_digest, manifest_digest, canonical_size, parameters, parameters_digest, role, protocol, input_key, upstream_stream_id, task_run_id, stream_id, task_name, task_key, task_version, flow_version, deployment_id, deployment_version, artifact_digest, dynamic_key, limits, task_policy, tags, labels, state, released_at, id, created, updated) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::INTEGER, $6::JSON, $7::VARCHAR, $8::VARCHAR, $9::VARCHAR, $10::VARCHAR, $11::UUID, $12::UUID, $13::UUID, $14::VARCHAR, $15::VARCHAR, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::VARCHAR, $22::JSONB, $23::JSONB, $24::JSONB, $25::JSONB, $26::VARCHAR, $27::TIMESTAMP WITH TIME ZONE, $28::UUID, $29::TIMESTAMP WITH TIME ZONE, $30::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0600532Z 2026-11-04 16:40:04.353 UTC [293] ERROR:  new row for relation "stream_finite_submission" violates check constraint "ck_stream_finite_submission__canonical_size_positive"
+2026-11-04T16:40:24.0603261Z 2026-11-04 16:40:04.353 UTC [293] DETAIL:  Failing row contains (9dc1dab9-ec2c-4ad4-b6df-63cf8021c280, PREFIX, finite.prefix, 0000000000000000000000000000000000000000000000000000000000000000, 1111111111111111111111111111111111111111111111111111111111111111, 0, {"negative_zero": -0.0}, 2222222222222222222222222222222222222222222222222222222222222222, d6cd3d5a-a8df-4e8a-8312-4b93bba3f207, prefix, prefix-key, v1, v1, null, null, 3333333333333333333333333333333333333333333333333333333333333333, finite-prefix, {"retries": 1}, [], {}, ACTIVE, null, 547fa933-248f-47ad-81b8-3adf1cb3dfc0, 2026-11-04 16:40:04.350762+00, 2026-11-04 16:40:04.35077+00).
+2026-11-04T16:40:24.0607860Z 2026-11-04 16:40:04.353 UTC [293] STATEMENT:  INSERT INTO stream_finite_submission (flow_run_id, phase, submission_key, request_digest, manifest_digest, canonical_size, parameters, parameters_digest, task_run_id, task_name, task_key, task_version, flow_version, deployment_id, deployment_version, artifact_digest, dynamic_key, task_policy, tags, labels, state, released_at, id, created, updated) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::INTEGER, $7::JSON, $8::VARCHAR, $9::UUID, $10::VARCHAR, $11::VARCHAR, $12::VARCHAR, $13::VARCHAR, $14::UUID, $15::VARCHAR, $16::VARCHAR, $17::VARCHAR, $18::JSONB, $19::JSONB, $20::JSONB, $21::VARCHAR, $22::TIMESTAMP WITH TIME ZONE, $23::UUID, $24::TIMESTAMP WITH TIME ZONE, $25::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0610700Z 2026-11-04 16:40:04.659 UTC [293] ERROR:  new row for relation "stream_finite_receipt" violates check constraint "ck_stream_finite_receipt__run_count_positive"
+2026-11-04T16:40:24.0612800Z 2026-11-04 16:40:04.659 UTC [293] DETAIL:  Failing row contains (a881c5c9-71f2-4689-b959-6f3b56338fef, 072910a4-c05c-4f98-892f-099f3426f4f4, f51215e8-bc44-41dd-a002-d2762c9c9a84, 4444444444444444444444444444444444444444444444444444444444444444, 5555555555555555555555555555555555555555555555555555555555555555, 0, null, 6666666666666666666666666666666666666666666666666666666666666666, 4, 36f88901-be8c-4be9-9670-fc57badb3986, 2026-11-04 16:40:04.658132+00, 2026-11-04 16:40:04.658139+00).
+2026-11-04T16:40:24.0615733Z 2026-11-04 16:40:04.659 UTC [293] STATEMENT:  INSERT INTO stream_finite_receipt (finite_submission_id, task_run_id, operation_id, request_digest, outcome_digest, run_count, result, result_digest, result_size, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::VARCHAR, $5::VARCHAR, $6::INTEGER, $7::JSON, $8::VARCHAR, $9::INTEGER, $10::UUID, $11::TIMESTAMP WITH TIME ZONE, $12::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0617513Z 2026-11-04 16:40:04.958 UTC [293] ERROR:  new row for relation "stream_finite_receipt" violates check constraint "ck_stream_finite_receipt__digest_lengths_valid"
+2026-11-04T16:40:24.0619407Z 2026-11-04 16:40:04.958 UTC [293] DETAIL:  Failing row contains (a0de7673-5e24-4279-9d2e-91a8fc2ca84f, bafde56c-f79f-45ee-8cc7-f3259b5bcc58, bd178151-ba3f-46f8-9a02-13e2e4511ee6, short, 5555555555555555555555555555555555555555555555555555555555555555, 1, null, 6666666666666666666666666666666666666666666666666666666666666666, 4, 18484fd5-ab5c-48de-bd06-e86dd8238103, 2026-11-04 16:40:04.957704+00, 2026-11-04 16:40:04.957711+00).
+2026-11-04T16:40:24.0622058Z 2026-11-04 16:40:04.958 UTC [293] STATEMENT:  INSERT INTO stream_finite_receipt (finite_submission_id, task_run_id, operation_id, request_digest, outcome_digest, run_count, result, result_digest, result_size, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::VARCHAR, $5::VARCHAR, $6::INTEGER, $7::JSON, $8::VARCHAR, $9::INTEGER, $10::UUID, $11::TIMESTAMP WITH TIME ZONE, $12::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0623794Z 2026-11-04 16:40:05.258 UTC [293] ERROR:  new row for relation "stream_partition" violates check constraint "ck_stream_partition__terminal_shape_valid"
+2026-11-04T16:40:24.0625304Z 2026-11-04 16:40:05.258 UTC [293] DETAIL:  Failing row contains (08fb74c1-aa2c-4e3c-8194-85fec2b3f7e7, 1, COMPLETED, null, null, 0, 0, null, null, null, 0, 0, {}, 0, 0, f, 10c0f2e8-a0d7-4c2f-b689-2ef9e61d7b91, 2026-11-04 16:40:05.255674+00, 2026-11-04 16:40:05.255682+00).
+2026-11-04T16:40:24.0627783Z 2026-11-04 16:40:05.258 UTC [293] STATEMENT:  INSERT INTO stream_partition (flow_run_id, protocol_version, state, error, tail_sequence, last_sequence, producer_position, attempt, owner_epoch, limits, record_count, byte_count, released, id, created, updated) VALUES ($1::UUID, $2::INTEGER, $3::VARCHAR, $4::VARCHAR, $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::INTEGER, $9::INTEGER, $10::JSONB, $11::BIGINT, $12::BIGINT, $13::BOOLEAN, $14::UUID, $15::TIMESTAMP WITH TIME ZONE, $16::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0629895Z 2026-11-04 16:40:05.266 UTC [293] ERROR:  new row for relation "stream_consumer" violates check constraint "ck_stream_consumer__delivery_shape_valid"
+2026-11-04T16:40:24.0631589Z 2026-11-04 16:40:05.266 UTC [293] DETAIL:  Failing row contains (08fb74c1-aa2c-4e3c-8194-85fec2b3f7e7, e2ab07fb-5234-48b0-af85-6709f65b7d54, 3d06b56c-e4b2-4ecb-9dd4-2fffaa3dc5c3, 0464673e-cc72-4857-9348-c23de1812922, 1, 1, 0, {}, null, 3ae975db-71f9-41fc-bd5f-6546050b6d89, 93618d18-ba1c-40a2-b952-712f80bde40a, 2026-11-04 16:40:05.264979+00, 2026-11-04 16:40:05.264986+00).
+2026-11-04T16:40:24.0634120Z 2026-11-04 16:40:05.266 UTC [293] STATEMENT:  INSERT INTO stream_consumer (flow_run_id, input_stream_id, output_stream_id, owner_id, attempt, owner_epoch, completed_through, managed_state, inflight_sequence, delivery_id, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::INTEGER, $6::INTEGER, $7::BIGINT, $8::JSON, $9::BIGINT, $10::UUID, $11::UUID, $12::TIMESTAMP WITH TIME ZONE, $13::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0636049Z 2026-11-04 16:40:05.276 UTC [293] ERROR:  new row for relation "stream_completion" violates check constraint "ck_stream_completion__output_shape_valid"
+2026-11-04T16:40:24.0637585Z 2026-11-04 16:40:05.276 UTC [293] DETAIL:  Failing row contains (aa103868-ab23-4d78-baf8-c98c7ab0fd99, 1, f788605d-9a9d-4966-994b-cd673982bd26, 1, YIELD, 0000000000000000000000000000000000000000000000000000000000000000, null, fcb8136f-cda3-4851-8e56-8b7454908e07, 2026-11-04 16:40:05.273573+00, 2026-11-04 16:40:05.273581+00).
+2026-11-04T16:40:24.0639698Z 2026-11-04 16:40:05.276 UTC [293] STATEMENT:  INSERT INTO stream_completion (consumer_id, input_sequence, delivery_id, owner_epoch, kind, intent_digest, output_sequence, id, created, updated) VALUES ($1::UUID, $2::BIGINT, $3::UUID, $4::INTEGER, $5::VARCHAR, $6::VARCHAR, $7::BIGINT, $8::UUID, $9::TIMESTAMP WITH TIME ZONE, $10::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.0640979Z 2026-11-04 16:40:11.651 UTC [314] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0641408Z 2026-11-04 16:40:21.718 UTC [323] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.0642228Z waiting for server to start....2026-11-04 16:36:19.587 UTC [49] LOG:  starting PostgreSQL 14.24 (Debian 14.24-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-04T16:40:24.0643135Z 2026-11-04 16:36:19.588 UTC [49] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-11-04T16:40:24.0643730Z 2026-11-04 16:36:19.589 UTC [50] LOG:  database system was shut down at 2026-11-04 16:36:19 UTC
+2026-11-04T16:40:24.0644272Z 2026-11-04 16:36:19.593 UTC [49] LOG:  database system is ready to accept connections
+2026-11-04T16:40:24.0644671Z  done
+2026-11-04T16:40:24.0644870Z server started
+2026-11-04T16:40:24.0645196Z CREATE DATABASE
+2026-11-04T16:40:24.0645332Z 
+2026-11-04T16:40:24.0645338Z 
+2026-11-04T16:40:24.0645585Z /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+2026-11-04T16:40:24.0645927Z 
+2026-11-04T16:40:24.0646213Z waiting for server to shut down...2026-11-04 16:36:19.749 UTC [49] LOG:  received fast shutdown request
+2026-11-04T16:40:24.0646769Z .2026-11-04 16:36:19.749 UTC [49] LOG:  aborting any active transactions
+2026-11-04T16:40:24.0647379Z 2026-11-04 16:36:19.751 UTC [49] LOG:  background worker "logical replication launcher" (PID 56) exited with exit code 1
+2026-11-04T16:40:24.0647948Z 2026-11-04 16:36:19.752 UTC [51] LOG:  shutting down
+2026-11-04T16:40:24.0648332Z 2026-11-04 16:36:19.757 UTC [49] LOG:  database system is shut down
+2026-11-04T16:40:24.0648815Z  done
+2026-11-04T16:40:24.0649015Z server stopped
+2026-11-04T16:40:24.0649147Z 
+2026-11-04T16:40:24.0649311Z PostgreSQL init process complete; ready for start up.
+2026-11-04T16:40:24.0649549Z 
+2026-11-04T16:40:24.0745867Z Post job cleanup.
+2026-11-04T16:40:24.1650241Z [command]/usr/bin/git version
+2026-11-04T16:40:24.1697571Z git version 2.56.0
+2026-11-04T16:40:24.1740535Z Temporarily overriding HOME='/home/runner/work/_temp/0370a846-b433-48db-96a9-c655406640dd' before making global git config changes
+2026-11-04T16:40:24.1742327Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-04T16:40:24.1743948Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ariadne/ariadne
+2026-11-04T16:40:24.1779754Z Removing SSH command configuration
+2026-11-04T16:40:24.1786290Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-04T16:40:24.1824658Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-04T16:40:24.2116994Z Removing HTTP extra header
+2026-11-04T16:40:24.2126555Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-04T16:40:24.2193700Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-04T16:40:24.2518502Z Removing includeIf entries pointing to credentials config files
+2026-11-04T16:40:24.2526770Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-04T16:40:24.2582882Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-04T16:40:24.2987946Z Print service container logs: 5abe412e33254283b30965c9b0e386b0_redislatest_85ef20
+2026-11-04T16:40:24.2992509Z ##[command]/usr/bin/docker logs --details 2477aa706716a75e88ac9e25f30865738f89e6376f4bb2139ab1423652fe188b
+2026-11-04T16:40:24.3140805Z  Starting Redis Server
+2026-11-04T16:40:24.3146911Z  1:C 04 Nov 2026 16:36:14.843 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+2026-11-04T16:40:24.3149412Z  1:C 04 Nov 2026 16:36:14.843 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+2026-11-04T16:40:24.3150041Z  1:C 04 Nov 2026 16:36:14.843 * Redis version=8.10.3, bits=64, commit=00000000, modified=1, pid=1, just started
+2026-11-04T16:40:24.3150624Z  1:C 04 Nov 2026 16:36:14.843 * Configuration loaded
+2026-11-04T16:40:24.3151034Z  1:M 04 Nov 2026 16:36:14.843 * monotonic clock: POSIX clock_gettime
+2026-11-04T16:40:24.3151473Z  1:M 04 Nov 2026 16:36:14.844 * Running mode=standalone, port=6379.
+2026-11-04T16:40:24.3152046Z  1:M 04 Nov 2026 16:36:14.845 * <bf> RedisBloom version 8.10.1 (Git=unknown)
+2026-11-04T16:40:24.3152707Z  1:M 04 Nov 2026 16:36:14.845 * <bf> Registering configuration options: [
+2026-11-04T16:40:24.3153161Z  1:M 04 Nov 2026 16:36:14.845 * <bf> 	{ bf-error-rate       :      0.01 }
+2026-11-04T16:40:24.3153593Z  1:M 04 Nov 2026 16:36:14.845 * <bf> 	{ bf-initial-size     :       100 }
+2026-11-04T16:40:24.3154022Z  1:M 04 Nov 2026 16:36:14.845 * <bf> 	{ bf-expansion-factor :         2 }
+2026-11-04T16:40:24.3154439Z  1:M 04 Nov 2026 16:36:14.845 * <bf> 	{ cf-bucket-size      :         2 }
+2026-11-04T16:40:24.3154855Z  1:M 04 Nov 2026 16:36:14.845 * <bf> 	{ cf-initial-size     :      1024 }
+2026-11-04T16:40:24.3155597Z  1:M 04 Nov 2026 16:36:14.845 * <bf> 	{ cf-max-iterations   :        20 }
+2026-11-04T16:40:24.3156325Z  1:M 04 Nov 2026 16:36:14.845 * <bf> 	{ cf-expansion-factor :         1 }
+2026-11-04T16:40:24.3156764Z  1:M 04 Nov 2026 16:36:14.845 * <bf> 	{ cf-max-expansions   :        32 }
+2026-11-04T16:40:24.3157123Z  1:M 04 Nov 2026 16:36:14.845 * <bf> ]
+2026-11-04T16:40:24.3157563Z  1:M 04 Nov 2026 16:36:14.845 * Module 'bf' loaded from /usr/local/lib/redis/modules//redisbloom.so
+2026-11-04T16:40:24.3158235Z  1:M 04 Nov 2026 16:36:14.849 * <search> search-workers default: 4 (min of MAX_WORKER_THREADS=16 and CPU cores)
+2026-11-04T16:40:24.3159194Z  1:M 04 Nov 2026 16:36:14.849 * <search> Redis version found by RedisSearch : 8.10.3 - oss
+2026-11-04T16:40:24.3160044Z  1:M 04 Nov 2026 16:36:14.849 * <search> RediSearch version 8.10.1 (Git=)
+2026-11-04T16:40:24.3162060Z  1:M 04 Nov 2026 16:36:14.849 * <search> gc: ON, prefix min length: 2, min word length to stem: 4, prefix max expansions: 200, query timeout (ms): 500, timeout policy: return, oom policy: return, cursor read size: 1000, cursor max idle (ms): 300000, max doctable size: 1000000, max number of search results:  1000000, default scorer: BM25STD, 
+2026-11-04T16:40:24.3163365Z  1:M 04 Nov 2026 16:36:14.849 * <search> Initialized thread pools!
+2026-11-04T16:40:24.3163807Z  1:M 04 Nov 2026 16:36:14.849 * <search> Enabled workers threadpool of size 4
+2026-11-04T16:40:24.3164258Z  1:M 04 Nov 2026 16:36:14.849 * <search> Subscribe to config changes
+2026-11-04T16:40:24.3164710Z  1:M 04 Nov 2026 16:36:14.849 * <search> Subscribe to cluster slot migration events
+2026-11-04T16:40:24.3165481Z  1:M 04 Nov 2026 16:36:14.849 * <search> Subscribe to cluster topology change events
+2026-11-04T16:40:24.3165963Z  1:M 04 Nov 2026 16:36:14.849 * <search> Enabled role change notification
+2026-11-04T16:40:24.3166569Z  1:M 04 Nov 2026 16:36:14.850 * <search> Cluster configuration: AUTO partitions, type: 0, coordinator timeout: 0ms
+2026-11-04T16:40:24.3167481Z  1:M 04 Nov 2026 16:36:14.850 * Module 'search' loaded from /usr/local/lib/redis/modules//redisearch.so
+2026-11-04T16:40:24.3168262Z  1:M 04 Nov 2026 16:36:14.850 * <timeseries> RedisTimeSeries version 81001, git_sha=
+2026-11-04T16:40:24.3169616Z  1:M 04 Nov 2026 16:36:14.850 * <timeseries> Redis version found by RedisTimeSeries : 8.10.3 - oss
+2026-11-04T16:40:24.3170261Z  1:M 04 Nov 2026 16:36:14.850 * <timeseries> Registering configuration options: [
+2026-11-04T16:40:24.3170773Z  1:M 04 Nov 2026 16:36:14.850 * <timeseries> 	{ ts-compaction-policy   :              }
+2026-11-04T16:40:24.3171281Z  1:M 04 Nov 2026 16:36:14.850 * <timeseries> 	{ ts-num-threads         :            3 }
+2026-11-04T16:40:24.3171772Z  1:M 04 Nov 2026 16:36:14.851 * <timeseries> 	{ ts-libmr-protocol      :     INTERNAL }
+2026-11-04T16:40:24.3172290Z  1:M 04 Nov 2026 16:36:14.851 * <timeseries> 	{ ts-retention-policy    :            0 }
+2026-11-04T16:40:24.3172784Z  1:M 04 Nov 2026 16:36:14.851 * <timeseries> 	{ ts-duplicate-policy    :        block }
+2026-11-04T16:40:24.3173282Z  1:M 04 Nov 2026 16:36:14.851 * <timeseries> 	{ ts-chunk-size-bytes    :         4096 }
+2026-11-04T16:40:24.3173772Z  1:M 04 Nov 2026 16:36:14.851 * <timeseries> 	{ ts-encoding            :   compressed }
+2026-11-04T16:40:24.3174255Z  1:M 04 Nov 2026 16:36:14.851 * <timeseries> 	{ ts-ignore-max-time-diff:            0 }
+2026-11-04T16:40:24.3174738Z  1:M 04 Nov 2026 16:36:14.851 * <timeseries> 	{ ts-ignore-max-val-diff :     0.000000 }
+2026-11-04T16:40:24.3175491Z  1:M 04 Nov 2026 16:36:14.851 * <timeseries> 	{ ts-topology-events     :         true }
+2026-11-04T16:40:24.3176205Z  1:M 04 Nov 2026 16:36:14.851 * <timeseries> ]
+2026-11-04T16:40:24.3176893Z  1:M 04 Nov 2026 16:36:14.851 * <timeseries> Detected redis oss (cluster-enabled=no)
+2026-11-04T16:40:24.3177625Z  1:M 04 Nov 2026 16:36:14.851 * <timeseries> Subscribe to ASM events
+2026-11-04T16:40:24.3178079Z  1:M 04 Nov 2026 16:36:14.851 * <timeseries> Subscribe to topology changes events
+2026-11-04T16:40:24.3178546Z  1:M 04 Nov 2026 16:36:14.851 * <timeseries> Enabled diskless replication
+2026-11-04T16:40:24.3179105Z  1:M 04 Nov 2026 16:36:14.851 * Module 'timeseries' loaded from /usr/local/lib/redis/modules//redistimeseries.so
+2026-11-04T16:40:24.3179893Z  1:M 04 Nov 2026 16:36:14.851 * <ReJSON> Created new data type 'ReJSON-RL'
+2026-11-04T16:40:24.3180372Z  1:M 04 Nov 2026 16:36:14.852 * <ReJSON> version: 81000 git sha: unknown branch: unknown
+2026-11-04T16:40:24.3180852Z  1:M 04 Nov 2026 16:36:14.852 * <ReJSON> Exported RedisJSON_V1 API
+2026-11-04T16:40:24.3181281Z  1:M 04 Nov 2026 16:36:14.852 * <ReJSON> Exported RedisJSON_V2 API
+2026-11-04T16:40:24.3181677Z  1:M 04 Nov 2026 16:36:14.852 * <ReJSON> Exported RedisJSON_V3 API
+2026-11-04T16:40:24.3182072Z  1:M 04 Nov 2026 16:36:14.852 * <ReJSON> Exported RedisJSON_V4 API
+2026-11-04T16:40:24.3182458Z  1:M 04 Nov 2026 16:36:14.852 * <ReJSON> Exported RedisJSON_V5 API
+2026-11-04T16:40:24.3182852Z  1:M 04 Nov 2026 16:36:14.852 * <ReJSON> Exported RedisJSON_V6 API
+2026-11-04T16:40:24.3183249Z  1:M 04 Nov 2026 16:36:14.852 * <ReJSON> Exported RedisJSON_V7 API
+2026-11-04T16:40:24.3183637Z  1:M 04 Nov 2026 16:36:14.852 * <ReJSON> Exported RedisJSON_V8 API
+2026-11-04T16:40:24.3184050Z  1:M 04 Nov 2026 16:36:14.852 * <ReJSON> Enabled diskless replication
+2026-11-04T16:40:24.3184530Z  1:M 04 Nov 2026 16:36:14.852 * <ReJSON> Initialized shared string cache, thread safe: true.
+2026-11-04T16:40:24.3185344Z  1:M 04 Nov 2026 16:36:14.852 * Module 'ReJSON' loaded from /usr/local/lib/redis/modules//rejson.so
+2026-11-04T16:40:24.3185857Z  1:M 04 Nov 2026 16:36:14.852 * <search> Acquired RedisJSON_V8 API
+2026-11-04T16:40:24.3186223Z  1:M 04 Nov 2026 16:36:14.852 * Server initialized
+2026-11-04T16:40:24.3186591Z  1:M 04 Nov 2026 16:36:14.852 * Ready to accept connections tcp
+2026-11-04T16:40:24.3187430Z  1:M 04 Nov 2026 16:36:14.852 # WARNING: Redis does not require authentication and is not protected by network restrictions. Redis will accept connections from any IP address on any network interface.
+2026-11-04T16:40:24.3193682Z Stop and remove container: 5abe412e33254283b30965c9b0e386b0_redislatest_85ef20
+2026-11-04T16:40:24.3198802Z ##[command]/usr/bin/docker rm --force 2477aa706716a75e88ac9e25f30865738f89e6376f4bb2139ab1423652fe188b
+2026-11-04T16:40:24.4484050Z 2477aa706716a75e88ac9e25f30865738f89e6376f4bb2139ab1423652fe188b
+2026-11-04T16:40:24.4514551Z Print service container logs: 2d84b553aee04fba94bf4be1b451046b_postgres14_1cb002
+2026-11-04T16:40:24.4516477Z ##[command]/usr/bin/docker logs --details bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920
+2026-11-04T16:40:24.4669170Z  The files belonging to this database system will be owned by user "postgres".
+2026-11-04T16:40:24.4670722Z  This user must also own the server process.
+2026-11-04T16:40:24.4673937Z  initdb: warning: enabling "trust" authentication for local connections
+2026-11-04T16:40:24.4674758Z  
+2026-11-04T16:40:24.4675932Z  You can change this by editing pg_hba.conf or using the option -A, or
+2026-11-04T16:40:24.4685999Z  --auth-local and --auth-host, the next time you run initdb.
+2026-11-04T16:40:24.4686786Z  The database cluster will be initialized with locale "C.UTF-8".
+2026-11-04T16:40:24.4688143Z  2026-11-04 16:36:19.869 UTC [1] LOG:  starting PostgreSQL 14.24 (Debian 14.24-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-04T16:40:24.4689479Z  2026-11-04 16:36:19.870 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+2026-11-04T16:40:24.4690276Z  2026-11-04 16:36:19.870 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+2026-11-04T16:40:24.4691119Z  2026-11-04 16:36:19.870 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-11-04T16:40:24.4692026Z  2026-11-04 16:36:19.872 UTC [64] LOG:  database system was shut down at 2026-11-04 16:36:19 UTC
+2026-11-04T16:40:24.4692909Z  2026-11-04 16:36:19.876 UTC [1] LOG:  database system is ready to accept connections
+2026-11-04T16:40:24.4693695Z  2026-11-04 16:36:29.021 UTC [78] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4694598Z  2026-11-04 16:36:39.104 UTC [85] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4695915Z  2026-11-04 16:36:49.176 UTC [93] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4696645Z  2026-11-04 16:36:59.337 UTC [101] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4697371Z  2026-11-04 16:37:09.451 UTC [109] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4698082Z  2026-11-04 16:37:19.556 UTC [116] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4698788Z  2026-11-04 16:37:29.785 UTC [124] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4699468Z  2026-11-04 16:37:39.894 UTC [132] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4699923Z  2026-11-04 16:37:50.020 UTC [148] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4700353Z  2026-11-04 16:38:00.143 UTC [166] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4700759Z  2026-11-04 16:38:10.250 UTC [177] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4701178Z  2026-11-04 16:38:20.384 UTC [188] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4701582Z  2026-11-04 16:38:30.495 UTC [198] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4701996Z  2026-11-04 16:38:40.619 UTC [213] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4702427Z  2026-11-04 16:38:50.721 UTC [222] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4702829Z  2026-11-04 16:39:00.813 UTC [238] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4703251Z  2026-11-04 16:39:10.915 UTC [250] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4703662Z  2026-11-04 16:39:21.018 UTC [259] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4704088Z  2026-11-04 16:39:31.114 UTC [267] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4704853Z  2026-11-04 16:39:36.724 UTC [167] ERROR:  insert or update on table "deployment" violates foreign key constraint "fk_deployment__concurrency_limit_id__concurrency_limit_v2"
+2026-11-04T16:40:24.4706828Z  2026-11-04 16:39:36.724 UTC [167] DETAIL:  Key (concurrency_limit_id)=(caf0af40-d90f-4e5b-b73d-1aeb0636d119) is not present in table "concurrency_limit_v2".
+2026-11-04T16:40:24.4709353Z  2026-11-04 16:39:36.724 UTC [167] STATEMENT:  INSERT INTO deployment (name, infra_overrides, status, flow_id, paused, concurrency_limit_id, tags, labels, parameters, pull_steps, parameter_openapi_schema, enforce_parameter_schema, id, created, updated) VALUES ($1::VARCHAR, $2::JSONB, $3::deployment_status, $4::UUID, $5::BOOLEAN, $6::UUID, $7::JSONB, $8::JSONB, $9::JSONB, $10::JSONB, $11::JSONB, $12::BOOLEAN, $13::UUID, $14::TIMESTAMP WITH TIME ZONE, $15::TIMESTAMP WITH TIME ZONE) ON CONFLICT (flow_id, name) DO UPDATE SET name = $16::VARCHAR, flow_id = $17::UUID, concurrency_limit_id = $18::UUID, labels = $19::JSONB, updated = $20::TIMESTAMP WITH TIME ZONE
+2026-11-04T16:40:24.4711691Z  2026-11-04 16:39:40.348 UTC [155] ERROR:  duplicate key value violates unique constraint "pk_flow_run"
+2026-11-04T16:40:24.4712583Z  2026-11-04 16:39:40.348 UTC [155] DETAIL:  Key (id)=(d325b0ad-cc2f-4f60-a074-149ab349bbb7) already exists.
+2026-11-04T16:40:24.4717592Z  2026-11-04 16:39:40.348 UTC [155] STATEMENT:  INSERT INTO flow_run (flow_id, deployment_id, work_queue_name, flow_version, deployment_version, parameters, idempotency_key, context, empirical_policy, tags, labels, created_by, infrastructure_pid, job_variables, infrastructure_document_id, parent_task_run_id, auto_scheduled, state_id, work_queue_id, name, state_type, state_name, state_timestamp, run_count, expected_start_time, next_scheduled_start_time, start_time, end_time, total_run_time, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::JSONB, $7::VARCHAR, $8::JSONB, $9, $10::JSONB, $11::JSONB, $12, $13::VARCHAR, $14::JSONB, $15::UUID, $16::UUID, $17::BOOLEAN, $18::UUID, $19::UUID, $20::VARCHAR, $21::state_type, $22::VARCHAR, $23::TIMESTAMP WITH TIME ZONE, $24::INTEGER, $25::TIMESTAMP WITH TIME ZONE, $26::TIMESTAMP WITH TIME ZONE, $27::TIMESTAMP WITH TIME ZONE, $28::TIMESTAMP WITH TIME ZONE, $29::INTERVAL, $30::UUID, $31::TIMESTAMP WITH TIME ZONE, $32::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4721831Z  2026-11-04 16:39:41.247 UTC [276] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4722812Z  2026-11-04 16:39:46.559 UTC [155] ERROR:  update or delete on table "work_queue" violates foreign key constraint "fk_work_pool__default_queue_id__work_queue" on table "work_pool"
+2026-11-04T16:40:24.4723947Z  2026-11-04 16:39:46.559 UTC [155] DETAIL:  Key (id)=(701ba7d2-62e6-4d52-b104-8f09716a103a) is still referenced from table "work_pool".
+2026-11-04T16:40:24.4736154Z  2026-11-04 16:39:46.559 UTC [155] STATEMENT:  DELETE FROM work_queue WHERE work_queue.id = $1::UUID
+2026-11-04T16:40:24.4736812Z  2026-11-04 16:39:51.424 UTC [285] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4737371Z  2026-11-04 16:39:55.790 UTC [169] FATAL:  terminating connection due to administrator command
+2026-11-04T16:40:24.4737984Z  2026-11-04 16:39:55.790 UTC [231] FATAL:  terminating connection due to administrator command
+2026-11-04T16:40:24.4738493Z  2026-11-04 16:40:01.532 UTC [300] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4739290Z  2026-11-04 16:40:02.775 UTC [293] ERROR:  new row for relation "native_stream_launch_identity" violates check constraint "ck_native_stream_launch_identity__process_shape_valid"
+2026-11-04T16:40:24.4743649Z  2026-11-04 16:40:02.775 UTC [293] DETAIL:  Failing row contains (aab01607-57e2-44c0-8c2d-448fcb8c0040, eaa3196e-1c2a-4ea6-ba52-bde8b550e393, 1, c942efdb-da11-4ef9-b726-349c0cd47fe8, cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd, 6aaa44bc-7706-4831-bceb-64905b5d9308, 01f4e123-15df-452e-9d4b-e95a58736bf0, 68558ed3-3223-4fe4-af74-eaa0812fd904, bbf2137a-4bd7-418c-ab68-5748ac1dd2a3, 1b820e20-0cc7-47fc-8050-57ba9191bca1, 111, 222, linux-local-pidfd-v1, ae834de4-c576-49f5-85bd-91d464ddf662, eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee, ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 3ccc4725-8dc2-47a9-9558-99cdd3139030, 0000000000000000000000000000000000000000000000000000000000000000, PROCESS_REGISTERED, null, null, null, null, null, null, null, null, null, 5055db21-52d4-41cb-9fd8-d6179b8c6dbf, 2026-11-04 16:40:02.772118+00, 2026-11-04 16:40:02.772124+00, 2026-11-04 16:40:02.768047+00).
+2026-11-04T16:40:24.4750108Z  2026-11-04 16:40:02.775 UTC [293] STATEMENT:  INSERT INTO native_stream_launch_identity (flow_run_id, snapshot_id, generation, enrollment_operation_id, enrollment_request_digest, enrollment_outcome_digest, work_pool_id, worker_id, launcher_instance_id, launcher_host_id, launcher_boot_id, launcher_process_id, launcher_start_ticks, launch_profile, holder_id, holder_capability_digest, holder_event_public_key, supervisor_id, supervisor_capability_digest, state, last_renewed_at, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::UUID, $5::VARCHAR, $6::VARCHAR, $7::UUID, $8::UUID, $9::UUID, $10::UUID, $11::UUID, $12::BIGINT, $13::BIGINT, $14::VARCHAR, $15::UUID, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::TIMESTAMP WITH TIME ZONE, $22::UUID, $23::TIMESTAMP WITH TIME ZONE, $24::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4753291Z  2026-11-04 16:40:02.783 UTC [293] ERROR:  new row for relation "native_stream_launch_identity" violates check constraint "ck_native_stream_launch_identity__launcher_identity_valid"
+2026-11-04T16:40:24.4757588Z  2026-11-04 16:40:02.783 UTC [293] DETAIL:  Failing row contains (aab01607-57e2-44c0-8c2d-448fcb8c0040, eaa3196e-1c2a-4ea6-ba52-bde8b550e393, 1, 09770756-6d36-4a49-83e6-31cd90d973f6, cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd, 6aaa44bc-7706-4831-bceb-64905b5d9308, 01f4e123-15df-452e-9d4b-e95a58736bf0, 68558ed3-3223-4fe4-af74-eaa0812fd904, bbf2137a-4bd7-418c-ab68-5748ac1dd2a3, 1b820e20-0cc7-47fc-8050-57ba9191bca1, 0, 222, linux-local-pidfd-v1, ae834de4-c576-49f5-85bd-91d464ddf662, eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee, ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 3ccc4725-8dc2-47a9-9558-99cdd3139030, 0000000000000000000000000000000000000000000000000000000000000000, ENROLLED, null, null, null, null, null, null, null, null, null, 9028046d-3a7e-4462-826e-998fc5e22575, 2026-11-04 16:40:02.782002+00, 2026-11-04 16:40:02.782008+00, 2026-11-04 16:40:02.768047+00).
+2026-11-04T16:40:24.4763863Z  2026-11-04 16:40:02.783 UTC [293] STATEMENT:  INSERT INTO native_stream_launch_identity (flow_run_id, snapshot_id, generation, enrollment_operation_id, enrollment_request_digest, enrollment_outcome_digest, work_pool_id, worker_id, launcher_instance_id, launcher_host_id, launcher_boot_id, launcher_process_id, launcher_start_ticks, launch_profile, holder_id, holder_capability_digest, holder_event_public_key, supervisor_id, supervisor_capability_digest, state, last_renewed_at, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::UUID, $5::VARCHAR, $6::VARCHAR, $7::UUID, $8::UUID, $9::UUID, $10::UUID, $11::UUID, $12::BIGINT, $13::BIGINT, $14::VARCHAR, $15::UUID, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::TIMESTAMP WITH TIME ZONE, $22::UUID, $23::TIMESTAMP WITH TIME ZONE, $24::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4767256Z  2026-11-04 16:40:02.789 UTC [293] ERROR:  new row for relation "native_stream_launch_identity" violates check constraint "ck_native_stream_launch_identity__renewal_shape_valid"
+2026-11-04T16:40:24.4771408Z  2026-11-04 16:40:02.789 UTC [293] DETAIL:  Failing row contains (aab01607-57e2-44c0-8c2d-448fcb8c0040, eaa3196e-1c2a-4ea6-ba52-bde8b550e393, 1, 0cac9080-5608-40e7-af6e-46a23efb8cd6, cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd, 6aaa44bc-7706-4831-bceb-64905b5d9308, 01f4e123-15df-452e-9d4b-e95a58736bf0, 68558ed3-3223-4fe4-af74-eaa0812fd904, bbf2137a-4bd7-418c-ab68-5748ac1dd2a3, 1b820e20-0cc7-47fc-8050-57ba9191bca1, 111, 222, linux-local-pidfd-v1, ae834de4-c576-49f5-85bd-91d464ddf662, eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee, ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 3ccc4725-8dc2-47a9-9558-99cdd3139030, 0000000000000000000000000000000000000000000000000000000000000000, ENROLLED, null, null, null, null, null, null, null, null, null, 446925e0-e180-4223-9e5f-5477207b7dc3, 2026-11-04 16:40:02.787879+00, 2026-11-04 16:40:02.787885+00, null).
+2026-11-04T16:40:24.4777704Z  2026-11-04 16:40:02.789 UTC [293] STATEMENT:  INSERT INTO native_stream_launch_identity (flow_run_id, snapshot_id, generation, enrollment_operation_id, enrollment_request_digest, enrollment_outcome_digest, work_pool_id, worker_id, launcher_instance_id, launcher_host_id, launcher_boot_id, launcher_process_id, launcher_start_ticks, launch_profile, holder_id, holder_capability_digest, holder_event_public_key, supervisor_id, supervisor_capability_digest, state, last_renewed_at, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::UUID, $5::VARCHAR, $6::VARCHAR, $7::UUID, $8::UUID, $9::UUID, $10::UUID, $11::UUID, $12::BIGINT, $13::BIGINT, $14::VARCHAR, $15::UUID, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::TIMESTAMP WITH TIME ZONE, $22::UUID, $23::TIMESTAMP WITH TIME ZONE, $24::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4780868Z  2026-11-04 16:40:02.797 UTC [293] ERROR:  new row for relation "native_stream_launch_identity" violates check constraint "ck_native_stream_launch_identity__process_shape_valid"
+2026-11-04T16:40:24.4785323Z  2026-11-04 16:40:02.797 UTC [293] DETAIL:  Failing row contains (aab01607-57e2-44c0-8c2d-448fcb8c0040, eaa3196e-1c2a-4ea6-ba52-bde8b550e393, 1, c20325fa-63fd-4917-ab8b-9a212dc86fb5, cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd, 6aaa44bc-7706-4831-bceb-64905b5d9308, 01f4e123-15df-452e-9d4b-e95a58736bf0, 68558ed3-3223-4fe4-af74-eaa0812fd904, bbf2137a-4bd7-418c-ab68-5748ac1dd2a3, 1b820e20-0cc7-47fc-8050-57ba9191bca1, 111, 222, linux-local-pidfd-v1, ae834de4-c576-49f5-85bd-91d464ddf662, eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee, ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 3ccc4725-8dc2-47a9-9558-99cdd3139030, 0000000000000000000000000000000000000000000000000000000000000000, ENROLLED, null, null, null, 0d34d4df-ef99-4809-826e-f6df8d9f48f6, null, null, null, null, null, 53f6ac94-0800-4e02-94e8-3a48edc0e596, 2026-11-04 16:40:02.794965+00, 2026-11-04 16:40:02.79497+00, 2026-11-04 16:40:02.768047+00).
+2026-11-04T16:40:24.4791998Z  2026-11-04 16:40:02.797 UTC [293] STATEMENT:  INSERT INTO native_stream_launch_identity (flow_run_id, snapshot_id, generation, enrollment_operation_id, enrollment_request_digest, enrollment_outcome_digest, work_pool_id, worker_id, launcher_instance_id, launcher_host_id, launcher_boot_id, launcher_process_id, launcher_start_ticks, launch_profile, holder_id, holder_capability_digest, holder_event_public_key, supervisor_id, supervisor_capability_digest, state, host_id, last_renewed_at, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::UUID, $5::VARCHAR, $6::VARCHAR, $7::UUID, $8::UUID, $9::UUID, $10::UUID, $11::UUID, $12::BIGINT, $13::BIGINT, $14::VARCHAR, $15::UUID, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::UUID, $22::TIMESTAMP WITH TIME ZONE, $23::UUID, $24::TIMESTAMP WITH TIME ZONE, $25::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4795435Z  2026-11-04 16:40:02.805 UTC [293] ERROR:  new row for relation "native_stream_launch_identity" violates check constraint "ck_native_stream_launch_identity__process_shape_valid"
+2026-11-04T16:40:24.4800688Z  2026-11-04 16:40:02.805 UTC [293] DETAIL:  Failing row contains (aab01607-57e2-44c0-8c2d-448fcb8c0040, eaa3196e-1c2a-4ea6-ba52-bde8b550e393, 1, f2fe6c82-4f02-4a20-a1a8-3638dc30b826, cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd, 6aaa44bc-7706-4831-bceb-64905b5d9308, 01f4e123-15df-452e-9d4b-e95a58736bf0, 68558ed3-3223-4fe4-af74-eaa0812fd904, bbf2137a-4bd7-418c-ab68-5748ac1dd2a3, 1b820e20-0cc7-47fc-8050-57ba9191bca1, 111, 222, linux-local-pidfd-v1, ae834de4-c576-49f5-85bd-91d464ddf662, eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee, ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 3ccc4725-8dc2-47a9-9558-99cdd3139030, 0000000000000000000000000000000000000000000000000000000000000000, PROCESS_REGISTERED, 1fd98729-0b56-4d08-ac9b-f8417af7e414, 1111111111111111111111111111111111111111111111111111111111111111, 2222222222222222222222222222222222222222222222222222222222222222, 2a6e541f-0511-4f27-bfd5-7be5d517ad10, ab754076-a3cb-4779-81ca-f4a7927a9c52, -1, 1, 3333333333333333333333333333333333333333333333333333333333333333, 2026-11-04 16:40:02.768077+00, 24181f6e-daa9-4a52-9063-784b7d011a78, 2026-11-04 16:40:02.803526+00, 2026-11-04 16:40:02.803533+00, 2026-11-04 16:40:02.768047+00).
+2026-11-04T16:40:24.4809224Z  2026-11-04 16:40:02.805 UTC [293] STATEMENT:  INSERT INTO native_stream_launch_identity (flow_run_id, snapshot_id, generation, enrollment_operation_id, enrollment_request_digest, enrollment_outcome_digest, work_pool_id, worker_id, launcher_instance_id, launcher_host_id, launcher_boot_id, launcher_process_id, launcher_start_ticks, launch_profile, holder_id, holder_capability_digest, holder_event_public_key, supervisor_id, supervisor_capability_digest, state, process_registration_operation_id, process_registration_request_digest, process_registration_outcome_digest, host_id, boot_id, child_process_id, process_start_ticks, launch_nonce_digest, process_registered_at, last_renewed_at, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::UUID, $5::VARCHAR, $6::VARCHAR, $7::UUID, $8::UUID, $9::UUID, $10::UUID, $11::UUID, $12::BIGINT, $13::BIGINT, $14::VARCHAR, $15::UUID, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::UUID, $22::VARCHAR, $23::VARCHAR, $24::UUID, $25::UUID, $26::BIGINT, $27::BIGINT, $28::VARCHAR, $29::TIMESTAMP WITH TIME ZONE, $30::TIMESTAMP WITH TIME ZONE, $31::UUID, $32::TIMESTAMP WITH TIME ZONE, $33::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4813770Z  2026-11-04 16:40:03.073 UTC [293] ERROR:  new row for relation "stream_execution_authority" violates check constraint "ck_stream_execution_authority__finite_prefix_anchor_shape_valid"
+2026-11-04T16:40:24.4816601Z  2026-11-04 16:40:03.073 UTC [293] DETAIL:  Failing row contains (f31f9e1f-81e5-4b80-854e-71c331dd0103, 1, 0, 0412de98-71ad-4e84-8581-432fa0972515, 0000000000000000000000000000000000000000000000000000000000000000, 1111111111111111111111111111111111111111111111111111111111111111, 2222222222222222222222222222222222222222222222222222222222222222, 64794550-de52-4621-8e5f-cb21b0ebcb35, 3333333333333333333333333333333333333333333333333333333333333333, CLAIMED, 0, null, null, null, null, null, be54bc3d-26cb-41f1-b302-9ba26e3f1d18, 2026-11-04 16:40:03.069985+00, 2026-11-04 16:40:03.069993+00, 0000000000000000000000000000000000000000000000000000000000000000, null, null, f, f).
+2026-11-04T16:40:24.4821653Z  2026-11-04 16:40:03.073 UTC [293] STATEMENT:  INSERT INTO stream_execution_authority (flow_run_id, generation, prepared_generation, holder_id, holder_capability_digest, holder_event_public_key, event_key_id, supervisor_id, supervisor_capability_digest, state, flow_run_run_count, manifest_set_digest, manifest_count, manifest_sealed_at, manifest_seal_operation_id, manifest_seal_request_digest, finite_prefix_manifest_digest, finite_prefix_task_run_id, finite_prefix_sealed_at, source_admission_closed, cancel_requested, id, created, updated) VALUES ($1::UUID, $2::BIGINT, $3::BIGINT, $4::UUID, $5::VARCHAR, $6::VARCHAR, $7::VARCHAR, $8::UUID, $9::VARCHAR, $10::VARCHAR, $11::BIGINT, $12::VARCHAR, $13::INTEGER, $14::TIMESTAMP WITH TIME ZONE, $15::UUID, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::TIMESTAMP WITH TIME ZONE, $20::BOOLEAN, $21::BOOLEAN, $22::UUID, $23::TIMESTAMP WITH TIME ZONE, $24::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4825174Z  2026-11-04 16:40:03.372 UTC [293] ERROR:  new row for relation "stream_execution_attempt" violates check constraint "ck_stream_execution_attempt__recovery_shape_valid"
+2026-11-04T16:40:24.4828091Z  2026-11-04 16:40:03.372 UTC [293] DETAIL:  Failing row contains (b8974601-8bd7-4ec6-b66f-5d6a0b9d85d2, 1, 88408723-dec1-4155-a49b-36a2aeb356d3, CLAIM, 0000000000000000000000000000000000000000000000000000000000000000, 1111111111111111111111111111111111111111111111111111111111111111, 9272f304-e9ab-485a-b5ce-5b867df2a2c8, 2222222222222222222222222222222222222222222222222222222222222222, 3333333333333333333333333333333333333333333333333333333333333333, null, null, null, CLAIMED, 0, f9f9f3f5-c19b-444c-8e30-fd84da7dd773, null, {"state": "prepared"}, 4444444444444444444444444444444444444444444444444444444444444444, 2b10c5ea-f12f-4051-8066-5b551ae0bf29, 2026-11-04 16:40:03.369176+00, 2026-11-04 16:40:03.369184+00, null, null, null, null).
+2026-11-04T16:40:24.4833000Z  2026-11-04 16:40:03.372 UTC [293] STATEMENT:  INSERT INTO stream_execution_attempt (flow_run_id, generation, operation_id, kind, request_digest, outcome_digest, holder_id, holder_event_public_key, event_key_id, previous_generation, previous_holder_id, death_witness, state, flow_run_run_count, recovery_operation_id, recovery_request_digest, recovery_outcome, recovery_outcome_digest, abort_operation_id, abort_request_digest, abort_outcome, abort_outcome_digest, id, created, updated) VALUES ($1::UUID, $2::BIGINT, $3::UUID, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR, $7::UUID, $8::VARCHAR, $9::VARCHAR, $10::BIGINT, $11::UUID, $12::JSONB, $13::VARCHAR, $14::BIGINT, $15::UUID, $16::VARCHAR, $17::JSONB, $18::VARCHAR, $19::UUID, $20::VARCHAR, $21::JSONB, $22::VARCHAR, $23::UUID, $24::TIMESTAMP WITH TIME ZONE, $25::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4836141Z  2026-11-04 16:40:03.707 UTC [293] ERROR:  new row for relation "stream_submission" violates check constraint "ck_stream_submission__digest_lengths_valid"
+2026-11-04T16:40:24.4838553Z  2026-11-04 16:40:03.707 UTC [293] DETAIL:  Failing row contains (11e96571-c7aa-47ec-9b7d-41391ee6330f, source.documents, short, 1111111111111111111111111111111111111111111111111111111111111111, 1, {"negative_zero": -0.0}, 2222222222222222222222222222222222222222222222222222222222222222, SOURCE, source-v1, null, null, ecb1afb8-bd7b-450d-a9da-9e403f49fcce, 965ae815-18ad-4ea3-96fd-311cb8acc5bb, documents, documents-key, v1, v1, null, null, null, stream-documents, {}, {"retries": 1}, [], {}, ACTIVE, null, 746e6e5c-c987-445b-8eb5-89e0f6512a2e, 2026-11-04 16:40:03.702768+00, 2026-11-04 16:40:03.702779+00).
+2026-11-04T16:40:24.4843252Z  2026-11-04 16:40:03.707 UTC [293] STATEMENT:  INSERT INTO stream_submission (flow_run_id, submission_key, request_digest, manifest_digest, canonical_size, parameters, parameters_digest, role, protocol, input_key, upstream_stream_id, task_run_id, stream_id, task_name, task_key, task_version, flow_version, deployment_id, deployment_version, artifact_digest, dynamic_key, limits, task_policy, tags, labels, state, released_at, id, created, updated) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::INTEGER, $6::JSON, $7::VARCHAR, $8::VARCHAR, $9::VARCHAR, $10::VARCHAR, $11::UUID, $12::UUID, $13::UUID, $14::VARCHAR, $15::VARCHAR, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::VARCHAR, $22::JSONB, $23::JSONB, $24::JSONB, $25::JSONB, $26::VARCHAR, $27::TIMESTAMP WITH TIME ZONE, $28::UUID, $29::TIMESTAMP WITH TIME ZONE, $30::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4846519Z  2026-11-04 16:40:04.033 UTC [293] ERROR:  new row for relation "stream_submission" violates check constraint "ck_stream_submission__release_shape_valid"
+2026-11-04T16:40:24.4849221Z  2026-11-04 16:40:04.033 UTC [293] DETAIL:  Failing row contains (0166d54e-40d7-4f32-a02d-83e39b1264f1, source.documents, 0000000000000000000000000000000000000000000000000000000000000000, 1111111111111111111111111111111111111111111111111111111111111111, 1, {"negative_zero": -0.0}, 2222222222222222222222222222222222222222222222222222222222222222, SOURCE, source-v1, null, null, d4faecad-abf7-4cd8-b2af-e886e7f11c1f, 9e800245-317a-4653-aafa-14b23394544c, documents, documents-key, v1, v1, null, null, null, stream-documents, {}, {"retries": 1}, [], {}, RELEASED, null, eceb6fab-22c3-4956-b4ab-05276768cb2c, 2026-11-04 16:40:04.032626+00, 2026-11-04 16:40:04.032634+00).
+2026-11-04T16:40:24.4853978Z  2026-11-04 16:40:04.033 UTC [293] STATEMENT:  INSERT INTO stream_submission (flow_run_id, submission_key, request_digest, manifest_digest, canonical_size, parameters, parameters_digest, role, protocol, input_key, upstream_stream_id, task_run_id, stream_id, task_name, task_key, task_version, flow_version, deployment_id, deployment_version, artifact_digest, dynamic_key, limits, task_policy, tags, labels, state, released_at, id, created, updated) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::INTEGER, $6::JSON, $7::VARCHAR, $8::VARCHAR, $9::VARCHAR, $10::VARCHAR, $11::UUID, $12::UUID, $13::UUID, $14::VARCHAR, $15::VARCHAR, $16::VARCHAR, $17::VARCHAR, $18::UUID, $19::VARCHAR, $20::VARCHAR, $21::VARCHAR, $22::JSONB, $23::JSONB, $24::JSONB, $25::JSONB, $26::VARCHAR, $27::TIMESTAMP WITH TIME ZONE, $28::UUID, $29::TIMESTAMP WITH TIME ZONE, $30::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4857316Z  2026-11-04 16:40:04.353 UTC [293] ERROR:  new row for relation "stream_finite_submission" violates check constraint "ck_stream_finite_submission__canonical_size_positive"
+2026-11-04T16:40:24.4859918Z  2026-11-04 16:40:04.353 UTC [293] DETAIL:  Failing row contains (9dc1dab9-ec2c-4ad4-b6df-63cf8021c280, PREFIX, finite.prefix, 0000000000000000000000000000000000000000000000000000000000000000, 1111111111111111111111111111111111111111111111111111111111111111, 0, {"negative_zero": -0.0}, 2222222222222222222222222222222222222222222222222222222222222222, d6cd3d5a-a8df-4e8a-8312-4b93bba3f207, prefix, prefix-key, v1, v1, null, null, 3333333333333333333333333333333333333333333333333333333333333333, finite-prefix, {"retries": 1}, [], {}, ACTIVE, null, 547fa933-248f-47ad-81b8-3adf1cb3dfc0, 2026-11-04 16:40:04.350762+00, 2026-11-04 16:40:04.35077+00).
+2026-11-04T16:40:24.4864409Z  2026-11-04 16:40:04.353 UTC [293] STATEMENT:  INSERT INTO stream_finite_submission (flow_run_id, phase, submission_key, request_digest, manifest_digest, canonical_size, parameters, parameters_digest, task_run_id, task_name, task_key, task_version, flow_version, deployment_id, deployment_version, artifact_digest, dynamic_key, task_policy, tags, labels, state, released_at, id, created, updated) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::INTEGER, $7::JSON, $8::VARCHAR, $9::UUID, $10::VARCHAR, $11::VARCHAR, $12::VARCHAR, $13::VARCHAR, $14::UUID, $15::VARCHAR, $16::VARCHAR, $17::VARCHAR, $18::JSONB, $19::JSONB, $20::JSONB, $21::VARCHAR, $22::TIMESTAMP WITH TIME ZONE, $23::UUID, $24::TIMESTAMP WITH TIME ZONE, $25::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4867370Z  2026-11-04 16:40:04.659 UTC [293] ERROR:  new row for relation "stream_finite_receipt" violates check constraint "ck_stream_finite_receipt__run_count_positive"
+2026-11-04T16:40:24.4869453Z  2026-11-04 16:40:04.659 UTC [293] DETAIL:  Failing row contains (a881c5c9-71f2-4689-b959-6f3b56338fef, 072910a4-c05c-4f98-892f-099f3426f4f4, f51215e8-bc44-41dd-a002-d2762c9c9a84, 4444444444444444444444444444444444444444444444444444444444444444, 5555555555555555555555555555555555555555555555555555555555555555, 0, null, 6666666666666666666666666666666666666666666666666666666666666666, 4, 36f88901-be8c-4be9-9670-fc57badb3986, 2026-11-04 16:40:04.658132+00, 2026-11-04 16:40:04.658139+00).
+2026-11-04T16:40:24.4872377Z  2026-11-04 16:40:04.659 UTC [293] STATEMENT:  INSERT INTO stream_finite_receipt (finite_submission_id, task_run_id, operation_id, request_digest, outcome_digest, run_count, result, result_digest, result_size, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::VARCHAR, $5::VARCHAR, $6::INTEGER, $7::JSON, $8::VARCHAR, $9::INTEGER, $10::UUID, $11::TIMESTAMP WITH TIME ZONE, $12::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4874158Z  2026-11-04 16:40:04.958 UTC [293] ERROR:  new row for relation "stream_finite_receipt" violates check constraint "ck_stream_finite_receipt__digest_lengths_valid"
+2026-11-04T16:40:24.4876173Z  2026-11-04 16:40:04.958 UTC [293] DETAIL:  Failing row contains (a0de7673-5e24-4279-9d2e-91a8fc2ca84f, bafde56c-f79f-45ee-8cc7-f3259b5bcc58, bd178151-ba3f-46f8-9a02-13e2e4511ee6, short, 5555555555555555555555555555555555555555555555555555555555555555, 1, null, 6666666666666666666666666666666666666666666666666666666666666666, 4, 18484fd5-ab5c-48de-bd06-e86dd8238103, 2026-11-04 16:40:04.957704+00, 2026-11-04 16:40:04.957711+00).
+2026-11-04T16:40:24.4878804Z  2026-11-04 16:40:04.958 UTC [293] STATEMENT:  INSERT INTO stream_finite_receipt (finite_submission_id, task_run_id, operation_id, request_digest, outcome_digest, run_count, result, result_digest, result_size, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::VARCHAR, $5::VARCHAR, $6::INTEGER, $7::JSON, $8::VARCHAR, $9::INTEGER, $10::UUID, $11::TIMESTAMP WITH TIME ZONE, $12::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4880544Z  2026-11-04 16:40:05.258 UTC [293] ERROR:  new row for relation "stream_partition" violates check constraint "ck_stream_partition__terminal_shape_valid"
+2026-11-04T16:40:24.4881844Z  2026-11-04 16:40:05.258 UTC [293] DETAIL:  Failing row contains (08fb74c1-aa2c-4e3c-8194-85fec2b3f7e7, 1, COMPLETED, null, null, 0, 0, null, null, null, 0, 0, {}, 0, 0, f, 10c0f2e8-a0d7-4c2f-b689-2ef9e61d7b91, 2026-11-04 16:40:05.255674+00, 2026-11-04 16:40:05.255682+00).
+2026-11-04T16:40:24.4884165Z  2026-11-04 16:40:05.258 UTC [293] STATEMENT:  INSERT INTO stream_partition (flow_run_id, protocol_version, state, error, tail_sequence, last_sequence, producer_position, attempt, owner_epoch, limits, record_count, byte_count, released, id, created, updated) VALUES ($1::UUID, $2::INTEGER, $3::VARCHAR, $4::VARCHAR, $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::INTEGER, $9::INTEGER, $10::JSONB, $11::BIGINT, $12::BIGINT, $13::BOOLEAN, $14::UUID, $15::TIMESTAMP WITH TIME ZONE, $16::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4886383Z  2026-11-04 16:40:05.266 UTC [293] ERROR:  new row for relation "stream_consumer" violates check constraint "ck_stream_consumer__delivery_shape_valid"
+2026-11-04T16:40:24.4888280Z  2026-11-04 16:40:05.266 UTC [293] DETAIL:  Failing row contains (08fb74c1-aa2c-4e3c-8194-85fec2b3f7e7, e2ab07fb-5234-48b0-af85-6709f65b7d54, 3d06b56c-e4b2-4ecb-9dd4-2fffaa3dc5c3, 0464673e-cc72-4857-9348-c23de1812922, 1, 1, 0, {}, null, 3ae975db-71f9-41fc-bd5f-6546050b6d89, 93618d18-ba1c-40a2-b952-712f80bde40a, 2026-11-04 16:40:05.264979+00, 2026-11-04 16:40:05.264986+00).
+2026-11-04T16:40:24.4890797Z  2026-11-04 16:40:05.266 UTC [293] STATEMENT:  INSERT INTO stream_consumer (flow_run_id, input_stream_id, output_stream_id, owner_id, attempt, owner_epoch, completed_through, managed_state, inflight_sequence, delivery_id, id, created, updated) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::INTEGER, $6::INTEGER, $7::BIGINT, $8::JSON, $9::BIGINT, $10::UUID, $11::UUID, $12::TIMESTAMP WITH TIME ZONE, $13::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4892601Z  2026-11-04 16:40:05.276 UTC [293] ERROR:  new row for relation "stream_completion" violates check constraint "ck_stream_completion__output_shape_valid"
+2026-11-04T16:40:24.4894113Z  2026-11-04 16:40:05.276 UTC [293] DETAIL:  Failing row contains (aa103868-ab23-4d78-baf8-c98c7ab0fd99, 1, f788605d-9a9d-4966-994b-cd673982bd26, 1, YIELD, 0000000000000000000000000000000000000000000000000000000000000000, null, fcb8136f-cda3-4851-8e56-8b7454908e07, 2026-11-04 16:40:05.273573+00, 2026-11-04 16:40:05.273581+00).
+2026-11-04T16:40:24.4896597Z  2026-11-04 16:40:05.276 UTC [293] STATEMENT:  INSERT INTO stream_completion (consumer_id, input_sequence, delivery_id, owner_epoch, kind, intent_digest, output_sequence, id, created, updated) VALUES ($1::UUID, $2::BIGINT, $3::UUID, $4::INTEGER, $5::VARCHAR, $6::VARCHAR, $7::BIGINT, $8::UUID, $9::TIMESTAMP WITH TIME ZONE, $10::TIMESTAMP WITH TIME ZONE)
+2026-11-04T16:40:24.4897941Z  2026-11-04 16:40:11.651 UTC [314] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4898383Z  2026-11-04 16:40:21.718 UTC [323] FATAL:  role "root" does not exist
+2026-11-04T16:40:24.4899104Z  The default database encoding has accordingly been set to "UTF8".
+2026-11-04T16:40:24.4899798Z  The default text search configuration will be set to "english".
+2026-11-04T16:40:24.4900383Z  
+2026-11-04T16:40:24.4900709Z  Data page checksums are disabled.
+2026-11-04T16:40:24.4901166Z  
+2026-11-04T16:40:24.4901672Z  fixing permissions on existing directory /var/lib/postgresql/data ... ok
+2026-11-04T16:40:24.4902324Z  creating subdirectories ... ok
+2026-11-04T16:40:24.4902675Z  selecting dynamic shared memory implementation ... posix
+2026-11-04T16:40:24.4903049Z  selecting default max_connections ... 100
+2026-11-04T16:40:24.4903376Z  selecting default shared_buffers ... 128MB
+2026-11-04T16:40:24.4903692Z  selecting default time zone ... Etc/UTC
+2026-11-04T16:40:24.4904007Z  creating configuration files ... ok
+2026-11-04T16:40:24.4904310Z  running bootstrap script ... ok
+2026-11-04T16:40:24.4904631Z  performing post-bootstrap initialization ... ok
+2026-11-04T16:40:24.4905209Z  syncing data to disk ... ok
+2026-11-04T16:40:24.4905492Z  
+2026-11-04T16:40:24.4905682Z  
+2026-11-04T16:40:24.4905932Z  Success. You can now start the database server using:
+2026-11-04T16:40:24.4906266Z  
+2026-11-04T16:40:24.4906524Z      pg_ctl -D /var/lib/postgresql/data -l logfile start
+2026-11-04T16:40:24.4906845Z  
+2026-11-04T16:40:24.4907521Z  waiting for server to start....2026-11-04 16:36:19.587 UTC [49] LOG:  starting PostgreSQL 14.24 (Debian 14.24-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-04T16:40:24.4908477Z  2026-11-04 16:36:19.588 UTC [49] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-11-04T16:40:24.4909107Z  2026-11-04 16:36:19.589 UTC [50] LOG:  database system was shut down at 2026-11-04 16:36:19 UTC
+2026-11-04T16:40:24.4909673Z  2026-11-04 16:36:19.593 UTC [49] LOG:  database system is ready to accept connections
+2026-11-04T16:40:24.4910253Z   done
+2026-11-04T16:40:24.4910462Z  server started
+2026-11-04T16:40:24.4910679Z  CREATE DATABASE
+2026-11-04T16:40:24.4910893Z  
+2026-11-04T16:40:24.4911075Z  
+2026-11-04T16:40:24.4911427Z  /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+2026-11-04T16:40:24.4911858Z  
+2026-11-04T16:40:24.4912246Z  waiting for server to shut down...2026-11-04 16:36:19.749 UTC [49] LOG:  received fast shutdown request
+2026-11-04T16:40:24.4912815Z  .2026-11-04 16:36:19.749 UTC [49] LOG:  aborting any active transactions
+2026-11-04T16:40:24.4913428Z  2026-11-04 16:36:19.751 UTC [49] LOG:  background worker "logical replication launcher" (PID 56) exited with exit code 1
+2026-11-04T16:40:24.4914002Z  2026-11-04 16:36:19.752 UTC [51] LOG:  shutting down
+2026-11-04T16:40:24.4914398Z  2026-11-04 16:36:19.757 UTC [49] LOG:  database system is shut down
+2026-11-04T16:40:24.4914749Z   done
+2026-11-04T16:40:24.4915088Z  server stopped
+2026-11-04T16:40:24.4915302Z  
+2026-11-04T16:40:24.4915574Z  PostgreSQL init process complete; ready for start up.
+2026-11-04T16:40:24.4915898Z  
+2026-11-04T16:40:24.4916931Z Stop and remove container: 2d84b553aee04fba94bf4be1b451046b_postgres14_1cb002
+2026-11-04T16:40:24.4917832Z ##[command]/usr/bin/docker rm --force bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920
+2026-11-04T16:40:24.6493844Z bc745d07bd2d32caa0c9ff04715ef7931d035a73ad905320a6adab798da35920
+2026-11-04T16:40:24.6525381Z Remove container network: github_network_31bb9fb92b724f73a2b409d5c5b751bb
+2026-11-04T16:40:24.6530381Z ##[command]/usr/bin/docker network rm github_network_31bb9fb92b724f73a2b409d5c5b751bb
+2026-11-04T16:40:24.7501722Z github_network_31bb9fb92b724f73a2b409d5c5b751bb
+2026-11-04T16:40:24.7582383Z Cleaning up orphan processes
+2026-11-04T16:40:24.7946809Z Terminate orphan process: pid (4358) (python)
+2026-11-04T16:40:24.7972357Z Terminate orphan process: pid (4359) (python)

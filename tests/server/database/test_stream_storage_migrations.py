@@ -28,6 +28,10 @@ STREAM_TABLES = {
     "stream_execution_attempt",
     "stream_finite_submission",
     "stream_finite_receipt",
+    "native_stream_deployment_snapshot",
+    "native_stream_launch_identity",
+    "native_stream_replacement_operation",
+    "native_stream_control_operation",
 }
 
 
@@ -85,16 +89,43 @@ async def test_native_stream_storage_upgrade_and_downgrade(
             )
 
     assert finite_columns <= await execution_authority_columns()
+    control_columns = {"source_admission_closed", "cancel_requested"}
+    assert control_columns <= await execution_authority_columns()
 
     await database_engine.dispose()
     try:
+        await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+        replacement_tables = {
+            "native_stream_replacement_operation",
+            "native_stream_control_operation",
+        }
+        assert replacement_tables.isdisjoint(await _table_names(database_engine))
+        assert STREAM_TABLES - replacement_tables <= await _table_names(database_engine)
+        assert control_columns.isdisjoint(await execution_authority_columns())
+
+        await database_engine.dispose()
+        await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+        deployment_tables = {
+            "native_stream_deployment_snapshot",
+            "native_stream_launch_identity",
+        }
+        assert deployment_tables.isdisjoint(await _table_names(database_engine))
+        assert (
+            STREAM_TABLES - replacement_tables - deployment_tables
+            <= await _table_names(database_engine)
+        )
+
+        await database_engine.dispose()
         await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
         assert {
             "stream_finite_submission",
             "stream_finite_receipt",
         }.isdisjoint(await _table_names(database_engine))
         assert (
-            STREAM_TABLES - {"stream_finite_submission", "stream_finite_receipt"}
+            STREAM_TABLES
+            - replacement_tables
+            - deployment_tables
+            - {"stream_finite_submission", "stream_finite_receipt"}
         ) <= await _table_names(database_engine)
         assert finite_columns.isdisjoint(await execution_authority_columns())
         assert abort_columns <= await execution_attempt_columns()
@@ -102,7 +133,10 @@ async def test_native_stream_storage_upgrade_and_downgrade(
         await database_engine.dispose()
         await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
         assert (
-            STREAM_TABLES - {"stream_finite_submission", "stream_finite_receipt"}
+            STREAM_TABLES
+            - replacement_tables
+            - deployment_tables
+            - {"stream_finite_submission", "stream_finite_receipt"}
         ) <= await _table_names(database_engine)
         assert abort_columns.isdisjoint(await execution_attempt_columns())
 
@@ -114,6 +148,8 @@ async def test_native_stream_storage_upgrade_and_downgrade(
         }.isdisjoint(await _table_names(database_engine))
         assert (
             STREAM_TABLES
+            - replacement_tables
+            - deployment_tables
             - {
                 "stream_finite_submission",
                 "stream_finite_receipt",
@@ -127,6 +163,8 @@ async def test_native_stream_storage_upgrade_and_downgrade(
         assert "stream_submission" not in await _table_names(database_engine)
         assert (
             STREAM_TABLES
+            - replacement_tables
+            - deployment_tables
             - {
                 "stream_finite_submission",
                 "stream_finite_receipt",
@@ -162,6 +200,10 @@ async def test_native_stream_storage_schema_matches_orm(
         db.StreamExecutionAttempt,
         db.StreamFiniteSubmission,
         db.StreamFiniteReceipt,
+        db.NativeStreamDeploymentSnapshot,
+        db.NativeStreamLaunchIdentity,
+        db.NativeStreamReplacementOperation,
+        db.NativeStreamControlOperation,
     ):
         table = cast(sa.Table, model.__table__)
         orm_tables[table.name] = table
@@ -180,6 +222,188 @@ async def test_native_stream_storage_schema_matches_orm(
         assert actual["unique_constraints"] == _orm_unique_constraints(orm_table)
         assert actual["check_constraints"] == _orm_check_constraints(orm_table)
         assert actual["foreign_keys"] == _orm_foreign_keys(orm_table)
+
+
+async def test_native_deployment_launch_schema_rejects_partial_process_identity(
+    db: PrefectDBInterface,
+    flow_run: orm_models.FlowRun,
+):
+    snapshot_id = uuid.uuid4()
+    async with db.session_context(begin_transaction=True) as session:
+        await session.execute(
+            sa.insert(db.NativeStreamDeploymentSnapshot).values(
+                id=snapshot_id,
+                flow_run_id=flow_run.id,
+                deployment_id=uuid.uuid4(),
+                deployment_version="deployment-v1",
+                work_pool_id=uuid.uuid4(),
+                declaration={
+                    "schema_version": 1,
+                    "protocol_version": 1,
+                    "profile": "bounded-linear-v1",
+                    "flow_version": "flow-v1",
+                    "flow_code_digest": "a" * 64,
+                    "resource_profile": "bounded-default-v1",
+                    "flow_retries": 2,
+                    "flow_retry_delay_seconds": 0,
+                },
+                declaration_digest="b" * 64,
+                protocol_version=1,
+                profile="bounded-linear-v1",
+                flow_version="flow-v1",
+                flow_code_digest="a" * 64,
+                resource_profile="bounded-default-v1",
+                state="ACTIVE",
+            )
+        )
+
+    base = {
+        "flow_run_id": flow_run.id,
+        "snapshot_id": snapshot_id,
+        "generation": 1,
+        "enrollment_operation_id": uuid.uuid4(),
+        "enrollment_request_digest": "c" * 64,
+        "enrollment_outcome_digest": "d" * 64,
+        "work_pool_id": uuid.uuid4(),
+        "worker_id": uuid.uuid4(),
+        "launcher_instance_id": uuid.uuid4(),
+        "launcher_host_id": uuid.uuid4(),
+        "launcher_boot_id": uuid.uuid4(),
+        "launcher_process_id": 111,
+        "launcher_start_ticks": 222,
+        "launch_profile": "linux-local-pidfd-v1",
+        "holder_id": uuid.uuid4(),
+        "holder_capability_digest": "e" * 64,
+        "holder_event_public_key": "f" * 64,
+        "supervisor_id": uuid.uuid4(),
+        "supervisor_capability_digest": "0" * 64,
+        "last_renewed_at": now("UTC"),
+    }
+    invalid = (
+        dict(base, state="PROCESS_REGISTERED"),
+        dict(
+            base,
+            enrollment_operation_id=uuid.uuid4(),
+            state="ENROLLED",
+            launcher_process_id=0,
+        ),
+        dict(
+            base,
+            enrollment_operation_id=uuid.uuid4(),
+            state="ENROLLED",
+            last_renewed_at=None,
+        ),
+        dict(
+            base,
+            enrollment_operation_id=uuid.uuid4(),
+            state="ENROLLED",
+            host_id=uuid.uuid4(),
+        ),
+        dict(
+            base,
+            enrollment_operation_id=uuid.uuid4(),
+            state="PROCESS_REGISTERED",
+            process_registration_operation_id=uuid.uuid4(),
+            process_registration_request_digest="1" * 64,
+            process_registration_outcome_digest="2" * 64,
+            host_id=uuid.uuid4(),
+            boot_id=uuid.uuid4(),
+            child_process_id=-1,
+            process_start_ticks=1,
+            launch_nonce_digest="3" * 64,
+            process_registered_at=now("UTC"),
+        ),
+    )
+    accepted: list[int] = []
+    for index, values in enumerate(invalid):
+        try:
+            async with db.session_context(begin_transaction=True) as session:
+                await session.execute(
+                    sa.insert(db.NativeStreamLaunchIdentity).values(values)
+                )
+        except IntegrityError:
+            pass
+        else:
+            accepted.append(index)
+    assert not accepted, f"Launch shape constraints accepted cases: {accepted}"
+
+
+async def test_native_replacement_and_control_schema_reject_invalid_shapes(
+    db: PrefectDBInterface,
+    flow_run: orm_models.FlowRun,
+):
+    invalid_replacement = {
+        "flow_run_id": flow_run.id,
+        "operation_id": uuid.uuid4(),
+        "expected_generation": 1,
+        "worker_id": uuid.uuid4(),
+        "work_pool_id": uuid.uuid4(),
+        "host_id": uuid.uuid4(),
+        "identity_kind": "CHILD",
+        "challenge_capability_digest": "a" * 64,
+        "authorization_request_digest": "b" * 64,
+        "state": "CONFIRMED",
+        "new_generation": 2,
+    }
+    with pytest.raises(IntegrityError):
+        async with db.session_context(begin_transaction=True) as session:
+            await session.execute(
+                sa.insert(db.NativeStreamReplacementOperation).values(
+                    invalid_replacement
+                )
+            )
+    invalid_kind = dict(
+        invalid_replacement,
+        operation_id=uuid.uuid4(),
+        identity_kind="PROCESS",
+        state="AUTHORIZED",
+        new_generation=None,
+    )
+    with pytest.raises(IntegrityError):
+        async with db.session_context(begin_transaction=True) as session:
+            await session.execute(
+                sa.insert(db.NativeStreamReplacementOperation).values(invalid_kind)
+            )
+
+    verified_retirement = {
+        **invalid_replacement,
+        "operation_id": uuid.uuid4(),
+        "state": "AUTHORIZED",
+        "new_generation": None,
+        "death_witness": {
+            "kind": "WAITPID",
+            "host_id": str(uuid.uuid4()),
+            "boot_id": str(uuid.uuid4()),
+            "child_process_id": 123,
+            "process_start_ticks": 456,
+            "exit_code": 77,
+        },
+    }
+    async with db.session_context(begin_transaction=True) as session:
+        await session.execute(
+            sa.insert(db.NativeStreamReplacementOperation).values(verified_retirement)
+        )
+
+    invalid_authority = {
+        "flow_run_id": flow_run.id,
+        "generation": 1,
+        "prepared_generation": 0,
+        "holder_id": uuid.uuid4(),
+        "holder_capability_digest": "c" * 64,
+        "holder_event_public_key": "d" * 64,
+        "event_key_id": "e" * 64,
+        "supervisor_id": uuid.uuid4(),
+        "supervisor_capability_digest": "f" * 64,
+        "state": "CLAIMED",
+        "flow_run_run_count": 0,
+        "source_admission_closed": False,
+        "cancel_requested": True,
+    }
+    with pytest.raises(IntegrityError):
+        async with db.session_context(begin_transaction=True) as session:
+            await session.execute(
+                sa.insert(db.StreamExecutionAuthority).values(invalid_authority)
+            )
 
 
 @pytest.mark.parametrize(

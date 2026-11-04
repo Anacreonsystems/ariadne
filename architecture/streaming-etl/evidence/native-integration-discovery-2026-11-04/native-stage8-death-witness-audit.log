@@ -1,0 +1,1398 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+____________ test_orphan_cancellation_uses_authorized_death_witness ____________
+
+client = <httpx.AsyncClient object at 0x7fcbca47bbc0>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fcbca47b0e0>
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fcbcbc5e7e0>
+deployment = Deployment(id=556fab17-0443-4ab8-8769-8a04cd22a68c)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fcbca461dc0>
+
+    async def test_orphan_cancellation_uses_authorized_death_witness(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL orphan cancellation is covered by its PG profile")
+        flow_run, worker, work_pool_id, enrollment, _, registration = await _active_launch(
+            client, session, db, deployment
+        )
+        cancel = await client.post(
+            "/streams/v1/deployments/control/cancel",
+            json={
+                "flow_run_id": str(flow_run.id),
+                "operation_id": str(uuid4()),
+                "expected_generation": 1,
+                "reason": "orphan cancellation",
+            },
+        )
+        assert cancel.status_code == 200
+        monkeypatch.setattr(native_deployments, "LAUNCH_RENEWAL_STALE_AFTER", timedelta(0))
+        candidates = await client.get(
+            "/streams/v1/deployments/replacements/candidates",
+            params={
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+            },
+        )
+        assert candidates.status_code == 200
+        assert len(candidates.json()) == 1
+        operation_id = uuid4()
+        challenge = secrets.token_hex(32)
+        authorized = await client.post(
+            "/streams/v1/deployments/replacements/authorize",
+            json={
+                "flow_run_id": str(flow_run.id),
+                "operation_id": str(operation_id),
+                "expected_generation": 1,
+                "enrollment_operation_id": enrollment["operation_id"],
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+                "identity_kind": "CHILD",
+                "challenge_capability": challenge,
+            },
+        )
+        assert authorized.status_code == 200
+        finalization = {
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(operation_id),
+            "expected_generation": 1,
+            "enrollment_operation_id": enrollment["operation_id"],
+            "challenge_capability": challenge,
+            "death_witness": {
+                "kind": "IDENTITY_GONE",
+                "observed_at": "2026-11-04T15:30:00Z",
+                "host_id": registration["host_id"],
+                "boot_id": registration["boot_id"],
+                "child_process_id": registration["child_process_id"],
+                "process_start_ticks": registration["process_start_ticks"],
+            },
+        }
+        finalized = await client.post(
+            "/streams/v1/deployments/control/finalize-cancel", json=finalization
+        )
+        finalized_replay = await client.post(
+            "/streams/v1/deployments/control/finalize-cancel", json=finalization
+        )
+>       assert finalized.status_code == finalized_replay.status_code == 200, (
+            finalized.text,
+            finalized_replay.text,
+        )
+E       AssertionError: ('{"detail":"Data integrity conflict. This usually means a unique or foreign key constraint was violated. See server l...ntegrity conflict. This usually means a unique or foreign key constraint was violated. See server logs for details."}')
+E       assert 409 == 200
+E        +  where 409 = <Response [409 Conflict]>.status_code
+
+tests/server/api/test_native_deployments.py:1667: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_stage7_arch'
+Connecting to postgres at 'postgres://native_recovery:native_recovery@127.0.0.1:55436/postgres'
+Creating test postgres database 'native_stage7_arch_tests_master'
+Using test database connection URL 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_stage7_arch_tests_master'
+Running hosted API server on port 41345
+---------------------------- Captured stderr setup -----------------------------
+16:00:18.838 | INFO    | uvicorn.error - Started server process [65925]
+16:00:18.842 | INFO    | uvicorn.error - Waiting for application startup.
+16:00:18.964 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+16:00:18.970 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+16:00:18.970 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+16:00:18.970 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+16:00:18.970 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+16:00:18.971 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+16:00:18.971 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+16:00:18.971 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+16:00:18.971 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+16:00:18.971 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+16:00:18.971 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+16:00:18.971 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+16:00:18.971 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+16:00:18.972 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+16:00:18.972 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+16:00:18.972 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+16:00:18.972 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+16:00:18.973 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+16:00:18.974 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+16:00:18.976 | INFO    | uvicorn.error - Application startup complete.
+16:00:18.977 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 41345) (Press CTRL+C to quit)
+16:00:19.017 | INFO    | uvicorn.access - 127.0.0.1:58922 - "GET /api/health HTTP/1.1" 200
+----------------------------- Captured stderr call -----------------------------
+16:00:20.248 | ERROR   | prefect.server - Encountered exception in request:
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 550, in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 177, in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 268, in __bind_execute
+    data, status, _ = await self.__do_execute(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 257, in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 205, in bind_execute
+asyncpg.exceptions.CheckViolationError: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (1ec10351-9eda-4517-996d-7d7fa277ca33, d589cffa-4fc9-477b-a7df-b1657befd74a, 1, 48776a08-5619-4dfe-906f-19c0250223f3, 10cf14f5-adfa-4e13-b90c-901e5e3ac36f, 976bb388-6b0b-4e58-8ab8-cb5d8a1129ac, CHILD, 9cec4d0503632f1ec907df16e2f8d955c0fda633393c39bc720c09daec4d5531, d73b23387b7c83c127f606d6d1fd1543fd8009ea75cf2da1e92cbd280ce1573a, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "f31d1c79-552e-4652-ba5d-c6..., null, 611ea2cf-b74d-4ebc-863c-0c61a618a7a3, 2026-11-04 16:00:20.217211+00, 2026-11-04 16:00:20.23115+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (1ec10351-9eda-4517-996d-7d7fa277ca33, d589cffa-4fc9-477b-a7df-b1657befd74a, 1, 48776a08-5619-4dfe-906f-19c0250223f3, 10cf14f5-adfa-4e13-b90c-901e5e3ac36f, 976bb388-6b0b-4e58-8ab8-cb5d8a1129ac, CHILD, 9cec4d0503632f1ec907df16e2f8d955c0fda633393c39bc720c09daec4d5531, d73b23387b7c83c127f606d6d1fd1543fd8009ea75cf2da1e92cbd280ce1573a, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "f31d1c79-552e-4652-ba5d-c6..., null, 611ea2cf-b74d-4ebc-863c-0c61a618a7a3, 2026-11-04 16:00:20.217211+00, 2026-11-04 16:00:20.23115+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 64, in redacted_route_handler
+    return await route_handler(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 251, in finalize_native_stream_cancellation
+    result = await finalize_cancelled_launch(session, db, request, execution)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/native_deployments.py", line 1377, in finalize_cancelled_launch
+    await session.scalars(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 562, in scalars
+    result = await self.execute(
+             ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 449, in execute
+    result = await greenlet_spawn(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2351, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2228, in _execute_internal
+    ) = compile_state_cls.orm_pre_session_exec(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/context.py", line 577, in orm_pre_session_exec
+    session._autoflush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3051, in _autoflush
+    raise e.with_traceback(sys.exc_info()[2])
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3040, in _autoflush
+    self.flush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 85, in save_obj
+    _emit_update_statements(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 885, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+           ^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.IntegrityError: (raised as a result of Query-invoked autoflush; consider using a session.no_autoflush block if this flush is occurring prematurely)
+(sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (1ec10351-9eda-4517-996d-7d7fa277ca33, d589cffa-4fc9-477b-a7df-b1657befd74a, 1, 48776a08-5619-4dfe-906f-19c0250223f3, 10cf14f5-adfa-4e13-b90c-901e5e3ac36f, 976bb388-6b0b-4e58-8ab8-cb5d8a1129ac, CHILD, 9cec4d0503632f1ec907df16e2f8d955c0fda633393c39bc720c09daec4d5531, d73b23387b7c83c127f606d6d1fd1543fd8009ea75cf2da1e92cbd280ce1573a, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "f31d1c79-552e-4652-ba5d-c6..., null, 611ea2cf-b74d-4ebc-863c-0c61a618a7a3, 2026-11-04 16:00:20.217211+00, 2026-11-04 16:00:20.23115+00).
+[SQL: UPDATE native_stream_replacement_operation SET death_witness=$1::JSONB, updated=now() WHERE native_stream_replacement_operation.id = $2::UUID RETURNING native_stream_replacement_operation.updated]
+[parameters: ('{"kind": "IDENTITY_GONE", "observed_at": "2026-11-04T15:30:00Z", "host_id": "976bb388-6b0b-4e58-8ab8-cb5d8a1129ac", "boot_id": "f31d1c79-552e-4652-ba5d-c6283fccf904", "child_process_id": 4321, "process_start_ticks": 987654, "exit_code": null, "observed_boot_id": null}', '611ea2cf-b74d-4ebc-863c-0c61a618a7a3')]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+16:00:20.285 | ERROR   | prefect.server - Encountered exception in request:
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 550, in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 177, in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 268, in __bind_execute
+    data, status, _ = await self.__do_execute(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 257, in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 205, in bind_execute
+asyncpg.exceptions.CheckViolationError: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (1ec10351-9eda-4517-996d-7d7fa277ca33, d589cffa-4fc9-477b-a7df-b1657befd74a, 1, 48776a08-5619-4dfe-906f-19c0250223f3, 10cf14f5-adfa-4e13-b90c-901e5e3ac36f, 976bb388-6b0b-4e58-8ab8-cb5d8a1129ac, CHILD, 9cec4d0503632f1ec907df16e2f8d955c0fda633393c39bc720c09daec4d5531, d73b23387b7c83c127f606d6d1fd1543fd8009ea75cf2da1e92cbd280ce1573a, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "f31d1c79-552e-4652-ba5d-c6..., null, 611ea2cf-b74d-4ebc-863c-0c61a618a7a3, 2026-11-04 16:00:20.217211+00, 2026-11-04 16:00:20.269651+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (1ec10351-9eda-4517-996d-7d7fa277ca33, d589cffa-4fc9-477b-a7df-b1657befd74a, 1, 48776a08-5619-4dfe-906f-19c0250223f3, 10cf14f5-adfa-4e13-b90c-901e5e3ac36f, 976bb388-6b0b-4e58-8ab8-cb5d8a1129ac, CHILD, 9cec4d0503632f1ec907df16e2f8d955c0fda633393c39bc720c09daec4d5531, d73b23387b7c83c127f606d6d1fd1543fd8009ea75cf2da1e92cbd280ce1573a, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "f31d1c79-552e-4652-ba5d-c6..., null, 611ea2cf-b74d-4ebc-863c-0c61a618a7a3, 2026-11-04 16:00:20.217211+00, 2026-11-04 16:00:20.269651+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 64, in redacted_route_handler
+    return await route_handler(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 251, in finalize_native_stream_cancellation
+    result = await finalize_cancelled_launch(session, db, request, execution)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/native_deployments.py", line 1377, in finalize_cancelled_launch
+    await session.scalars(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 562, in scalars
+    result = await self.execute(
+             ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 449, in execute
+    result = await greenlet_spawn(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2351, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2228, in _execute_internal
+    ) = compile_state_cls.orm_pre_session_exec(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/context.py", line 577, in orm_pre_session_exec
+    session._autoflush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3051, in _autoflush
+    raise e.with_traceback(sys.exc_info()[2])
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3040, in _autoflush
+    self.flush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 85, in save_obj
+    _emit_update_statements(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 885, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+           ^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.IntegrityError: (raised as a result of Query-invoked autoflush; consider using a session.no_autoflush block if this flush is occurring prematurely)
+(sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (1ec10351-9eda-4517-996d-7d7fa277ca33, d589cffa-4fc9-477b-a7df-b1657befd74a, 1, 48776a08-5619-4dfe-906f-19c0250223f3, 10cf14f5-adfa-4e13-b90c-901e5e3ac36f, 976bb388-6b0b-4e58-8ab8-cb5d8a1129ac, CHILD, 9cec4d0503632f1ec907df16e2f8d955c0fda633393c39bc720c09daec4d5531, d73b23387b7c83c127f606d6d1fd1543fd8009ea75cf2da1e92cbd280ce1573a, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "f31d1c79-552e-4652-ba5d-c6..., null, 611ea2cf-b74d-4ebc-863c-0c61a618a7a3, 2026-11-04 16:00:20.217211+00, 2026-11-04 16:00:20.269651+00).
+[SQL: UPDATE native_stream_replacement_operation SET death_witness=$1::JSONB, updated=now() WHERE native_stream_replacement_operation.id = $2::UUID RETURNING native_stream_replacement_operation.updated]
+[parameters: ('{"kind": "IDENTITY_GONE", "observed_at": "2026-11-04T15:30:00Z", "host_id": "976bb388-6b0b-4e58-8ab8-cb5d8a1129ac", "boot_id": "f31d1c79-552e-4652-ba5d-c6283fccf904", "child_process_id": 4321, "process_start_ticks": 987654, "exit_code": null, "observed_boot_id": null}', '611ea2cf-b74d-4ebc-863c-0c61a618a7a3')]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+------------------------------ Captured log call -------------------------------
+ERROR    prefect.server:server.py:308 Encountered exception in request:
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 550, in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 177, in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 268, in __bind_execute
+    data, status, _ = await self.__do_execute(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 257, in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 205, in bind_execute
+asyncpg.exceptions.CheckViolationError: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (1ec10351-9eda-4517-996d-7d7fa277ca33, d589cffa-4fc9-477b-a7df-b1657befd74a, 1, 48776a08-5619-4dfe-906f-19c0250223f3, 10cf14f5-adfa-4e13-b90c-901e5e3ac36f, 976bb388-6b0b-4e58-8ab8-cb5d8a1129ac, CHILD, 9cec4d0503632f1ec907df16e2f8d955c0fda633393c39bc720c09daec4d5531, d73b23387b7c83c127f606d6d1fd1543fd8009ea75cf2da1e92cbd280ce1573a, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "f31d1c79-552e-4652-ba5d-c6..., null, 611ea2cf-b74d-4ebc-863c-0c61a618a7a3, 2026-11-04 16:00:20.217211+00, 2026-11-04 16:00:20.23115+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (1ec10351-9eda-4517-996d-7d7fa277ca33, d589cffa-4fc9-477b-a7df-b1657befd74a, 1, 48776a08-5619-4dfe-906f-19c0250223f3, 10cf14f5-adfa-4e13-b90c-901e5e3ac36f, 976bb388-6b0b-4e58-8ab8-cb5d8a1129ac, CHILD, 9cec4d0503632f1ec907df16e2f8d955c0fda633393c39bc720c09daec4d5531, d73b23387b7c83c127f606d6d1fd1543fd8009ea75cf2da1e92cbd280ce1573a, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "f31d1c79-552e-4652-ba5d-c6..., null, 611ea2cf-b74d-4ebc-863c-0c61a618a7a3, 2026-11-04 16:00:20.217211+00, 2026-11-04 16:00:20.23115+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 64, in redacted_route_handler
+    return await route_handler(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 251, in finalize_native_stream_cancellation
+    result = await finalize_cancelled_launch(session, db, request, execution)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/native_deployments.py", line 1377, in finalize_cancelled_launch
+    await session.scalars(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 562, in scalars
+    result = await self.execute(
+             ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 449, in execute
+    result = await greenlet_spawn(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2351, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2228, in _execute_internal
+    ) = compile_state_cls.orm_pre_session_exec(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/context.py", line 577, in orm_pre_session_exec
+    session._autoflush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3051, in _autoflush
+    raise e.with_traceback(sys.exc_info()[2])
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3040, in _autoflush
+    self.flush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 85, in save_obj
+    _emit_update_statements(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 885, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+           ^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.IntegrityError: (raised as a result of Query-invoked autoflush; consider using a session.no_autoflush block if this flush is occurring prematurely)
+(sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (1ec10351-9eda-4517-996d-7d7fa277ca33, d589cffa-4fc9-477b-a7df-b1657befd74a, 1, 48776a08-5619-4dfe-906f-19c0250223f3, 10cf14f5-adfa-4e13-b90c-901e5e3ac36f, 976bb388-6b0b-4e58-8ab8-cb5d8a1129ac, CHILD, 9cec4d0503632f1ec907df16e2f8d955c0fda633393c39bc720c09daec4d5531, d73b23387b7c83c127f606d6d1fd1543fd8009ea75cf2da1e92cbd280ce1573a, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "f31d1c79-552e-4652-ba5d-c6..., null, 611ea2cf-b74d-4ebc-863c-0c61a618a7a3, 2026-11-04 16:00:20.217211+00, 2026-11-04 16:00:20.23115+00).
+[SQL: UPDATE native_stream_replacement_operation SET death_witness=$1::JSONB, updated=now() WHERE native_stream_replacement_operation.id = $2::UUID RETURNING native_stream_replacement_operation.updated]
+[parameters: ('{"kind": "IDENTITY_GONE", "observed_at": "2026-11-04T15:30:00Z", "host_id": "976bb388-6b0b-4e58-8ab8-cb5d8a1129ac", "boot_id": "f31d1c79-552e-4652-ba5d-c6283fccf904", "child_process_id": 4321, "process_start_ticks": 987654, "exit_code": null, "observed_boot_id": null}', '611ea2cf-b74d-4ebc-863c-0c61a618a7a3')]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+ERROR    prefect.server:server.py:308 Encountered exception in request:
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 550, in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 177, in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 268, in __bind_execute
+    data, status, _ = await self.__do_execute(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 257, in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 205, in bind_execute
+asyncpg.exceptions.CheckViolationError: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (1ec10351-9eda-4517-996d-7d7fa277ca33, d589cffa-4fc9-477b-a7df-b1657befd74a, 1, 48776a08-5619-4dfe-906f-19c0250223f3, 10cf14f5-adfa-4e13-b90c-901e5e3ac36f, 976bb388-6b0b-4e58-8ab8-cb5d8a1129ac, CHILD, 9cec4d0503632f1ec907df16e2f8d955c0fda633393c39bc720c09daec4d5531, d73b23387b7c83c127f606d6d1fd1543fd8009ea75cf2da1e92cbd280ce1573a, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "f31d1c79-552e-4652-ba5d-c6..., null, 611ea2cf-b74d-4ebc-863c-0c61a618a7a3, 2026-11-04 16:00:20.217211+00, 2026-11-04 16:00:20.269651+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (1ec10351-9eda-4517-996d-7d7fa277ca33, d589cffa-4fc9-477b-a7df-b1657befd74a, 1, 48776a08-5619-4dfe-906f-19c0250223f3, 10cf14f5-adfa-4e13-b90c-901e5e3ac36f, 976bb388-6b0b-4e58-8ab8-cb5d8a1129ac, CHILD, 9cec4d0503632f1ec907df16e2f8d955c0fda633393c39bc720c09daec4d5531, d73b23387b7c83c127f606d6d1fd1543fd8009ea75cf2da1e92cbd280ce1573a, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "f31d1c79-552e-4652-ba5d-c6..., null, 611ea2cf-b74d-4ebc-863c-0c61a618a7a3, 2026-11-04 16:00:20.217211+00, 2026-11-04 16:00:20.269651+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 64, in redacted_route_handler
+    return await route_handler(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 251, in finalize_native_stream_cancellation
+    result = await finalize_cancelled_launch(session, db, request, execution)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/native_deployments.py", line 1377, in finalize_cancelled_launch
+    await session.scalars(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 562, in scalars
+    result = await self.execute(
+             ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 449, in execute
+    result = await greenlet_spawn(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2351, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2228, in _execute_internal
+    ) = compile_state_cls.orm_pre_session_exec(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/context.py", line 577, in orm_pre_session_exec
+    session._autoflush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3051, in _autoflush
+    raise e.with_traceback(sys.exc_info()[2])
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3040, in _autoflush
+    self.flush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 85, in save_obj
+    _emit_update_statements(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 885, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+           ^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.IntegrityError: (raised as a result of Query-invoked autoflush; consider using a session.no_autoflush block if this flush is occurring prematurely)
+(sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (1ec10351-9eda-4517-996d-7d7fa277ca33, d589cffa-4fc9-477b-a7df-b1657befd74a, 1, 48776a08-5619-4dfe-906f-19c0250223f3, 10cf14f5-adfa-4e13-b90c-901e5e3ac36f, 976bb388-6b0b-4e58-8ab8-cb5d8a1129ac, CHILD, 9cec4d0503632f1ec907df16e2f8d955c0fda633393c39bc720c09daec4d5531, d73b23387b7c83c127f606d6d1fd1543fd8009ea75cf2da1e92cbd280ce1573a, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "f31d1c79-552e-4652-ba5d-c6..., null, 611ea2cf-b74d-4ebc-863c-0c61a618a7a3, 2026-11-04 16:00:20.217211+00, 2026-11-04 16:00:20.269651+00).
+[SQL: UPDATE native_stream_replacement_operation SET death_witness=$1::JSONB, updated=now() WHERE native_stream_replacement_operation.id = $2::UUID RETURNING native_stream_replacement_operation.updated]
+[parameters: ('{"kind": "IDENTITY_GONE", "observed_at": "2026-11-04T15:30:00Z", "host_id": "976bb388-6b0b-4e58-8ab8-cb5d8a1129ac", "boot_id": "f31d1c79-552e-4652-ba5d-c6283fccf904", "child_process_id": 4321, "process_start_ticks": 987654, "exit_code": null, "observed_boot_id": null}', '611ea2cf-b74d-4ebc-863c-0c61a618a7a3')]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+____________ test_registered_startup_crash_is_verified_and_retired _____________
+
+client = <httpx.AsyncClient object at 0x7fcbc98790a0>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fcbcbdb7da0>
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fcbcbc5e7e0>
+deployment = Deployment(id=1e1af7c2-f998-460b-9b89-7e715cf21be9)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fcbc9dd7fe0>
+
+    async def test_registered_startup_crash_is_verified_and_retired(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL verified retirement is covered by its PG profile")
+        flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
+        plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()
+        enrollment = _enrollment_body(
+            flow_run.id, worker.id, work_pool_id, plan["declaration_digest"]
+        )
+        enrolled = await client.post("/streams/v1/deployments/enroll", json=enrollment)
+        assert enrolled.status_code == 200
+        headers = {
+            "X-Prefect-Stream-Execution-Generation": "1",
+            "X-Prefect-Stream-Execution-Holder": enrollment["holder_id"],
+            "X-Prefect-Stream-Execution-Capability": enrollment["holder_capability"],
+        }
+        registration = {
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(uuid4()),
+            "enrollment_operation_id": enrollment["operation_id"],
+            "generation": 1,
+            "launcher_instance_id": enrollment["launcher_instance_id"],
+            "host_id": str(uuid4()),
+            "boot_id": str(uuid4()),
+            "child_process_id": 6789,
+            "process_start_ticks": 456789,
+            "launch_nonce_digest": "d" * 64,
+        }
+        registered = await client.post(
+            "/streams/v1/deployments/launches/register-process",
+            json=registration,
+            headers=headers,
+        )
+        assert registered.status_code == 200
+        monkeypatch.setattr(native_deployments, "LAUNCH_RENEWAL_STALE_AFTER", timedelta(0))
+        candidates = await client.get(
+            "/streams/v1/deployments/replacements/candidates",
+            params={
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+            },
+        )
+        assert len(candidates.json()) == 1
+        operation_id = uuid4()
+        challenge = secrets.token_hex(32)
+        authorized = await client.post(
+            "/streams/v1/deployments/replacements/authorize",
+            json={
+                "flow_run_id": str(flow_run.id),
+                "operation_id": str(operation_id),
+                "expected_generation": 1,
+                "enrollment_operation_id": enrollment["operation_id"],
+                "worker_id": str(worker.id),
+                "work_pool_id": str(work_pool_id),
+                "host_id": registration["host_id"],
+                "identity_kind": "CHILD",
+                "challenge_capability": challenge,
+            },
+        )
+        assert authorized.status_code == 200
+        retirement = {
+            "flow_run_id": str(flow_run.id),
+            "operation_id": str(operation_id),
+            "expected_generation": 1,
+            "enrollment_operation_id": enrollment["operation_id"],
+            "challenge_capability": challenge,
+            "death_witness": {
+                "kind": "IDENTITY_GONE",
+                "observed_at": "2026-11-04T16:00:00Z",
+                "host_id": registration["host_id"],
+                "boot_id": registration["boot_id"],
+                "child_process_id": registration["child_process_id"],
+                "process_start_ticks": registration["process_start_ticks"],
+            },
+            "error": "registered child exited before bootstrap",
+        }
+        retired = await client.post(
+            "/streams/v1/deployments/replacements/retire-verified", json=retirement
+        )
+        retired_replay = await client.post(
+            "/streams/v1/deployments/replacements/retire-verified", json=retirement
+        )
+>       assert retired.status_code == retired_replay.status_code == 200, retired.text
+E       AssertionError: {"detail":"Data integrity conflict. This usually means a unique or foreign key constraint was violated. See server logs for details."}
+E       assert 409 == 200
+E        +  where 409 = <Response [409 Conflict]>.status_code
+
+tests/server/api/test_native_deployments.py:1775: AssertionError
+----------------------------- Captured stderr call -----------------------------
+16:00:21.302 | ERROR   | prefect.server - Encountered exception in request:
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 550, in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 177, in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 268, in __bind_execute
+    data, status, _ = await self.__do_execute(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 257, in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 205, in bind_execute
+asyncpg.exceptions.CheckViolationError: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (aa66648f-7063-4d58-8741-f3373393f5e9, 934ac70f-2a29-4266-a208-f3f02bcc3b9c, 1, 592482f5-098a-429c-9f88-b73fa2302797, 97562c58-8ded-4537-b46a-552a0f13f939, 8a4bb79d-d418-4341-966d-bed80b5cc7b5, CHILD, ef2fc98bf33e6345e3fa6cc263af146d37219452e2195a7622046428d51c25d6, 9e46d5b014bf4f2b874f2979c6cd58a0a7cdcdc865ccdda4a75e11ea618113df, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bc..., null, 6c2e89ca-02df-4013-bb48-e63022c57e31, 2026-11-04 16:00:21.273727+00, 2026-11-04 16:00:21.286245+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (aa66648f-7063-4d58-8741-f3373393f5e9, 934ac70f-2a29-4266-a208-f3f02bcc3b9c, 1, 592482f5-098a-429c-9f88-b73fa2302797, 97562c58-8ded-4537-b46a-552a0f13f939, 8a4bb79d-d418-4341-966d-bed80b5cc7b5, CHILD, ef2fc98bf33e6345e3fa6cc263af146d37219452e2195a7622046428d51c25d6, 9e46d5b014bf4f2b874f2979c6cd58a0a7cdcdc865ccdda4a75e11ea618113df, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bc..., null, 6c2e89ca-02df-4013-bb48-e63022c57e31, 2026-11-04 16:00:21.273727+00, 2026-11-04 16:00:21.286245+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 64, in redacted_route_handler
+    return await route_handler(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 163, in retire_verified_native_stream_launch
+    result = await retire_verified_dead_launch(session, db, request)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/native_deployments.py", line 1603, in retire_verified_dead_launch
+    flow_result = await flow_run_models.set_flow_run_state(
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/flow_runs.py", line 634, in set_flow_run_state
+    run = await models.flow_runs.read_flow_run(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/flow_runs.py", line 219, in read_flow_run
+    result = await session.execute(select)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 449, in execute
+    result = await greenlet_spawn(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2351, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2228, in _execute_internal
+    ) = compile_state_cls.orm_pre_session_exec(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/context.py", line 577, in orm_pre_session_exec
+    session._autoflush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3051, in _autoflush
+    raise e.with_traceback(sys.exc_info()[2])
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3040, in _autoflush
+    self.flush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 85, in save_obj
+    _emit_update_statements(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 885, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+           ^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.IntegrityError: (raised as a result of Query-invoked autoflush; consider using a session.no_autoflush block if this flush is occurring prematurely)
+(sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (aa66648f-7063-4d58-8741-f3373393f5e9, 934ac70f-2a29-4266-a208-f3f02bcc3b9c, 1, 592482f5-098a-429c-9f88-b73fa2302797, 97562c58-8ded-4537-b46a-552a0f13f939, 8a4bb79d-d418-4341-966d-bed80b5cc7b5, CHILD, ef2fc98bf33e6345e3fa6cc263af146d37219452e2195a7622046428d51c25d6, 9e46d5b014bf4f2b874f2979c6cd58a0a7cdcdc865ccdda4a75e11ea618113df, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bc..., null, 6c2e89ca-02df-4013-bb48-e63022c57e31, 2026-11-04 16:00:21.273727+00, 2026-11-04 16:00:21.286245+00).
+[SQL: UPDATE native_stream_replacement_operation SET death_witness=$1::JSONB, updated=now() WHERE native_stream_replacement_operation.id = $2::UUID RETURNING native_stream_replacement_operation.updated]
+[parameters: ('{"kind": "IDENTITY_GONE", "observed_at": "2026-11-04T16:00:00Z", "host_id": "8a4bb79d-d418-4341-966d-bed80b5cc7b5", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bceb37a3e8ab", "child_process_id": 6789, "process_start_ticks": 456789, "exit_code": null, "observed_boot_id": null}', '6c2e89ca-02df-4013-bb48-e63022c57e31')]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+16:00:21.330 | ERROR   | prefect.server - Encountered exception in request:
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 550, in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 177, in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 268, in __bind_execute
+    data, status, _ = await self.__do_execute(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 257, in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 205, in bind_execute
+asyncpg.exceptions.CheckViolationError: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (aa66648f-7063-4d58-8741-f3373393f5e9, 934ac70f-2a29-4266-a208-f3f02bcc3b9c, 1, 592482f5-098a-429c-9f88-b73fa2302797, 97562c58-8ded-4537-b46a-552a0f13f939, 8a4bb79d-d418-4341-966d-bed80b5cc7b5, CHILD, ef2fc98bf33e6345e3fa6cc263af146d37219452e2195a7622046428d51c25d6, 9e46d5b014bf4f2b874f2979c6cd58a0a7cdcdc865ccdda4a75e11ea618113df, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bc..., null, 6c2e89ca-02df-4013-bb48-e63022c57e31, 2026-11-04 16:00:21.273727+00, 2026-11-04 16:00:21.317389+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (aa66648f-7063-4d58-8741-f3373393f5e9, 934ac70f-2a29-4266-a208-f3f02bcc3b9c, 1, 592482f5-098a-429c-9f88-b73fa2302797, 97562c58-8ded-4537-b46a-552a0f13f939, 8a4bb79d-d418-4341-966d-bed80b5cc7b5, CHILD, ef2fc98bf33e6345e3fa6cc263af146d37219452e2195a7622046428d51c25d6, 9e46d5b014bf4f2b874f2979c6cd58a0a7cdcdc865ccdda4a75e11ea618113df, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bc..., null, 6c2e89ca-02df-4013-bb48-e63022c57e31, 2026-11-04 16:00:21.273727+00, 2026-11-04 16:00:21.317389+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 64, in redacted_route_handler
+    return await route_handler(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 163, in retire_verified_native_stream_launch
+    result = await retire_verified_dead_launch(session, db, request)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/native_deployments.py", line 1603, in retire_verified_dead_launch
+    flow_result = await flow_run_models.set_flow_run_state(
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/flow_runs.py", line 634, in set_flow_run_state
+    run = await models.flow_runs.read_flow_run(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/flow_runs.py", line 219, in read_flow_run
+    result = await session.execute(select)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 449, in execute
+    result = await greenlet_spawn(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2351, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2228, in _execute_internal
+    ) = compile_state_cls.orm_pre_session_exec(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/context.py", line 577, in orm_pre_session_exec
+    session._autoflush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3051, in _autoflush
+    raise e.with_traceback(sys.exc_info()[2])
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3040, in _autoflush
+    self.flush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 85, in save_obj
+    _emit_update_statements(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 885, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+           ^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.IntegrityError: (raised as a result of Query-invoked autoflush; consider using a session.no_autoflush block if this flush is occurring prematurely)
+(sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (aa66648f-7063-4d58-8741-f3373393f5e9, 934ac70f-2a29-4266-a208-f3f02bcc3b9c, 1, 592482f5-098a-429c-9f88-b73fa2302797, 97562c58-8ded-4537-b46a-552a0f13f939, 8a4bb79d-d418-4341-966d-bed80b5cc7b5, CHILD, ef2fc98bf33e6345e3fa6cc263af146d37219452e2195a7622046428d51c25d6, 9e46d5b014bf4f2b874f2979c6cd58a0a7cdcdc865ccdda4a75e11ea618113df, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bc..., null, 6c2e89ca-02df-4013-bb48-e63022c57e31, 2026-11-04 16:00:21.273727+00, 2026-11-04 16:00:21.317389+00).
+[SQL: UPDATE native_stream_replacement_operation SET death_witness=$1::JSONB, updated=now() WHERE native_stream_replacement_operation.id = $2::UUID RETURNING native_stream_replacement_operation.updated]
+[parameters: ('{"kind": "IDENTITY_GONE", "observed_at": "2026-11-04T16:00:00Z", "host_id": "8a4bb79d-d418-4341-966d-bed80b5cc7b5", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bceb37a3e8ab", "child_process_id": 6789, "process_start_ticks": 456789, "exit_code": null, "observed_boot_id": null}', '6c2e89ca-02df-4013-bb48-e63022c57e31')]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+------------------------------ Captured log call -------------------------------
+ERROR    prefect.server:server.py:308 Encountered exception in request:
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 550, in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 177, in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 268, in __bind_execute
+    data, status, _ = await self.__do_execute(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 257, in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 205, in bind_execute
+asyncpg.exceptions.CheckViolationError: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (aa66648f-7063-4d58-8741-f3373393f5e9, 934ac70f-2a29-4266-a208-f3f02bcc3b9c, 1, 592482f5-098a-429c-9f88-b73fa2302797, 97562c58-8ded-4537-b46a-552a0f13f939, 8a4bb79d-d418-4341-966d-bed80b5cc7b5, CHILD, ef2fc98bf33e6345e3fa6cc263af146d37219452e2195a7622046428d51c25d6, 9e46d5b014bf4f2b874f2979c6cd58a0a7cdcdc865ccdda4a75e11ea618113df, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bc..., null, 6c2e89ca-02df-4013-bb48-e63022c57e31, 2026-11-04 16:00:21.273727+00, 2026-11-04 16:00:21.286245+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (aa66648f-7063-4d58-8741-f3373393f5e9, 934ac70f-2a29-4266-a208-f3f02bcc3b9c, 1, 592482f5-098a-429c-9f88-b73fa2302797, 97562c58-8ded-4537-b46a-552a0f13f939, 8a4bb79d-d418-4341-966d-bed80b5cc7b5, CHILD, ef2fc98bf33e6345e3fa6cc263af146d37219452e2195a7622046428d51c25d6, 9e46d5b014bf4f2b874f2979c6cd58a0a7cdcdc865ccdda4a75e11ea618113df, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bc..., null, 6c2e89ca-02df-4013-bb48-e63022c57e31, 2026-11-04 16:00:21.273727+00, 2026-11-04 16:00:21.286245+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 64, in redacted_route_handler
+    return await route_handler(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 163, in retire_verified_native_stream_launch
+    result = await retire_verified_dead_launch(session, db, request)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/native_deployments.py", line 1603, in retire_verified_dead_launch
+    flow_result = await flow_run_models.set_flow_run_state(
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/flow_runs.py", line 634, in set_flow_run_state
+    run = await models.flow_runs.read_flow_run(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/flow_runs.py", line 219, in read_flow_run
+    result = await session.execute(select)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 449, in execute
+    result = await greenlet_spawn(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2351, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2228, in _execute_internal
+    ) = compile_state_cls.orm_pre_session_exec(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/context.py", line 577, in orm_pre_session_exec
+    session._autoflush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3051, in _autoflush
+    raise e.with_traceback(sys.exc_info()[2])
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3040, in _autoflush
+    self.flush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 85, in save_obj
+    _emit_update_statements(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 885, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+           ^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.IntegrityError: (raised as a result of Query-invoked autoflush; consider using a session.no_autoflush block if this flush is occurring prematurely)
+(sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (aa66648f-7063-4d58-8741-f3373393f5e9, 934ac70f-2a29-4266-a208-f3f02bcc3b9c, 1, 592482f5-098a-429c-9f88-b73fa2302797, 97562c58-8ded-4537-b46a-552a0f13f939, 8a4bb79d-d418-4341-966d-bed80b5cc7b5, CHILD, ef2fc98bf33e6345e3fa6cc263af146d37219452e2195a7622046428d51c25d6, 9e46d5b014bf4f2b874f2979c6cd58a0a7cdcdc865ccdda4a75e11ea618113df, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bc..., null, 6c2e89ca-02df-4013-bb48-e63022c57e31, 2026-11-04 16:00:21.273727+00, 2026-11-04 16:00:21.286245+00).
+[SQL: UPDATE native_stream_replacement_operation SET death_witness=$1::JSONB, updated=now() WHERE native_stream_replacement_operation.id = $2::UUID RETURNING native_stream_replacement_operation.updated]
+[parameters: ('{"kind": "IDENTITY_GONE", "observed_at": "2026-11-04T16:00:00Z", "host_id": "8a4bb79d-d418-4341-966d-bed80b5cc7b5", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bceb37a3e8ab", "child_process_id": 6789, "process_start_ticks": 456789, "exit_code": null, "observed_boot_id": null}', '6c2e89ca-02df-4013-bb48-e63022c57e31')]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+ERROR    prefect.server:server.py:308 Encountered exception in request:
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 550, in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 177, in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 268, in __bind_execute
+    data, status, _ = await self.__do_execute(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 257, in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 205, in bind_execute
+asyncpg.exceptions.CheckViolationError: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (aa66648f-7063-4d58-8741-f3373393f5e9, 934ac70f-2a29-4266-a208-f3f02bcc3b9c, 1, 592482f5-098a-429c-9f88-b73fa2302797, 97562c58-8ded-4537-b46a-552a0f13f939, 8a4bb79d-d418-4341-966d-bed80b5cc7b5, CHILD, ef2fc98bf33e6345e3fa6cc263af146d37219452e2195a7622046428d51c25d6, 9e46d5b014bf4f2b874f2979c6cd58a0a7cdcdc865ccdda4a75e11ea618113df, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bc..., null, 6c2e89ca-02df-4013-bb48-e63022c57e31, 2026-11-04 16:00:21.273727+00, 2026-11-04 16:00:21.317389+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (aa66648f-7063-4d58-8741-f3373393f5e9, 934ac70f-2a29-4266-a208-f3f02bcc3b9c, 1, 592482f5-098a-429c-9f88-b73fa2302797, 97562c58-8ded-4537-b46a-552a0f13f939, 8a4bb79d-d418-4341-966d-bed80b5cc7b5, CHILD, ef2fc98bf33e6345e3fa6cc263af146d37219452e2195a7622046428d51c25d6, 9e46d5b014bf4f2b874f2979c6cd58a0a7cdcdc865ccdda4a75e11ea618113df, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bc..., null, 6c2e89ca-02df-4013-bb48-e63022c57e31, 2026-11-04 16:00:21.273727+00, 2026-11-04 16:00:21.317389+00).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 64, in redacted_route_handler
+    return await route_handler(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/api/native_deployments.py", line 163, in retire_verified_native_stream_launch
+    result = await retire_verified_dead_launch(session, db, request)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/native_deployments.py", line 1603, in retire_verified_dead_launch
+    flow_result = await flow_run_models.set_flow_run_state(
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/flow_runs.py", line 634, in set_flow_run_state
+    run = await models.flow_runs.read_flow_run(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/src/prefect/server/models/flow_runs.py", line 219, in read_flow_run
+    result = await session.execute(select)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 449, in execute
+    result = await greenlet_spawn(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2351, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2228, in _execute_internal
+    ) = compile_state_cls.orm_pre_session_exec(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/context.py", line 577, in orm_pre_session_exec
+    session._autoflush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3051, in _autoflush
+    raise e.with_traceback(sys.exc_info()[2])
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3040, in _autoflush
+    self.flush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 85, in save_obj
+    _emit_update_statements(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 885, in _emit_update_statements
+    c = connection.execute(
+        ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+           ^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.IntegrityError: (raised as a result of Query-invoked autoflush; consider using a session.no_autoflush block if this flush is occurring prematurely)
+(sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "native_stream_replacement_operation" violates check constraint "ck_native_stream_replacement_operation__confirmation_valid"
+DETAIL:  Failing row contains (aa66648f-7063-4d58-8741-f3373393f5e9, 934ac70f-2a29-4266-a208-f3f02bcc3b9c, 1, 592482f5-098a-429c-9f88-b73fa2302797, 97562c58-8ded-4537-b46a-552a0f13f939, 8a4bb79d-d418-4341-966d-bed80b5cc7b5, CHILD, ef2fc98bf33e6345e3fa6cc263af146d37219452e2195a7622046428d51c25d6, 9e46d5b014bf4f2b874f2979c6cd58a0a7cdcdc865ccdda4a75e11ea618113df, AUTHORIZED, null, null, {"kind": "IDENTITY_GONE", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bc..., null, 6c2e89ca-02df-4013-bb48-e63022c57e31, 2026-11-04 16:00:21.273727+00, 2026-11-04 16:00:21.317389+00).
+[SQL: UPDATE native_stream_replacement_operation SET death_witness=$1::JSONB, updated=now() WHERE native_stream_replacement_operation.id = $2::UUID RETURNING native_stream_replacement_operation.updated]
+[parameters: ('{"kind": "IDENTITY_GONE", "observed_at": "2026-11-04T16:00:00Z", "host_id": "8a4bb79d-d418-4341-966d-bed80b5cc7b5", "boot_id": "d0ce6f8f-7a61-4ff9-be27-bceb37a3e8ab", "child_process_id": 6789, "process_start_ticks": 456789, "exit_code": null, "observed_boot_id": null}', '6c2e89ca-02df-4013-bb48-e63022c57e31')]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+16:00:21.393 | INFO    | uvicorn.error - Shutting down
+16:00:21.494 | INFO    | uvicorn.error - Waiting for application shutdown.
+16:00:21.496 | INFO    | uvicorn.error - Application shutdown complete.
+16:00:21.496 | INFO    | uvicorn.error - Finished server process [65925]
+=========================== short test summary info ============================
+FAILED tests/server/api/test_native_deployments.py::test_orphan_cancellation_uses_authorized_death_witness
+FAILED tests/server/api/test_native_deployments.py::test_registered_startup_crash_is_verified_and_retired
+2 failed in 8.91s

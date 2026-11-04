@@ -1,0 +1,18 @@
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+root = Path('/workspace/ariadne')
+gate = root / 'architecture/streaming-etl/evidence/native-epoch1-gate-runner-2026-11-04.txt'
+for profile in ('client', 'code', 'native-client', 'sqlite', 'deployment-sqlite'):
+    environment = os.environ | {
+        'ARIADNE_SOURCE_MANIFEST': 'native-epoch1-source-freeze-successor-2026-11-04.json',
+        'PREFECT_SERVER_DATABASE_CONNECTION_URL': f'sqlite+aiosqlite:////tmp/native_e1_more_{profile}.db',
+        'PREFECT_API_DATABASE_CONNECTION_URL': f'sqlite+aiosqlite:////tmp/native_e1_more_{profile}.db',
+    }
+    result = subprocess.run([sys.executable, str(gate), profile, 'successor'], cwd=root, env=environment, capture_output=True, text=True)
+    Path(f'/tmp/native-epoch1-{profile}-extra-driver.log').write_text(result.stdout + result.stderr)
+    print(json.dumps({'profile': profile, 'returncode': result.returncode}), flush=True)
+    if result.returncode:
+        raise SystemExit(result.returncode)

@@ -1,0 +1,22 @@
+import concurrent.futures
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+root=Path('/workspace/ariadne')
+gate=root/'architecture/streaming-etl/evidence/native-epoch1-gate-runner-2026-11-04.txt'
+queue=['flow-api','task-api','flow-policy','cancellation-cleanup']
+def run(profile):
+    db='native_e1_pending_'+profile.replace('-','_')
+    exists=subprocess.check_output(['docker','exec','ariadne-native-recovery-postgres','psql','-U','native_recovery','-d','postgres','-tAc',f"SELECT datname FROM pg_database WHERE datname='{db}'"],text=True).strip()
+    if not exists:subprocess.run(['docker','exec','ariadne-native-recovery-postgres','psql','-U','native_recovery','-d','postgres','-c',f'CREATE DATABASE {db}'],check=True,stdout=subprocess.DEVNULL)
+    url=f'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/{db}'
+    env=os.environ|{'ARIADNE_SOURCE_MANIFEST':'native-epoch1-source-freeze-closure-2026-11-04.json','PREFECT_SERVER_DATABASE_CONNECTION_URL':url,'PREFECT_API_DATABASE_CONNECTION_URL':url}
+    result=subprocess.run([sys.executable,str(gate),profile,'closure'],cwd=root,env=env,capture_output=True,text=True)
+    Path(f'/tmp/native-epoch1-{profile}-pending-driver.log').write_text(result.stdout+result.stderr)
+    print(json.dumps({'profile':profile,'returncode':result.returncode}),flush=True)
+    return result.returncode
+with concurrent.futures.ThreadPoolExecutor(max_workers=2)as pool:
+    results=list(pool.map(run,queue))
+raise SystemExit(1 if any(results)else 0)

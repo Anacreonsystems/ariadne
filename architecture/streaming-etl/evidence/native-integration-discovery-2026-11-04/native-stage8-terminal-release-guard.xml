@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="2" time="14.841" timestamp="2026-11-04T15:32:17.209596+00:00" hostname="f8abb611283c"><testcase classname="tests.server.api.test_native_deployments" name="test_terminal_child_cleanup_preserves_final_flow_state" time="10.958" /><testcase classname="tests.server.api.test_native_deployments" name="test_release_waits_for_bound_task_terminal_metadata" time="3.016"><failure message="AssertionError: assert {'code': 'REC...yable': False} == {'code': 'MET...ryable': True}&#10;  &#10;  Differing items:&#10;  {'retryable': False} != {'retryable': True}&#10;  {'message': 'Execution generation is not active'} != {'message': 'Bound TaskRun terminal metadata has not been recorded'}&#10;  {'code': 'RECOVERY_NOT_READY'} != {'code': 'METADATA_NOT_READY'}&#10;  Use -v to get more diff">client = &lt;httpx.AsyncClient object at 0x7fbb207dbfe0&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbb209ca6f0&gt;
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fbb2374c3e0&gt;
+deployment = Deployment(id=8a730a93-651f-4c57-9ca2-7df5d70a46da)
+
+    async def test_release_waits_for_bound_task_terminal_metadata(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL release metadata gate is covered by its PG profile")
+        flow_run, _, _, _, headers, _ = await _active_launch(
+            client, session, db, deployment
+        )
+        assert (
+            await client.post(
+                f"/flow_runs/{flow_run.id}/set_state",
+                json={"state": {"type": "FAILED", "name": "Failed"}},
+                headers=headers,
+            )
+        ).status_code == 201
+        refused = await client.post(
+            "/streams/v1/release",
+            json={"flow_run_id": str(flow_run.id)},
+            headers=headers,
+        )
+        assert refused.status_code == 409
+&gt;       assert refused.json()["detail"] == {
+            "code": "METADATA_NOT_READY",
+            "message": "Bound TaskRun terminal metadata has not been recorded",
+            "retryable": True,
+        }
+E       AssertionError: assert {'code': 'REC...yable': False} == {'code': 'MET...ryable': True}
+E         
+E         Differing items:
+E         {'retryable': False} != {'retryable': True}
+E         {'message': 'Execution generation is not active'} != {'message': 'Bound TaskRun terminal metadata has not been recorded'}
+E         {'code': 'RECOVERY_NOT_READY'} != {'code': 'METADATA_NOT_READY'}
+E         Use -v to get more diff
+
+tests/server/api/test_native_deployments.py:1228: AssertionError</failure></testcase></testsuite></testsuites>

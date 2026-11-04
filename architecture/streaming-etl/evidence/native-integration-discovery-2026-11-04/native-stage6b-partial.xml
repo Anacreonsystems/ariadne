@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="16.342" timestamp="2026-11-04T15:05:43.444241+00:00" hostname="f8abb611283c"><testcase classname="tests.test_native_mixed_flow_http" name="test_partial_collection_does_not_admit_tail_before_durable_eof" time="16.094"><failure message="AssertionError: assert 0 != 0&#10; +  where 0 = wait(timeout=60)&#10; +    where wait = &lt;Popen: returncode: 0 args: ['/workspace/ariadne/.venv/bin/python', '-m', 'p...&gt;.wait">execution_api = &lt;tests.test_native_stream_recovery_http.RestartableAPI object at 0x7fa6cfb48290&gt;
+tmp_path = PosixPath('/tmp/pytest-of-agent/pytest-63/test_partial_collection_does_n0')
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fa6d53443e0&gt;
+
+    @pytest.mark.timeout(90)
+    async def test_partial_collection_does_not_admit_tail_before_durable_eof(
+        execution_api: RestartableAPI, tmp_path: Path, db: Any
+    ):
+        dataset, coordination = tmp_path / "dataset", tmp_path / "coordination"
+        dataset.mkdir()
+        coordination.mkdir()
+        (coordination / "signed").mkdir()
+        for position in range(1, 501):
+            (dataset / f"{position:04}.json").write_text(json.dumps({"number": position}))
+        entrypoint = "tests/fixtures/native_stream_mixed_flow.py:partial_collection_flow"
+        definition = load_flow_from_entrypoint(entrypoint)
+        with execution_api.client() as client:
+            run = client.create_flow_run(
+                definition,
+                parameters={"dataset": str(dataset), "coordination": str(coordination)},
+                state=Pending(),
+            )
+        launch = _launch(execution_api, run.id)
+        log = tmp_path / "flow.log"
+        child = _start_flow(execution_api, entrypoint, launch.context, log)
+        try:
+&gt;           assert child.wait(timeout=60) != 0
+E           AssertionError: assert 0 != 0
+E            +  where 0 = wait(timeout=60)
+E            +    where wait = &lt;Popen: returncode: 0 args: ['/workspace/ariadne/.venv/bin/python', '-m', 'p...&gt;.wait
+
+tests/test_native_mixed_flow_http.py:356: AssertionError</failure></testcase></testsuite></testsuites>

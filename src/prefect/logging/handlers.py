@@ -20,6 +20,7 @@ from prefect._internal.concurrency.api import create_call, from_sync
 from prefect._internal.concurrency.event_loop import get_running_loop
 from prefect._internal.concurrency.services import BatchedQueueService
 from prefect._internal.concurrency.threads import in_global_loop
+from prefect.client.base import ServerType, determine_server_type
 from prefect.client.orchestration import get_client
 from prefect.client.schemas.actions import LogCreate
 from prefect.exceptions import MissingContextError
@@ -211,7 +212,11 @@ class APILogHandler(logging.Handler):
         """
         flow_run_id = getattr(record, "flow_run_id", None)
         task_run_id = getattr(record, "task_run_id", None)
-        worker_id = getattr(record, "worker_id", None)
+        worker_id = (
+            getattr(record, "worker_id", None)
+            if determine_server_type() == ServerType.CLOUD
+            else None
+        )
 
         if not flow_run_id:
             try:
@@ -291,10 +296,12 @@ class APILogHandler(logging.Handler):
 
 class WorkerAPILogHandler(APILogHandler):
     def emit(self, record: logging.LogRecord) -> None:
-        # Open-source API servers do not currently support worker logs, and
-        # worker logs only have an associated worker ID when connected to Cloud,
-        # so we won't send worker logs to the API unless they have a worker ID.
-        if not getattr(record, "worker_id", None):
+        # Local workers can also have a durable ID (native enrollment), but
+        # worker-log ingestion remains a Cloud capability.
+        if (
+            not getattr(record, "worker_id", None)
+            or determine_server_type() != ServerType.CLOUD
+        ):
             return
         super().emit(record)
 

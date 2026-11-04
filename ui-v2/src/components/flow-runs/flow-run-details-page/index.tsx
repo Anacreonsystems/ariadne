@@ -13,6 +13,7 @@ import {
 import { queryKeyFactory as logsQueryKeyFactory } from "@/api/logs";
 import { queryKeyFactory as taskRunsQueryKeyFactory } from "@/api/task-runs";
 import { FlowRunGraph } from "@/components/flow-runs/flow-run-graph";
+import { NativeStreamProgress } from "@/components/flow-runs/native-stream-progress";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -114,6 +115,9 @@ export const FlowRunDetailsPage = ({
 			<div className="flex flex-col gap-2">
 				<FlowRunHeader flowRun={flowRun} onDeleteClick={onDeleteRunClicked} />
 			</div>
+			{flowRun.labels?.["prefect.native-streaming"] && (
+				<NativeStreamProgress flowRunId={flowRun.id} />
+			)}
 			{!isPending && (
 				<Card className="py-0">
 					<CardContent className="p-0">

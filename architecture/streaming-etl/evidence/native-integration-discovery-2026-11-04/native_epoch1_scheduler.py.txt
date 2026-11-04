@@ -1,0 +1,62 @@
+import concurrent.futures
+import json
+import os
+import runpy
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT=Path('/workspace/ariadne')
+GATE=ROOT/'architecture/streaming-etl/evidence/native-epoch1-gate-runner-2026-11-04.txt'
+profiles=runpy.run_path(str(GATE))['PROFILES']
+pg=['mixed-http','worker-http','flow-http','native-http','finite-http','store-api','deployment-api','migrations','lease','legacy-contract','recorder','flow-api','task-api','flow-policy','cancellation-cleanup']
+local=['kernel','flow-engine','ordinary-worker','logging-cli','deployment-builder','client','code','native-client','sqlite','deployment-sqlite']
+assert set(pg+local)==set(profiles)
+progress={p:{'state':'PENDING'} for p in pg+local}
+progress_path=Path('/tmp/native-epoch1-gates-progress.json')
+def save():
+    progress_path.write_text(json.dumps(progress,indent=2)+'\n')
+def execute(profile):
+    env=os.environ.copy()
+    index=(pg+local).index(profile)
+    name=f'native_e1_final_{index:02d}'
+    if profile in pg:
+        existing=subprocess.check_output(['docker','exec','ariadne-native-recovery-postgres','psql','-U','native_recovery','-d','postgres','-tAc',f"SELECT datname FROM pg_database WHERE datname='{name}'"],text=True).strip()
+        if not existing:
+            subprocess.run(['docker','exec','ariadne-native-recovery-postgres','psql','-U','native_recovery','-d','postgres','-c',f'CREATE DATABASE {name}'],check=True,stdout=subprocess.DEVNULL)
+        url=f'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/{name}'
+    else:
+        url=f'sqlite+aiosqlite:////tmp/{name}.db'
+    env.update(PREFECT_SERVER_DATABASE_CONNECTION_URL=url,PREFECT_API_DATABASE_CONNECTION_URL=url)
+    start=time.monotonic()
+    result=subprocess.run([sys.executable,str(GATE),profile,'final'],cwd=ROOT,env=env,capture_output=True,text=True)
+    Path(f'/tmp/native-epoch1-{profile}-driver.log').write_text(result.stdout+result.stderr)
+    return {'state':'PASS' if result.returncode==0 else 'FAIL','returncode':result.returncode,'seconds':round(time.monotonic()-start,3),'driver':f'/tmp/native-epoch1-{profile}-driver.log'}
+queues=[pg.copy(),pg.copy(),local.copy()]
+# Both PostgreSQL slots consume the same queue; local profiles use independent SQLite.
+shared_pg=pg.copy();active={};failed=False
+with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+    for slot in range(3):
+        queue=shared_pg if slot<2 else local
+        profile=queue.pop(0)
+        progress[profile]={'state':'RUNNING','slot':slot}
+        active[pool.submit(execute,profile)]=(profile,slot)
+    save()
+    while active:
+        done,_=concurrent.futures.wait(active,return_when=concurrent.futures.FIRST_COMPLETED)
+        for future in done:
+            profile,slot=active.pop(future)
+            try:
+                progress[profile]=future.result()
+            except Exception as error:
+                progress[profile]={'state':'FAIL','error':str(error)}
+            print(json.dumps({'profile':profile,**progress[profile]}),flush=True)
+            failed=failed or progress[profile]['state']!='PASS'
+            queue=shared_pg if slot<2 else local
+            if queue and not failed:
+                next_profile=queue.pop(0)
+                progress[next_profile]={'state':'RUNNING','slot':slot}
+                active[pool.submit(execute,next_profile)]=(next_profile,slot)
+            save()
+raise SystemExit(1 if failed or any(p['state']!='PASS'for p in progress.values()) else 0)

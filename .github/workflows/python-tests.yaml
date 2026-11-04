@@ -160,6 +160,9 @@ jobs:
               tests/test_native_execution_recovery_http.py
               tests/test_native_flow_recovery_http.py
               tests/test_native_finite_http.py
+              tests/test_native_mixed_flow_http.py
+              tests/test_native_worker_deployment_http.py
+              tests/test_native_worker_recovery_http.py
               tests/test_native_stream_http.py
               tests/test_native_stream_recovery_http.py
               tests/test_native_stream_client_package.py
@@ -250,6 +253,9 @@ jobs:
                 tests/test_native_execution_recovery_http.py
                 tests/test_native_flow_recovery_http.py
                 tests/test_native_finite_http.py
+                tests/test_native_mixed_flow_http.py
+                tests/test_native_worker_deployment_http.py
+                tests/test_native_worker_recovery_http.py
                 tests/test_native_stream_http.py
                 tests/test_native_stream_recovery_http.py
                 tests/test_native_stream_client_package.py
@@ -321,8 +327,8 @@ jobs:
     if: ${{ github.event_name != 'repository_dispatch' }}
     runs-on: ubuntu-latest
     name: Native stream tasks - python:3.12, ${{ matrix.database }}
-    # The 500-document whole-process matrix adds measured real HTTP recovery work.
-    timeout-minutes: 30
+    # Real 500-document process cuts and the 120-second orphan eligibility horizon.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -374,14 +380,21 @@ jobs:
           tests/test_native_execution_recovery_http.py
           tests/test_native_flow_recovery_http.py
           tests/test_native_finite_http.py
+          tests/test_native_mixed_flow_http.py
+          tests/test_native_worker_deployment_http.py
+          tests/test_native_worker_recovery_http.py
           tests/test_native_stream_code.py
           tests/client/test_stream_storage_native.py
-          -q --junitxml=native-stream-http.xml
+          tests/client/test_native_deployment_schemas.py
+          -n2 --dist worksteal -q --junitxml=native-stream-http.xml
       - name: Run native HTTP server contract
         if: matrix.database == 'postgres:17'
         run: >-
           uv run pytest tests/server/api/test_streams.py tests/server/api/test_stream_executions.py
-          -k 'not (test_backend_capability_error_has_stable_wire_shape or test_execution_claim_fails_closed_on_sqlite)'
+          tests/server/api/test_stream_finite_plan.py
+          tests/server/api/test_native_deployments.py
+          tests/server/api/test_native_worker_registration.py
+          -k 'not (test_backend_capability_error_has_stable_wire_shape or test_execution_claim_fails_closed_on_sqlite or test_finite_plan_fails_closed_on_sqlite or test_sqlite_enrollment_refuses_before_mutation)'
           -q --junitxml=native-stream-api.xml
       - name: Require SQLite HTTP capability and version refusal
         if: matrix.database == 'sqlite'
@@ -394,6 +407,13 @@ jobs:
           tests/server/api/test_stream_executions.py::test_execution_claim_rejects_boolean_generation_before_storage
           tests/server/api/test_stream_executions.py::test_ordinary_flow_exception_retries_remain_enabled
           tests/server/api/test_stream_executions.py::test_explicit_non_retriable_flow_failure_remains_final
+          tests/server/api/test_stream_finite_plan.py::test_finite_plan_fails_closed_on_sqlite
+          tests/server/api/test_native_deployments.py::test_sqlite_enrollment_refuses_before_mutation
+          tests/server/api/test_native_deployments.py::test_flow_run_cannot_override_deployment_declaration
+          tests/server/api/test_native_deployments.py::test_zero_retry_declaration_rolls_back_flow_run
+          tests/server/api/test_native_deployments.py::test_native_local_profile_rejects_custom_launch_configuration
+          tests/server/api/test_native_worker_registration.py
+          -k 'not test_concurrent_native_bind_preserves_pool_discovery_marker'
           -q --junitxml=native-stream-api.xml
       - name: Verify native storage migration upgrade and downgrade
         run: uv run pytest tests/server/database/test_stream_storage_migrations.py -q --junitxml=native-stream-migrations.xml
