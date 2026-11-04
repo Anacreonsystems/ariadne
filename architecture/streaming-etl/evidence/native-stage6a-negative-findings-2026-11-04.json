@@ -1,0 +1,105 @@
+{
+  "schema": "native-stage6a-negative-findings/v1",
+  "qualification": "Discovery observations only. Final acceptance uses unchanged-source final ledgers. Missing exploratory raw artifacts are explicitly not reconstructed.",
+  "retained_root_discovery": [
+    {
+      "path": "native-stage6a-discovery-ci-types-2026-11-04.json",
+      "sha256": "3b38112c81a9d709e9f0be2948f59f2c44da968c23a7f7b9f7f4c8da1a92c022"
+    },
+    {
+      "path": "native-stage6a-discovery-first-api-2026-11-04.log",
+      "sha256": "c7aab26848cc24abeff2c14eace600586ecfff43bbb87cb332f522acfdbd3daa"
+    },
+    {
+      "path": "native-stage6a-discovery-first-api-2026-11-04.xml",
+      "sha256": "ac57b9b813703f8ff8cfd49ec23e11622ab5199359f7cb99ca336d1d111054f8"
+    },
+    {
+      "path": "native-stage6a-discovery-http-client-2026-11-04.log",
+      "sha256": "0a4aa2100acad653aa233020a6d893e8820cbe1f0ab95975f4e5d8e41d410f7f"
+    },
+    {
+      "path": "native-stage6a-discovery-http-client-2026-11-04.xml",
+      "sha256": "d204f043c3f651f06f3dbb6388673c8d89e12b1df1b93a4e90bdd0a7af3680e4"
+    },
+    {
+      "path": "native-stage6a-discovery-http-expanded-2026-11-04.log",
+      "sha256": "3361e0a45c5d1b7f4ad6623fe5e2a7ca4429ab1422f1c1207ecaa1ae3d8aa52e"
+    },
+    {
+      "path": "native-stage6a-discovery-http-expanded-2026-11-04.xml",
+      "sha256": "a3fef3fd7a24386d01d82604ac06618c07d47596f1376c390ac129b8bdc3c84a"
+    },
+    {
+      "path": "native-stage6a-discovery-http-expanded-successor-2026-11-04.log",
+      "sha256": "fdcd2900dee22b9e24baa973b2a31f5b6e81f4d0c001f03ad40bb0f9a40594bc"
+    },
+    {
+      "path": "native-stage6a-discovery-http-expanded-successor-2026-11-04.xml",
+      "sha256": "e3f6bc840a1694c1892ba9b06839febc57e9f80a043cf830dea30bfdd53837b1"
+    },
+    {
+      "path": "native-stage6a-discovery-http-full-2026-11-04.log",
+      "sha256": "e60dffab3c32eee8cbad24f9e8299b4b49085e7d5f6bff0d2a7f82a53803f25c"
+    },
+    {
+      "path": "native-stage6a-discovery-http-full-2026-11-04.xml",
+      "sha256": "62c9d1fdca671ab3e3e649eea4544b646f895b66c19ee6de888b1e8a34c9a50e"
+    },
+    {
+      "path": "native-stage6a-discovery-recorder-2026-11-04.log",
+      "sha256": "0a7186e192351ea300b659c1b5c68fa53a89617d2ab93133fc04b6dfa689fd0a"
+    },
+    {
+      "path": "native-stage6a-discovery-recorder-2026-11-04.xml",
+      "sha256": "c3b7132f50156dc587f26cf787d6ec68fdfe0407e60c4aa6660cd3b8beb414eb"
+    },
+    {
+      "path": "native-stage6a-sqlite-api-initial-import-2026-11-04.log",
+      "sha256": "d312f5a991115039c49eb38e05c6653480bccd0bcc2ca4931637ac7e51093505"
+    }
+  ],
+  "findings": [
+    {
+      "kind": "source_review_and_executed_serializer_counterexample",
+      "finding": "Recursive exclusion of None strips a required null finite result; storing optional finite_items:null also breaks strict legacy response replay.",
+      "decision": "Use unset omission and omit the finite extension entirely for legacy response construction and journal storage.",
+      "evidence": "native-stage6a-null-serialization-counterexample-2026-11-04.json",
+      "adr": "ADR-0097-recursive-null-omission-in-recovery-responses.md"
+    },
+    {
+      "kind": "source_integrity_review",
+      "finding": "Receipt outcome initially included a temporary created_at/self-digest, preventing independent reproduction from the returned persisted receipt.",
+      "decision": "Canonical outcome binds manifest/flow/phase/key/task/operation/attempt/result digest, excluding timestamps/self-digest; verify persisted result size/SHA and outcome on every authority read. Independent HTTP digest assertions pass in the final finite profile.",
+      "raw_failed_runtime_claimed": false
+    },
+    {
+      "kind": "protocol_review",
+      "finding": "A lost completion acknowledgement followed by a late Failed could advance an attempt after an immutable success receipt.",
+      "decision": "Keep attempt exactness; reject lifecycle advancement and discard late failure events after receipt. Actual HTTP and real-recorder controls include both former-holder and current-holder future-timestamp Failed events."
+    },
+    {
+      "kind": "executed_test_fixture_error",
+      "finding": "First expanded HTTP discovery used an already-imported test module before missing helper imports were corrected; NameError(timedelta).",
+      "evidence": "native-stage6a-discovery-http-expanded-2026-11-04.log",
+      "decision": "Add the required imports and preserve the failed trial."
+    },
+    {
+      "kind": "executed_lifecycle_fixture_error",
+      "finding": "The next recorder test tried to start a replacement task before its normal FlowRun Running transition. The server correctly refused inactive authority.",
+      "evidence": "native-stage6a-discovery-http-expanded-successor-2026-11-04.log",
+      "decision": "Enter Running through the ordinary Flow API before the retry TaskRun transition; preserve the refusal trial."
+    },
+    {
+      "kind": "reported_exploratory_observation_without_raw_artifact",
+      "finding": "Server author reported SQLite38pass+regex-case assertion failure; PG38pass+same assertion failure; model2pass+transaction-catch assertion failure.",
+      "decision": "Test assertions corrected. These transcript-reported observations have no saved raw log/XML and are not used as acceptance evidence. Final76-source PG/SQLite/model gates are separate recorded runs."
+    },
+    {
+      "kind": "executed_adjunct_harness_import_error",
+      "finding": "Standalone SQLite API probe initially lacked the repository root on its import path for the captured RestartableAPI helper.",
+      "decision": "Set command-local PYTHONPATH=/workspace/ariadne; the unchanged captured probe then passed against migrated SQLite with zero data-plane rows.",
+      "evidence": "native-stage6a-sqlite-api-initial-import-2026-11-04.log"
+    }
+  ]
+}

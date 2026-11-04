@@ -139,6 +139,8 @@ graph TD
     A0033 --> A0034[ADR-0034: HTTP adapter - accepted]
     A0034 --> A0035[ADR-0035: Native source runtime - accepted]
     A0035 --> A0036[ADR-0036: Durable submission recovery - accepted]
+    A0036 --> A0037[ADR-0037: Mixed finite tasks - progress]
+    A0037 --> A0097[ADR-0097: Recursive null omission - rejected]
     A0094[ADR-0094: JSONB fidelity - rejected] -. evidence .-> A0033
     A0095[ADR-0095: Implicit FK lock order - rejected] -. evidence .-> A0033
     A0010 --> A0032
@@ -249,3 +251,12 @@ The [N1.5 hosted closure](../evidence/native-stage5c-hosted-successor-2026-11-03
 records PR 9 merged after 97 successful checks/five conditional skips, identical
 tested/merge source, successful native PostgreSQL and corrected Python 3.14
 logs, and the explicit test-only bridge. This earns no extra percentage.
+
+- [ADR-0037: Finite tasks around a streaming graph](ADR-0037-mixed-finite-and-streaming-tasks.md) — `progress`
+
+- [ADR-0097: Recursive null omission in recovery responses](ADR-0097-recursive-null-omission-in-recovery-responses.md) — `rejected`
+
+N1.6a [scoped acceptance](../evidence/native-stage6a-acceptance-2026-11-04.json)
+and [Principal review](../evidence/native-stage6a-principal-2026-11-04.json) close
+server/client finite authority at +0%. ADR-0037 remains in progress until the
+mixed SDK/runtime gate; earned foundation stays 50%.

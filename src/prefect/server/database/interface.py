@@ -217,6 +217,16 @@ class PrefectDBInterface(metaclass=DBSingleton):
         return orm_models.StreamSubmission
 
     @property
+    def StreamFiniteSubmission(self) -> type[orm_models.StreamFiniteSubmission]:
+        """An immutable finite Task submission manifest orm model"""
+        return orm_models.StreamFiniteSubmission
+
+    @property
+    def StreamFiniteReceipt(self) -> type[orm_models.StreamFiniteReceipt]:
+        """A durable finite Task result receipt orm model"""
+        return orm_models.StreamFiniteReceipt
+
+    @property
     def StreamExecutionAuthority(self) -> type[orm_models.StreamExecutionAuthority]:
         """The current native stream execution-generation authority orm model"""
         return orm_models.StreamExecutionAuthority

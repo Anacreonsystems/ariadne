@@ -1,0 +1,30 @@
+"""Compile the scoped A0 verdict without reclassifying discovery as acceptance."""
+from pathlib import Path
+import hashlib
+import json
+
+root=Path('/workspace/ariadne');ev=root/'architecture/streaming-etl/evidence'
+profiles=['finite-http','store-api','migrations','sqlite','recorder','native-http','flow-http','code','legacy-contract','kernel','client','flow-api','task-api','flow-engine','flow-policy','lease']
+def artifact(name):
+    return {'path':name,'sha256':hashlib.sha256((ev/name).read_bytes()).hexdigest()}
+freeze=json.loads((ev/'native-stage6a-source-freeze-2026-11-04.json').read_text());source=freeze['source_sha256'];assert len(source)==76 and freeze['verdict']=='PASS'
+items={};totals={key:0 for key in ('tests','passed','failure','error','skipped')}
+for profile in profiles:
+    name=f'native-stage6a-{profile}-final-2026-11-04.json';d=json.loads((ev/name).read_text());assert d['verdict']=='PASS',name
+    assert d['source_sha256_before']==d['source_sha256_after']==source,name
+    assert not d['source_drift'] and not d['source_inventory_drift'] and not d['unexpected_skip_or_xfail'],name
+    for kind in ('log','junit','expected_markers'):assert artifact(d[kind]['path'])==d[kind],(name,kind)
+    for key in totals:totals[key]+=d[key]
+    items[profile]={'ledger':artifact(name),**{key:d[key] for key in totals},'duration_seconds':d['duration_seconds']}
+for profile,count in [('finite-http',17),('store-api',94),('migrations',43),('sqlite',52),('native-http',209),('flow-http',17),('lease',1)]:assert items[profile]['tests']==count,profile
+assert all(hashlib.sha256((root/name).read_bytes()).hexdigest()==digest for name,digest in source.items())
+principal=json.loads((ev/'native-stage6a-principal-2026-11-04.json').read_text());assert principal['verdict']=='PASS_N1_6A_SCOPED' and not principal.get('conditions_remaining',[])
+assert principal['source_sha256']==source
+static=json.loads((ev/'native-stage6a-static-2026-11-04.json').read_text());assert static['verdict']=='PASS' and static['source_sha256']==source
+for item in static['artifacts'].values():assert artifact(item['path'])==item
+adjunct=json.loads((ev/'native-stage6a-sqlite-api-adjunct-2026-11-04.json').read_text())
+assert adjunct['verdict']=='PASS' and adjunct['source_sha256_before']==adjunct['source_sha256_after']==source
+assert all(item['code']=='UNSUPPORTED_BACKEND' for item in adjunct['routes']) and not any(adjunct['row_counts'].values())
+assert artifact(adjunct['probe']['path'])==adjunct['probe']
+record={'schema':'native-stage6a-acceptance/v1','verdict':'PASS_N1_6A_SCOPED','earned_native_foundation_percent':50,'percentage_delta':0,'parent_adr':'ADR-0037-mixed-finite-and-streaming-tasks.md','parent_adr_status':'progress','slice_status':'accepted','repository_base':freeze['repository_head'],'source_sha256':source,'totals':totals,'profiles':items,'principal':artifact('native-stage6a-principal-2026-11-04.json'),'static':artifact('native-stage6a-static-2026-11-04.json'),'freeze':artifact('native-stage6a-source-freeze-2026-11-04.json'),'negative_findings':artifact('native-stage6a-negative-findings-2026-11-04.json'),'sqlite_api_adjunct':artifact('native-stage6a-sqlite-api-adjunct-2026-11-04.json'),'sqlite_api_log':artifact('native-stage6a-sqlite-api-adjunct-2026-11-04.log'),'accepted_scope':['Separate immutable finite PREFIX/TAIL manifests and bounded JSON completion receipts in Prefect server, paired HTTP clients and schema migrations.','Prefix-only process-loss recovery preserves TaskRun identity, normal retry budget and durable result including JSON null; no artificial stream/EOF is allocated for finite work.','Signed old-holder and current-holder late failure events and HTTP lifecycle advancement cannot supersede accepted finite results.','Tail and Flow completion require exact durable stream EOF/finite outcomes; independent result/outcome SHA checks and quota/release/horizon refusals pass.','Legacy stream-only HTTP responses and exact replay keep their existing strict field shape.'],'not_claimed':['Ordinary direct finite Task invocation inside the enrolled Flow remains disabled until N1.6b. This is server/client authority groundwork, not a completed mixed-flow SDK.','The full four-TaskRun/two-channel mixed 500-document SDK matrix remains N1.6b; N1.5 stream-only whole-flow regression is rerun here.','No readiness increase, production-worker automation, branch/join/dynamic graph recovery, unbounded retention/HA/throughput guarantee.','External-effect idempotence and deterministic replay remain client responsibilities.'],'qualifications':['All sixteen selected profiles share exactly the same76-file source manifest.','The36legacy contract cases intentionally keep their prototype-backed adapter; native persistence/process proof comes from actual server/API/PG probes.','Only exact prior ordinary kernel/client skip-or-xfail cases and declared markers in unchanged Flow tests are accepted; native profiles have no skipped cases.','Reported exploratory server assertion mistakes without raw files are explicitly unarchived and excluded from acceptance; retained root failures/discovery are not promoted.']}
+(ev/'native-stage6a-acceptance-2026-11-04.json').write_text(json.dumps(record,indent=2)+'\n');print(json.dumps({'verdict':record['verdict'],'sources':len(source),'totals':totals,'foundation_percent':50,'delta':0}))

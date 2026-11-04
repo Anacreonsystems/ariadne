@@ -1,0 +1,53 @@
+"""Exercise new finite HTTP mutations on an actually migrated SQLite server."""
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from uuid import uuid4
+
+import httpx
+from tests.test_native_stream_recovery_http import RestartableAPI
+
+root=Path('/workspace/ariadne');evidence=root/'architecture/streaming-etl/evidence'
+freeze=json.loads((evidence/'native-stage6a-source-freeze-2026-11-04.json').read_text())['source_sha256']
+def source_hashes():
+    return {name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in freeze}
+before=source_hashes();assert before==freeze
+work=Path(tempfile.mkdtemp(prefix='ariadne-stage6a-sqlite-api-'));database=work/'platform.db'
+env=os.environ.copy()
+for name in ('PREFECT_API_DATABASE_CONNECTION_URL','PREFECT_SERVER_DATABASE_CONNECTION_URL'):
+    env.pop(name,None)
+env['PREFECT_SERVER_DATABASE_CONNECTION_URL']='sqlite+aiosqlite:///'+str(database)
+with (work/'migration.log').open('w') as log:
+    subprocess.run([sys.executable,'-m','prefect','server','database','upgrade','--yes'],cwd=root,env=env,stdout=log,stderr=subprocess.STDOUT,check=True,timeout=120)
+server=RestartableAPI(work);server.environment.update(env)
+server.environment['PREFECT_SERVER_API_AUTH_STRING']=server.auth
+server.environment['PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED']='false'
+server.environment['PREFECT_API_SERVICES_TASK_RUN_RECORDER_ENABLED']='false'
+flow_id,task_id=uuid4(),uuid4()
+requests=[('/streams/v1/finite/reserve',{'flow_run_id':str(flow_id),'phase':'PREFIX','submission_key':'prepare','task_name':'prepare','task_key':'prepare-v1','artifact_digest':'a'*64,'task_version':'v1','flow_version':'v1','parameters':{}}),('/streams/v1/finite/complete',{'flow_run_id':str(flow_id),'task_run_id':str(task_id),'operation_id':str(uuid4()),'run_count':1,'result':None})]
+results=[]
+try:
+    server.start()
+    with httpx.Client(base_url=server.url,auth=tuple(server.auth.split(':')),timeout=30) as client:
+        for path,body in requests:
+            response=client.post(server.url+path, json=body)
+            detail=response.json().get('detail',{})
+            assert detail.get('code')=='UNSUPPORTED_BACKEND',(path,response.status_code,response.text)
+            results.append({'route':path,'status_code':response.status_code,'code':detail['code']})
+finally:
+    server.stop();server.socket.close()
+with sqlite3.connect(database) as connection:
+    counts={name:connection.execute('SELECT count(*) FROM '+name).fetchone()[0] for name in ('task_run','stream_finite_submission','stream_finite_receipt','stream_partition')}
+    versions=[row[0] for row in connection.execute('SELECT version_num FROM alembic_version')]
+assert all(value==0 for value in counts.values()),counts
+assert 'a12d8e4f6c30' in versions,versions
+after=source_hashes();assert after==before
+record={'schema':'native-stage6a-sqlite-api-adjunct/v1','verdict':'PASS','captured_at_utc':datetime.now(timezone.utc).isoformat(),'routes':results,'row_counts':counts,'migration_heads':versions,'source_sha256_before':before,'source_sha256_after':after,'probe':{'path':Path(__file__).name,'sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},'scope':'Additional real HTTP/SQLite capability proof; captured adjunct, not a replacement for sixteen frozen-source profiles.'}
+(evidence/'native-stage6a-sqlite-api-adjunct-2026-11-04.json').write_text(json.dumps(record,indent=2)+'\n')
+print(json.dumps({'verdict':record['verdict'],'routes':results,'row_counts':counts,'migration_heads':versions}))

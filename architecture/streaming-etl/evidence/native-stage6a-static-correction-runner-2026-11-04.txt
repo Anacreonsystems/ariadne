@@ -1,0 +1,43 @@
+"""Require real exit status and diagnostics, rather than rounded completeness."""
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+import subprocess
+
+root = Path('/workspace/ariadne')
+ev = root / 'architecture/streaming-etl/evidence'
+baseline = json.loads((ev / 'native-stage6a-source-freeze-2026-11-04.json').read_text())['source_sha256']
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+def hashes():
+    return {p: digest(root / p) for p in baseline}
+before = hashes()
+env = os.environ | {'UV_PROJECT_ENVIRONMENT': '/tmp/ariadne-stage6a-types312'}
+def run(profile, args):
+    command = ['uv', 'run', 'pyright', *args]
+    result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
+    path = ev / f'native-stage6a-corrected-{profile}-2026-11-04.log'
+    path.write_text(result.stdout + result.stderr)
+    record = {'command': command, 'exit_code': result.returncode, 'log': {'path': path.name, 'sha256': digest(path)}}
+    if profile == 'public-types':
+        errors = [line for line in (result.stdout + result.stderr).splitlines() if ' - error:' in line]
+        record['diagnostic_errors'] = errors
+        record['completeness_score_line'] = next((line for line in result.stdout.splitlines() if line.startswith('Type completeness score:')), None)
+        record['pass'] = result.returncode == 0 and not errors and record['completeness_score_line'] == 'Type completeness score: 100%'
+    else:
+        report = json.loads(result.stdout)
+        record['summary'] = report['summary']
+        record['pass'] = result.returncode == 0 and report['summary']['filesAnalyzed'] > 0 and report['summary']['errorCount'] == 0
+    return profile, record
+with ThreadPoolExecutor(max_workers=2) as pool:
+    jobs = [pool.submit(run, 'public-types', ['--ignoreexternal', '--verifytypes', 'prefect']), pool.submit(run, 'ci-types', ['-p', 'pyrightconfig-ci.json', '--level', 'error', '--outputjson'])]
+    checks = dict(job.result() for job in jobs)
+after = hashes()
+record = {'schema': 'native-stage6a-static-correction/v1', 'captured_at_utc': datetime.now(timezone.utc).isoformat(), 'verdict': 'PASS' if before == after and all(c['pass'] for c in checks.values()) else 'FAIL', 'supersedes': 'The public type PASS asserted in native-stage6a-static-2026-11-04.json and inherited by its original acceptance was incorrect. Its retained raw log already contains the missing streams annotation error, despite the rounded 100% score. Functional profile evidence is unaffected. This record requires exit code zero and no error diagnostics.', 'environment': 'Python 3.12 / Pyright1.1.411. Initially locked --no-editable --group type-checking --no-dev, then default editable/dev sync as performed implicitly by the hosted uv run steps; isolated environment /tmp/ariadne-stage6a-types312. The exploratory no-sync/no-dev attempt is retained separately and is not acceptance.', 'checks': checks, 'source_sha256_before': before, 'source_sha256_after': after, 'source_drift': [p for p in before if before[p] != after[p]], 'baseline_deltas': [p for p in before if before[p] != baseline[p]]}
+path = ev / 'native-stage6a-static-correction-2026-11-04.json'
+path.write_text(json.dumps(record, indent=2) + '\n')
+print(json.dumps({'verdict': record['verdict'], 'checks': checks, 'source_drift': record['source_drift'], 'baseline_deltas': record['baseline_deltas']}))
+raise SystemExit(0 if record['verdict'] == 'PASS' else 1)

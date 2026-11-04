@@ -23,6 +23,10 @@ from prefect.server.database import (
     provide_database_interface,
 )
 from prefect.server.events.schemas.events import ReceivedEvent
+from prefect.server.models._stream_receipts import (
+    canonical_json_digest,
+    finite_receipt_outcome_digest,
+)
 from prefect.server.schemas.core import TaskRun, TaskRunPolicy
 from prefect.server.schemas.states import State
 from prefect.server.services.base import RunInEphemeralServers, Service
@@ -95,6 +99,17 @@ async def _authorized_stream_events(
             )
         ).all()
     }
+    finite_manifests = {
+        row.task_run_id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamFiniteSubmission).where(
+                    db.StreamFiniteSubmission.task_run_id.in_(task_ids),
+                    db.StreamFiniteSubmission.state == "ACTIVE",
+                )
+            )
+        ).all()
+    }
     task_flow_ids = dict(
         (
             await session.execute(
@@ -105,6 +120,7 @@ async def _authorized_stream_events(
         ).all()
     )
     flow_ids.update(row.flow_run_id for row in manifests.values())
+    flow_ids.update(row.flow_run_id for row in finite_manifests.values())
     flow_ids.update(
         flow_run_id for flow_run_id in task_flow_ids.values() if flow_run_id is not None
     )
@@ -156,15 +172,32 @@ async def _authorized_stream_events(
             )
         ).all()
     }
+    finite_receipts = {
+        row.finite_submission_id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamFiniteReceipt)
+                .where(
+                    db.StreamFiniteReceipt.finite_submission_id.in_(
+                        [manifest.id for manifest in finite_manifests.values()]
+                    )
+                )
+                .order_by(db.StreamFiniteReceipt.finite_submission_id)
+                .with_for_update(read=True)
+            )
+        ).all()
+    }
 
     decisions: dict[int, bool] = {}
     candidates: dict[UUID, list[tuple[ReceivedEvent, int, str]]] = {}
     native_task_ids: set[UUID] = set()
     for event, flow_id, task_id in event_scope:
         manifest = manifests.get(task_id)
+        finite_manifest = finite_manifests.get(task_id)
+        active_manifest = manifest or finite_manifest
         authoritative_flow_id = (
-            manifest.flow_run_id
-            if manifest is not None
+            active_manifest.flow_run_id
+            if active_manifest is not None
             else task_flow_ids.get(task_id, flow_id)
         )
         authority = authorities.get(authoritative_flow_id)
@@ -204,8 +237,22 @@ async def _authorized_stream_events(
                 task_run_payload.get("empirical_policy")
             ).model_dump(mode="json")
             manifest_policy = TaskRunPolicy.model_validate(
-                manifest.task_policy if manifest is not None else None
+                active_manifest.task_policy if active_manifest is not None else None
             ).model_dump(mode="json")
+            manifest_ready = False
+            if manifest is not None:
+                manifest_ready = authority.manifest_set_digest is not None
+            elif finite_manifest is not None:
+                manifest_ready = (
+                    finite_manifest.phase == "PREFIX"
+                    and authority.finite_prefix_manifest_digest
+                    == finite_manifest.manifest_digest
+                    and authority.finite_prefix_task_run_id
+                    == finite_manifest.task_run_id
+                ) or (
+                    finite_manifest.phase == "TAIL"
+                    and authority.manifest_set_digest is not None
+                )
             if (
                 (
                     authority.state != "ACTIVE"
@@ -216,15 +263,15 @@ async def _authorized_stream_events(
                 or generation != authority.generation
                 or holder_id != authority.holder_id
                 or key_id != authority.event_key_id
-                or authority.manifest_set_digest is None
                 or authority.prepared_generation != authority.generation
-                or manifest is None
-                or manifest.flow_run_id != authoritative_flow_id
-                or manifest.manifest_digest != manifest_digest
-                or task_run_payload.get("task_key") != manifest.task_key
-                or task_run_payload.get("dynamic_key") != manifest.dynamic_key
-                or task_run_payload.get("task_version") != manifest.task_version
-                or normalized_tags != manifest.tags
+                or not manifest_ready
+                or active_manifest is None
+                or active_manifest.flow_run_id != authoritative_flow_id
+                or active_manifest.manifest_digest != manifest_digest
+                or task_run_payload.get("task_key") != active_manifest.task_key
+                or task_run_payload.get("dynamic_key") != active_manifest.dynamic_key
+                or task_run_payload.get("task_version") != active_manifest.task_version
+                or normalized_tags != active_manifest.tags
                 or event_policy != manifest_policy
                 or type(payload_run_count) is not int
                 or payload_run_count != run_count
@@ -232,15 +279,51 @@ async def _authorized_stream_events(
                 or flow_run_run_count != authority.flow_run_run_count
             ):
                 raise ValueError("stale execution event")
+            finite_receipt = (
+                finite_receipts.get(finite_manifest.id)
+                if finite_manifest is not None
+                else None
+            )
+            finite_result_shape = (
+                canonical_json_digest(finite_receipt.result)
+                if finite_receipt is not None
+                else None
+            )
+            if finite_receipt is not None and (
+                finite_receipt.run_count != run_count
+                or state_type not in {"RUNNING", "COMPLETED"}
+                or finite_manifest is None
+                or finite_result_shape
+                != (finite_receipt.result_size, finite_receipt.result_digest)
+                or finite_receipt.outcome_digest
+                != finite_receipt_outcome_digest(
+                    flow_run_id=finite_manifest.flow_run_id,
+                    phase=finite_manifest.phase,
+                    submission_key=finite_manifest.submission_key,
+                    manifest_digest=finite_manifest.manifest_digest,
+                    task_run_id=finite_manifest.task_run_id,
+                    operation_id=finite_receipt.operation_id,
+                    run_count=finite_receipt.run_count,
+                    result_digest=finite_receipt.result_digest,
+                )
+            ):
+                raise ValueError("finite result event would advance a durable receipt")
             if state_type == "COMPLETED":
-                output = outputs.get(manifest.stream_id)
-                if (
-                    output is None
-                    or output.state != "COMPLETED"
-                    or output.producer_task_run_id != task_id
-                    or output.attempt != run_count
-                ):
-                    raise ValueError("TaskRun completed before durable stream EOF")
+                if manifest is not None:
+                    output = outputs.get(manifest.stream_id)
+                    if (
+                        output is None
+                        or output.state != "COMPLETED"
+                        or output.producer_task_run_id != task_id
+                        or output.attempt != run_count
+                    ):
+                        raise ValueError("TaskRun completed before durable stream EOF")
+                else:
+                    assert finite_manifest is not None
+                    if finite_receipt is None:
+                        raise ValueError(
+                            "TaskRun completed before durable finite result receipt"
+                        )
             witness = canonical_event_witness(
                 event_id=event.id,
                 event=event.event,

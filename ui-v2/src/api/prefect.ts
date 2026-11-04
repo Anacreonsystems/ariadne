@@ -931,6 +931,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/streams/v1/finite/reserve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reserve Finite Submission */
+        post: operations["reserve_finite_submission_streams_v1_finite_reserve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/finite/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Lookup Finite Submission */
+        post: operations["lookup_finite_submission_streams_v1_finite_lookup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/finite/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete Finite Submission */
+        post: operations["complete_finite_submission_streams_v1_finite_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v1/finite/{task_run_id}/receipt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Finite Receipt */
+        get: operations["read_finite_receipt_streams_v1_finite__task_run_id__receipt_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/streams/v1/create": {
         parameters: {
             query?: never;
@@ -11785,6 +11853,206 @@ export interface components {
             new_holder_event_public_key: string;
             death_witness: components["schemas"]["StreamExecutionDeathWitness"];
         };
+        /** StreamFiniteCompleteRequest */
+        StreamFiniteCompleteRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Run Count */
+            run_count: number;
+            result: components["schemas"]["JsonValue"];
+        };
+        /** StreamFiniteLookupRequest */
+        StreamFiniteLookupRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Submission Key */
+            submission_key: string;
+        };
+        /** StreamFiniteManifest */
+        StreamFiniteManifest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "PREFIX" | "TAIL";
+            /** Submission Key */
+            submission_key: string;
+            /** Manifest Digest */
+            manifest_digest: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /** Dynamic Key */
+            dynamic_key: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "ACTIVE" | "RELEASED";
+            /**
+             * Result State
+             * @enum {string}
+             */
+            result_state: "PENDING" | "COMPLETED";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** StreamFiniteManifestWitness */
+        StreamFiniteManifestWitness: {
+            /** Submission Key */
+            submission_key: string;
+            /** Manifest Digest */
+            manifest_digest: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "PREFIX" | "TAIL";
+        };
+        /** StreamFiniteReceipt */
+        StreamFiniteReceipt: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "PREFIX" | "TAIL";
+            /** Submission Key */
+            submission_key: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Run Count */
+            run_count: number;
+            result: components["schemas"]["JsonValue"];
+            /** Result Digest */
+            result_digest: string;
+            /** Outcome Digest */
+            outcome_digest: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** StreamFiniteReceiptWitness */
+        StreamFiniteReceiptWitness: {
+            /** Submission Key */
+            submission_key: string;
+            /** Manifest Digest */
+            manifest_digest: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "PREFIX" | "TAIL";
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /** Result Digest */
+            result_digest: string;
+        };
+        /** StreamFiniteRecoveryItem */
+        StreamFiniteRecoveryItem: {
+            /** Submission Key */
+            submission_key: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "PREFIX" | "TAIL";
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /** Task State */
+            task_state: string;
+            /** Current Run Count */
+            current_run_count: number;
+            /** Next Run Count */
+            next_run_count: number;
+            receipt?: components["schemas"]["StreamFiniteReceipt"] | null;
+        };
+        /** StreamFiniteReserveRequest */
+        StreamFiniteReserveRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "PREFIX" | "TAIL";
+            /** Submission Key */
+            submission_key: string;
+            /** Task Name */
+            task_name: string;
+            /** Task Key */
+            task_key: string;
+            /** Artifact Digest */
+            artifact_digest: string;
+            /** Task Version */
+            task_version: string;
+            /** Flow Version */
+            flow_version: string;
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Deployment Version */
+            deployment_version?: string | null;
+            /** Parameters */
+            parameters: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            task_policy?: components["schemas"]["TaskRunPolicy"];
+            /** Tags */
+            tags?: string[];
+            /** Labels */
+            labels?: {
+                [key: string]: boolean | number | string;
+            };
+        };
         /** StreamInfo */
         StreamInfo: {
             /**
@@ -11875,6 +12143,7 @@ export interface components {
             operation_id: string;
             /** Manifests */
             manifests: components["schemas"]["StreamManifestWitness"][];
+            finite_prefix?: components["schemas"]["StreamFiniteReceiptWitness"] | null;
         };
         /** StreamManifestSealResult */
         StreamManifestSealResult: {
@@ -12010,7 +12279,9 @@ export interface components {
              */
             operation_id: string;
             /** Manifests */
-            manifests: components["schemas"]["StreamManifestWitness"][];
+            manifests?: components["schemas"]["StreamManifestWitness"][];
+            /** Finite Manifests */
+            finite_manifests?: components["schemas"]["StreamFiniteManifestWitness"][] | null;
         };
         /** StreamRecoveryResult */
         StreamRecoveryResult: {
@@ -12028,6 +12299,8 @@ export interface components {
             operation_id: string;
             /** Items */
             items: components["schemas"]["StreamRecoveryItem"][];
+            /** Finite Items */
+            finite_items?: components["schemas"]["StreamFiniteRecoveryItem"][] | null;
             /** Outcome Digest */
             outcome_digest: string;
         };
@@ -16052,6 +16325,150 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StreamSubmissionManifest"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reserve_finite_submission_streams_v1_finite_reserve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamFiniteReserveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamFiniteManifest"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lookup_finite_submission_streams_v1_finite_lookup_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamFiniteLookupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamFiniteManifest"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_finite_submission_streams_v1_finite_complete_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamFiniteCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamFiniteReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_finite_receipt_streams_v1_finite__task_run_id__receipt_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                task_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamFiniteReceipt"];
                 };
             };
             /** @description Validation Error */

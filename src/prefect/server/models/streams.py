@@ -38,7 +38,7 @@ from prefect.server.schemas.streams import (
     StreamSubmissionManifest,
     StreamSubmissionReserveRequest,
 )
-from prefect.types import DateTime
+from prefect.types._datetime import now
 
 MAX_STREAMS_PER_FLOW = 128
 MAX_SUBMISSIONS_PER_FLOW = 128
@@ -558,11 +558,23 @@ class NativeStreamStore:
                     ).where(self.db.StreamSubmission.flow_run_id == request.flow_run_id)
                 )
             ).one()
+            finite_bytes = await session.scalar(
+                sa.select(
+                    sa.func.coalesce(
+                        sa.func.sum(self.db.StreamFiniteSubmission.canonical_size), 0
+                    )
+                ).where(
+                    self.db.StreamFiniteSubmission.flow_run_id == request.flow_run_id
+                )
+            )
             if count >= MAX_SUBMISSIONS_PER_FLOW:
                 raise NativeStreamError(
                     "CAPACITY", "FlowRun submission capacity is exhausted"
                 )
-            if total_bytes + len(canonical) > MAX_SUBMISSION_BYTES_PER_FLOW:
+            if (
+                total_bytes + (finite_bytes or 0) + len(canonical)
+                > MAX_SUBMISSION_BYTES_PER_FLOW
+            ):
                 raise NativeStreamError(
                     "CAPACITY", "FlowRun submission metadata capacity is exhausted"
                 )
@@ -1666,6 +1678,14 @@ class NativeStreamStore:
                     .with_for_update()
                 )
             ).all()
+            finite_manifests = (
+                await session.scalars(
+                    sa.select(self.db.StreamFiniteSubmission)
+                    .where(self.db.StreamFiniteSubmission.flow_run_id == flow_run_id)
+                    .order_by(self.db.StreamFiniteSubmission.submission_key)
+                    .with_for_update()
+                )
+            ).all()
             streams = (
                 await session.scalars(
                     sa.select(self.db.StreamPartition)
@@ -1693,6 +1713,13 @@ class NativeStreamStore:
                     self.db.StreamRecord.stream_id.in_(ids)
                 )
             )
+            await session.execute(
+                sa.delete(self.db.StreamFiniteReceipt).where(
+                    self.db.StreamFiniteReceipt.finite_submission_id.in_(
+                        [manifest.id for manifest in finite_manifests]
+                    )
+                )
+            )
             count = 0
             for stream in streams:
                 if not stream.released:
@@ -1703,8 +1730,12 @@ class NativeStreamStore:
                         )
                     stream.released = True
                     stream.record_count, stream.byte_count = 0, 0
-            released_at = DateTime.now("UTC")
+            released_at = now("UTC")
             for manifest in manifests:
+                if manifest.state == "ACTIVE":
+                    manifest.state = "RELEASED"
+                    manifest.released_at = released_at
+            for manifest in finite_manifests:
                 if manifest.state == "ACTIVE":
                     manifest.state = "RELEASED"
                     manifest.released_at = released_at

@@ -8,6 +8,17 @@ Each time a database migration is written, an entry is included here with:
 
 This gives us a history of changes and will create merge conflicts if two migrations are made at once, flagging situations where a branch needs to be updated before merging.
 
+# Add bounded finite Task manifests and receipts
+SQLite: `a12d8e4f6c30`
+Postgres: `e41c7b6d2a90`
+
+Adds one immutable PREFIX and one immutable TAIL Task slot per enrolled FlowRun,
+bounded canonical parameters and result receipts, and a finite-prefix execution
+anchor. The upgrade does not enroll or backfill existing FlowRuns. Downgrading
+drops finite receipts, manifests, and the prefix anchor; existing stream
+manifests and execution-generation authority remain, but mixed finite/stream
+recovery is unavailable.
+
 # Add native stream unsealed-abort receipts
 SQLite: `b86f2d7e0c54`
 Postgres: `a75e1c6d9b43`

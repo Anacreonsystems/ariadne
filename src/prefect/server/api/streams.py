@@ -8,6 +8,7 @@ from fastapi import Depends, HTTPException, Query, status
 
 from prefect.server.api.stream_execution_dependencies import ExecutionCredentials
 from prefect.server.database import PrefectDBInterface, provide_database_interface
+from prefect.server.models.finite_submissions import NativeFiniteStore
 from prefect.server.models.stream_executions import (
     abort_unsealed_execution,
     claim_execution,
@@ -31,6 +32,11 @@ from prefect.server.schemas.streams import (
     StreamExecutionBinding,
     StreamExecutionClaimRequest,
     StreamExecutionTakeoverRequest,
+    StreamFiniteCompleteRequest,
+    StreamFiniteLookupRequest,
+    StreamFiniteManifest,
+    StreamFiniteReceipt,
+    StreamFiniteReserveRequest,
     StreamInfo,
     StreamManifestSealRequest,
     StreamManifestSealResult,
@@ -126,7 +132,7 @@ async def abort_unsealed_stream_execution(
         raise _stream_http_error(error) from error
 
 
-@router.post("/executions/prepare-recovery")
+@router.post("/executions/prepare-recovery", response_model_exclude_unset=True)
 async def prepare_stream_recovery(
     request: StreamRecoveryPrepareRequest,
     db: Database,
@@ -167,6 +173,40 @@ async def lookup_submission(
     db: Database,
 ) -> StreamSubmissionManifest:
     return await _call(NativeStreamStore(db).lookup_submission(request))
+
+
+@router.post("/finite/reserve")
+async def reserve_finite_submission(
+    request: StreamFiniteReserveRequest,
+    db: Database,
+    execution: ExecutionCredentials,
+) -> StreamFiniteManifest:
+    return await _call(NativeFiniteStore(db, execution).reserve(request))
+
+
+@router.post("/finite/lookup")
+async def lookup_finite_submission(
+    request: StreamFiniteLookupRequest,
+    db: Database,
+) -> StreamFiniteManifest:
+    return await _call(NativeFiniteStore(db).lookup(request))
+
+
+@router.post("/finite/complete")
+async def complete_finite_submission(
+    request: StreamFiniteCompleteRequest,
+    db: Database,
+    execution: ExecutionCredentials,
+) -> StreamFiniteReceipt:
+    return await _call(NativeFiniteStore(db, execution).complete(request))
+
+
+@router.get("/finite/{task_run_id:uuid}/receipt")
+async def read_finite_receipt(
+    task_run_id: UUID,
+    db: Database,
+) -> StreamFiniteReceipt:
+    return await _call(NativeFiniteStore(db).receipt(task_run_id))
 
 
 @router.post("/create")

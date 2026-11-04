@@ -468,6 +468,14 @@ async def test_takeover_uses_retry_policy_and_fences_old_holder(db, flow_run):
             )
         )
         assert authority is not None and authority.prepared_generation == 2
+        attempt = await session.scalar(
+            sa.select(db.StreamExecutionAttempt).where(
+                db.StreamExecutionAttempt.flow_run_id == flow_run.id,
+                db.StreamExecutionAttempt.generation == 2,
+            )
+        )
+        assert attempt is not None and attempt.recovery_outcome is not None
+        assert "finite_items" not in attempt.recovery_outcome
 
     drift = recovery_request.model_copy(update={"operation_id": uuid4()})
     async with db.session_context(begin_transaction=True) as session:

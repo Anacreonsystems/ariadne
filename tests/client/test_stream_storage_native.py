@@ -26,6 +26,9 @@ from prefect.settings import PREFECT_CLIENT_CSRF_SUPPORT_ENABLED, temporary_sett
 from prefect.streams import StreamProtocolError, StreamRecord
 
 REQUEST_SCHEMA_NAMES = (
+    "StreamFiniteReserveRequest",
+    "StreamFiniteLookupRequest",
+    "StreamFiniteCompleteRequest",
     "StreamSubmissionReserveRequest",
     "StreamSubmissionLookupRequest",
     "StreamCreateRequest",
@@ -48,6 +51,11 @@ REQUEST_SCHEMA_NAMES = (
 )
 
 PUBLIC_WIRE_SCHEMA_NAMES = (
+    "StreamFiniteManifest",
+    "StreamFiniteReceipt",
+    "StreamFiniteManifestWitness",
+    "StreamFiniteReceiptWitness",
+    "StreamFiniteRecoveryItem",
     "StreamExecutionCredentials",
     "StreamExecutionDeathWitness",
     "StreamExecutionClaimRequest",
@@ -74,6 +82,10 @@ PUBLIC_WIRE_SCHEMA_NAMES = (
 )
 
 PUBLIC_STREAM_METHODS = (
+    "reserve_stream_finite_submission",
+    "read_stream_finite_submission",
+    "complete_stream_finite_task",
+    "read_stream_finite_receipt",
     "claim_stream_execution",
     "takeover_stream_execution",
     "seal_stream_manifest",
