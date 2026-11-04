@@ -1,6 +1,6 @@
 # ADR-0039: Native streaming progress projections
 
-- Status: `progress`
+- Status: `accepted`
 - Date: 2026-11-04
 - Owners: ETL Architect / HighLoad Principal, server and UI maintainers
 - Epoch: [Native integration epoch 1](../epochs/epoch-01-native-prefect.md), N1.9
@@ -110,23 +110,23 @@ and its real PostgreSQL controls govern server-side enforcement.
 
 ## Acceptance criteria
 
-- [ ] As a user, I can inspect generation, worker, launch/lifecycle state,
+- [x] As a user, I can inspect generation, worker, launch/lifecycle state,
   completed-through, in-flight input, lag, EOF and finite receipt status with
   an explicit observation time.
-- [ ] As a user, I can request native drain/cancellation with a generation-bound
+- [x] As a user, I can request native drain/cancellation with a generation-bound
   command, safely retry an unconfirmed response and cancel a run before worker
   enrollment through ordinary orchestration.
-- [ ] As a user, I can follow each streaming or finite task to its existing
+- [x] As a user, I can follow each streaming or finite task to its existing
   TaskRun and distinguish pending work from accepted completion.
-- [ ] As a system, I can return the projection from bounded control/header
+- [x] As a system, I can return the projection from bounded control/header
   reads without payloads, results, parameters or private/process credentials.
-- [ ] As a user, I got named native capacity/lifecycle errors while ordinary
+- [x] As a user, I got named native capacity/lifecycle errors while ordinary
   string errors remain unchanged and malformed errors do not echo client input.
-- [ ] As a developer, I got actual-server OpenAPI types, API/component tests,
+- [x] As a developer, I got actual-server OpenAPI types, API/component tests,
   accessible loading/error states, Storybook cases and a passing UI build.
-- [ ] As a user, I got ordinary FlowRun UI regression coverage and no new
+- [x] As a user, I got ordinary FlowRun UI regression coverage and no new
   projection calls for runs without the native capability.
-- [ ] As a user, I can follow TaskRun links while graph work is pending without
+- [x] As a user, I can follow TaskRun links while graph work is pending without
   old callbacks mutating destroyed elements, proven by the full owned-lifecycle
   gate in [ADR-0041](ADR-0041-owned-graph-lifecycle-during-navigation.md).
 
@@ -219,9 +219,8 @@ navigation instead of assuming a non-HTML request gets SPA fallback.
 
 The common [local epoch acceptance](../evidence/native-epoch1-local-acceptance-2026-11-04.json)
 and [independent review](../evidence/native-epoch1-principal-local-2026-11-04.json)
-now pass. This ADR remains `progress` until hosted CI and the final graph/status
-closure in [ADR-0040](ADR-0040-native-integration-acceptance-and-operations.md)
-pass.
+pass. Hosted CI and the final graph/status closure in
+[ADR-0040](ADR-0040-native-integration-acceptance-and-operations.md) also pass.
 The [task registry](../todo.md), [sprint board](../sprint_board.md) and
 [epoch criteria](../epochs/epoch-01-native-prefect.md) remain authoritative for
 delivery readiness.
@@ -355,3 +354,55 @@ initialization wait. A global promise-rejection protocol is outside this
 agreement. The local result adds no streaming capability or readiness
 percentage; hosted UI-only CI and status closure remain governed by
 [ADR-0040](ADR-0040-native-integration-acceptance-and-operations.md).
+
+## Complete hosted suite and qualified local controls
+
+The [final UI acceptance](../evidence/native-stage9-ui-error-compat-successor-2026-11-04/acceptance.json)
+uses the complete four hosted unit shards at `aa131ce`, with 3,125 passing
+tests, two predeclared TODOs and zero failures or new skips across 366 files.
+Their unique file union and every per-file count match the unchanged 42-path
+source collection. The
+[canonical hosted proof](../evidence/native-stage9-ui-error-compat-successor-2026-11-04/hosted/hosted-canonical-coverage.json)
+retains all four raw logs. The workflow uploads no unit JUnit artifacts; its
+per-file PASS logs and the same-source collection establish completeness.
+This satisfies the agreed complete-shards-or-full-suite criterion.
+
+Both local full-suite runs remain failed observations. The first recorded two
+1 s count-query waits; the controlled four-worker run recorded one 5 s test
+deadline in an unchanged synchronous automation label test. Their exact raw
+logs and XML remain in discovery. The two affected files pass unchanged in
+isolation and in the hosted suite. An additional 46-case external diagnostic
+passes the five new regression files together with the automation control;
+after each file it verifies real timers and restored Date, timeout, console,
+Application prototype and event-subscription method identities. The automation
+component's local production import closure contains no graph modules. These
+are resource-sensitive timeout observations; a CPU root cause is not proven.
+No source, assertion or timeout was changed to obtain these controls.
+
+The combined gate also retains 134 affected native/graph cases, 36 focused
+ownership cases, 33 Chromium story cases, static/type checks and the production
+build. Three clean cold-browser observations read one fresh eight-document
+real deployment through context/browser close. They are observations of one
+pipeline execution. A deliberately injected late exception fails the detector
+with exactly that exception. The served entry, transport, worker and graph
+bytes match the fresh package. The original pending record, intermediate
+snapshots and earlier acceptance records remain immutable. This ADR stays
+`progress` pending the common final review and status closure in
+[ADR-0040](ADR-0040-native-integration-acceptance-and-operations.md) and
+[ADR-0041](ADR-0041-owned-graph-lifecycle-during-navigation.md).
+
+## Final native foundation acceptance
+
+The [final source-bound acceptance](../evidence/native-epoch1-final-acceptance-2026-11-04.json)
+and its linked independent review, hosted CI and retained first failures
+close the criteria of this decision. All implementation and acceptance
+tasks for this selected scope are complete. Earlier planning and local-only
+observations remain historical records.
+
+The accepted profile is finite versioned top-level Python code, a finite
+prefix and tail around a single-source linear stream graph, PostgreSQL 17
+and trusted same-host Linux/PID-namespace process recovery. There are at
+most 128 ACTIVE native runs per work pool. Application code owns external
+effect idempotency. General DAG/partition support, cross-host recovery,
+production HA, performance SLOs and a new 72-hour native campaign are
+outside this accepted foundation.

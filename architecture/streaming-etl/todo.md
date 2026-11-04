@@ -5,7 +5,7 @@ completion does not make an ADR `accepted`; evidence for every criterion in
 the declared ADR scope must be linked back to it.
 
 Current direction: [Native integration epoch 1](epochs/epoch-01-native-prefect.md)
-is `progress`, with **50% earned native foundation readiness** after N1.5. Its [first-stage contract](adr/ADR-0032-native-task-stream-contract.md)
+is `accepted`, with **100% earned native foundation readiness** for the selected scope. Its [first-stage contract](adr/ADR-0032-native-task-stream-contract.md)
 is accepted for its native Task SDK/engine scope with real HTTP/PostgreSQL
 checks. The first sprint earned its planned 10% share after the complete
 [Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json) passed.
@@ -91,9 +91,8 @@ earn no percentage separately. All tasks trace to
 ## Native epoch 1 — Stage 5 mixed finite/stream delivery
 
 All tasks trace to [ADR-0037](adr/ADR-0037-mixed-finite-and-streaming-tasks.md).
-N1.6a is a server/client authority slice (+0%, earned readiness stays 50%).
-N1.6b is in progress and earns +10% only after complete mixed SDK/process
-acceptance.
+N1.6a was a server/client authority slice (+0%, readiness stayed 50% at its gate).
+N1.6b is accepted after complete mixed SDK/process acceptance, earning its +10%.
 
 The [N1.6a hosted closure](evidence/native-stage6a-hosted-successor-2026-11-04.json)
 records merged PR 11 and 423 PostgreSQL/88 SQLite selected cases with zero skips.
@@ -107,38 +106,38 @@ refine NI1-054 without claiming that the mixed SDK is implemented.
 | NI1-051 | `done` | NI1-050 | Separate finite bindings/receipts, staged execution anchor and paired migrations. As a system, I can preserve TaskRun identity without fake stream IDs or EOF. |
 | NI1-052 | `done` | NI1-051 | Fenced reserve/complete/lookup/recovery HTTP API and paired clients. As a user, I can exactly replay finite progress under current generation authority. |
 | NI1-053 | `done` | NI1-051, NI1-052 | Real API/PostgreSQL hostile matrix, migration parity and independent A review. As a system, I got [corrected scoped acceptance](evidence/native-stage6a-corrected-acceptance-2026-11-04.json) and [Principal review](evidence/native-stage6a-corrected-principal-2026-11-04.json); earned readiness remains 50%. |
-| NI1-054 | `progress` | NI1-053 | Direct finite Task invocation around the linear graph, durable-state selection of first seal/recovery, existing-tail witness discovery, sync/async parity and named early refusals. As a developer, I can prepare and summarize the stream in one FlowRun. |
-| NI1-055 | `progress` | NI1-054 | Real mixed 500-document process-loss matrix. As a user, I got four stable TaskRuns, two channels, receipt-based finite bypass and first-incomplete document recovery. |
-| NI1-056 | `progress` | NI1-055 | Ordinary-flow regression, evidence graph and independent combined acceptance. As a system, I can close ADR-0037 and earn the planned 60% milestone only after all criteria pass. |
+| NI1-054 | `done` | NI1-053 | Direct finite Task invocation around the linear graph, durable-state selection of first seal/recovery, existing-tail witness discovery, sync/async parity and named early refusals. As a developer, I can prepare and summarize the stream in one FlowRun. |
+| NI1-055 | `done` | NI1-054 | Real mixed 500-document process-loss matrix. As a user, I got four stable TaskRuns, two channels, receipt-based finite bypass and first-incomplete document recovery. |
+| NI1-056 | `done` | NI1-055 | Ordinary-flow regression, evidence graph and independent combined acceptance. As a system, I can close ADR-0037 and earn the planned 60% milestone only after all criteria pass. |
 
 ## Native epoch 1 — deployment, worker lifecycle and final acceptance
 
 All remaining tasks trace to
 [ADR-0038](adr/ADR-0038-native-deployment-worker-lifecycle.md). They extend the
 existing Prefect server, worker and work-pool path. They do not add an external
-controller or claim production HA. Current earned readiness remains 50% until
-N1.6b passes.
+controller or claim production HA. The final selected-profile gate now closes
+N1.6b–N1.10 and earns 100% of the bounded foundation.
 
 | ID | State | Depends | Deliverable and acceptance criteria |
 | --- | --- | --- | --- |
-| NI1-060 | `progress` | NI1-056 | Typed native Flow capability and immutable deployment/FlowRun protocol-profile digest. As a developer, I can declare the bounded profile before launch, and changed or unsupported declarations refuse before DATA. |
-| NI1-061 | `progress` | NI1-060 | Server worker-enrollment and exact-replay launch operation before Flow `Running`. As a system, I can bind work pool, worker, generation and one concurrency slot without putting credentials in parameters or events. |
-| NI1-062 | `progress` | NI1-061 | Bounded inherited-FD credential transport and actual work-pool launch. As a user, I can launch the mixed Flow through an ordinary Prefect deployment while ordinary deployments remain unchanged. |
-| NI1-063 | `progress` | NI1-060…062 | N1.7 real HTTP/PostgreSQL/deployment gate and independent review. As a system, I got declaration, version and secret-leak negative controls before earning 70%. |
-| NI1-070 | `progress` | NI1-063 | Durable Linux process identity and single-use death-verification operation. As a system, I can distinguish the recorded child from PID reuse and refuse timeout-only takeover. |
-| NI1-071 | `progress` | NI1-070 | One-winner generation replacement with stale-holder fencing and slot continuity. As a user, I got the same FlowRun, TaskRuns and channels after confirmed process loss. |
-| NI1-072 | `progress` | NI1-071 | Authenticated cancellation and drain with replayable commands. As a user, I can stop new admission, drain accepted work through EOF/tail, or cancel and reject later writes. |
-| NI1-073 | `progress` | NI1-070…072 | Worker/server restart, foreign PID, reused PID, live-old-child and retry-budget hostile matrix. As a system, I got no duplicate launch, double slot or timeout-as-death path. |
-| NI1-074 | `progress` | NI1-073 | N1.8 independent replacement/lifecycle acceptance. As a system, I got the selected Linux local-process profile reviewed before earning 85%. |
-| NI1-080 | `progress` | NI1-074 | Bounded authenticated progress/lifecycle projections and native UI. As a user, I can inspect generation, owner, positions, lag, EOF and receipts without payloads or capabilities. |
-| NI1-081 | `progress` | NI1-080 | SDK/server/worker/deployment version compatibility and paired migration gate. As a developer, I can observe a named pre-DATA refusal for mixed versions or code drift. |
-| NI1-082 | `progress` | NI1-080, NI1-081 | Selected-profile manifest/channel/receipt/projection/log and engine-owned buffer bounds and SQLite fail-closed controls. As a system, I got explicit capacity limits without a throughput or HA claim. |
-| NI1-083 | `progress` | NI1-082 | N1.9 projection/compatibility/resource acceptance. As a user, I got an operational boundary and independent review before earning 90%. |
-| NI1-090 | `progress` | NI1-083 | Actual work-pool mixed deployment in sync and async profiles. As a developer, I can run prefix, source, operator and tail without a test launcher or prototype adapter. |
-| NI1-091 | `progress` | NI1-090 | End-to-end retry, lost-response, confirmed replacement, server restart, drain and cancellation cuts with PostgreSQL oracles. As a user, I got exact first-incomplete continuation and terminal lifecycle. |
-| NI1-092 | `progress` | NI1-091 | Ordinary Flow/Task/generator, package, migration, client/server, UI and resource regression. As a system, I got no native-lane skips and no ordinary-runtime regression. |
-| NI1-092a | `progress` | NI1-080, NI1-092 | [Owned UI graph lifecycle](adr/ADR-0041-owned-graph-lifecycle-during-navigation.md). As a user, I can navigate to a TaskRun without queued layout, late data or stale subscriptions mutating a destroyed scene; real Pixi/throttle, stop/start, full UI and post-close packaged-browser gates pass. No extra foundation percentage. |
-| NI1-093 | `progress` | NI1-092 | Source-bound final evidence, [runbook and independent epoch review](adr/ADR-0040-native-integration-acceptance-and-operations.md). As a user, I got the bounded native-foundation acceptance and its explicit non-HA/non-performance limits before 100%. |
+| NI1-060 | `done` | NI1-056 | Typed native Flow capability and immutable deployment/FlowRun protocol-profile digest. As a developer, I can declare the bounded profile before launch, and changed or unsupported declarations refuse before DATA. |
+| NI1-061 | `done` | NI1-060 | Server worker-enrollment and exact-replay launch operation before Flow `Running`. As a system, I can bind work pool, worker, generation and one concurrency slot without putting credentials in parameters or events. |
+| NI1-062 | `done` | NI1-061 | Bounded inherited-FD credential transport and actual work-pool launch. As a user, I can launch the mixed Flow through an ordinary Prefect deployment while ordinary deployments remain unchanged. |
+| NI1-063 | `done` | NI1-060…062 | N1.7 real HTTP/PostgreSQL/deployment gate and independent review. As a system, I got declaration, version and secret-leak negative controls before earning 70%. |
+| NI1-070 | `done` | NI1-063 | Durable Linux process identity and single-use death-verification operation. As a system, I can distinguish the recorded child from PID reuse and refuse timeout-only takeover. |
+| NI1-071 | `done` | NI1-070 | One-winner generation replacement with stale-holder fencing and slot continuity. As a user, I got the same FlowRun, TaskRuns and channels after confirmed process loss. |
+| NI1-072 | `done` | NI1-071 | Authenticated cancellation and drain with replayable commands. As a user, I can stop new admission, drain accepted work through EOF/tail, or cancel and reject later writes. |
+| NI1-073 | `done` | NI1-070…072 | Worker/server restart, foreign PID, reused PID, live-old-child and retry-budget hostile matrix. As a system, I got no duplicate launch, double slot or timeout-as-death path. |
+| NI1-074 | `done` | NI1-073 | N1.8 independent replacement/lifecycle acceptance. As a system, I got the selected Linux local-process profile reviewed before earning 85%. |
+| NI1-080 | `done` | NI1-074 | Bounded authenticated progress/lifecycle projections and native UI. As a user, I can inspect generation, owner, positions, lag, EOF and receipts without payloads or capabilities. |
+| NI1-081 | `done` | NI1-080 | SDK/server/worker/deployment version compatibility and paired migration gate. As a developer, I can observe a named pre-DATA refusal for mixed versions or code drift. |
+| NI1-082 | `done` | NI1-080, NI1-081 | Selected-profile manifest/channel/receipt/projection/log and engine-owned buffer bounds and SQLite fail-closed controls. As a system, I got explicit capacity limits without a throughput or HA claim. |
+| NI1-083 | `done` | NI1-082 | N1.9 projection/compatibility/resource acceptance. As a user, I got an operational boundary and independent review before earning 90%. |
+| NI1-090 | `done` | NI1-083 | Actual work-pool mixed deployment in sync and async profiles. As a developer, I can run prefix, source, operator and tail without a test launcher or prototype adapter. |
+| NI1-091 | `done` | NI1-090 | End-to-end retry, lost-response, confirmed replacement, server restart, drain and cancellation cuts with PostgreSQL oracles. As a user, I got exact first-incomplete continuation and terminal lifecycle. |
+| NI1-092 | `done` | NI1-091 | Ordinary Flow/Task/generator, package, migration, client/server, UI and resource regression. As a system, I got no native-lane skips and no ordinary-runtime regression. |
+| NI1-092a | `done` | NI1-080, NI1-092 | [Owned UI graph lifecycle](adr/ADR-0041-owned-graph-lifecycle-during-navigation.md). As a user, I can navigate to a TaskRun without queued layout, late data or stale subscriptions mutating a destroyed scene; real Pixi/throttle, stop/start, full UI and post-close packaged-browser gates pass. No extra foundation percentage. |
+| NI1-093 | `done` | NI1-092 | Source-bound final evidence, [runbook and independent epoch review](adr/ADR-0040-native-integration-acceptance-and-operations.md). As a user, I got the bounded native-foundation acceptance and its explicit non-HA/non-performance limits before 100%. |
 
 ## Protocol epoch 2 — short experimental delivery — target 100%, earned 100%
 
@@ -748,3 +747,19 @@ broader technical-ADR production criteria remain separate open work.
 
 Final sign-off: [architecture review](evidence/postgres-r5b-architecture-review-2026-10-26.json)
 and [documentation graph](evidence/adr-graph-final-2026-10-26.json).
+
+## Final native foundation acceptance
+
+The [final source-bound acceptance](evidence/native-epoch1-final-acceptance-2026-11-04.json)
+and its linked independent review, hosted CI and retained first failures
+close the criteria of this decision. All implementation and acceptance
+tasks for this selected scope are complete. Earlier planning and local-only
+observations remain historical records.
+
+The accepted profile is finite versioned top-level Python code, a finite
+prefix and tail around a single-source linear stream graph, PostgreSQL 17
+and trusted same-host Linux/PID-namespace process recovery. There are at
+most 128 ACTIVE native runs per work pool. Application code owns external
+effect idempotency. General DAG/partition support, cross-host recovery,
+production HA, performance SLOs and a new 72-hour native campaign are
+outside this accepted foundation.

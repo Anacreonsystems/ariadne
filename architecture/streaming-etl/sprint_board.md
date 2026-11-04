@@ -1,7 +1,7 @@
 # Streaming ETL sprint board
 
 Current product cycle: [Native integration epoch 1](epochs/epoch-01-native-prefect.md),
-`progress`, **50% earned native foundation readiness** after N1.5. The
+`accepted`, **100% earned native foundation readiness** for the selected scope. The
 [first-stage ADR](adr/ADR-0032-native-task-stream-contract.md) is accepted for
 its scoped contract gate. Implementation was requested on 2026-11-01 with frequent tests
 against the actual runtime and storage.
@@ -18,14 +18,14 @@ against the actual runtime and storage.
 | N1.5b — Execution fencing and lifecycle | `done` | 40% | +0% | NI1-043…045 | [1,724-case scoped acceptance](evidence/native-stage5b-acceptance-2026-11-03.json) and independent review: generation fence, signed events and normal retry preparation; no SDK reconstruction. |
 | N1.5c — Whole-worker reconstruction gate | `done` | 50% | +10% | NI1-046…048 | [2,457-case frozen acceptance](evidence/native-stage5c-acceptance-2026-11-03.json) and [Principal review](evidence/native-stage5c-principal-2026-11-03.json) pass; five 500-document whole-process cuts retain the same TaskRuns/channels. Bounded selected-launcher profile, not production worker automation. |
 | N1.6a — Finite authority and receipts | `done` | 50% | +0% | NI1-050…053 | [corrected scoped acceptance](evidence/native-stage6a-corrected-acceptance-2026-11-04.json), SQLite HTTP adjunct and [Principal review](evidence/native-stage6a-corrected-principal-2026-11-04.json) pass. Server/client authority only; mixed SDK remains N1.6b. |
-| N1.6b — Mixed finite/stream runtime | `progress` | 60% | +10% | NI1-054…056 | All [ADR-0037](adr/ADR-0037-mixed-finite-and-streaming-tasks.md) criteria, real mixed process matrix and independent review pass. Current earned readiness remains 50%. |
-| N1.7 — Native declaration and deployment launch | `progress` | 70% | +10% | NI1-060…063 | [ADR-0038](adr/ADR-0038-native-deployment-worker-lifecycle.md): immutable Flow/deployment capability, worker enrollment before `Running`, secret-safe launch and actual work-pool gate. |
-| N1.8 — Confirmed replacement and lifecycle | `progress` | 85% | +15% | NI1-070…074 | Verified Linux process death, one-winner replacement, slot/retry invariants, cancellation and drain pass real process controls. Lease expiry alone cannot authorize takeover. |
-| N1.9 — Projections, compatibility and bounds | `progress` | 90% | +5% | NI1-080…083 | Authenticated native projections/UI, mixed-version refusals, paired migration compatibility and selected-profile resource bounds pass. |
-| N1.10 — Real mixed deployment acceptance | `progress` | 100% | +10% | NI1-090…093 | [ADR-0040](adr/ADR-0040-native-integration-acceptance-and-operations.md): actual SDK/server/work-pool/worker deployment, fault/lifecycle matrix, ordinary regressions and independent final review pass for the bounded foundation. |
+| N1.6b — Mixed finite/stream runtime | `done` | 60% | +10% | NI1-054…056 | All [ADR-0037](adr/ADR-0037-mixed-finite-and-streaming-tasks.md) criteria, real mixed process matrix and independent review pass. Accepted in the final selected-profile gate. |
+| N1.7 — Native declaration and deployment launch | `done` | 70% | +10% | NI1-060…063 | [ADR-0038](adr/ADR-0038-native-deployment-worker-lifecycle.md): immutable Flow/deployment capability, worker enrollment before `Running`, secret-safe launch and actual work-pool gate. |
+| N1.8 — Confirmed replacement and lifecycle | `done` | 85% | +15% | NI1-070…074 | Verified Linux process death, one-winner replacement, slot/retry invariants, cancellation and drain pass real process controls. Lease expiry alone cannot authorize takeover. |
+| N1.9 — Projections, compatibility and bounds | `done` | 90% | +5% | NI1-080…083 | Authenticated native projections/UI, mixed-version refusals, paired migration compatibility and selected-profile resource bounds pass. |
+| N1.10 — Real mixed deployment acceptance | `done` | 100% | +10% | NI1-090…093 | [ADR-0040](adr/ADR-0040-native-integration-acceptance-and-operations.md): actual SDK/server/work-pool/worker deployment, fault/lifecycle matrix, ordinary regressions and independent final review pass for the bounded foundation. |
 
-The 50% is a planning estimate toward the explicitly bounded native foundation,
-not a measurement of production readiness. The [complete Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json)
+The 100% records delivery of the agreed bounded native foundation.
+It is not a measurement of general production readiness. The [complete Stage 1 gate](evidence/native-stage1-acceptance-2026-11-01.json)
 and the [N1.2 storage gate](evidence/native-stage2-closure-acceptance-2026-11-01.json)
 now pass. The [N1.3 transport gate](evidence/native-stage3-acceptance-2026-11-02.json)
 and [Principal review](evidence/native-stage3-principal-2026-11-02.json)
@@ -49,14 +49,14 @@ records PR 11 merged after 96 successful checks/five conditional skips. Its
 corrected 76 source paths survive merge; 423 PostgreSQL and 88 SQLite selected
 cases pass without skips. The [N1.6b planning review](evidence/native-stage6b-sdk-design-review-2026-11-04.md)
 includes a passing low-level first-seal-in-generation-2 control. Direct mixed SDK
-execution is in progress; foundation stays 50% until its acceptance passes.
+execution and its real process acceptance now pass in the final epoch gate.
 
 N1.6b and the remaining deployment work are now planned as one continuous
 route in [ADR-0038](adr/ADR-0038-native-deployment-worker-lifecycle.md).
 N1.7 binds a public native capability before worker launch; N1.8 adds verified
 local-process replacement plus cancellation/drain; N1.9 adds projections,
 compatibility and resource bounds; N1.10 performs the real mixed deployment
-acceptance. These are target shares, not earned readiness. Cross-host recovery,
+acceptance. These planned shares are now earned after final scoped acceptance. Cross-host recovery,
 production HA and throughput SLOs remain outside this bounded epoch objective.
 
 N1.9/N1.10 also includes NI1-092a under
@@ -496,3 +496,19 @@ Exit criteria:
 
 Detailed dependencies, deliverables, and task-level acceptance criteria are in
 [todo.md](todo.md).
+
+## Final native foundation acceptance
+
+The [final source-bound acceptance](evidence/native-epoch1-final-acceptance-2026-11-04.json)
+and its linked independent review, hosted CI and retained first failures
+close the criteria of this decision. All implementation and acceptance
+tasks for this selected scope are complete. Earlier planning and local-only
+observations remain historical records.
+
+The accepted profile is finite versioned top-level Python code, a finite
+prefix and tail around a single-source linear stream graph, PostgreSQL 17
+and trusted same-host Linux/PID-namespace process recovery. There are at
+most 128 ACTIVE native runs per work pool. Application code owns external
+effect idempotency. General DAG/partition support, cross-host recovery,
+production HA, performance SLOs and a new 72-hour native campaign are
+outside this accepted foundation.

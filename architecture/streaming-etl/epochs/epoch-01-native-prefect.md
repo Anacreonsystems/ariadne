@@ -1,9 +1,9 @@
 # Native integration epoch 1: Prefect core streaming foundation
 
-- Status: `progress`
+- Status: `accepted`
 - Date: 2026-10-31
 - Owners: ETL Architect / HighLoad Principal, SDK/server/runtime maintainers
-- Earned native foundation implementation readiness: **50%**
+- Earned native foundation implementation readiness: **100%**
 - Target: **100% of the native foundation scope defined here**
 - Basis: [validated prototype theory](../adr/ADR-0031-validated-durable-stream-theory.md)
 - First stage: [ADR-0032](../adr/ADR-0032-native-task-stream-contract.md)
@@ -17,8 +17,8 @@ epoch's definition, Prefect core lacked native durable stream dependencies and
 per-input recovery. Stage 1 now implements the selected SDK/task-engine
 contract. N1.2 adds bounded native storage and migrations; N1.3 connects native
 operators over authenticated HTTP. N1.4 adds the finite source SDK under
-[ADR-0035](../adr/ADR-0035-native-source-task-runtime.md); bounded whole-flow process recovery is accepted in N1.5. Production worker
-automation and deployment integration remain open. An
+[ADR-0035](../adr/ADR-0035-native-source-task-runtime.md); bounded whole-flow process recovery is accepted in N1.5. Production worker automation and deployment integration for the selected
+local Linux profile are now accepted under ADR-0038–0040. An
 adapter connecting two execution models is not the final product requested by
 the user.
 
@@ -104,10 +104,10 @@ as a reference, not silently inherited by this native foundation.
 | --- | --- | --- |
 | 1. Native task and dependency contract | Define stream ports, supported per-input execution, finite dependency boundaries and stable TaskRun retry binding. Native SDK/task-engine tests execute against a real HTTP API and an explicit PostgreSQL test adapter; native migrations and deployment proof follow. | `accepted` for Stage 1 — [ADR-0032](../adr/ADR-0032-native-task-stream-contract.md). |
 | 2. Native durable storage | Add versioned platform models, migrations and an internal storage interface for append, terminal completion, fencing, retention and quotas. Prove atomicity and compatibility on the selected PostgreSQL profile. | `accepted`: storage-only N1.2 in [ADR-0033](../adr/ADR-0033-native-durable-stream-storage.md); HTTP/admission N1.3 in [ADR-0034](../adr/ADR-0034-native-stream-http-adapter.md). [ADR-0018](../adr/ADR-0018-postgresql-authoritative-data-plane.md) remains prototype input. |
-| 3. Native runtime and source | Extend the accepted operator transport with native source-task SDK, persisted source coordinates and durable submission identity/lookup. Reconstruct supported execution after whole-worker/flow loss, including output accepted before final TaskRun reporting. | `accepted` for the bounded runtime/source profile: finite source/task retry in [ADR-0035](../adr/ADR-0035-native-source-task-runtime.md) and selected-launcher whole-flow reconstruction in [ADR-0036](../adr/ADR-0036-durable-submission-recovery.md). Production worker automation remains later work. [ADR-0017](../adr/ADR-0017-sync-async-generator-adapter.md) and [ADR-0019](../adr/ADR-0019-production-generator-state-and-replacement.md) remain prototype input. |
-| 4. Mixed-flow execution | Schedule downstream while producers run, support finite side inputs and explicit bounded collection/end-of-stream, and prevent dependency/capacity deadlocks. Register required consumers before source admission. | `progress` under [ADR-0037](../adr/ADR-0037-mixed-finite-and-streaming-tasks.md): N1.6a finite authority is accepted (+0%) under its [scoped gate](../evidence/native-stage6a-corrected-acceptance-2026-11-04.json); N1.6b bounded mixed runtime is in progress (+10% only after acceptance). |
-| 5. Server, deployment and operations | Bind native deployment/FlowRun/TaskRun identities, authorization, lifecycle commands, cancellation/drain, worker launch and bounded progress projections. Reject incompatible code/state versions before data admission. | `planning` under [ADR-0038](../adr/ADR-0038-native-deployment-worker-lifecycle.md): N1.7 declaration/launch targets 70%, N1.8 confirmed replacement/lifecycle targets 85%, and N1.9 projections/compatibility/bounds targets 90%. |
-| 6. Native foundation acceptance | Run the selected graph through actual SDK/server/worker deployment, task retry and process-loss cases; prove ordinary-flow regression, resource isolation, completion/cancellation and documented compatibility limits. | N1.10 under [ADR-0040](../adr/ADR-0040-native-integration-acceptance-and-operations.md) targets the bounded foundation's final +10% to 100%. Standalone prototype or selected-launcher results cannot replace this gate. |
+| 3. Native runtime and source | Extend the accepted operator transport with native source-task SDK, persisted source coordinates and durable submission identity/lookup. Reconstruct supported execution after whole-worker/flow loss, including output accepted before final TaskRun reporting. | `accepted` for the bounded runtime/source profile: finite source/task retry in [ADR-0035](../adr/ADR-0035-native-source-task-runtime.md) and selected-launcher whole-flow reconstruction in [ADR-0036](../adr/ADR-0036-durable-submission-recovery.md). Selected local ProcessWorker automation is accepted under [ADR-0038](../adr/ADR-0038-native-deployment-worker-lifecycle.md). [ADR-0017](../adr/ADR-0017-sync-async-generator-adapter.md) and [ADR-0019](../adr/ADR-0019-production-generator-state-and-replacement.md) remain prototype input. |
+| 4. Mixed-flow execution | Schedule downstream while producers run, preserve finite preparation/summary receipts and bounded EOF admission. | `accepted`: [ADR-0037](../adr/ADR-0037-mixed-finite-and-streaming-tasks.md), N1.6b completes the 60% milestone. |
+| 5. Server, deployment and operations | Existing deployment/ProcessWorker path, exact verified replacement, drain/cancel/release and authenticated bounded progress UI. | `accepted`: [ADR-0038](../adr/ADR-0038-native-deployment-worker-lifecycle.md) and [ADR-0039](../adr/ADR-0039-native-progress-projections.md), N1.7–N1.9 complete 70%/85%/90%. |
+| 6. Native foundation acceptance | Actual SDK/server/worker deployment, real process-loss matrix, ordinary regressions, source/evidence review and hosted CI. | `accepted`: [ADR-0040](../adr/ADR-0040-native-integration-acceptance-and-operations.md), N1.10 completes 100% of this bounded foundation. |
 
 Stage 1 tests use real Prefect task/dependency code, a hosted HTTP API process
 and an explicit real PostgreSQL test adapter. They do not substitute this
@@ -188,23 +188,23 @@ These criteria apply to the complete foundation with native persistence,
 source admission and deployment binding. Stage 1 tests against an explicit
 storage adapter establish their scoped contract, not completion of this gate.
 
-- [ ] As a developer, I can run the selected mixed flow through the native SDK,
+- [x] As a developer, I can run the selected mixed flow through the native SDK,
   server and worker deployment without the experimental adapter coordinating
   an external streaming run.
-- [ ] As a user, I can observe downstream processing while the producer TaskRun
+- [x] As a user, I can observe downstream processing while the producer TaskRun
   is still running, and terminal completion only after its durable tail drains.
-- [ ] As a user, I got input 200 again after pre-acceptance failure and input
+- [x] As a user, I got input 200 again after pre-acceptance failure and input
   201 after a lost acknowledgement of durable completion of 200.
-- [ ] As a system, I can keep the same downstream TaskRun and consumer binding
+- [x] As a system, I can keep the same downstream TaskRun and consumer binding
   across task retry, reject the former execution owner and advance each input
   completion only once.
-- [ ] As a developer, I can reproduce the declared source-position, state,
+- [x] As a developer, I can reproduce the declared source-position, state,
   cancellation, migration and failure behavior with independent invariant
   checks on actual PostgreSQL storage.
-- [ ] As a system, I got ordinary finite-flow and generator-task regression
+- [x] As a system, I got ordinary finite-flow and generator-task regression
   coverage, bounded metadata and resource checks, and fail-closed refusal of
   unsupported stream capabilities before input admission.
-- [ ] As a user, I can inspect progress, in-flight ownership, lag and pressure
+- [x] As a user, I can inspect progress, in-flight ownership, lag and pressure
   through authenticated native projections and follow a tested recovery guide.
 
 ## Evidence and observability graph
@@ -260,5 +260,21 @@ N1.5b's [scoped acceptance](../evidence/native-stage5b-acceptance-2026-11-03.jso
 and [Principal review](../evidence/native-stage5b-principal-2026-11-03.json)
 pass execution fencing, signed lifecycle events and normal retry preparation.
 This adds zero percentage. [N1.5c reconstruction](../evidence/native-stage5c-design-2026-11-03.md)
-is in progress; whole-flow identity recovery and completed-code bypass still
-require the actual process gate before the planned 50% can be claimed.
+was subsequently accepted with its real process gate, earning the planned 50%
+milestone. The final epoch acceptance below closes the remaining selected scope.
+
+## Final native foundation acceptance
+
+The [final source-bound acceptance](../evidence/native-epoch1-final-acceptance-2026-11-04.json)
+and its linked independent review, hosted CI and retained first failures
+close the criteria of this decision. All implementation and acceptance
+tasks for this selected scope are complete. Earlier planning and local-only
+observations remain historical records.
+
+The accepted profile is finite versioned top-level Python code, a finite
+prefix and tail around a single-source linear stream graph, PostgreSQL 17
+and trusted same-host Linux/PID-namespace process recovery. There are at
+most 128 ACTIVE native runs per work pool. Application code owns external
+effect idempotency. General DAG/partition support, cross-host recovery,
+production HA, performance SLOs and a new 72-hour native campaign are
+outside this accepted foundation.

@@ -1,6 +1,6 @@
 # ADR-0038: Native deployment, worker enrollment and lifecycle
 
-- Status: `progress`
+- Status: `accepted`
 - Date: 2026-11-04
 - Epoch: [Native integration epoch 1](../epochs/epoch-01-native-prefect.md)
 - Owners: deployment, worker, lifecycle, API and operations maintainers
@@ -211,9 +211,8 @@ The concrete UI and projection contract is tracked by
 
 ### N1.6b: bounded mixed SDK/runtime, +10% to 60%
 
-ADR-0037 remains the current implementation slice. NI1-054 is `progress`; its
-completion needs the real mixed SDK/process gate. This ADR does not claim that
-share and current earned readiness remains 50%.
+ADR-0037 and NI1-054…056 are accepted after the real mixed SDK/process gate.
+The final epoch acceptance records the completed +10% milestone at 60%.
 
 ### N1.7: declaration and deployment launch, +10% to 70%
 
@@ -259,63 +258,63 @@ distributed stream processor.
 
 ### N1.7
 
-- [ ] As a developer, I can declare the supported native protocol/profile on a
+- [x] As a developer, I can declare the supported native protocol/profile on a
   Flow and persist the same immutable digest in its deployment and FlowRun.
-- [ ] As a system, I can reject a missing, changed or unsupported declaration
+- [x] As a system, I can reject a missing, changed or unsupported declaration
   before child launch and before DATA while ordinary deployments are unchanged.
-- [ ] As a system, I can enrol an authenticated worker and claim generation one
+- [x] As a system, I can enrol an authenticated worker and claim generation one
   before Flow `Running`, with an exact-replay launch operation.
-- [ ] As a system, I got holder/event credentials delivered only through a
+- [x] As a system, I got holder/event credentials delivered only through a
   bounded inherited channel and absent from parameters, events, logs and API/UI
   projections.
-- [ ] As a user, I got the selected mixed Flow launched by an actual Prefect
+- [x] As a user, I got the selected mixed Flow launched by an actual Prefect
   work pool and worker with one concurrency slot.
 
 ### N1.8
 
-- [ ] As a system, I can identify the exact Linux child using boot ID, PID and
+- [x] As a system, I can identify the exact Linux child using boot ID, PID and
   process start ticks, terminate a live match through `pidfd`, and avoid a reused
   PID or foreign process.
-- [ ] As a system, I can refuse replacement when only a lease expired or when
+- [x] As a system, I can refuse replacement when only a lease expired or when
   the recorded host/process identity cannot be inspected.
-- [ ] As a user, I got one replacement winner after confirmed child or worker
+- [x] As a user, I got one replacement winner after confirmed child or worker
   loss, the same FlowRun/TaskRuns/channels, the first incomplete input and stale
   former-owner writes/events rejected.
-- [ ] As a system, I can preserve the one concurrency slot and existing Flow and
+- [x] As a system, I can preserve the one concurrency slot and existing Flow and
   Task retry budgets across infrastructure replacement.
-- [ ] As a user, I can drain accepted work through EOF and tail completion, or
+- [x] As a user, I can drain accepted work through EOF and tail completion, or
   cancel the current generation and observe later writes rejected.
-- [ ] As a system, I got server/worker restart and command-replay controls with
+- [x] As a system, I got server/worker restart and command-replay controls with
   no double release, duplicate launch or unrecorded success.
 
 ### N1.9
 
-- [ ] As a user, I can inspect authenticated generation, worker, progress,
+- [x] As a user, I can inspect authenticated generation, worker, progress,
   in-flight, lag, EOF, receipt and lifecycle projections without payloads or
   secrets.
-- [ ] As a developer, I can upgrade and downgrade paired schema revisions and
+- [x] As a developer, I can upgrade and downgrade paired schema revisions and
   get a named pre-DATA refusal for incompatible SDK/server/worker/deployment
   protocol or code versions.
-- [ ] As a system, I got bounded manifest, channel, receipt, prefix, projection,
+- [x] As a system, I got bounded manifest, channel, receipt, prefix, projection,
   log and memory behavior for the selected profile, with SQLite mutations still
   fail-closed.
-- [ ] As a user, I got documented operational limits without a production HA,
+- [x] As a user, I got documented operational limits without a production HA,
   cross-host recovery or throughput claim.
 
 ### N1.10
 
-- [ ] As a developer, I can deploy the versioned mixed Flow through a real work
+- [x] As a developer, I can deploy the versioned mixed Flow through a real work
   pool and run sync/async finite prefix, native source/operator and finite tail
   without a test launcher or prototype storage adapter.
-- [ ] As a user, I got early downstream delivery, exact document replay after
+- [x] As a user, I got early downstream delivery, exact document replay after
   pre-commit failure, continuation after lost acknowledgement, confirmed worker
   replacement, drain and cancellation on actual PostgreSQL storage.
-- [ ] As a system, I got stale-worker, PID-reuse, timeout-only, mixed-version,
+- [x] As a system, I got stale-worker, PID-reuse, timeout-only, mixed-version,
   server-restart and resource-bound hostile controls with independent durable
   state/progress oracles.
-- [ ] As a system, I got ordinary Flow/Task/generator, package, migration,
+- [x] As a system, I got ordinary Flow/Task/generator, package, migration,
   client/server and UI regression gates with no native-lane skips.
-- [ ] As a user, I got an independently reviewed, source-bound acceptance and
+- [x] As a user, I got an independently reviewed, source-bound acceptance and
   runbook that states the bounded foundation and all remaining production
   limits.
 
@@ -398,3 +397,19 @@ condition. These observations do not add a general HA or cross-host guarantee.
 - [Native integration epoch 1](../epochs/epoch-01-native-prefect.md)
 - [Task registry](../todo.md)
 - [Sprint board](../sprint_board.md)
+
+## Final native foundation acceptance
+
+The [final source-bound acceptance](../evidence/native-epoch1-final-acceptance-2026-11-04.json)
+and its linked independent review, hosted CI and retained first failures
+close the criteria of this decision. All implementation and acceptance
+tasks for this selected scope are complete. Earlier planning and local-only
+observations remain historical records.
+
+The accepted profile is finite versioned top-level Python code, a finite
+prefix and tail around a single-source linear stream graph, PostgreSQL 17
+and trusted same-host Linux/PID-namespace process recovery. There are at
+most 128 ACTIVE native runs per work pool. Application code owns external
+effect idempotency. General DAG/partition support, cross-host recovery,
+production HA, performance SLOs and a new 72-hour native campaign are
+outside this accepted foundation.

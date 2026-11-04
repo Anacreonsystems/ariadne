@@ -1,0 +1,18 @@
+import { afterAll, expect, vi } from "/workspace/ariadne/ui-v2/node_modules/vitest/dist/index.js";
+import { Application } from "/workspace/ariadne/ui-v2/node_modules/pixi.js/lib/index.mjs";
+import { emitter } from "/workspace/ariadne/ui-v2/src/graphs/objects/events.ts";
+import { writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
+const original = { init: Application.prototype.init, destroy: Application.prototype.destroy,
+ canvas: Object.getOwnPropertyDescriptor(Application.prototype, "canvas")?.get,
+ on: emitter.on, date: globalThis.Date, timeout: globalThis.setTimeout, error: console.error };
+afterAll(() => {
+ const checks = { fake_timers_disabled: !vi.isFakeTimers(), application_init_restored: Application.prototype.init === original.init,
+ application_destroy_restored: Application.prototype.destroy === original.destroy,
+ application_canvas_getter_restored: Object.getOwnPropertyDescriptor(Application.prototype, "canvas")?.get === original.canvas,
+ emitter_on_restored: emitter.on === original.on, date_restored: globalThis.Date === original.date,
+ timeout_restored: globalThis.setTimeout === original.timeout, console_error_restored: console.error === original.error };
+ const file = expect.getState().testPath;
+ writeFileSync(join(process.env.NATIVE_AUDIT_OUTPUT, basename(file) + ".json"), JSON.stringify({ file, checks }, null, 2));
+ expect(Object.values(checks).every(Boolean)).toBe(true);
+});

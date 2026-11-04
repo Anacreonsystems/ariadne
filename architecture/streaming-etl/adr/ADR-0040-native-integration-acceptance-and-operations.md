@@ -1,6 +1,6 @@
 # ADR-0040: Native integration acceptance and operation
 
-- Status: `progress`
+- Status: `accepted`
 - Date: 2026-11-04
 - Epoch: [Native integration epoch 1](../epochs/epoch-01-native-prefect.md)
 - Owners: SDK, server, worker and UI maintainers; ETL Architect / HighLoad Principal
@@ -34,8 +34,8 @@ N1.10 closes the selected foundation only after the criteria below pass. The
 preceding allocation is N1.6b +10% (60%), N1.7 +10% (70%), N1.8 +15% (85%) and
 N1.9 +5% (90%); the final acceptance contributes +10% (100%). These are planned
 shares of the stated problem. Discovery runs and documentation alone earn no
-share. Current earned readiness stays at the previously accepted 50% until
-source-bound acceptance is recorded.
+share. Source-bound acceptance is now recorded: the completed selected
+foundation earns its planned 100%.
 
 The profile is finite, versioned, top-level Python code, exactly one ordinary
 preparation task, a single-source linear native stream graph and one ordinary
@@ -75,25 +75,25 @@ before any work starts produces a clear failed run with no stream DATA.
 
 ## Acceptance criteria
 
-- [ ] As a developer, I can execute the declared deployment through actual SDK,
+- [x] As a developer, I can execute the declared deployment through actual SDK,
   HTTP server, PostgreSQL and ProcessWorker processes, including sync/async
   500-document flows and a finite preparation/summary.
-- [ ] As a user, I got the same TaskRun/channel identities and correct document
+- [x] As a user, I got the same TaskRun/channel identities and correct document
   boundary after prefix failure/receipt loss, before/after document-200 yield,
   tail receipt loss and whole-worker SIGKILL.
-- [ ] As a system, I can admit one winning replacement after real stale-renewal
+- [x] As a system, I can admit one winning replacement after real stale-renewal
   time and verified process death, while rejecting live-launcher takeover,
   stale generations, code drift and timeout-as-death.
-- [ ] As a user, I can drain the accepted prefix, cancel through SDK/UI/CLI,
+- [x] As a user, I can drain the accepted prefix, cancel through SDK/UI/CLI,
   finalize orphan cancellation and inspect released state without invented
   cursor or receipt history.
-- [ ] As a system, I can retire pre-spawn and registered startup failures,
+- [x] As a system, I can retire pre-spawn and registered startup failures,
   exhausted retry policy and abandoned final launches without permanent
   Running/Pending states or retained concurrency slots.
-- [ ] As a developer, I got bounded resource refusals, paired PostgreSQL/SQLite
+- [x] As a developer, I got bounded resource refusals, paired PostgreSQL/SQLite
   migrations, client-only package compatibility, unchanged ordinary workflows
   and successful public/CI type checks with actual zero exit status.
-- [ ] As an operator, I got a source-bound manifest, preserved first failures,
+- [x] As an operator, I got a source-bound manifest, preserved first failures,
   zero skipped selected native cases, ordinary regression results, a reviewed
   PR and CI results linked from this document.
 
@@ -229,7 +229,8 @@ records 25 profiles: 3,968 collected cases, 3,942 successful executions and
 The [independent Principal review](../evidence/native-epoch1-principal-local-2026-11-04.json)
 returns `PASS_LOCAL_SCOPED`: report/log/JUnit/marker hashes, exit statuses,
 counts, all 143 source paths and exact commit `35dc8d5` blobs agree.
-Hosted CI and final graph/status closure remain pending.
+Hosted CI and final graph/status closure now pass; the final record below
+binds their source and evidence.
 
 The [closure source manifest](../evidence/native-epoch1-source-freeze-closure-2026-11-04.json)
 identifies the final source. The [reviewed source bridge](../evidence/native-epoch1-source-relevance-closure-2026-11-04.json)
@@ -272,13 +273,13 @@ Backend predicates and the oracle were corrected, with actual PostgreSQL 14/17
 controls. The runtime release guard remains intact. Three CodeQL findings were
 fixed through private temporary artifact directories and worker-message origin
 validation; both valid-origin and foreign-origin browser controls passed.
-Hosted successor results must still confirm these fixes before acceptance.
+The linked hosted successor confirms these fixes before acceptance.
 
 The packaged navigation gate later exposed an existing upstream graphics
 lifecycle defect and an early error-snapshot flaw in the probe. Its confirmed
 diagnosis, implementation agreement and additional acceptance are recorded in
-[ADR-0041](ADR-0041-owned-graph-lifecycle-during-navigation.md). Final native
-foundation acceptance remains blocked until that UI successor also passes.
+[ADR-0041](ADR-0041-owned-graph-lifecycle-during-navigation.md). At discovery, final native
+foundation acceptance was blocked on that UI successor; its final gate below now passes.
 
 ### Hosted integration findings after the first local gate
 
@@ -353,3 +354,19 @@ requires the separately tracked [UI lifecycle successor](ADR-0041-owned-graph-li
 and its reviewed source bridge: its production changes are confined to the
 UI, so native/backend reports must be bound by byte equality rather than
 described as executions of a different UI source.
+
+## Final native foundation acceptance
+
+The [final source-bound acceptance](../evidence/native-epoch1-final-acceptance-2026-11-04.json)
+and its linked independent review, hosted CI and retained first failures
+close the criteria of this decision. All implementation and acceptance
+tasks for this selected scope are complete. Earlier planning and local-only
+observations remain historical records.
+
+The accepted profile is finite versioned top-level Python code, a finite
+prefix and tail around a single-source linear stream graph, PostgreSQL 17
+and trusted same-host Linux/PID-namespace process recovery. There are at
+most 128 ACTIVE native runs per work pool. Application code owns external
+effect idempotency. General DAG/partition support, cross-host recovery,
+production HA, performance SLOs and a new 72-hour native campaign are
+outside this accepted foundation.
