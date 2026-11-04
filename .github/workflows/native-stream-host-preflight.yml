@@ -3,13 +3,22 @@ run-name: Native host prerequisites · NO_NATIVE_ACCEPTANCE
 
 on:
   workflow_dispatch:
+    inputs:
+      secondary_runner:
+        description: Pool for observation b
+        type: choice
+        required: true
+        default: arc
+        options:
+          - arc
+          - static
 
 permissions: {}
 
 jobs:
   observe:
     name: Observe host ${{ matrix.probe }} · NO_NATIVE_ACCEPTANCE
-    runs-on: anacreon-runners
+    runs-on: ${{ matrix.probe == 'b' && inputs.secondary_runner == 'static' && fromJSON('["self-hosted","Linux","X64"]') || 'anacreon-runners' }}
     timeout-minutes: 5
     strategy:
       fail-fast: false
@@ -174,8 +183,8 @@ jobs:
                   for key in ("boot_sha256", "machine_sha256")
               ):
                   result["reason"] = "MISSING_IDENTITY"
-              elif result["overlap_seconds"] <= 0:
-                  result["reason"] = "NO_OBSERVED_OVERLAP_OR_COLD_QUEUE"
+              elif result["overlap_seconds"] < 30:
+                  result["reason"] = "INSUFFICIENT_OBSERVED_OVERLAP_OR_COLD_QUEUE"
               elif result["same_observed_boot_id"] or result["same_observed_machine_id"]:
                   result["reason"] = "SHARED_OBSERVED_IDENTITY"
               else:

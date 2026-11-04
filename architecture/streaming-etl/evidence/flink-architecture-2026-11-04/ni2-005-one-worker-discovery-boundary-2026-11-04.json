@@ -1,0 +1,75 @@
+{
+  "schema": "native-epoch2-runtime-discovery-boundary-v1",
+  "date": "2026-11-04",
+  "task_id": "NI2-005",
+  "adr": "ADR-0043",
+  "status": "DISCOVERY_ONLY",
+  "earned_percentage_points": 0,
+  "source_state": {
+    "repository_head_observed_before_wip": "9c444a3aa944d4ffa78afd5fe130db141c0c657b",
+    "qualification": "The observations were produced from changing, uncommitted server, client and runtime files. They do not bind the complete participating source union and are not acceptance evidence."
+  },
+  "positive_observations": [
+    {
+      "name": "fixed_p2_eight_documents",
+      "result": "PASS_DISCOVERY",
+      "duration_seconds": 22.45,
+      "observed": "One ProcessWorker launched four distinct physical child processes and four stable TaskRuns/partitions; eight references reached a completed FlowRun.",
+      "limitation": "Only runtime-owned file hashes were captured. Server and client WIP bytes were not frozen."
+    },
+    {
+      "name": "fixed_p2_b0_process_loss_500_documents",
+      "result": "PASS_DISCOVERY",
+      "duration_seconds": 81.26,
+      "observed": "B0 retained its TaskRun and partition, resumed its accepted input at 201 after attempt 1 completed 1..200, and healthy A0/A1/B1 process identities did not change.",
+      "limitation": "The run used one registered ProcessWorker and therefore does not satisfy the approved two-worker placement gate. Its 81.26 seconds include startup, fault injection, held-source coordination and pytest asyncio debugging; it is not a steady-state throughput measurement or NI2-071 evidence."
+    }
+  ],
+  "retained_failed_observations": [
+    {
+      "name": "deployment_launcher_identity_mismatch",
+      "result": "FAILED_DISCOVERY",
+      "finding": "The first deployed claim compared the Flow coordinator PID with the ProcessWorker launcher identity. The server binding was corrected to the registered Flow child for the one-worker prototype."
+    },
+    {
+      "name": "physical_flow_attempt_counter_mismatch",
+      "result": "FAILED_DISCOVERY",
+      "finding": "Precreated physical TaskRuns retained flow_run_run_count zero while the active Flow authority was one. Seal now persists the authoritative Flow count and bootstrap refuses drift."
+    },
+    {
+      "name": "missing_flow_related_resource",
+      "result": "FAILED_DISCOVERY",
+      "finding": "Direct scoped event transport bypassed the ordinary EventsWorker relation enrichment. The physical event builder now includes the immutable FlowRun related resource."
+    },
+    {
+      "name": "public_stream_info_attempt_assumption",
+      "result": "FAILED_DISCOVERY",
+      "finding": "The coordinator attempted to read an intentionally absent public StreamInfo attempt field. Exact attempt authority remains server-side in recorder and verified-retirement transactions."
+    }
+  ],
+  "open_runtime_corrections": [
+    {
+      "id": "RUNTIME_IMPORT_AUTHORITY",
+      "finding": "The scoped subtask context was active during Python module import, before artifact and task-option validation.",
+      "required_correction": "Read bootstrap under scope, import and validate with no platform authority, then enter the scoped context only for validated execution; prove module top-level code cannot mutate DATA."
+    },
+    {
+      "id": "FLOW_RETRY_BOUNDARY",
+      "finding": "The partitioned profile disabled Flow retries even before any graph mutation, and admission_attempted was never advanced.",
+      "required_correction": "Preserve ordinary retry before the first graph mutation, mark admission before the first control-plane RPC, and make post-mutation failure final."
+    },
+    {
+      "id": "POST_ACTIVATION_FAILURE_CLEANUP",
+      "finding": "An application exception after activation hard-killed children without reconciling TaskRuns, outputs and region allocations.",
+      "required_correction": "For the bounded finite slice, drain all physical tasks to durable terminal metadata before rethrowing the Flow error, or implement an explicit verified graph-cancel protocol."
+    }
+  ],
+  "blocking_acceptance_gap": {
+    "id": "TWO_REGISTERED_WORKERS",
+    "approved_text": "Use two registered workers with explicit placement and real HTTP/PostgreSQL storage.",
+    "current_behavior": "One ProcessWorker owns the Flow coordinator and directly launches all four physical child processes; every deployed grant binds the same worker.",
+    "required_behavior": "Persist explicit placement across two distinct ONLINE workers in the same pool, let each worker claim, launch and supervise only its assigned subtasks, and activate DATA only after all four assigned processes are registered.",
+    "acceptance_effect": "NI2-006 and N2.1c remain open; no N2.1 percentage is earned."
+  },
+  "next_evidence_requirement": "Freeze the union of every participating server, client, runtime, worker, migration, test and configuration file; save the complete diff and before/after hashes; then run the two-worker 500/5000 and named failure matrix against real HTTP and PostgreSQL 17."
+}

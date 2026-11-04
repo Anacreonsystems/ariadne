@@ -1,0 +1,109 @@
+....................F..............                                      [100%]
+=================================== FAILURES ===================================
+______ test_sqlite_all_physical_mutations_refuse_before_locator_or_write _______
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fec5b82aff0>
+flow_run = FlowRun(id=94ab2e65-4b30-4e53-ab85-a948b61c923f)
+physical_api = <httpx.AsyncClient object at 0x7fec52b44ef0>
+
+    async def test_sqlite_all_physical_mutations_refuse_before_locator_or_write(
+        db: PrefectDBInterface,
+        flow_run: orm_models.FlowRun,
+        physical_api: httpx.AsyncClient,
+    ):
+        if db.dialect.name == "postgresql":
+            pytest.skip("SQLite negative profile")
+        subtask_id, grant_id = uuid4(), uuid4()
+        basic = "Basic " + base64.b64encode(b"native-physical:test").decode()
+        parent_headers = {"Authorization": basic}
+        claim = s.StreamSubtaskClaimRequest(
+            operation_id=uuid4(),
+            graph_digest="aa" * 32,
+            holder_id=uuid4(),
+            capability="bb" * 32,
+            event_public_key="cc" * 32,
+            launcher_binding_kind="FLOW_AUTHORITY_LOCAL",
+            host_id=uuid4(),
+            boot_id=uuid4(),
+            launcher_process_id=1,
+            launcher_start_ticks=1,
+        )
+        requests = [
+            ("claim", claim.model_dump(mode="json")),
+            (
+                "register",
+                {
+                    "operation_id": str(uuid4()),
+                    "grant_id": str(grant_id),
+                    "child_process_id": 1,
+                    "process_start_ticks": 1,
+                },
+            ),
+            ("renew", {"grant_id": str(grant_id)}),
+            (
+                "replacements/authorize",
+                {
+                    "operation_id": str(uuid4()),
+                    "expected_grant_id": str(grant_id),
+                    "expected_physical_epoch": 1,
+                    "host_id": str(claim.host_id),
+                    "challenge_capability": "dd" * 32,
+                },
+            ),
+            (
+                "replacements/confirm",
+                {
+                    "operation_id": str(uuid4()),
+                    "challenge_capability": "dd" * 32,
+                    "death_witness": {
+                        "kind": "WAITPID",
+                        "observed_at": now("UTC").isoformat(),
+                        "host_id": str(claim.host_id),
+                        "boot_id": str(claim.boot_id),
+                        "child_process_id": 1,
+                        "process_start_ticks": 1,
+                        "exit_code": -9,
+                    },
+                    "new_holder_id": str(uuid4()),
+                    "new_capability": "ee" * 32,
+                    "new_event_public_key": "ff" * 32,
+                    "new_child_process_id": 2,
+                    "new_process_start_ticks": 2,
+                    "host_id": str(claim.host_id),
+                    "boot_id": str(claim.boot_id),
+                },
+            ),
+        ]
+        for suffix, body in requests:
+            response = await physical_api.post(
+                f"/streams/v2/subtasks/{subtask_id}/{suffix}",
+                json=body,
+                headers=parent_headers,
+            )
+            assert response.status_code == 422, (suffix, response.text)
+            assert response.json()["detail"]["code"] == "UNSUPPORTED_BACKEND"
+        child_headers = headers(
+            s.StreamSubtaskCredentials(grant_id=grant_id, capability="bb" * 32)
+        )
+>       event = Event(
+            event="prefect.task-run.Running",
+            resource={"prefect.resource.id": f"prefect.task-run.{uuid4()}"},
+            payload={},
+        )
+E       pydantic_core._pydantic_core.ValidationError: 2 validation errors for Event
+E       occurred
+E         Field required [type=missing, input_value={'event': 'prefect.task-r...41e464'}, 'payload': {}}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.13/v/missing
+E       id
+E         Field required [type=missing, input_value={'event': 'prefect.task-r...41e464'}, 'payload': {}}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.13/v/missing
+
+tests/server/api/test_stream_subtasks.py:453: ValidationError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.457 seconds
+22:55:21.735 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.457 seconds
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.457 seconds
+=========================== short test summary info ============================
+FAILED tests/server/api/test_stream_subtasks.py::test_sqlite_all_physical_mutations_refuse_before_locator_or_write
+1 failed, 34 passed, 3 deselected in 18.19s
