@@ -25,14 +25,11 @@ const throwOnError: Middleware = {
 			let message = `API request failed with status ${response.status}`;
 			try {
 				const body: unknown = await response.clone().json();
-				if (
-					body &&
-					typeof body === "object" &&
-					!Array.isArray(body) &&
-					"detail" in body
-				) {
-					const detail = body.detail;
-					if (typeof detail === "string") message = detail;
+				if (body && typeof body === "object" && !Array.isArray(body)) {
+					const detail = "detail" in body ? body.detail : undefined;
+					// Preserve caller-specific fallbacks when the server provides no detail.
+					if (detail === undefined) message = "";
+					else if (typeof detail === "string") message = detail;
 					else if (
 						detail &&
 						typeof detail === "object" &&

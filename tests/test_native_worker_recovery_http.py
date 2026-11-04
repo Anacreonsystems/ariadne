@@ -27,9 +27,11 @@ import sqlalchemy as sa
 
 from prefect.client.orchestration import get_client
 from prefect.client.schemas.actions import WorkPoolCreate
+from prefect.client.schemas.native_deployments import NativeStreamProcessDeathWitness
 from prefect.deployments.runner import RunnerDeployment
 from prefect.flows import load_flow_from_entrypoint
 from prefect.runner._native_process import NativePidfdScope, verify_native_process_death
+from prefect.runner._starter_native import linux_process_identity
 from prefect.settings import (
     PREFECT_API_AUTH_STRING,
     PREFECT_API_URL,
@@ -290,6 +292,7 @@ async def test_fresh_worker_recovers_live_orphan_after_real_renewal_horizon(
     try:
         first = case.start_worker(run_once=True)
         original_pid = await case.wait_paused()
+        original_identity = linux_process_identity(original_pid)
         await _wait_completed_prefix(db, case)
         assert case.child_scope is not None and case.child_scope.is_alive(original_pid)
         assert len(list((case.coordination / "signed").glob("*.json"))) == 200
@@ -351,6 +354,7 @@ async def test_fresh_worker_recovers_live_orphan_after_real_renewal_horizon(
         assert datetime.now(UTC) >= verification_not_before
         assert generation == 2
         assert not case.child_scope.is_alive(original_pid)
+        death_observed_at = datetime.now(UTC)
         final = await case.wait_final()
         assert final.state.is_completed(), case.diagnostic()
         assert final.empirical_policy.retries == 2
@@ -370,18 +374,86 @@ async def test_fresh_worker_recovers_live_orphan_after_real_renewal_horizon(
                     {"flow": case.flow_run_id},
                 )
             )
-            replacement_witnesses = list(
-                await session.scalars(
-                    sa.text(
-                        "SELECT death_witness->>'kind' FROM native_stream_replacement_operation "
-                        "WHERE flow_run_id=:flow AND state='CONFIRMED'"
-                    ),
-                    {"flow": case.flow_run_id},
+            replacement = (
+                (
+                    await session.execute(
+                        sa.text(
+                            "SELECT expected_generation, new_generation, worker_id, "
+                            "host_id, identity_kind, death_witness "
+                            "FROM native_stream_replacement_operation "
+                            "WHERE flow_run_id=:flow AND state='CONFIRMED'"
+                        ),
+                        {"flow": case.flow_run_id},
+                    )
                 )
+                .mappings()
+                .one()
+            )
+            original_launch = (
+                (
+                    await session.execute(
+                        sa.text(
+                            "SELECT host_id, boot_id, child_process_id, process_start_ticks, "
+                            "last_renewed_at FROM native_stream_launch_identity "
+                            "WHERE flow_run_id=:flow AND generation=1"
+                        ),
+                        {"flow": case.flow_run_id},
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            successor_launch = (
+                (
+                    await session.execute(
+                        sa.text(
+                            "SELECT worker_id, launcher_process_id "
+                            "FROM native_stream_launch_identity "
+                            "WHERE flow_run_id=:flow AND generation=2"
+                        ),
+                        {"flow": case.flow_run_id},
+                    )
+                )
+                .mappings()
+                .one()
             )
         assert task_ids < final_tasks and len(final_tasks) == 4
         assert final_streams == stream_ids
-        assert replacement_witnesses == ["PIDFD_EXIT"]
+        # The worker that wins the generation CAS need not be the worker that
+        # signalled the old child: another verifier can observe its identity
+        # gone after the first worker's pidfd kill. Both proofs must refer to
+        # the exact original process, after the real durable renewal horizon.
+        witness = NativeStreamProcessDeathWitness.model_validate(
+            replacement["death_witness"]
+        )
+        assert witness.kind in {"PIDFD_EXIT", "IDENTITY_GONE"}
+        assert original_identity == (
+            original_launch["host_id"],
+            original_launch["boot_id"],
+            original_launch["process_start_ticks"],
+        )
+        assert witness.host_id == original_launch["host_id"]
+        assert witness.boot_id == original_launch["boot_id"]
+        assert (
+            witness.child_process_id
+            == original_launch["child_process_id"]
+            == original_pid
+        )
+        assert witness.process_start_ticks == original_launch["process_start_ticks"]
+        assert (
+            original_launch["last_renewed_at"] + timedelta(seconds=120)
+            <= witness.observed_at
+            <= death_observed_at
+        )
+        assert replacement["identity_kind"] == "CHILD"
+        assert replacement["host_id"] == witness.host_id
+        assert replacement["expected_generation"] == 1
+        assert replacement["new_generation"] == 2
+        assert replacement["worker_id"] == successor_launch["worker_id"]
+        assert successor_launch["launcher_process_id"] in (
+            second.pid,
+            competing_worker.pid,
+        )
         assert (case.coordination / "prefix-bodies").read_text().splitlines() == [
             "prepare"
         ]

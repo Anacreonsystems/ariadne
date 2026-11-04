@@ -273,3 +273,36 @@ controls. The runtime release guard remains intact. Three CodeQL findings were
 fixed through private temporary artifact directories and worker-message origin
 validation; both valid-origin and foreign-origin browser controls passed.
 Hosted successor results must still confirm these fixes before acceptance.
+
+### Hosted integration findings after the first local gate
+
+GitHub delayed final job/check statuses even after all their steps had
+completed. Inspecting individual step conclusions exposed failures that an
+`in_progress`/null job conclusion concealed. The preserved
+[status diagnosis](../evidence/native-integration-discovery-2026-11-04/native-epoch1-ci-status-diagnosis.json)
+and original logs are evidence of this observation; a missing final conclusion
+is not a successful check.
+
+The [full UI shard](../evidence/native-integration-discovery-2026-11-04/native-epoch1-ci-status-ui-failed-raw.log)
+had 730 passes and two variable-form failures. The shared transport's new
+status-only fallback replaced the legacy empty `Error.message` for a JSON
+object with no `detail`, preventing component-specific fallback messages.
+The agreement is to preserve that exact existing contract without displaying
+an arbitrary `error` field. Native `{code, message}`, ordinary string details
+and safe fallbacks for null/malformed/validation/non-JSON errors remain.
+The original two variable assertions stay unchanged. A real wire case for
+missing `detail` reproduces the defect before the fix. Because this transport
+serves the whole UI, the successor must run the complete UI suite, browser and
+packaged-live gates rather than only the selected native components.
+
+The [native PostgreSQL HTTP lane](../evidence/native-integration-discovery-2026-11-04/native-epoch1-ci-status-native-pg17-failed-raw.log)
+had 358 passes and one overly specific witness assertion. Two fresh workers
+can verify the same eligible orphan: one kills its exact process through a
+pidfd while another observes that identity already gone and wins generation
+CAS. The independently reviewed agreement keeps the runtime unchanged and
+requires exactly one confirmed operation, a `PIDFD_EXIT` or `IDENTITY_GONE`
+witness for the exact old host/boot/PID/start ticks, and observation at or after
+the real 120-second renewal horizon. `BOOT_CHANGED` and `WAITPID` do not satisfy
+this scenario. Live-before-horizon/dead-after-replacement, retry/slot/identity
+continuity and all 500 ordered outputs remain mandatory. A full worker-profile
+successor must pass before this changed test oracle is accepted.

@@ -39,7 +39,13 @@ describe("API error response messages", () => {
 			expected: "API request failed with status 400",
 		},
 		{
-			name: "missing detail",
+			name: "missing detail property",
+			status: 500,
+			detail: undefined,
+			expected: "",
+		},
+		{
+			name: "null detail",
 			status: 500,
 			detail: null,
 			expected: "API request failed with status 500",

@@ -1,0 +1,42 @@
+import hashlib
+import json
+import subprocess
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+
+prefix = Path('/tmp/native-epoch1-ci-status-native-pg17-monitor')
+last = None
+for tick in range(30):
+    observed = datetime.now(UTC).isoformat()
+    command = ['gh', 'api', '-H', 'Cache-Control: no-cache', f'/repos/Anacreonsystems/ariadne/actions/jobs/126735153000?diagnostic_tick={int(time.time())}']
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        row = {'observed_at': observed, 'api_returncode': result.returncode, 'error': result.stderr[:250]}
+    else:
+        job = json.loads(result.stdout)
+        snapshot = prefix.with_name(prefix.name + f'-{tick:02}.json')
+        snapshot.write_text(result.stdout)
+        steps = job.get('steps', [])
+        row = {
+            'observed_at': observed,
+            'job_id': job['id'],
+            'status': job['status'],
+            'conclusion': job['conclusion'],
+            'completed_at': job['completed_at'],
+            'active_steps': [{'name': s['name'], 'started_at': s.get('started_at')} for s in steps if s['status'] == 'in_progress'],
+            'failed_steps': [{'name': s['name'], 'conclusion': s['conclusion']} for s in steps if s.get('conclusion') in ('failure', 'timed_out', 'cancelled')],
+            'latest_completed': max([s['completed_at'] for s in steps if s.get('completed_at')], default=None),
+            'all_steps_completed': bool(steps) and all(s['status'] == 'completed' for s in steps),
+            'raw_snapshot': str(snapshot),
+            'raw_sha256': hashlib.sha256(result.stdout.encode()).hexdigest(),
+        }
+    with prefix.with_suffix('.jsonl').open('a') as log:
+        log.write(json.dumps(row) + '\n')
+    state = {key: value for key, value in row.items() if key not in ('observed_at', 'raw_snapshot', 'raw_sha256')}
+    if state != last or tick % 3 == 0:
+        print(json.dumps(row), flush=True)
+    last = state
+    if row.get('status') == 'completed':
+        break
+    time.sleep(20)

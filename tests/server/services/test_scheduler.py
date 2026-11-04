@@ -675,7 +675,14 @@ class TestScheduleRulesWaterfall:
         session: AsyncSession,
         interval: datetime.timedelta,
         n: int,
+        frozen_time: datetime.datetime,
+        monkeypatch: pytest.MonkeyPatch,
     ):
+        # Freeze the scheduler's imported alias as well as the anchor so DB
+        # latency cannot move the first scheduled date into the past.
+        monkeypatch.setattr(
+            "prefect.server.services.scheduler.now", lambda tz: frozen_time
+        )
         await models.deployments.create_deployment(
             session=session,
             deployment=schemas.core.Deployment(
@@ -685,7 +692,7 @@ class TestScheduleRulesWaterfall:
                     schemas.core.DeploymentSchedule(
                         schedule=schemas.schedules.IntervalSchedule(
                             interval=interval,
-                            anchor_date=now("UTC") + datetime.timedelta(seconds=1),
+                            anchor_date=frozen_time + datetime.timedelta(seconds=1),
                         ),
                         active=True,
                     )
