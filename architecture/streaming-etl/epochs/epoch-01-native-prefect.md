@@ -1,5 +1,10 @@
 # Native integration epoch 1: Prefect core streaming foundation
 
+The broader streaming ETL objective continues in
+[native integration epoch 2](epoch-02-native-streaming-completion.md). Acceptance
+and percentages below apply only to this epoch's bounded foundation; they do
+not establish native branches, joins, continuous input or cross-host execution.
+
 - Status: `accepted`
 - Date: 2026-10-31
 - Owners: ETL Architect / HighLoad Principal, SDK/server/runtime maintainers

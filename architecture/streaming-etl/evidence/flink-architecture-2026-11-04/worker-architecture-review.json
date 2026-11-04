@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-04",
+  "kind": "runtime_recovery_architecture_review",
+  "status": "planning_only",
+  "source_commit": "52a981e997f049abe58ebd962b6c32a8d2f1076d",
+  "related_discussion": "principal-discussion.json",
+  "scope": {
+    "production_code_changed": false,
+    "product_behavior_changed": false,
+    "tests_or_long_campaigns_run": false,
+    "native_readiness_earned": 0,
+    "historical_epoch_1_acceptance_preserved": true,
+    "subject": "TaskRun identity for partitioned native streaming execution"
+  },
+  "discussion_outcome": {
+    "joint_recommendation": "Use ordinary Prefect TaskRuns for stable physical subtasks, with a separate stable logical StreamOperatorRun or graph-manifest UID for topology, grouping, rescale lineage, and UI.",
+    "decision_state": "PENDING_NATIVE_PROOF",
+    "agreement": [
+      "The runtime/recovery reviewer initially preferred one logical parent TaskRun plus separate physical child attempts.",
+      "The ETL Principal preferred ordinary TaskRuns for physical subtasks, preserving Prefect invocation lifecycle machinery.",
+      "After comparing authoritative state, event, retry, concurrency, and fencing requirements, both reviewers recommend physical-subtask TaskRuns for the native-first path.",
+      "A properly designed logical-parent and child-lifecycle architecture is coherent. It is deferred because it introduces another authoritative lifecycle entity rather than reusing the existing invocation unit.",
+      "Multiple processes jointly writing ordinary state events into one scalar TaskRun are rejected by both reviewers. This naive shared-owner design is distinct from the coherent deferred alternative.",
+      "The recommendation supports ADR planning but is not accepted implementation evidence and does not increase native readiness. Native acceptance criteria remain unmet until the named implementation and acceptance controls pass."
+    ],
+    "reason_for_reconsidering_initial_preference": "A stable logical identity and aggregate UI do not require a parent TaskRun: a StreamOperatorRun can provide them over real physical invocations. No measured metadata-scale evidence currently justifies implementing a second lightweight task lifecycle."
+  },
+  "lifecycle_clarification": {
+    "PENDING_NATIVE_PROOF": "An informal statement that implementation proof is still outstanding; it does not require the literal ADR status pending.",
+    "pending": "Created but not yet discussed.",
+    "planning": "Discussed and adopted for planning and implementation; the joint recommendation permits this status and ADR-0043 is already planning.",
+    "accepted": "Implementation and all named acceptance criteria are complete. This review does not grant acceptance or claim that native criteria have passed."
+  },
+  "explicit_semantic_refinement": {
+    "epoch_1": "The bounded native profile had one TaskRun per source or operator. Logical node and its single physical invocation coincided.",
+    "proposed_partitioned_profile": "One Task definition may be invoked by P stable physical-subtask TaskRuns. Each TaskRun processes many records and owns one independent current attempt. A stable operator UID groups those invocations.",
+    "not_per_document": "TaskRun cardinality follows operators, declared parallelism, and assignment epochs, never the number of documents.",
+    "example": "Anya is the logical operator. Anya[0] and Anya[1] are physical TaskRuns. A replacement of Anya[0] preserves that TaskRun ID and advances its attempt. A planned rescale creates a new bounded subtask set under the same logical operator UID.",
+    "agreement_required": "The new profile must document this refinement explicitly. It must not silently describe the existing singular TaskRun as both the logical operator and every parallel physical invocation."
+  },
+  "current_code_findings": [
+    {
+      "path": "src/prefect/_internal/stream_engine.py",
+      "lines": [204, 219, 229, 245],
+      "finding": "A long-lived TaskRun repeatedly invokes user code for input records; consumer_id is the TaskRun ID. This already avoids a TaskRun per document."
+    },
+    {
+      "path": "src/prefect/_internal/stream_reconstruction.py",
+      "lines": [277, 383, 428],
+      "finding": "Native declarations require the Flow thread-pool runner and submit actual Tasks locally. The entire bounded graph must fit its concurrent slots."
+    },
+    {
+      "path": "src/prefect/workers/_native.py",
+      "lines": [52, 66, 95],
+      "finding": "The current ProcessWorker composes one FlowRunExecutor for the whole FlowRun; it does not place operator subtasks independently."
+    },
+    {
+      "path": "src/prefect/runner/_starter_native.py",
+      "lines": [483],
+      "finding": "The registered child entrypoint is prefect.flow_engine for the complete Flow function."
+    },
+    {
+      "path": "src/prefect/server/models/streams.py",
+      "lines": [234, 238, 357, 363, 1467, 1577],
+      "finding": "Record admission locks the TaskRun exclusively. Consumer operations also lock input and output partitions. Terminal acceptance atomically saves output, managed state, receipt, and cursor. Sharing one parent TaskRun across parallel record guards would serialize otherwise independent partitions."
+    },
+    {
+      "path": "src/prefect/_internal/stream_execution.py",
+      "lines": [31, 34, 35, 148],
+      "finding": "Native authority and signed TaskRun events are currently scoped to one FlowRun execution generation. Distinct physical TaskRun IDs alone do not supply independent subtask holder fences."
+    },
+    {
+      "path": "src/prefect/task_worker.py",
+      "lines": [80, 108, 375, 388],
+      "finding": "Existing TaskWorker machinery already dispatches scheduled TaskRuns to ordinary task engines. It is a reuse candidate, not a ready native implementation: its default persistence/cache policy, parameter transport, execution isolation, and native assignment authority require explicit adaptation."
+    }
+  ],
+  "comparison": [
+    {
+      "axis": "states_and_events",
+      "physical_taskruns": "Each subtask retains an ordinary independent TaskRun state, run_count, and task-event stream. Operator aggregate status is a separate projection.",
+      "logical_parent_with_children": "Only a coordinator-aggregator may write the parent TaskRun. Children require separate authoritative states and an event protocol; their ordinary TaskRun events cannot be concurrently upserted into the parent.",
+      "assessment": "Physical TaskRuns reuse the existing invocation lifecycle with less new orchestration semantics."
+    },
+    {
+      "axis": "retries_and_timeouts",
+      "physical_taskruns": "TaskRun policy and run_count naturally describe each physical invocation. Infrastructure replacement must preserve its ID and must not reset that subtask's retry budget.",
+      "logical_parent_with_children": "The parent run_count can only describe logical-operator retries. Independent child retries, restart budgets, and timeouts need another policy and counter model.",
+      "assessment": "There is no honest single parent run_count for simultaneous child attempts 2, 1, and 3. Both models must define when an unrecoverable subtask failure fails its operator or FlowRun."
+    },
+    {
+      "axis": "concurrency_and_resource_placement",
+      "physical_taskruns": "P concurrent physical invocations can consume P applicable TaskRun concurrency leases and physical resource slots while the logical FlowRun keeps its one deployment lease.",
+      "logical_parent_with_children": "A parent TaskRun alone cannot account for P physical invocations. Child leases or another resource subsystem are required, and parent tag-concurrency semantics must be explicitly defined.",
+      "assessment": "Neither model may ignore long-lived streaming deadlocks: sources must not hold every available slot while downstream operators wait indefinitely. Region admission or an explicit slot-sharing policy needs a negative control."
+    },
+    {
+      "axis": "highload_locks",
+      "physical_taskruns": "Distinct subtask TaskRun rows avoid a shared logical-parent FOR UPDATE bottleneck.",
+      "logical_parent_with_children": "Hot-path guards must move to child rows; locking the parent for every input defeats partition parallelism.",
+      "assessment": "Fan-out and multi-input partition locking still need redesign in either model. The current Flow lock is shared on the hot path, so a claim that every record is serialized by an exclusive Flow lock would be inaccurate."
+    },
+    {
+      "axis": "fencing_and_cross_host_replacement",
+      "physical_taskruns": "A physical TaskRun provides a suitable identity to bind a subtask holder, but the current Flow-wide authority and event signing still require task/subtask-scoped grants and owner epochs.",
+      "logical_parent_with_children": "Every child likewise requires its own capability, owner epoch, admission checks, and stale-event fence; the parent's holder is insufficient.",
+      "assessment": "Neither identity choice makes cross-host recovery safe automatically. Timeout remains insufficient proof of death, and external-effect idempotence remains client-owned."
+    },
+    {
+      "axis": "ui_and_partial_failure",
+      "physical_taskruns": "A stable StreamOperatorRun or manifest group can show partial retrying/running/completed subtasks, with drill-down to ordinary Prefect TaskRuns and logs.",
+      "logical_parent_with_children": "The parent is an aggregate view; a child-state API and child log/event filters are still needed to explain partial failure.",
+      "assessment": "Aggregate UX is achievable in both models and is not evidence that an aggregate must itself be a TaskRun."
+    },
+    {
+      "axis": "rescale_and_metadata",
+      "physical_taskruns": "Retry keeps a TaskRun ID. Planned rescale creates a bounded new subtask TaskRun set for the new assignment epoch while preserving the logical operator UID.",
+      "logical_parent_with_children": "The logical parent ID remains stable, but child assignments and attempts still change and still require durable rows.",
+      "assessment": "Physical TaskRun cost is O(operators times parallelism times assignment epochs), plus attempt/state history. It must be measured and capped; no evidence currently establishes that it is unacceptable."
+    }
+  ],
+  "coherent_deferred_alternative": {
+    "name": "LOGICAL_PARENT_TASKRUN_WITH_AUTHORITATIVE_CHILD_LIFECYCLE",
+    "child_identity": [
+      "flow_run_id",
+      "graph_revision",
+      "operator_uid",
+      "assignment_epoch",
+      "subtask_index"
+    ],
+    "child_attempt_authority": [
+      "current attempt and owner epoch",
+      "worker, slot, and process identity",
+      "scoped capability and event verification key",
+      "independent retry and timeout policy",
+      "input partition bindings, cursor frontier, and state ownership"
+    ],
+    "parent_lifecycle": "One coordinator-aggregator owns the parent TaskRun state. Its run_count means logical-operator retry only. Child state changes never masquerade as parent ordinary TaskRun events.",
+    "concurrency": "P physical child leases are authoritative independently of the parent; parent tag/global-concurrency behavior needs a documented separate meaning.",
+    "rescale": "The parent remains stable while an explicitly committed state-transfer cut installs a new assignment child set.",
+    "reason_deferred": "This is a coherent new lifecycle entity, functionally close to a second TaskRun implementation. Current native-first goals do not yet justify its additional state, retry, event, concurrency, API, and UI machinery.",
+    "reopen_if": [
+      "Measured TaskRun state/event/metadata overhead at the required declared parallelism exceeds the agreed control-plane budget.",
+      "A product contract explicitly requires the parent logical operator to remain an ordinary TaskRun despite physical parallelism.",
+      "A separately justified authoritative physical lifecycle can be reused with a complete safety and observability design."
+    ]
+  },
+  "required_native_proofs": [
+    "As a system, I can process 500 and 5000 records with the same bounded TaskRun count for a fixed operator graph, parallelism, and assignment epoch.",
+    "As a system, I can observe one subtask at attempt 2 and another at attempt 1 without ambiguous current state or stale TaskRun event overwrite.",
+    "As a user, I can inspect one stable logical operator group, its partial failures, and each physical Prefect invocation in the UI.",
+    "As a system, I got P applicable physical/task leases and one Flow deployment lease, with no double acquisition during replacement.",
+    "As a system, I can refuse or safely schedule a region with insufficient slots before sources permanently occupy all capacity needed by their downstream operators.",
+    "As a system, I can restart one failed subtask while healthy source and sibling subtasks retain their processes and durable progress.",
+    "As a system, I can fence the previous holder's data and task events independently of other subtasks, and refuse cross-host activation without the approved proof contract.",
+    "As a system, I can complete a compatible rescale cut, create only the new bounded assignment TaskRun set, and preserve the logical operator UID, key-group state, and already accepted business progress.",
+    "As a developer, I can keep business idempotency keys stable across physical attempts and planned rescale rather than deriving them solely from a changing TaskRun ID or run_count."
+  ],
+  "open_contracts": [
+    "Exact SDK operator-group and partitioned-stream handle spelling remains undecided.",
+    "The aggregate operator state vocabulary and the terminal reason used for a controlled rescale handoff remain explicit ADR decisions.",
+    "The relation between subtask TaskRun retry policy, infrastructure restart budget, region policy, and unrecoverable Flow failure needs a single documented rule.",
+    "Parallelism caps, assignment-history retention, and measured TaskRun/event/UI budgets must be defined before a production-scale claim.",
+    "State and receipt transfer must preserve logical input identity across new assignment TaskRuns; new TaskRun IDs must not reset accepted business cursors or re-enter completed user calls.",
+    "Ordering remains per declared partition or key unless an explicit merge operator restores a global order."
+  ],
+  "acceptance_boundary": "This file records a joint architectural recommendation and the previously considered alternative. It is not code acceptance, a benchmark, a successful physical-subtask implementation, or permission to rewrite historical accepted ADRs."
+}

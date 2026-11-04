@@ -4,7 +4,14 @@ This registry slices the [ADR graph](adr/README.md) into delivery tasks. Task
 completion does not make an ADR `accepted`; evidence for every criterion in
 the declared ADR scope must be linked back to it.
 
-Current direction: [Native integration epoch 1](epochs/epoch-01-native-prefect.md)
+Current direction: [Native integration epoch 2](epochs/epoch-02-native-streaming-completion.md)
+is in architecture discussion under [ADR-0042](adr/ADR-0042-flink-informed-native-streaming-architecture.md)–[ADR-0048](adr/ADR-0048-rescaling-compatibility-and-native-acceptance.md).
+The original broader streaming ETL objective is unfinished. This cycle records
+the Flink comparison, review and standalone state-materialization experiment;
+it earns **zero new native capability completion**. New implementation tasks
+and weighted sprints will be sliced in the next planning cycle on command.
+
+Historical foundation: [Native integration epoch 1](epochs/epoch-01-native-prefect.md)
 is `accepted`, with **100% earned native foundation readiness** for the selected scope. Its [first-stage contract](adr/ADR-0032-native-task-stream-contract.md)
 is accepted for its native Task SDK/engine scope with real HTTP/PostgreSQL
 checks. The first sprint earned its planned 10% share after the complete
