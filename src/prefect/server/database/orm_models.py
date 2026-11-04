@@ -912,6 +912,95 @@ class StreamSubmission(Base):
     )
 
 
+class StreamFiniteSubmission(Base):
+    """One immutable finite Task slot in a mixed native execution."""
+
+    flow_run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("flow_run.id", ondelete="CASCADE"), index=True
+    )
+    phase: Mapped[str]
+    submission_key: Mapped[str] = mapped_column(sa.String(128))
+    request_digest: Mapped[str] = mapped_column(sa.String(64))
+    manifest_digest: Mapped[str] = mapped_column(sa.String(64))
+    canonical_size: Mapped[int]
+    parameters: Mapped[dict[str, Any]] = mapped_column(stream_value_JSON)
+    parameters_digest: Mapped[str] = mapped_column(sa.String(64))
+    task_run_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("task_run.id"))
+    task_name: Mapped[str]
+    task_key: Mapped[str]
+    task_version: Mapped[str]
+    flow_version: Mapped[str]
+    deployment_id: Mapped[Optional[uuid.UUID]]
+    deployment_version: Mapped[Optional[str]]
+    artifact_digest: Mapped[str] = mapped_column(sa.String(64))
+    dynamic_key: Mapped[str]
+    task_policy: Mapped[dict[str, Any]] = mapped_column(JSON)
+    tags: Mapped[list[str]] = mapped_column(JSON)
+    labels: Mapped[dict[str, Any]] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(server_default="ACTIVE", default="ACTIVE")
+    released_at: Mapped[Optional[DateTime]]
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("flow_run_id", "phase"),
+        sa.UniqueConstraint("flow_run_id", "submission_key"),
+        sa.UniqueConstraint("task_run_id"),
+        sa.CheckConstraint("phase IN ('PREFIX', 'TAIL')", name="phase_valid"),
+        sa.CheckConstraint(
+            "length(submission_key) BETWEEN 1 AND 128",
+            name="submission_key_length_valid",
+        ),
+        sa.CheckConstraint(
+            "length(request_digest) = 64 AND "
+            "length(manifest_digest) = 64 AND "
+            "length(parameters_digest) = 64 AND "
+            "length(artifact_digest) = 64",
+            name="digest_lengths_valid",
+        ),
+        sa.CheckConstraint("canonical_size > 0", name="canonical_size_positive"),
+        sa.CheckConstraint("state IN ('ACTIVE', 'RELEASED')", name="state_valid"),
+        sa.CheckConstraint(
+            "(state = 'ACTIVE' AND released_at IS NULL) OR "
+            "(state = 'RELEASED' AND released_at IS NOT NULL)",
+            name="release_shape_valid",
+        ),
+        sa.Index(
+            "ix_stream_finite_submission__flow_run_id_state",
+            "flow_run_id",
+            "state",
+        ),
+    )
+
+
+class StreamFiniteReceipt(Base):
+    """The immutable bounded result accepted for one finite TaskRun."""
+
+    finite_submission_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("stream_finite_submission.id", ondelete="CASCADE")
+    )
+    task_run_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("task_run.id"))
+    operation_id: Mapped[uuid.UUID]
+    request_digest: Mapped[str] = mapped_column(sa.String(64))
+    outcome_digest: Mapped[str] = mapped_column(sa.String(64))
+    run_count: Mapped[int]
+    result: Mapped[Any] = mapped_column(stream_value_JSON)
+    result_digest: Mapped[str] = mapped_column(sa.String(64))
+    result_size: Mapped[int]
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("finite_submission_id"),
+        sa.UniqueConstraint("task_run_id"),
+        sa.UniqueConstraint("operation_id"),
+        sa.CheckConstraint("run_count >= 1", name="run_count_positive"),
+        sa.CheckConstraint("result_size > 0", name="result_size_positive"),
+        sa.CheckConstraint(
+            "length(request_digest) = 64 AND "
+            "length(outcome_digest) = 64 AND "
+            "length(result_digest) = 64",
+            name="digest_lengths_valid",
+        ),
+    )
+
+
 class StreamExecutionAuthority(Base):
     """The current process-generation fence for one enrolled FlowRun."""
 
@@ -933,6 +1022,9 @@ class StreamExecutionAuthority(Base):
     manifest_sealed_at: Mapped[Optional[DateTime]]
     manifest_seal_operation_id: Mapped[Optional[uuid.UUID]]
     manifest_seal_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    finite_prefix_manifest_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    finite_prefix_task_run_id: Mapped[Optional[uuid.UUID]]
+    finite_prefix_sealed_at: Mapped[Optional[DateTime]]
 
     __table_args__: Any = (
         sa.UniqueConstraint("flow_run_id"),
@@ -968,6 +1060,16 @@ class StreamExecutionAuthority(Base):
             "AND manifest_seal_request_digest IS NOT NULL "
             "AND length(manifest_seal_request_digest) = 64)",
             name="manifest_seal_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(finite_prefix_manifest_digest IS NULL "
+            "AND finite_prefix_task_run_id IS NULL "
+            "AND finite_prefix_sealed_at IS NULL) OR "
+            "(finite_prefix_manifest_digest IS NOT NULL "
+            "AND length(finite_prefix_manifest_digest) = 64 "
+            "AND finite_prefix_task_run_id IS NOT NULL "
+            "AND finite_prefix_sealed_at IS NOT NULL)",
+            name="finite_prefix_anchor_shape_valid",
         ),
     )
 

@@ -58,6 +58,95 @@ class StreamClient(BaseClient):
         except httpx.HTTPStatusError as error:
             raise _refusal(error) from error
 
+    def reserve_stream_finite_submission(
+        self,
+        *,
+        flow_run_id: UUID,
+        phase: Literal["PREFIX", "TAIL"],
+        submission_key: str,
+        task_name: str,
+        task_key: str,
+        artifact_digest: str,
+        task_version: str,
+        flow_version: str,
+        parameters: dict[str, JsonValue],
+        deployment_id: UUID | None = None,
+        deployment_version: str | None = None,
+        task_policy: dict[str, Any] | None = None,
+        tags: list[str] | None = None,
+        labels: dict[str, bool | int | float | str] | None = None,
+    ) -> schemas.StreamFiniteManifest:
+        """Reserve an ordinary TaskRun in the fenced finite prefix/tail plan."""
+        payload = schemas.StreamFiniteReserveRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "phase": phase,
+                "submission_key": submission_key,
+                "task_name": task_name,
+                "task_key": task_key,
+                "artifact_digest": artifact_digest,
+                "task_version": task_version,
+                "flow_version": flow_version,
+                "parameters": parameters,
+                "deployment_id": deployment_id,
+                "deployment_version": deployment_version,
+                "task_policy": task_policy or {},
+                "tags": tags or [],
+                "labels": labels or {},
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/finite/reserve", json=payload
+        )
+        return schemas.StreamFiniteManifest.model_validate(response.json())
+
+    def read_stream_finite_submission(
+        self, *, flow_run_id: UUID, submission_key: str
+    ) -> schemas.StreamFiniteManifest:
+        """Read a finite binding without admitting or changing its task."""
+        payload = schemas.StreamFiniteLookupRequest(
+            flow_run_id=flow_run_id, submission_key=submission_key
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/finite/lookup", json=payload
+        )
+        return schemas.StreamFiniteManifest.model_validate(response.json())
+
+    def complete_stream_finite_task(
+        self,
+        *,
+        flow_run_id: UUID,
+        task_run_id: UUID,
+        operation_id: UUID,
+        run_count: int,
+        result: JsonValue,
+    ) -> schemas.StreamFiniteReceipt:
+        """Persist the bounded finite result before normal TaskRun success."""
+        payload = schemas.StreamFiniteCompleteRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "task_run_id": task_run_id,
+                "operation_id": operation_id,
+                "run_count": run_count,
+                "result": result,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST", "/streams/v1/finite/complete", json=payload
+        )
+        return schemas.StreamFiniteReceipt.model_validate(response.json())
+
+    def read_stream_finite_receipt(
+        self, *, task_run_id: UUID
+    ) -> schemas.StreamFiniteReceipt:
+        """Read a durable finite completion result for reconstruction."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v1/finite/{task_run_id}/receipt",
+            path_params={"task_run_id": task_run_id},
+        )
+        return schemas.StreamFiniteReceipt.model_validate(response.json())
+
     def abort_unsealed_stream_execution(
         self,
         *,
@@ -152,6 +241,7 @@ class StreamClient(BaseClient):
         flow_run_id: UUID,
         operation_id: UUID,
         manifests: list[dict[str, str]],
+        finite_prefix: dict[str, Any] | None = None,
     ) -> schemas.StreamManifestSealResult:
         """Execute an idempotent native execution-authority operation."""
         payload = schemas.StreamManifestSealRequest.model_validate(
@@ -159,8 +249,11 @@ class StreamClient(BaseClient):
                 "flow_run_id": flow_run_id,
                 "operation_id": operation_id,
                 "manifests": manifests,
+                "finite_prefix": finite_prefix,
             }
-        ).model_dump(mode="json")
+        ).model_dump(
+            mode="json", exclude={"finite_prefix"} if finite_prefix is None else set()
+        )
         response = self._stream_request(
             "POST", "/streams/v1/executions/seal-manifest", json=payload
         )
@@ -172,6 +265,7 @@ class StreamClient(BaseClient):
         flow_run_id: UUID,
         operation_id: UUID,
         manifests: list[dict[str, str]],
+        finite_manifests: list[dict[str, Any]] | None = None,
     ) -> schemas.StreamRecoveryResult:
         """Execute an idempotent native execution-authority operation."""
         payload = schemas.StreamRecoveryPrepareRequest.model_validate(
@@ -179,8 +273,12 @@ class StreamClient(BaseClient):
                 "flow_run_id": flow_run_id,
                 "operation_id": operation_id,
                 "manifests": manifests,
+                "finite_manifests": finite_manifests,
             }
-        ).model_dump(mode="json")
+        ).model_dump(
+            mode="json",
+            exclude={"finite_manifests"} if finite_manifests is None else set(),
+        )
         response = self._stream_request(
             "POST", "/streams/v1/executions/prepare-recovery", json=payload
         )
@@ -712,6 +810,95 @@ class StreamAsyncClient(BaseAsyncClient):
         except httpx.HTTPStatusError as error:
             raise _refusal(error) from error
 
+    async def reserve_stream_finite_submission(
+        self,
+        *,
+        flow_run_id: UUID,
+        phase: Literal["PREFIX", "TAIL"],
+        submission_key: str,
+        task_name: str,
+        task_key: str,
+        artifact_digest: str,
+        task_version: str,
+        flow_version: str,
+        parameters: dict[str, JsonValue],
+        deployment_id: UUID | None = None,
+        deployment_version: str | None = None,
+        task_policy: dict[str, Any] | None = None,
+        tags: list[str] | None = None,
+        labels: dict[str, bool | int | float | str] | None = None,
+    ) -> schemas.StreamFiniteManifest:
+        """Reserve an ordinary TaskRun in the fenced finite prefix/tail plan."""
+        payload = schemas.StreamFiniteReserveRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "phase": phase,
+                "submission_key": submission_key,
+                "task_name": task_name,
+                "task_key": task_key,
+                "artifact_digest": artifact_digest,
+                "task_version": task_version,
+                "flow_version": flow_version,
+                "parameters": parameters,
+                "deployment_id": deployment_id,
+                "deployment_version": deployment_version,
+                "task_policy": task_policy or {},
+                "tags": tags or [],
+                "labels": labels or {},
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/finite/reserve", json=payload
+        )
+        return schemas.StreamFiniteManifest.model_validate(response.json())
+
+    async def read_stream_finite_submission(
+        self, *, flow_run_id: UUID, submission_key: str
+    ) -> schemas.StreamFiniteManifest:
+        """Read a finite binding without admitting or changing its task."""
+        payload = schemas.StreamFiniteLookupRequest(
+            flow_run_id=flow_run_id, submission_key=submission_key
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/finite/lookup", json=payload
+        )
+        return schemas.StreamFiniteManifest.model_validate(response.json())
+
+    async def complete_stream_finite_task(
+        self,
+        *,
+        flow_run_id: UUID,
+        task_run_id: UUID,
+        operation_id: UUID,
+        run_count: int,
+        result: JsonValue,
+    ) -> schemas.StreamFiniteReceipt:
+        """Persist the bounded finite result before normal TaskRun success."""
+        payload = schemas.StreamFiniteCompleteRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "task_run_id": task_run_id,
+                "operation_id": operation_id,
+                "run_count": run_count,
+                "result": result,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v1/finite/complete", json=payload
+        )
+        return schemas.StreamFiniteReceipt.model_validate(response.json())
+
+    async def read_stream_finite_receipt(
+        self, *, task_run_id: UUID
+    ) -> schemas.StreamFiniteReceipt:
+        """Read a durable finite completion result for reconstruction."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v1/finite/{task_run_id}/receipt",
+            path_params={"task_run_id": task_run_id},
+        )
+        return schemas.StreamFiniteReceipt.model_validate(response.json())
+
     async def abort_unsealed_stream_execution(
         self,
         *,
@@ -806,6 +993,7 @@ class StreamAsyncClient(BaseAsyncClient):
         flow_run_id: UUID,
         operation_id: UUID,
         manifests: list[dict[str, str]],
+        finite_prefix: dict[str, Any] | None = None,
     ) -> schemas.StreamManifestSealResult:
         """Execute an idempotent native execution-authority operation."""
         payload = schemas.StreamManifestSealRequest.model_validate(
@@ -813,8 +1001,11 @@ class StreamAsyncClient(BaseAsyncClient):
                 "flow_run_id": flow_run_id,
                 "operation_id": operation_id,
                 "manifests": manifests,
+                "finite_prefix": finite_prefix,
             }
-        ).model_dump(mode="json")
+        ).model_dump(
+            mode="json", exclude={"finite_prefix"} if finite_prefix is None else set()
+        )
         response = await self._stream_request(
             "POST", "/streams/v1/executions/seal-manifest", json=payload
         )
@@ -826,6 +1017,7 @@ class StreamAsyncClient(BaseAsyncClient):
         flow_run_id: UUID,
         operation_id: UUID,
         manifests: list[dict[str, str]],
+        finite_manifests: list[dict[str, Any]] | None = None,
     ) -> schemas.StreamRecoveryResult:
         """Execute an idempotent native execution-authority operation."""
         payload = schemas.StreamRecoveryPrepareRequest.model_validate(
@@ -833,8 +1025,12 @@ class StreamAsyncClient(BaseAsyncClient):
                 "flow_run_id": flow_run_id,
                 "operation_id": operation_id,
                 "manifests": manifests,
+                "finite_manifests": finite_manifests,
             }
-        ).model_dump(mode="json")
+        ).model_dump(
+            mode="json",
+            exclude={"finite_manifests"} if finite_manifests is None else set(),
+        )
         response = await self._stream_request(
             "POST", "/streams/v1/executions/prepare-recovery", json=payload
         )

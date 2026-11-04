@@ -16,6 +16,10 @@ from prefect.server.database import PrefectDBInterface, orm_models
 from prefect.server.models import flow_runs as flow_run_models
 from prefect.server.models import task_runs as task_run_models
 from prefect.server.models._stream_errors import NativeStreamError
+from prefect.server.models._stream_receipts import (
+    canonical_json_digest,
+    finite_receipt_outcome_digest,
+)
 from prefect.server.orchestration.core_policy import CoreFlowPolicy, CoreTaskPolicy
 from prefect.server.schemas.responses import SetStateStatus
 from prefect.server.schemas.states import TERMINAL_STATES, State, StateType
@@ -24,6 +28,8 @@ from prefect.server.schemas.streams import (
     StreamExecutionClaimRequest,
     StreamExecutionCredentials,
     StreamExecutionTakeoverRequest,
+    StreamFiniteReceipt,
+    StreamFiniteRecoveryItem,
     StreamManifestSealRequest,
     StreamManifestSealResult,
     StreamRecoveryItem,
@@ -71,15 +77,18 @@ def _event_key_id(value: str) -> str:
 
 
 def _recovery_outcome_digest(result: StreamRecoveryResult) -> str:
-    _, digest = _canonical(
-        {
-            "schema": "native-stream-recovery-outcome-v1",
-            "flow_run_id": str(result.flow_run_id),
-            "generation": result.generation,
-            "operation_id": str(result.operation_id),
-            "items": [item.model_dump(mode="json") for item in result.items],
-        }
-    )
+    material: dict[str, Any] = {
+        "schema": "native-stream-recovery-outcome-v1",
+        "flow_run_id": str(result.flow_run_id),
+        "generation": result.generation,
+        "operation_id": str(result.operation_id),
+        "items": [item.model_dump(mode="json") for item in result.items],
+    }
+    if result.finite_items is not None:
+        material["finite_items"] = [
+            item.model_dump(mode="json") for item in result.finite_items
+        ]
+    _, digest = _canonical(material)
     return digest
 
 
@@ -279,16 +288,22 @@ async def takeover_execution(
         or authority.state != "ACTIVE"
     ):
         raise NativeStreamError("STALE_EXECUTION", "Execution generation changed")
-    if (
-        authority.manifest_set_digest is None
-        or authority.manifest_count is None
-        or authority.manifest_sealed_at is None
-        or authority.manifest_seal_operation_id is None
-        or authority.manifest_seal_request_digest is None
-    ):
+    stream_manifest_complete = (
+        authority.manifest_set_digest is not None
+        and authority.manifest_count is not None
+        and authority.manifest_sealed_at is not None
+        and authority.manifest_seal_operation_id is not None
+        and authority.manifest_seal_request_digest is not None
+    )
+    finite_prefix_complete = (
+        authority.finite_prefix_manifest_digest is not None
+        and authority.finite_prefix_task_run_id is not None
+        and authority.finite_prefix_sealed_at is not None
+    )
+    if not stream_manifest_complete and not finite_prefix_complete:
         raise NativeStreamError(
             "MANIFEST_NOT_SEALED",
-            "Process takeover requires the complete immutable stream manifest",
+            "Process takeover requires a complete immutable execution anchor",
         )
     if authority.generation >= MAX_EXECUTION_GENERATIONS:
         raise NativeStreamError(
@@ -464,6 +479,49 @@ async def guard_flow_lifecycle(
                 "TERMINAL_CONFLICT",
                 "Completed FlowRun requires EOF for every sealed stream",
             )
+        if authority.finite_prefix_manifest_digest is not None:
+            finite = (
+                await session.scalars(
+                    sa.select(db.StreamFiniteSubmission)
+                    .where(
+                        db.StreamFiniteSubmission.flow_run_id == flow_run_id,
+                        db.StreamFiniteSubmission.state == "ACTIVE",
+                    )
+                    .order_by(db.StreamFiniteSubmission.phase)
+                    .with_for_update(read=True)
+                )
+            ).all()
+            by_phase = {row.phase: row for row in finite}
+            prefix, tail = by_phase.get("PREFIX"), by_phase.get("TAIL")
+            if (
+                prefix is None
+                or tail is None
+                or prefix.manifest_digest != authority.finite_prefix_manifest_digest
+            ):
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT",
+                    "Mixed FlowRun completion requires its finite prefix and tail",
+                )
+            receipts = {
+                row.finite_submission_id: row
+                for row in (
+                    await session.scalars(
+                        sa.select(db.StreamFiniteReceipt)
+                        .where(
+                            db.StreamFiniteReceipt.finite_submission_id.in_(
+                                [prefix.id, tail.id]
+                            )
+                        )
+                        .order_by(db.StreamFiniteReceipt.finite_submission_id)
+                        .with_for_update(read=True)
+                    )
+                ).all()
+            }
+            if prefix.id not in receipts or tail.id not in receipts:
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT",
+                    "Mixed FlowRun completion requires durable finite results",
+                )
     if authority.state in {"CLAIMED", "RECOVERING"} and not proposed_state.is_running():
         raise NativeStreamError(
             "RECOVERY_NOT_READY",
@@ -527,11 +585,6 @@ async def guard_task_lifecycle(
         raise NativeStreamError(
             "PROTOCOL_ERROR", "Enrolled TaskRun lifecycle cannot bypass policy"
         )
-    if authority.manifest_set_digest is None:
-        raise NativeStreamError(
-            "MANIFEST_NOT_SEALED",
-            "TaskRun lifecycle cannot start before its manifest is sealed",
-        )
     if authority.prepared_generation != authority.generation:
         raise NativeStreamError(
             "RECOVERY_NOT_READY", "Execution generation is not prepared"
@@ -548,11 +601,77 @@ async def guard_task_lifecycle(
             db.StreamSubmission.state == "ACTIVE",
         )
     )
-    if manifest is None:
+    finite = await session.scalar(
+        sa.select(db.StreamFiniteSubmission).where(
+            db.StreamFiniteSubmission.flow_run_id == flow_run_id,
+            db.StreamFiniteSubmission.task_run_id == task_run_id,
+            db.StreamFiniteSubmission.state == "ACTIVE",
+        )
+    )
+    if manifest is None and finite is None:
         raise NativeStreamError(
             "IDENTITY_CONFLICT", "Enrolled TaskRun is not bound to a manifest"
         )
+    if manifest is not None and authority.manifest_set_digest is None:
+        raise NativeStreamError(
+            "MANIFEST_NOT_SEALED",
+            "Stream TaskRun lifecycle cannot start before its manifest is sealed",
+        )
+    if finite is not None:
+        if finite.phase == "PREFIX" and (
+            authority.finite_prefix_manifest_digest != finite.manifest_digest
+            or authority.finite_prefix_task_run_id != finite.task_run_id
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Finite prefix manifest is not the authority anchor",
+            )
+        if finite.phase == "TAIL" and authority.manifest_set_digest is None:
+            raise NativeStreamError(
+                "MANIFEST_NOT_SEALED", "Finite tail requires the sealed stream graph"
+            )
+        receipt = await session.scalar(
+            sa.select(db.StreamFiniteReceipt)
+            .where(db.StreamFiniteReceipt.finite_submission_id == finite.id)
+            .with_for_update(read=True)
+        )
+        if receipt is not None:
+            if receipt.outcome_digest != finite_receipt_outcome_digest(
+                flow_run_id=finite.flow_run_id,
+                phase=finite.phase,
+                submission_key=finite.submission_key,
+                manifest_digest=finite.manifest_digest,
+                task_run_id=finite.task_run_id,
+                operation_id=receipt.operation_id,
+                run_count=receipt.run_count,
+                result_digest=receipt.result_digest,
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "Finite result receipt witness is inconsistent",
+                )
+            if receipt.run_count != task.run_count:
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT",
+                    "Finite result receipt belongs to an earlier TaskRun attempt",
+                )
+            if proposed_state is None or proposed_state.is_completed():
+                return authority
+            if proposed_state.is_running() and task.state_type == StateType.RUNNING:
+                return authority
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT",
+                "Durable finite result must reconcile to Completed without retry",
+            )
     if proposed_state is not None and proposed_state.is_completed():
+        if finite is not None:
+            if receipt is None:
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT",
+                    "Finite TaskRun completion requires its exact durable result receipt",
+                )
+            return authority
+        assert manifest is not None
         output = await session.scalar(
             sa.select(db.StreamPartition)
             .where(db.StreamPartition.id == manifest.stream_id)
@@ -629,14 +748,20 @@ async def seal_manifest(
     )
     assert authority is not None
     witness_material = [item.model_dump(mode="json") for item in request.manifests]
-    _, request_digest = _canonical(
-        {
-            "schema": "native-stream-manifest-seal-v1",
-            "flow_run_id": str(request.flow_run_id),
-            "operation_id": str(request.operation_id),
-            "manifests": witness_material,
-        }
+    finite_prefix_material = (
+        request.finite_prefix.model_dump(mode="json")
+        if request.finite_prefix is not None
+        else None
     )
+    request_material: dict[str, Any] = {
+        "schema": "native-stream-manifest-seal-v1",
+        "flow_run_id": str(request.flow_run_id),
+        "operation_id": str(request.operation_id),
+        "manifests": witness_material,
+    }
+    if finite_prefix_material is not None:
+        request_material["finite_prefix"] = finite_prefix_material
+    _, request_digest = _canonical(request_material)
     if authority.manifest_set_digest is not None:
         if (
             authority.manifest_seal_operation_id != request.operation_id
@@ -654,6 +779,47 @@ async def seal_manifest(
         raise NativeStreamError(
             "RECOVERY_NOT_READY", "Manifest can only be sealed before recovery begins"
         )
+
+    prefix = await session.scalar(
+        sa.select(db.StreamFiniteSubmission)
+        .where(
+            db.StreamFiniteSubmission.flow_run_id == request.flow_run_id,
+            db.StreamFiniteSubmission.phase == "PREFIX",
+            db.StreamFiniteSubmission.state == "ACTIVE",
+        )
+        .with_for_update(read=True)
+    )
+    if prefix is None:
+        if request.finite_prefix is not None:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Finite prefix witness has no stored manifest"
+            )
+    else:
+        receipt = await session.scalar(
+            sa.select(db.StreamFiniteReceipt)
+            .where(db.StreamFiniteReceipt.finite_submission_id == prefix.id)
+            .with_for_update(read=True)
+        )
+        witness = request.finite_prefix
+        if receipt is None:
+            raise NativeStreamError(
+                "RECOVERY_NOT_READY",
+                "Stream graph requires durable finite prefix result",
+            )
+        if (
+            witness is None
+            or witness.phase != "PREFIX"
+            or witness.submission_key != prefix.submission_key
+            or witness.manifest_digest != prefix.manifest_digest
+            or witness.task_run_id != prefix.task_run_id
+            or witness.result_digest != receipt.result_digest
+            or authority.finite_prefix_manifest_digest != prefix.manifest_digest
+            or authority.finite_prefix_task_run_id != prefix.task_run_id
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Finite prefix receipt witness differs from storage",
+            )
 
     keys = [item.submission_key for item in request.manifests]
     if len(set(keys)) != len(keys):
@@ -759,32 +925,47 @@ async def prepare_recovery(
         update=True,
     )
     assert authority is not None
-    if authority.manifest_set_digest is None:
+    if (
+        authority.manifest_set_digest is None
+        and authority.finite_prefix_manifest_digest is None
+    ):
         raise NativeStreamError(
             "MANIFEST_NOT_SEALED",
-            "Whole-worker recovery requires an immutable manifest seal",
+            "Whole-worker recovery requires an immutable execution anchor",
         )
-    _, supplied_manifest_digest = _canonical(
-        {
-            "schema": "native-stream-manifest-set-v1",
-            "flow_run_id": str(request.flow_run_id),
-            "manifests": [item.model_dump(mode="json") for item in request.manifests],
-        }
-    )
+    supplied_manifest_digest: str | None = None
+    if authority.manifest_set_digest is not None:
+        _, supplied_manifest_digest = _canonical(
+            {
+                "schema": "native-stream-manifest-set-v1",
+                "flow_run_id": str(request.flow_run_id),
+                "manifests": [
+                    item.model_dump(mode="json") for item in request.manifests
+                ],
+            }
+        )
+    elif request.manifests:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Recovery supplied an unsealed stream manifest"
+        )
     if supplied_manifest_digest != authority.manifest_set_digest:
         raise NativeStreamError(
             "IDENTITY_CONFLICT", "Recovery manifest differs from the sealed graph"
         )
-    _, request_digest = _canonical(
-        {
-            "schema": "native-stream-recovery-prepare-v1",
-            "flow_run_id": str(request.flow_run_id),
-            "generation": authority.generation,
-            "operation_id": str(request.operation_id),
-            "manifest_set_digest": supplied_manifest_digest,
-            "manifests": [item.model_dump(mode="json") for item in request.manifests],
-        }
-    )
+    finite_witnesses = request.finite_manifests or []
+    request_material: dict[str, Any] = {
+        "schema": "native-stream-recovery-prepare-v1",
+        "flow_run_id": str(request.flow_run_id),
+        "generation": authority.generation,
+        "operation_id": str(request.operation_id),
+        "manifest_set_digest": supplied_manifest_digest,
+        "manifests": [item.model_dump(mode="json") for item in request.manifests],
+    }
+    if request.finite_manifests is not None:
+        request_material["finite_manifests"] = [
+            item.model_dump(mode="json") for item in finite_witnesses
+        ]
+    _, request_digest = _canonical(request_material)
     attempt = await session.scalar(
         sa.select(db.StreamExecutionAttempt)
         .where(
@@ -863,6 +1044,42 @@ async def prepare_recovery(
             )
         ordered_submissions.append(submission)
 
+    finite_submissions = (
+        await session.scalars(
+            sa.select(db.StreamFiniteSubmission)
+            .where(
+                db.StreamFiniteSubmission.flow_run_id == request.flow_run_id,
+                db.StreamFiniteSubmission.state == "ACTIVE",
+            )
+            .order_by(db.StreamFiniteSubmission.task_run_id)
+            .with_for_update()
+        )
+    ).all()
+    finite_by_key = {row.submission_key: row for row in finite_submissions}
+    if len(finite_submissions) != len(finite_witnesses):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Recovery finite manifest is incomplete"
+        )
+    ordered_finite: list[orm_models.StreamFiniteSubmission] = []
+    for witness in finite_witnesses:
+        finite = finite_by_key.get(witness.submission_key)
+        if (
+            finite is None
+            or finite.manifest_digest != witness.manifest_digest
+            or finite.phase != witness.phase
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Recovery finite manifest differs from storage"
+            )
+        ordered_finite.append(finite)
+    prefix = next((item for item in finite_submissions if item.phase == "PREFIX"), None)
+    if authority.finite_prefix_manifest_digest is not None and (
+        prefix is None
+        or prefix.manifest_digest != authority.finite_prefix_manifest_digest
+        or prefix.task_run_id != authority.finite_prefix_task_run_id
+    ):
+        raise NativeStreamError("IDENTITY_CONFLICT", "Finite prefix anchor drift")
+
     tasks = {
         row.id: row
         for row in (
@@ -871,6 +1088,7 @@ async def prepare_recovery(
                 .where(
                     db.TaskRun.id.in_(
                         [submission.task_run_id for submission in submissions]
+                        + [submission.task_run_id for submission in finite_submissions]
                     )
                 )
                 .order_by(db.TaskRun.id)
@@ -893,7 +1111,9 @@ async def prepare_recovery(
             )
         ).all()
     }
-    if len(tasks) != len(submissions) or len(streams) != len(submissions):
+    if len(tasks) != len(submissions) + len(finite_submissions) or len(streams) != len(
+        submissions
+    ):
         raise NativeStreamError("IDENTITY_CONFLICT", "Recovery graph is incomplete")
 
     items: list[StreamRecoveryItem] = []
@@ -977,18 +1197,139 @@ async def prepare_recovery(
             )
         )
 
-    unsigned_result = StreamRecoveryResult(
-        flow_run_id=request.flow_run_id,
-        generation=authority.generation,
-        operation_id=request.operation_id,
-        items=items,
-        outcome_digest="0" * 64,
-    )
+    receipt_rows = {
+        row.finite_submission_id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamFiniteReceipt)
+                .where(
+                    db.StreamFiniteReceipt.finite_submission_id.in_(
+                        [submission.id for submission in finite_submissions]
+                    )
+                )
+                .order_by(db.StreamFiniteReceipt.finite_submission_id)
+                .with_for_update(read=True)
+            )
+        ).all()
+    }
+    finite_items: list[StreamFiniteRecoveryItem] = []
+    for submission in ordered_finite:
+        task = tasks[submission.task_run_id]
+        receipt_row = receipt_rows.get(submission.id)
+        receipt: StreamFiniteReceipt | None = None
+        if receipt_row is not None:
+            result_size, result_digest = canonical_json_digest(receipt_row.result)
+            if (
+                receipt_row.task_run_id != task.id
+                or receipt_row.run_count != task.run_count
+                or receipt_row.result_size != result_size
+                or receipt_row.result_digest != result_digest
+                or receipt_row.outcome_digest
+                != finite_receipt_outcome_digest(
+                    flow_run_id=submission.flow_run_id,
+                    phase=submission.phase,
+                    submission_key=submission.submission_key,
+                    manifest_digest=submission.manifest_digest,
+                    task_run_id=submission.task_run_id,
+                    operation_id=receipt_row.operation_id,
+                    run_count=receipt_row.run_count,
+                    result_digest=receipt_row.result_digest,
+                )
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "Finite receipt TaskRun attempt drift"
+                )
+            if task.state_type != StateType.COMPLETED:
+                completed = await task_run_models.set_task_run_state(
+                    session=session,
+                    task_run_id=task.id,
+                    state=schemas.states.Completed(
+                        message="Recovered from durable finite result receipt"
+                    ),
+                    force=False,
+                    task_policy=CoreTaskPolicy,
+                )
+                if (
+                    completed.status != SetStateStatus.ACCEPT
+                    or completed.state is None
+                    or not completed.state.is_completed()
+                ):
+                    raise NativeStreamError(
+                        "RECOVERY_POLICY_EXHAUSTED",
+                        "TaskRun policy did not reconcile finite result receipt",
+                    )
+                await session.refresh(task)
+            next_run_count = max(1, task.run_count)
+            receipt = StreamFiniteReceipt(
+                flow_run_id=submission.flow_run_id,
+                phase=cast(Literal["PREFIX", "TAIL"], submission.phase),
+                submission_key=submission.submission_key,
+                task_run_id=submission.task_run_id,
+                operation_id=receipt_row.operation_id,
+                run_count=receipt_row.run_count,
+                result=receipt_row.result,
+                result_digest=receipt_row.result_digest,
+                outcome_digest=receipt_row.outcome_digest,
+                created_at=receipt_row.created,
+            )
+        else:
+            if task.state_type == StateType.RUNNING:
+                failed = await task_run_models.set_task_run_state(
+                    session=session,
+                    task_run_id=task.id,
+                    state=schemas.states.Failed(
+                        message="Confirmed execution process loss"
+                    ),
+                    force=False,
+                    task_policy=CoreTaskPolicy,
+                )
+                if (
+                    failed.status != SetStateStatus.REJECT
+                    or failed.state is None
+                    or failed.state.name != "AwaitingRetry"
+                ):
+                    raise NativeStreamError(
+                        "RECOVERY_POLICY_EXHAUSTED",
+                        "Finite TaskRun retry policy did not produce AwaitingRetry",
+                    )
+                await session.refresh(task)
+            elif task.state_type == StateType.COMPLETED:
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT",
+                    "Completed finite TaskRun has no durable result receipt",
+                )
+            elif task.state_type not in {StateType.PENDING, StateType.SCHEDULED}:
+                raise NativeStreamError(
+                    "RECOVERY_NOT_READY", "Finite TaskRun is not recoverable"
+                )
+            next_run_count = task.run_count + 1
+        finite_items.append(
+            StreamFiniteRecoveryItem(
+                submission_key=submission.submission_key,
+                phase=cast(Literal["PREFIX", "TAIL"], submission.phase),
+                task_run_id=task.id,
+                task_state=cast(str, task.state_name),
+                current_run_count=task.run_count,
+                next_run_count=next_run_count,
+                receipt=receipt,
+            )
+        )
+
+    result_fields: dict[str, Any] = {
+        "flow_run_id": request.flow_run_id,
+        "generation": authority.generation,
+        "operation_id": request.operation_id,
+        "items": items,
+        "outcome_digest": "0" * 64,
+    }
+    if finite_items:
+        result_fields["finite_items"] = finite_items
+    unsigned_result = StreamRecoveryResult.model_validate(result_fields)
     outcome_digest = _recovery_outcome_digest(unsigned_result)
     result = unsigned_result.model_copy(update={"outcome_digest": outcome_digest})
     attempt.recovery_operation_id = request.operation_id
     attempt.recovery_request_digest = request_digest
-    attempt.recovery_outcome = result.model_dump(mode="json")
+    attempt.recovery_outcome = result.model_dump(mode="json", exclude_unset=True)
     attempt.recovery_outcome_digest = outcome_digest
     authority.prepared_generation = authority.generation
     await session.flush()

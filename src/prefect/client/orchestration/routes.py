@@ -1,6 +1,10 @@
 from typing import Literal
 
 ServerRoutes = Literal[
+    "/streams/v1/finite/reserve",
+    "/streams/v1/finite/lookup",
+    "/streams/v1/finite/complete",
+    "/streams/v1/finite/{task_run_id}/receipt",
     "/streams/v1/executions/abort-unsealed",
     "/streams/v1/executions/claim",
     "/streams/v1/executions/takeover",

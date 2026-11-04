@@ -1,0 +1,27 @@
+"""Reproduce required JSON null loss under recursive model exclusion."""
+from datetime import datetime, timezone
+import json
+from uuid import uuid4
+
+from pydantic import ValidationError
+from prefect.client.schemas.streams import (
+    StreamFiniteReceipt,
+    StreamFiniteRecoveryItem,
+    StreamRecoveryResult,
+)
+
+flow_id, task_id, operation = uuid4(), uuid4(), uuid4()
+receipt = StreamFiniteReceipt(flow_run_id=flow_id, phase='PREFIX', submission_key='prepare', task_run_id=task_id, operation_id=operation, run_count=1, result=None, result_digest='a'*64, outcome_digest='b'*64, created_at=datetime.now(timezone.utc))
+result = StreamRecoveryResult(flow_run_id=flow_id, generation=2, operation_id=uuid4(), items=[], finite_items=[StreamFiniteRecoveryItem(submission_key='prepare', phase='PREFIX', task_run_id=task_id, task_state='COMPLETED', current_run_count=1, next_run_count=1, receipt=receipt)], outcome_digest='c'*64)
+wrong = result.model_dump(mode='json', exclude_none=True)
+right = result.model_dump(mode='json', exclude_unset=True)
+assert 'result' not in wrong['finite_items'][0]['receipt']
+try:
+    StreamRecoveryResult.model_validate(wrong)
+except ValidationError as error:
+    rejected = [{'loc':list(item['loc']), 'type':item['type']} for item in error.errors()]
+else:
+    raise AssertionError('Missing required result was unexpectedly accepted')
+assert right['finite_items'][0]['receipt']['result'] is None
+assert StreamRecoveryResult.model_validate(right) == result
+print(json.dumps({'verdict':'REJECT_RECURSIVE_EXCLUDE_NONE','wrong_result_key_present':False,'validation_errors':rejected,'correct_explicit_null_preserved':True,'correct_round_trip':True},indent=2))

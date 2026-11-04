@@ -25,6 +25,8 @@ STREAM_TABLES = {
     "stream_submission",
     "stream_execution_authority",
     "stream_execution_attempt",
+    "stream_finite_submission",
+    "stream_finite_receipt",
 }
 
 
@@ -61,12 +63,46 @@ async def test_native_stream_storage_upgrade_and_downgrade(
         "abort_outcome",
         "abort_outcome_digest",
     }
+    finite_columns = {
+        "finite_prefix_manifest_digest",
+        "finite_prefix_task_run_id",
+        "finite_prefix_sealed_at",
+    }
     assert abort_columns <= await execution_attempt_columns()
+
+    async def execution_authority_columns() -> set[str]:
+        async with database_engine.connect() as connection:
+            return set(
+                await connection.run_sync(
+                    lambda sync_connection: {
+                        column["name"]
+                        for column in sa.inspect(sync_connection).get_columns(
+                            "stream_execution_authority"
+                        )
+                    }
+                )
+            )
+
+    assert finite_columns <= await execution_authority_columns()
 
     await database_engine.dispose()
     try:
         await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
-        assert STREAM_TABLES <= await _table_names(database_engine)
+        assert {
+            "stream_finite_submission",
+            "stream_finite_receipt",
+        }.isdisjoint(await _table_names(database_engine))
+        assert (
+            STREAM_TABLES - {"stream_finite_submission", "stream_finite_receipt"}
+        ) <= await _table_names(database_engine)
+        assert finite_columns.isdisjoint(await execution_authority_columns())
+        assert abort_columns <= await execution_attempt_columns()
+
+        await database_engine.dispose()
+        await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+        assert (
+            STREAM_TABLES - {"stream_finite_submission", "stream_finite_receipt"}
+        ) <= await _table_names(database_engine)
         assert abort_columns.isdisjoint(await execution_attempt_columns())
 
         await database_engine.dispose()
@@ -76,7 +112,13 @@ async def test_native_stream_storage_upgrade_and_downgrade(
             "stream_execution_attempt",
         }.isdisjoint(await _table_names(database_engine))
         assert (
-            STREAM_TABLES - {"stream_execution_authority", "stream_execution_attempt"}
+            STREAM_TABLES
+            - {
+                "stream_finite_submission",
+                "stream_finite_receipt",
+                "stream_execution_authority",
+                "stream_execution_attempt",
+            }
         ) <= await _table_names(database_engine)
 
         await database_engine.dispose()
@@ -85,6 +127,8 @@ async def test_native_stream_storage_upgrade_and_downgrade(
         assert (
             STREAM_TABLES
             - {
+                "stream_finite_submission",
+                "stream_finite_receipt",
                 "stream_submission",
                 "stream_execution_authority",
                 "stream_execution_attempt",
@@ -115,6 +159,8 @@ async def test_native_stream_storage_schema_matches_orm(
         db.StreamSubmission,
         db.StreamExecutionAuthority,
         db.StreamExecutionAttempt,
+        db.StreamFiniteSubmission,
+        db.StreamFiniteReceipt,
     ):
         table = cast(sa.Table, model.__table__)
         orm_tables[table.name] = table
@@ -165,6 +211,15 @@ async def test_native_stream_storage_schema_matches_orm(
         {"generation": 65},
         {"prepared_generation": -1},
         {"prepared_generation": 2},
+        {"finite_prefix_manifest_digest": "0" * 64},
+        {
+            "finite_prefix_manifest_digest": "0" * 64,
+            "finite_prefix_task_run_id": uuid.uuid4(),
+        },
+        {
+            "finite_prefix_task_run_id": uuid.uuid4(),
+            "finite_prefix_sealed_at": now("UTC"),
+        },
     ],
 )
 async def test_stream_execution_authority_schema_rejects_partial_seal_and_horizon(
@@ -364,6 +419,171 @@ async def test_stream_submission_parameters_preserve_signed_zero(
             )
         )
     assert math.copysign(1.0, parameters["negative_zero"]) == -1.0
+
+
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    [
+        ({"phase": "MIDDLE"}, "phase_valid"),
+        ({"canonical_size": 0}, "canonical_size_positive"),
+        ({"artifact_digest": "short"}, "digest_lengths_valid"),
+        ({"state": "RELEASED"}, "release_shape_valid"),
+    ],
+)
+async def test_finite_submission_schema_rejects_invalid_shapes(
+    db: PrefectDBInterface,
+    session,
+    flow_run,
+    task_run,
+    mutation: dict[str, object],
+    match: str,
+):
+    values: dict[str, object] = {
+        "flow_run_id": flow_run.id,
+        "phase": "PREFIX",
+        "submission_key": "finite.prefix",
+        "request_digest": "0" * 64,
+        "manifest_digest": "1" * 64,
+        "canonical_size": 1,
+        "parameters": {"negative_zero": -0.0},
+        "parameters_digest": "2" * 64,
+        "task_run_id": task_run.id,
+        "task_name": "prefix",
+        "task_key": "prefix-key",
+        "task_version": "v1",
+        "flow_version": "v1",
+        "artifact_digest": "3" * 64,
+        "dynamic_key": "finite-prefix",
+        "task_policy": {"retries": 1},
+        "tags": [],
+        "labels": {},
+    }
+    values.update(mutation)
+    session.add(db.StreamFiniteSubmission(**values))
+    with pytest.raises(IntegrityError, match=match):
+        await session.flush()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    [
+        ({"run_count": 0}, "run_count_positive"),
+        ({"result_size": 0}, "result_size_positive"),
+        ({"request_digest": "short"}, "digest_lengths_valid"),
+        ({"outcome_digest": "short"}, "digest_lengths_valid"),
+        ({"result": sa.null()}, "(?i)not.?null"),
+    ],
+)
+async def test_finite_receipt_schema_rejects_invalid_shapes(
+    db: PrefectDBInterface,
+    session,
+    flow_run,
+    task_run,
+    mutation: dict[str, object],
+    match: str,
+):
+    manifest = db.StreamFiniteSubmission(
+        flow_run_id=flow_run.id,
+        phase="PREFIX",
+        submission_key="finite.prefix",
+        request_digest="0" * 64,
+        manifest_digest="1" * 64,
+        canonical_size=1,
+        parameters={},
+        parameters_digest="2" * 64,
+        task_run_id=task_run.id,
+        task_name="prefix",
+        task_key="prefix-key",
+        task_version="v1",
+        flow_version="v1",
+        artifact_digest="3" * 64,
+        dynamic_key="finite-prefix",
+        task_policy={"retries": 1},
+        tags=[],
+        labels={},
+    )
+    session.add(manifest)
+    await session.flush()
+    values: dict[str, object] = {
+        "finite_submission_id": manifest.id,
+        "task_run_id": task_run.id,
+        "operation_id": uuid.uuid4(),
+        "request_digest": "4" * 64,
+        "outcome_digest": "5" * 64,
+        "run_count": 1,
+        "result": None,
+        "result_digest": "6" * 64,
+        "result_size": 4,
+    }
+    values.update(mutation)
+    session.add(db.StreamFiniteReceipt(**values))
+    with pytest.raises(IntegrityError, match=match):
+        await session.flush()
+
+
+async def test_finite_json_preserves_null_and_signed_zero(
+    db: PrefectDBInterface,
+    flow_run,
+    task_run,
+):
+    async with db.session_context(begin_transaction=True) as session:
+        manifest = db.StreamFiniteSubmission(
+            flow_run_id=flow_run.id,
+            phase="PREFIX",
+            submission_key="finite.json",
+            request_digest="0" * 64,
+            manifest_digest="1" * 64,
+            canonical_size=1,
+            parameters={"negative_zero": -0.0},
+            parameters_digest="2" * 64,
+            task_run_id=task_run.id,
+            task_name="prefix",
+            task_key="prefix-key",
+            task_version="v1",
+            flow_version="v1",
+            artifact_digest="3" * 64,
+            dynamic_key="finite-prefix",
+            task_policy={"retries": 1},
+            tags=[],
+            labels={},
+        )
+        session.add(manifest)
+        await session.flush()
+        session.add(
+            db.StreamFiniteReceipt(
+                finite_submission_id=manifest.id,
+                task_run_id=task_run.id,
+                operation_id=uuid.uuid4(),
+                request_digest="4" * 64,
+                outcome_digest="5" * 64,
+                run_count=1,
+                result=None,
+                result_digest="6" * 64,
+                result_size=4,
+            )
+        )
+
+    async with db.session_context() as session:
+        parameters = await session.scalar(
+            sa.select(db.StreamFiniteSubmission.parameters).where(
+                db.StreamFiniteSubmission.task_run_id == task_run.id
+            )
+        )
+        result_is_sql_null = await session.scalar(
+            sa.text(
+                "SELECT result IS NULL FROM stream_finite_receipt "
+                "WHERE task_run_id = :task_run_id"
+            ),
+            {"task_run_id": str(task_run.id)},
+        )
+        result = await session.scalar(
+            sa.select(db.StreamFiniteReceipt.result).where(
+                db.StreamFiniteReceipt.task_run_id == task_run.id
+            )
+        )
+    assert math.copysign(1.0, parameters["negative_zero"]) == -1.0
+    assert result_is_sql_null is False or result_is_sql_null == 0
+    assert result is None
 
 
 async def test_stream_submission_schema_has_one_source_root_index(
