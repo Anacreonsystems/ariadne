@@ -95,10 +95,12 @@ witness. No online GC or unbounded retention guarantee is added.
 
 N1.6b initially supports direct finite calls only. Finite submit/map/deferred
 execution, nested tasks, arbitrary finite chains, mid-graph finite calls,
-partial collection, branch/join and production worker automation remain later
+TAIL admission based only on partial collection, branch/join and production worker automation remain later
 scopes. Unsupported calls before graph seal must refuse before admission and
-DATA. A partial-collection TAIL call must refuse before its TaskRun/body; stream
-DATA may already exist when collection returns.
+DATA. A TAIL call after bounded collection must refuse while any leaf remains
+OPEN, before its TaskRun/body; DATA may already exist when collection returns.
+If all EOFs become durable before TAIL reservation, that EOF condition permits
+admission. Collection size alone never proves EOF.
 
 ## Stories
 
@@ -141,8 +143,9 @@ DATA may already exist when collection returns.
   prefix receipt loss, document-200 process loss, and tail receipt loss.
 - [ ] As a user, I got the completed prefix skipped, first-incomplete document
   replayed, and the tail run or skipped according to its durable receipt.
-- [ ] As a system, I can refuse a TAIL after partial collection before creating
-  its TaskRun or entering its body, even when stream DATA already exists.
+- [ ] As a system, I can refuse a TAIL after partial collection while any leaf
+  remains OPEN, before creating its TaskRun or entering its body, even when
+  prior DATA exists; durable EOF before reservation permits admission.
 - [ ] As a system, I can refuse mid-graph finite calls and unsupported finite
   entrypoints before creating that call's TaskRun, while the unsealed graph
   still admits no stream DATA.
@@ -278,7 +281,9 @@ Final review also separates refusal guarantees by phase: partial collection
 already implies DATA, so its refusal cannot promise zero earlier stream DATA.
 Its acceptance criterion now checks no TAIL TaskRun/body; pre-seal unsupported
 calls cannot create their own TaskRun or admit DATA. Earlier reserved graph
-TaskRuns may already exist behind the seal gate.
+TaskRuns may already exist behind the seal gate. If every EOF becomes durable
+before TAIL reservation, admission is allowed: an earlier bounded collection
+neither proves EOF nor permanently prohibits a later TAIL.
 
 ## Consequences
 
