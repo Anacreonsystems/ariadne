@@ -42,13 +42,17 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           filter: blob:none
-      - name: Set up uv and Python 3.12
+      - name: Set up uv and managed Python 3.12.14
         uses: astral-sh/setup-uv@v10.0.1
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
         with:
-          python-version: "3.12"
+          python-version: "3.12.14"
           enable-cache: true
       - name: Install packages
-        run: uv sync --locked
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
+        run: uv sync --locked --python 3.12.14
       - name: Configure the isolated database and selected case
         env:
           PROGRESS_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
@@ -80,6 +84,9 @@ jobs:
           import json
           import os
           import platform
+          import sys
+          import sysconfig
+          from importlib.metadata import version
           from pathlib import Path
 
           limits = {}
@@ -90,6 +97,15 @@ jobs:
           result = {
               "platform": platform.platform(),
               "python": platform.python_version(),
+              "python_executable": sys.executable,
+              "python_build": {
+                  key: sysconfig.get_config_var(key)
+                  for key in ("Py_DEBUG", "CONFIG_ARGS", "CFLAGS", "PY_CFLAGS_NODIST")
+              },
+              "dependency_versions": {
+                  name: version(name)
+                  for name in ("sqlalchemy", "pydantic", "asyncpg", "uvicorn", "fastapi", "httpx")
+              },
               "logical_cpus": os.cpu_count(),
               "cpu_affinity": sorted(os.sched_getaffinity(0)),
               "cgroup": limits,
