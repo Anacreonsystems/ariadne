@@ -1,0 +1,101 @@
+F
+=================================== FAILURES ===================================
+___________ test_physical_topology_roundtrip_keeps_legacy_partition ____________
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7ff792c40890>
+database_engine = <sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x7ff79357ac90>
+flow_run = FlowRun(id=5efdb1fb-9aff-4559-94b8-a0438062f674)
+
+    async def test_physical_topology_roundtrip_keeps_legacy_partition(
+        db, database_engine, flow_run
+    ):
+        async with db.session_context(begin_transaction=True) as session:
+            stream = db.StreamPartition(flow_run_id=flow_run.id, limits={})
+            session.add(stream)
+            await session.flush()
+            stream_id = stream.id
+        previous = "c95d1f8e3a42" if db.dialect.name == "postgresql" else "d06e2a9f4b53"
+        async with _isolated_postgres_schema_changes(db, database_engine):
+            await database_engine.dispose()
+            try:
+                await run_sync_in_worker_thread(alembic_downgrade, previous)
+                await database_engine.dispose()
+                async with database_engine.connect() as connection:
+                    names = await connection.run_sync(
+                        lambda sync: sa.inspect(sync).get_table_names()
+                    )
+                    assert "stream_graph_revision" not in names
+                    assert (
+                        await connection.scalar(
+                            sa.text("SELECT COUNT(*) FROM stream_partition WHERE id=:id"),
+                            {"id": str(stream_id)},
+                        )
+                        == 1
+                    )
+                await run_sync_in_worker_thread(alembic_upgrade, "head")
+                await database_engine.dispose()
+                async with database_engine.connect() as connection:
+                    names = await connection.run_sync(
+                        lambda sync: sa.inspect(sync).get_table_names()
+                    )
+                    assert {
+                        "stream_graph_revision",
+                        "stream_operator_run",
+                        "stream_physical_subtask",
+                        "stream_subtask_grant",
+                        "stream_subtask_replacement",
+                        "stream_subtask_allocation",
+                    }.issubset(names)
+                    indexes = await connection.run_sync(
+                        lambda sync: sa.inspect(sync).get_indexes("stream_submission")
+                    )
+                    source_index = next(
+                        index
+                        for index in indexes
+                        if index["name"] == "uq_stream_submission__one_source_per_flow"
+                    )
+                    assert source_index["unique"]
+>                   assert "graph_revision_id IS NULL" in str(
+                        source_index["dialect_options"]
+                    )
+E                   assert 'graph_revision_id IS NULL' in "{'sqlite_where': <sqlalchemy.sql.elements.TextClause object at 0x7ff78be4cdd0>}"
+E                    +  where "{'sqlite_where': <sqlalchemy.sql.elements.TextClause object at 0x7ff78be4cdd0>}" = str({'sqlite_where': <sqlalchemy.sql.elements.TextClause object at 0x7ff78be4cdd0>})
+
+tests/server/database/test_stream_subtask_migrations.py:66: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'sqlite+aiosqlite:////tmp/native-epoch2-server-migration.sqlite'
+Running hosted API server on port 42165
+---------------------------- Captured stderr setup -----------------------------
+22:06:43.902 | INFO    | uvicorn.error - Started server process [139554]
+22:06:43.906 | INFO    | uvicorn.error - Waiting for application startup.
+22:06:44.007 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+22:06:44.012 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+22:06:44.013 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+22:06:44.013 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+22:06:44.013 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+22:06:44.013 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+22:06:44.013 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+22:06:44.013 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+22:06:44.014 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+22:06:44.014 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+22:06:44.014 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+22:06:44.014 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+22:06:44.014 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+22:06:44.014 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+22:06:44.014 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+22:06:44.015 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+22:06:44.015 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+22:06:44.016 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+22:06:44.017 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+22:06:44.019 | INFO    | uvicorn.error - Application startup complete.
+22:06:44.020 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 42165) (Press CTRL+C to quit)
+22:06:44.055 | INFO    | uvicorn.access - 127.0.0.1:37820 - "GET /api/health HTTP/1.1" 200
+--------------------------- Captured stderr teardown ---------------------------
+22:06:44.736 | INFO    | uvicorn.error - Shutting down
+22:06:44.838 | INFO    | uvicorn.error - Waiting for application shutdown.
+22:06:44.841 | INFO    | uvicorn.error - Application shutdown complete.
+22:06:44.842 | INFO    | uvicorn.error - Finished server process [139554]
+=========================== short test summary info ============================
+FAILED tests/server/database/test_stream_subtask_migrations.py::test_physical_topology_roundtrip_keeps_legacy_partition
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 9.31s

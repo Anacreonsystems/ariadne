@@ -1,0 +1,116 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_concurrent_identity_acknowledgements_create_one_subtask_owner ______
+
+bootstrap_endpoint = ('http://127.0.0.1:36229/api', <queue.Queue object at 0x7f8cd1e84fe0>)
+
+    async def test_concurrent_identity_acknowledgements_create_one_subtask_owner(
+        bootstrap_endpoint: tuple[str, queue.Queue[tuple[str, str]]],
+    ):
+        async with PrefectClient(
+            bootstrap_endpoint[0], auth_string="owned-worker:transport-control"
+        ) as client:
+            worker = ProcessWorker(work_pool_name="owned-concurrent-startup")
+            worker._client = client
+            worker._work_pool = WorkPool(
+                name="owned-concurrent-startup",
+                type="process",
+                default_queue_id=uuid4(),
+                base_job_template={
+                    "prefect_native_streaming": {
+                        "schema_version": 1,
+                        "profile": "bounded-linear-v1",
+                    }
+                },
+            )
+            worker._has_successfully_synced = True
+            release_identity = Event()
+            both_started = Event()
+            worker_id = uuid4()
+            started = 0
+            owners: list[NativeStreamSubtaskSupervisor] = []
+    
+            class DelayedIdentityChannel(WorkPoolWorkerChannel):
+                def __init__(self) -> None:
+                    self.identity_requests = 0
+    
+                async def ensure_worker_identity(self) -> UUID:
+                    self.identity_requests += 1
+                    await release_identity.wait()
+                    worker.backend_id = worker_id
+                    return worker_id
+    
+            channel = DelayedIdentityChannel()
+            worker._worker_channel = channel
+    
+            async def ensure() -> None:
+                nonlocal started
+                started += 1
+                if started == 2:
+                    both_started.set()
+                await worker._ensure_stream_subtask_supervisor()
+                owners.append(worker._stream_subtask_supervisor)
+    
+            # Hold only the external identity acknowledgement. The manager, async
+            # task group and optional endpoint request all execute normally.
+            with fail_after(10):
+                async with create_task_group() as group:
+                    worker._runs_task_group = group
+                    group.start_soon(ensure)
+                    group.start_soon(ensure)
+                    await both_started.wait()
+                    release_identity.set()
+>           assert channel.identity_requests == 1
+E           assert 2 == 1
+E            +  where 2 = <tests.workers.test_stream_subtasks.test_concurrent_identity_acknowledgements_create_one_subtask_owner.<locals>.DelayedIdentityChannel object at 0x7f8ce7061910>.identity_requests
+
+tests/workers/test_stream_subtasks.py:459: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_worker'
+Connecting to postgres at 'postgres://native_recovery:native_recovery@127.0.0.1:55436/postgres'
+Creating test postgres database 'native_epoch2_worker_tests_master'
+Using test database connection URL 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_worker_tests_master'
+Running hosted API server on port 49561
+---------------------------- Captured stderr setup -----------------------------
+23:37:55.782 | INFO    | uvicorn.error - Started server process [156400]
+23:37:55.785 | INFO    | uvicorn.error - Waiting for application startup.
+23:37:55.913 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+23:37:55.919 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+23:37:55.919 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+23:37:55.919 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+23:37:55.919 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+23:37:55.919 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+23:37:55.920 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+23:37:55.920 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+23:37:55.920 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+23:37:55.920 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+23:37:55.920 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+23:37:55.920 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+23:37:55.920 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+23:37:55.921 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+23:37:55.921 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+23:37:55.921 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+23:37:55.922 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+23:37:55.923 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+23:37:55.924 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+23:37:55.926 | INFO    | uvicorn.error - Application startup complete.
+23:37:55.926 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 49561) (Press CTRL+C to quit)
+23:37:56.004 | INFO    | uvicorn.access - 127.0.0.1:46302 - "GET /api/health HTTP/1.1" 200
+----------------------------- Captured stderr call -----------------------------
+23:37:56.061 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:36229/api/
+23:37:56.089 | WARNING | prefect.workers.process.processworker 11ca6f84-21d0-4e17-96fd-b1ea3b304c0f - Assigned stream subtask None did not advance: UNSUPPORTED_BACKEND
+23:37:56.090 | WARNING | prefect.workers.process.processworker 11ca6f84-21d0-4e17-96fd-b1ea3b304c0f - Assigned stream subtask None did not advance: UNSUPPORTED_BACKEND
+------------------------------ Captured log call -------------------------------
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:36229/api/
+WARNING  prefect.workers.process.processworker 11ca6f84-21d0-4e17-96fd-b1ea3b304c0f:_stream_subtasks.py:271 Assigned stream subtask None did not advance: UNSUPPORTED_BACKEND
+WARNING  prefect.workers.process.processworker 11ca6f84-21d0-4e17-96fd-b1ea3b304c0f:_stream_subtasks.py:271 Assigned stream subtask None did not advance: UNSUPPORTED_BACKEND
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+23:37:56.630 | INFO    | uvicorn.error - Shutting down
+23:37:56.731 | INFO    | uvicorn.error - Waiting for application shutdown.
+23:37:56.733 | INFO    | uvicorn.error - Application shutdown complete.
+23:37:56.733 | INFO    | uvicorn.error - Finished server process [156400]
+=========================== short test summary info ============================
+FAILED tests/workers/test_stream_subtasks.py::test_concurrent_identity_acknowledgements_create_one_subtask_owner
+1 failed, 12 deselected in 6.96s

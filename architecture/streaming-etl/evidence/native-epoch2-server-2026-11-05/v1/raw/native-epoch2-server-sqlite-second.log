@@ -1,0 +1,43 @@
+.....sF
+=================================== FAILURES ===================================
+________ test_capability_is_not_echoed_from_validation_or_off_allowlist ________
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f39d4fc0110>
+physical_api = <httpx.AsyncClient object at 0x7f39cd1d10d0>
+
+    async def test_capability_is_not_echoed_from_validation_or_off_allowlist(
+        db: PrefectDBInterface, physical_api: httpx.AsyncClient
+    ):
+        secret = "ab" * 32
+        basic = "Basic " + base64.b64encode(b"native-physical:test").decode()
+        body = {"operation_id": str(uuid4()), "capability": secret, "unexpected": secret}
+        response = await physical_api.post(
+            f"/streams/v2/subtasks/{uuid4()}/claim",
+            json=body,
+            headers={"Authorization": basic},
+        )
+        assert response.status_code == 422
+        assert secret not in response.text
+        scoped = s.StreamSubtaskCredentials(grant_id=uuid4(), capability=secret)
+        wrong_resource = await physical_api.get(
+            f"/streams/v1/{uuid4()}", headers=headers(scoped)
+        )
+>       assert wrong_resource.status_code in (401, 404)
+E       assert 422 in (401, 404)
+E        +  where 422 = <Response [422 Unprocessable Entity]>.status_code
+
+tests/server/api/test_stream_subtasks.py:156: AssertionError
+--------------------------- Captured stderr teardown ---------------------------
+22:28:32.956 | INFO    | uvicorn.error - Shutting down
+22:28:33.057 | INFO    | uvicorn.error - Waiting for application shutdown.
+22:28:33.061 | INFO    | uvicorn.error - Application shutdown complete.
+22:28:33.061 | INFO    | uvicorn.error - Finished server process [142984]
+Executing <Task finished name='Task-130' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.488 seconds
+22:28:34.425 | WARNING | asyncio - Executing <Task finished name='Task-130' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.488 seconds
+---------------------------- Captured log teardown -----------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task finished name='Task-130' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.488 seconds
+=========================== short test summary info ============================
+FAILED tests/server/api/test_stream_subtasks.py::test_capability_is_not_echoed_from_validation_or_off_allowlist
+SKIPPED [1] tests/server/models/test_stream_executions.py:52: Native stream execution authority requires PostgreSQL 17
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 5 passed, 1 skipped in 12.75s

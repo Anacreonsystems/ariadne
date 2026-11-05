@@ -1,0 +1,550 @@
+"""Versioned fixed-partition topology and least-privilege physical attempts.
+
+These contracts describe control metadata only. Records and durable cursors use
+the existing v1 stream protocol and tables.
+"""
+
+import json
+import math
+import posixpath
+from typing import Annotated, ClassVar, Literal
+from uuid import UUID
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_validator,
+    model_validator,
+)
+from typing_extensions import Self
+
+from prefect.server.schemas.actions import SizedParameters
+from prefect.server.schemas.core import TaskRun, TaskRunPolicy
+from prefect.server.schemas.native_deployments import NativeStreamProcessDeathWitness
+from prefect.server.schemas.states import StateType
+from prefect.server.schemas.streams import (
+    StreamLimits,
+    StreamSubmissionManifest,
+    _strict_finite_json,
+)
+from prefect.types import DateTime
+
+Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+Capability = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$", repr=False)]
+
+
+class _Wire(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        extra="forbid", hide_input_in_errors=True
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def integer_identity_fields(cls, value: object) -> object:
+        if isinstance(value, dict):
+            for key in (
+                "assignment_epoch",
+                "parallelism",
+                "expected_physical_epoch",
+                "protocol_version",
+            ):
+                if key in value and type(value[key]) is not int:
+                    raise ValueError("physical identity counters must be JSON integers")
+        return value
+
+
+class StreamOperatorSpec(_Wire):
+    operator_uid: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
+    role: Literal["SOURCE", "OPERATOR"]
+    parallelism: Literal[2] = 2
+    task_name: str = Field(min_length=1, max_length=255)
+    task_key: str = Field(min_length=1, max_length=255)
+    task_version: str = Field(min_length=1, max_length=255)
+    artifact_digest: Digest
+    entrypoint: str = Field(min_length=1, max_length=1024)
+    context_key: str = Field(min_length=1, max_length=255)
+    parameters: list[SizedParameters] = Field(min_length=2, max_length=2)
+    input_key: str | None = Field(default=None, min_length=1, max_length=255)
+    upstream_operator_uid: str | None = Field(default=None, min_length=1, max_length=64)
+    task_policy: TaskRunPolicy = Field(default_factory=TaskRunPolicy)
+    timeout_seconds: float | None = Field(
+        default=None, gt=0, allow_inf_nan=False, strict=True
+    )
+    tags: list[str] = Field(default_factory=list, max_length=64)
+    limits: StreamLimits = Field(default_factory=StreamLimits)
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def strict_parameters(cls, value: object) -> object:
+        return _strict_finite_json(value)
+
+    @field_validator("task_policy", mode="before")
+    @classmethod
+    def bounded_physical_policy(cls, value: object) -> object:
+        material = value.model_dump() if isinstance(value, TaskRunPolicy) else value
+        if (
+            not isinstance(material, dict)
+            or type(material.get("retries")) is not int
+            or not 1 <= material["retries"] <= 63
+        ):
+            raise ValueError("physical retries must be an integer in 1..63")
+        delay = material.get("retry_delay")
+        delays = (
+            delay if isinstance(delay, list) else ([] if delay is None else [delay])
+        )
+        jitter = material.get("retry_jitter_factor")
+        for number in [*delays, *([] if jitter is None else [jitter])]:
+            if (
+                type(number) not in (int, float)
+                or not math.isfinite(number)
+                or number < 0
+            ):
+                raise ValueError(
+                    "physical retry delays and jitter must be finite nonnegative numbers"
+                )
+        return value
+
+    @model_validator(mode="after")
+    def fixed_shape(self) -> Self:
+        if self.role == "SOURCE" and not all(self.parameters):
+            raise ValueError(
+                "SOURCE requires two nonempty immutable partition split snapshots"
+            )
+        if (self.role == "SOURCE") != (self.input_key is None):
+            raise ValueError("only OPERATOR declares an input_key")
+        if (self.role == "SOURCE") != (self.upstream_operator_uid is None):
+            raise ValueError("only OPERATOR declares upstream_operator_uid")
+        if self.role == "OPERATOR" and any(
+            self.input_key in parameters for parameters in self.parameters
+        ):
+            raise ValueError(
+                "physical upstream input cannot be supplied as a parameter"
+            )
+        if self.context_key == self.input_key or any(
+            self.context_key in parameters for parameters in self.parameters
+        ):
+            raise ValueError(
+                "physical context must be distinct from input and absent from parameters"
+            )
+        if self.role == "SOURCE" and json.dumps(
+            self.parameters[0], sort_keys=True, allow_nan=False, separators=(",", ":")
+        ) == json.dumps(
+            self.parameters[1], sort_keys=True, allow_nan=False, separators=(",", ":")
+        ):
+            raise ValueError(
+                "SOURCE requires distinct immutable partition split snapshots"
+            )
+        if self.task_policy.retries is None or not 1 <= self.task_policy.retries <= 63:
+            raise ValueError("physical tasks require 1..63 retries")
+        if any(not tag or len(tag.encode("utf-8")) > 255 for tag in self.tags):
+            raise ValueError("tags must have 1..255 UTF-8 bytes")
+        self.tags = sorted(set(self.tags))
+        return self
+
+
+class StreamGraphSealRequest(_Wire):
+    flow_run_id: UUID
+    operation_id: UUID
+    profile: Literal["partitioned-fixed-v1"] = "partitioned-fixed-v1"
+    assignment_epoch: Literal[1] = 1
+    flow_version: str = Field(min_length=1, max_length=255)
+    deployment_id: UUID | None = None
+    deployment_version: str | None = Field(default=None, min_length=1, max_length=255)
+    working_directory: str | None = None
+    operators: list[StreamOperatorSpec] = Field(min_length=2, max_length=2)
+
+    @field_validator("working_directory")
+    @classmethod
+    def canonical_working_directory(cls, value: str | None) -> str | None:
+        if value is not None and (
+            not value.startswith("/")
+            or value.startswith("//")
+            or "\0" in value
+            or posixpath.normpath(value) != value
+            or len(value.encode("utf-8", errors="strict")) > 4096
+        ):
+            raise ValueError(
+                "working directory must be an absolute normalized Linux path of at most 4096 UTF-8 bytes"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def linear_p2(self) -> Self:
+        if [operator.role for operator in self.operators] != ["SOURCE", "OPERATOR"]:
+            raise ValueError("profile requires SOURCE then OPERATOR, each P2")
+        if len({operator.operator_uid for operator in self.operators}) != 2:
+            raise ValueError("operator UIDs must be distinct")
+        if self.operators[1].upstream_operator_uid != self.operators[0].operator_uid:
+            raise ValueError("OPERATOR must reference this graph's SOURCE UID")
+        if (self.deployment_id is None) != (self.deployment_version is None):
+            raise ValueError("deployment identity must be complete")
+        return self
+
+
+class StreamSubtaskProjection(_Wire):
+    id: UUID
+    graph_revision_id: UUID
+    operator_run_id: UUID
+    operator_uid: str
+    subtask_index: int = Field(ge=0, le=1)
+    assignment_epoch: Literal[1]
+    input_stream_id: UUID | None
+    manifest: StreamSubmissionManifest
+    current_grant_id: UUID | None
+    physical_epoch: int = Field(ge=0, le=64)
+    assigned_worker_id: UUID | None = None
+    physical_slot_released: bool = False
+
+
+class StreamGraphPlan(_Wire):
+    id: UUID
+    flow_run_id: UUID
+    profile: Literal["partitioned-fixed-v1"]
+    assignment_epoch: Literal[1]
+    graph_digest: Digest
+    state: Literal["SEALED", "ADMITTED", "ABORTING", "RELEASED"]
+    created_at: DateTime
+    startup_completed_at: DateTime | None = None
+    placement_digest: Digest | None = None
+    subtasks: list[StreamSubtaskProjection] = Field(min_length=4, max_length=4)
+
+
+class StreamRegionAdmissionRequest(_Wire):
+    operation_id: UUID
+    graph_digest: Digest
+
+
+class StreamGraphActivateRequest(StreamRegionAdmissionRequest):
+    grant_ids: list[UUID] = Field(min_length=4, max_length=4)
+
+
+class StreamGraphAbortRequest(StreamRegionAdmissionRequest):
+    error: str = Field(min_length=1, max_length=4096)
+
+    @field_validator("error")
+    @classmethod
+    def bounded_error(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 4096:
+            raise ValueError("abort error exceeds 4096 UTF-8 bytes")
+        return value
+
+
+class StreamSubtaskClaimRequest(_Wire):
+    operation_id: UUID
+    graph_digest: Digest
+    assignment_epoch: Literal[1] = 1
+    expected_physical_epoch: Literal[0] = 0
+    holder_id: UUID
+    capability: Capability
+    event_public_key: Digest
+    launcher_binding_kind: Literal[
+        "DEPLOYMENT", "FLOW_AUTHORITY_LOCAL", "ASSIGNED_WORKER"
+    ]
+    worker_id: UUID | None = None
+    work_pool_id: UUID | None = None
+    host_id: UUID
+    boot_id: UUID
+    launcher_process_id: int = Field(ge=1, strict=True)
+    launcher_start_ticks: int = Field(ge=1, strict=True)
+
+    @model_validator(mode="after")
+    def launcher_binding(self) -> Self:
+        if self.launcher_binding_kind in ("DEPLOYMENT", "ASSIGNED_WORKER"):
+            if self.worker_id is None or self.work_pool_id is None:
+                raise ValueError("deployed claim requires worker and work pool")
+        elif self.worker_id is not None or self.work_pool_id is not None:
+            raise ValueError("local authority claim excludes worker and work pool")
+        return self
+
+
+class StreamSubtaskGrant(_Wire):
+    credential_version: Literal["prefect-subtask-v1"] = "prefect-subtask-v1"
+    id: UUID
+    subtask_id: UUID
+    graph_revision_id: UUID
+    assignment_epoch: Literal[1]
+    physical_epoch: int = Field(ge=1, le=64)
+    holder_id: UUID
+    launcher_binding_kind: Literal[
+        "DEPLOYMENT", "FLOW_AUTHORITY_LOCAL", "ASSIGNED_WORKER"
+    ]
+    worker_id: UUID | None = None
+    work_pool_id: UUID | None = None
+    launcher_process_id: int = Field(ge=1, strict=True)
+    launcher_start_ticks: int = Field(ge=1, strict=True)
+    event_key_id: Digest
+    scope_digest: Digest
+    state: Literal["CLAIMED", "REGISTERED", "RETIRED", "RELEASED"]
+    host_id: UUID
+    boot_id: UUID
+    child_process_id: int | None = Field(ge=1)
+    process_start_ticks: int | None = Field(ge=1)
+    created_at: DateTime
+    last_renewed_at: DateTime
+
+    @model_validator(mode="after")
+    def process_identity_shape(self) -> Self:
+        if (self.child_process_id is None) != (self.process_start_ticks is None):
+            raise ValueError("child process identity must be complete")
+        if self.state == "CLAIMED" and self.child_process_id is not None:
+            raise ValueError("CLAIMED has no registered child")
+        if self.state == "REGISTERED" and self.child_process_id is None:
+            raise ValueError("REGISTERED requires exact child process identity")
+        return self
+
+
+class StreamSubtaskCredentials(_Wire):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+    grant_id: UUID
+    capability: Capability
+
+
+class StreamSubtaskRegistrationRequest(_Wire):
+    operation_id: UUID
+    grant_id: UUID
+    child_process_id: int = Field(ge=1, strict=True)
+    process_start_ticks: int = Field(ge=1, strict=True)
+
+
+class StreamSubtaskRenewRequest(_Wire):
+    grant_id: UUID
+
+
+class StreamSubtaskBootstrap(_Wire):
+    grant: StreamSubtaskGrant
+    assignment: StreamSubtaskProjection
+    flow_run_id: UUID
+    flow_run_run_count: int = Field(ge=0, strict=True)
+    entrypoint: str
+    context_key: str
+    task_version: str
+    artifact_digest: Digest
+    timeout_seconds: float | None = Field(
+        default=None, gt=0, allow_inf_nan=False, strict=True
+    )
+    task_policy: TaskRunPolicy
+    effective_tags: list[str]
+    parameters: dict[str, JsonValue]
+    input_key: str | None
+    task_run: TaskRun
+    reserved_tag_names: list[str]
+
+    @model_validator(mode="after")
+    def frozen_task_metadata(self) -> Self:
+        if (
+            self.effective_tags != sorted(set(self.effective_tags))
+            or sorted(set(self.task_run.tags)) != self.effective_tags
+            or self.task_run.empirical_policy.model_dump(mode="json")
+            != self.task_policy.model_dump(mode="json")
+            or self.task_run.task_version != self.task_version
+            or self.reserved_tag_names != [f"tag:{tag}" for tag in self.effective_tags]
+            or self.grant.subtask_id != self.assignment.id
+            or self.grant.graph_revision_id != self.assignment.graph_revision_id
+            or self.grant.assignment_epoch != self.assignment.assignment_epoch
+            or self.grant.physical_epoch != self.assignment.physical_epoch
+            or self.grant.id != self.assignment.current_grant_id
+            or self.task_run.id != self.assignment.manifest.task_run_id
+            or self.task_run.flow_run_id != self.flow_run_id
+            or self.assignment.manifest.flow_run_id != self.flow_run_id
+            or self.task_run.flow_run_run_count != self.flow_run_run_count
+        ):
+            raise ValueError(
+                "TaskRun metadata differs from the frozen physical task configuration"
+            )
+        return self
+
+
+class StreamSubtaskReplacementAuthorizeRequest(_Wire):
+    operation_id: UUID
+    expected_grant_id: UUID
+    expected_physical_epoch: int = Field(ge=1, le=64, strict=True)
+    host_id: UUID
+    challenge_capability: Capability
+
+
+class StreamSubtaskReplacementAuthorization(_Wire):
+    operation_id: UUID
+    subtask_id: UUID
+    expected_grant_id: UUID
+    expected_physical_epoch: int
+    verification_not_before: DateTime
+    host_id: UUID
+    boot_id: UUID
+    child_process_id: int
+    process_start_ticks: int
+    state: Literal["AUTHORIZED", "CONFIRMED", "RETIRED"]
+
+
+class StreamSubtaskReplacementConfirmRequest(_Wire):
+    operation_id: UUID
+    challenge_capability: Capability
+    death_witness: NativeStreamProcessDeathWitness
+    new_holder_id: UUID
+    new_capability: Capability
+    new_event_public_key: Digest
+    new_child_process_id: int = Field(ge=1, strict=True)
+    new_process_start_ticks: int = Field(ge=1, strict=True)
+    host_id: UUID
+    boot_id: UUID
+
+
+class StreamSubtaskEventResult(_Wire):
+    event_id: UUID
+    accepted: bool
+    task_run_id: UUID
+    run_count: int
+    state_type: StateType
+
+
+class StreamSubtaskVerifiedRetireRequest(_Wire):
+    operation_id: UUID
+    challenge_capability: Capability
+    death_witness: NativeStreamProcessDeathWitness
+    error: str = Field(min_length=1, max_length=4096)
+    reason: Literal["TERMINAL_RECONCILIATION", "REPLACEMENT_PREFLIGHT_FAILED"] = (
+        "TERMINAL_RECONCILIATION"
+    )
+
+    @field_validator("error")
+    @classmethod
+    def bounded_error(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 4096:
+            raise ValueError("retirement error exceeds 4096 UTF-8 bytes")
+        return value
+
+
+class StreamSubtaskVerifiedRetirement(_Wire):
+    operation_id: UUID
+    subtask_id: UUID
+    task_run_id: UUID
+    grant_id: UUID
+    physical_epoch: int = Field(ge=1, le=64, strict=True)
+    state: Literal["RETIRED"] = "RETIRED"
+    task_state: Literal["COMPLETED", "FAILED"]
+    outcome_kind: Literal[
+        "COMPLETED_RECONCILED",
+        "FAILED_RECONCILED",
+        "RETRY_EXHAUSTED",
+        "ATTEMPT_LIMIT",
+        "NONRETRIABLE_FAILURE",
+        "REPLACEMENT_PREFLIGHT_FAILED",
+    ]
+    allocation_released: Literal[True] = True
+    outcome_digest: Digest
+
+
+class StreamWorkerPrincipal(_Wire):
+    """Trusted Basic-auth worker's actual local supervisor identity."""
+
+    work_pool_id: UUID
+    host_id: UUID
+    boot_id: UUID
+    launcher_process_id: int = Field(ge=1, strict=True)
+    launcher_start_ticks: int = Field(ge=1, strict=True)
+
+
+class StreamWorkerPollRequest(_Wire):
+    protocol: Literal["partitioned-fixed-v1"] = "partitioned-fixed-v1"
+    protocol_version: Literal[1] = 1
+    principal: StreamWorkerPrincipal
+    active_subtask_ids: list[UUID] = Field(default_factory=list, max_length=64)
+    limit: int = Field(default=64, ge=1, le=128, strict=True)
+
+
+class StreamWorkerTaskConfiguration(_Wire):
+    entrypoint: str
+    task_key: str
+    role: Literal["SOURCE", "OPERATOR"]
+    parameters: SizedParameters
+    task_version: str
+    artifact_digest: Digest
+    context_key: str
+    timeout_seconds: float | None
+    task_policy: TaskRunPolicy
+    effective_tags: list[str]
+    input_key: str | None
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def strict_parameters(cls, value: object) -> object:
+        return _strict_finite_json(value)
+
+
+class StreamWorkerAssignment(_Wire):
+    flow_run_id: UUID
+    graph_digest: Digest
+    placement_digest: Digest
+    assignment: StreamSubtaskProjection
+    phase: Literal["WAITING", "ACTIVE", "ABORTING", "RELEASED"]
+    abort_operation_id: UUID | None
+    current_grant: StreamSubtaskGrant | None
+    working_directory: str
+    task_configuration: StreamWorkerTaskConfiguration
+    task_state: StateType
+    task_run_count: int = Field(ge=0, strict=True)
+    task_retriable: bool | None
+    output_state: Literal["OPEN", "COMPLETED", "FAILED"]
+    output_attempt: int = Field(ge=0, strict=True)
+
+
+class StreamWorkerRegistrationRequest(_Wire):
+    principal: StreamWorkerPrincipal
+    registration: StreamSubtaskRegistrationRequest
+
+
+class StreamWorkerRenewRequest(_Wire):
+    principal: StreamWorkerPrincipal
+    grant_id: UUID
+
+
+class StreamWorkerReplacementAuthorizeRequest(_Wire):
+    principal: StreamWorkerPrincipal
+    replacement: StreamSubtaskReplacementAuthorizeRequest
+
+
+class StreamWorkerReplacementConfirmRequest(_Wire):
+    principal: StreamWorkerPrincipal
+    replacement: StreamSubtaskReplacementConfirmRequest
+
+
+class StreamWorkerVerifiedRetireRequest(_Wire):
+    principal: StreamWorkerPrincipal
+    retirement: StreamSubtaskVerifiedRetireRequest
+
+
+class StreamWorkerStartupAbortRequest(_Wire):
+    principal: StreamWorkerPrincipal
+
+
+class StreamGraphStartupStopRequest(_Wire):
+    operation_id: UUID
+    abort_operation_id: UUID
+    grant_id: UUID
+    expected_physical_epoch: int = Field(ge=1, le=64, strict=True)
+    death_witness: NativeStreamProcessDeathWitness | None = None
+    unstarted: bool = False
+
+    @model_validator(mode="after")
+    def one_stop_proof(self) -> Self:
+        if (self.death_witness is None) != self.unstarted:
+            raise ValueError(
+                "provide exactly one exact death witness or unstarted acknowledgement"
+            )
+        return self
+
+
+class StreamWorkerStartupStopRequest(_Wire):
+    principal: StreamWorkerPrincipal
+    stop: StreamGraphStartupStopRequest
+
+
+class StreamGraphStartupStopResult(_Wire):
+    operation_id: UUID
+    graph_revision_id: UUID
+    subtask_id: UUID
+    grant_id: UUID
+    physical_epoch: int = Field(ge=1, le=64, strict=True)
+    state: Literal["STOPPED"] = "STOPPED"
+    graph_state: Literal["ABORTING", "RELEASED"]

@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="5" time="15.562" timestamp="2026-11-05T00:09:32.084430+00:00" hostname="f8abb611283c"><testcase classname="tests.server.api.test_stream_subtask_controls" name="test_cancel_and_raw_cancelling_are_refused_without_any_partial_state" time="7.196" /><testcase classname="tests.server.api.test_stream_subtask_controls" name="test_assigned_history_prevents_deleting_worker" time="1.478" /><testcase classname="tests.server.api.test_stream_subtask_controls" name="test_activation_revalidates_worker_after_all_registrations[stale-capability]" time="1.730" /><testcase classname="tests.server.api.test_stream_subtask_controls" name="test_activation_revalidates_worker_after_all_registrations[offline-worker]" time="1.925" /><testcase classname="tests.server.api.test_stream_subtask_controls" name="test_whole_flow_legacy_recovery_cannot_take_over_assigned_children" time="3.006"><failure message="AssertionError: {&quot;detail&quot;:{&quot;code&quot;:&quot;UNSUPPORTED_PROFILE&quot;,&quot;message&quot;:&quot;Partitioned physical children cannot use bounded whole-Flow recovery&quot;,&quot;retryable&quot;:false}}&#10;assert 422 == 409&#10; +  where 422 = &lt;Response [422 Unprocessable Entity]&gt;.status_code">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f7228cfdfa0&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7f722151aa50&gt;
+worker_api = &lt;httpx.AsyncClient object at 0x7f7221531370&gt;
+deployment = Deployment(id=a7a8cb48-1730-4153-a82c-3d364de20de1)
+
+    async def test_whole_flow_legacy_recovery_cannot_take_over_assigned_children(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        worker_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+    ):
+        await _require_postgres_17(db)
+        plan, workers, headers = await deployed_graph(db, session, worker_api, deployment)
+        grant_ids = await register_region(worker_api, plan, workers)
+        worker_id, identity = workers[0]
+        async with db.session_context(begin_transaction=True) as change:
+            launch = await change.scalar(
+                sa.select(db.NativeStreamLaunchIdentity).where(
+                    db.NativeStreamLaunchIdentity.flow_run_id == plan.flow_run_id
+                )
+            )
+            assert launch is not None
+            launch.last_renewed_at = now("UTC") - timedelta(seconds=121)
+            enrollment_id = launch.enrollment_operation_id
+            child_pid = launch.child_process_id
+            child_ticks = launch.process_start_ticks
+        candidates = await worker_api.get(
+            "/streams/v1/deployments/replacements/candidates",
+            params={
+                "worker_id": str(worker_id),
+                "work_pool_id": str(identity.work_pool_id),
+                "host_id": str(identity.host_id),
+            },
+        )
+        assert candidates.status_code == 200, candidates.text
+        assert candidates.json() == []
+        operation_id = uuid4()
+        challenge = uuid4().hex + uuid4().hex
+        witness = {
+            "kind": "IDENTITY_GONE",
+            "observed_at": now("UTC").isoformat(),
+            "host_id": str(identity.host_id),
+            "boot_id": str(identity.boot_id),
+            "child_process_id": child_pid,
+            "process_start_ticks": child_ticks,
+        }
+        authorization = {
+            "flow_run_id": str(plan.flow_run_id),
+            "operation_id": str(operation_id),
+            "expected_generation": 1,
+            "enrollment_operation_id": str(enrollment_id),
+            "worker_id": str(worker_id),
+            "work_pool_id": str(identity.work_pool_id),
+            "host_id": str(identity.host_id),
+            "identity_kind": "CHILD",
+            "challenge_capability": challenge,
+        }
+        confirmation = {
+            "flow_run_id": str(plan.flow_run_id),
+            "operation_id": str(operation_id),
+            "challenge_capability": challenge,
+            "launcher_instance_id": str(uuid4()),
+            "launcher_host_id": str(identity.host_id),
+            "launcher_boot_id": str(identity.boot_id),
+            "launcher_process_id": identity.launcher_process_id,
+            "launcher_start_ticks": identity.launcher_start_ticks,
+            "new_holder_id": str(uuid4()),
+            "new_holder_capability": uuid4().hex + uuid4().hex,
+            "new_holder_event_public_key": PUBLIC,
+            "new_supervisor_id": str(uuid4()),
+            "new_supervisor_capability": uuid4().hex + uuid4().hex,
+            "death_witness": witness,
+        }
+        retirement = {
+            "flow_run_id": str(plan.flow_run_id),
+            "operation_id": str(operation_id),
+            "expected_generation": 1,
+            "enrollment_operation_id": str(enrollment_id),
+            "challenge_capability": challenge,
+            "death_witness": witness,
+            "error": "P2 cannot use bounded whole-Flow retirement",
+        }
+        for path, request in (
+            ("authorize", authorization),
+            ("confirm-death", confirmation),
+            ("retire-verified", retirement),
+        ):
+            result = await worker_api.post(
+                f"/streams/v1/deployments/replacements/{path}",
+                json=request,
+                headers=headers,
+            )
+&gt;           assert result.status_code == 409, result.text
+E           AssertionError: {"detail":{"code":"UNSUPPORTED_PROFILE","message":"Partitioned physical children cannot use bounded whole-Flow recovery","retryable":false}}
+E           assert 422 == 409
+E            +  where 422 = &lt;Response [422 Unprocessable Entity]&gt;.status_code
+
+tests/server/api/test_stream_subtask_controls.py:306: AssertionError</failure></testcase></testsuite></testsuites>

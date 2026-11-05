@@ -1,0 +1,80 @@
+..........F
+=================================== FAILURES ===================================
+__________ test_registered_region_requires_explicit_exact_activation ___________
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f1066da3110>
+flow_run = FlowRun(id=391b0af6-6032-4438-a68a-a219a478caf0)
+
+    async def test_registered_region_requires_explicit_exact_activation(
+        db: PrefectDBInterface, flow_run: orm_models.FlowRun
+    ):
+        _, plan, credentials = await prepare(db, flow_run)
+        _, plan = await admit(db, plan, credentials)
+        subtask, claim, grant, scoped = await claim_registered(
+            db, plan, credentials, activate=False
+        )
+        with pytest.raises(NativeStreamError) as refusal:
+            async with db.session_context(begin_transaction=True) as session:
+                await m.bootstrap_subtask(session, db, subtask.id, scoped)
+        assert refusal.value.code == "METADATA_NOT_READY"
+        async with db.session_context(begin_transaction=True) as session:
+            assert (
+                await _authorized_stream_events(
+                    session, db, [task_event(plan, subtask, grant).receive()]
+                )
+            )[0] == []
+            assert (
+                await session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(db.TaskRunState)
+                    .where(db.TaskRunState.task_run_id == subtask.manifest.task_run_id)
+                )
+                == 1
+            )
+            current = await m.read_graph(session, db, plan.id, credentials)
+            request = s.StreamGraphActivateRequest(
+                operation_id=uuid4(),
+                graph_digest=plan.graph_digest,
+                grant_ids=[item.current_grant_id for item in current.subtasks],
+            )
+            activated = await m.activate_graph(session, db, plan.id, request, credentials)
+            assert activated.startup_completed_at is not None
+        async with db.session_context(begin_transaction=True) as session:
+            assert (
+                await m.activate_graph(session, db, plan.id, request, credentials)
+                == activated
+            )
+            assert (
+                await m.bootstrap_subtask(session, db, subtask.id, scoped)
+            ).grant.id == grant.id
+        with pytest.raises(NativeStreamError, match="drift"):
+            async with db.session_context(begin_transaction=True) as session:
+                await m.activate_graph(
+                    session,
+                    db,
+                    plan.id,
+                    request.model_copy(update={"operation_id": uuid4()}),
+                    credentials,
+                )
+>       with pytest.raises(NativeStreamError, match="verified runtime"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: 'verified runtime'
+E         Actual message: 'Activated graph requires normal verified process recovery'
+
+tests/server/models/test_stream_subtasks.py:809: AssertionError
+----------------------------- Captured stderr call -----------------------------
+23:39:31.897 | WARNING | prefect.server.services.task_run_recorder - Discarding fenced native TaskRun event d6f3c7b9-76a1-4094-8c90-bbc07b2009b8 for flow 391b0af6-6032-4438-a68a-a219a478caf0
+------------------------------ Captured log call -------------------------------
+WARNING  prefect.server.services.task_run_recorder:task_run_recorder.py:488 Discarding fenced native TaskRun event d6f3c7b9-76a1-4094-8c90-bbc07b2009b8 for flow 391b0af6-6032-4438-a68a-a219a478caf0
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+23:39:32.114 | INFO    | uvicorn.error - Shutting down
+23:39:32.216 | INFO    | uvicorn.error - Waiting for application shutdown.
+23:39:32.217 | INFO    | uvicorn.error - Application shutdown complete.
+23:39:32.218 | INFO    | uvicorn.error - Finished server process [156581]
+=========================== short test summary info ============================
+FAILED tests/server/models/test_stream_subtasks.py::test_registered_region_requires_explicit_exact_activation
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 10 passed, 2 deselected in 16.06s

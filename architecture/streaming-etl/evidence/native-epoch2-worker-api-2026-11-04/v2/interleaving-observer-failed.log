@@ -1,0 +1,267 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____ test_startup_abort_and_competing_admission_lock_workers_in_one_order _____
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7ff6042005f0>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7ff602c4b4d0>
+worker_api = <httpx.AsyncClient object at 0x7ff602816690>
+deployment = Deployment(id=ee6fc146-99ef-4e89-87cb-291bfc8e9d51)
+
+    async def test_startup_abort_and_competing_admission_lock_workers_in_one_order(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        worker_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+    ):
+        await _require_postgres_17(db)
+        active, workers, _ = await deployed_graph(db, session, worker_api, deployment)
+        contender, _, execution_headers = await deployed_graph(
+            db, session, worker_api, deployment, workers=workers, admit=False
+        )
+        ordered = sorted(workers, key=lambda item: item[0])
+        # Choose the higher-ID caller: locking its row first would invert admission's
+        # lower-ID-first order and create an actual PostgreSQL deadlock here.
+        caller_id, caller = ordered[1]
+        abort_task: asyncio.Task[httpx.Response] | None = None
+        try:
+            with pytest.raises(NativeStreamError) as refused:
+                async with db.session_context(begin_transaction=True) as holder:
+                    for model, clause in (
+                        (db.FlowRun, db.FlowRun.id == contender.flow_run_id),
+                        (
+                            db.StreamExecutionAuthority,
+                            db.StreamExecutionAuthority.flow_run_id
+                            == contender.flow_run_id,
+                        ),
+                        (db.StreamGraphRevision, db.StreamGraphRevision.id == contender.id),
+                    ):
+                        await holder.execute(
+                            sa.select(model.id).where(clause).with_for_update()
+                        )
+                    await holder.execute(
+                        sa.select(db.Worker.id)
+                        .where(db.Worker.id == ordered[0][0])
+                        .with_for_update()
+                    )
+                    abort_task = asyncio.create_task(
+                        worker_api.post(
+                            f"/streams/v2/workers/{caller_id}/graphs/{active.id}/startup-abort",
+                            json=s.StreamWorkerStartupAbortRequest(
+                                principal=caller
+                            ).model_dump(mode="json"),
+                        )
+                    )
+                    async with db.session_context() as observer:
+                        async with asyncio.timeout(5):
+                            while not await observer.scalar(
+                                sa.text(
+                                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                                    "WHERE datname=current_database() AND pid<>pg_backend_pid() "
+                                    "AND wait_event_type='Lock' AND query LIKE '%FROM worker%' "
+                                    "AND query LIKE '%FOR SHARE%')"
+                                )
+                            ):
+                                assert not abort_task.done(), (
+                                    await abort_task if abort_task.done() else ""
+                                )
+>                               await asyncio.sleep(0.01)
+
+tests/server/api/test_stream_workers.py:334: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+delay = 0.01, result = None
+
+    async def sleep(delay, result=None):
+        """Coroutine that completes after a given time (in seconds)."""
+        if delay <= 0:
+            await __sleep0()
+            return result
+    
+        loop = events.get_running_loop()
+        future = loop.create_future()
+        h = loop.call_later(delay,
+                            futures._set_result_unless_cancelled,
+                            future, result)
+        try:
+>           return await future
+                   ^^^^^^^^^^^^
+E           asyncio.exceptions.CancelledError
+
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/tasks.py:665: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7ff6042005f0>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7ff602c4b4d0>
+worker_api = <httpx.AsyncClient object at 0x7ff602816690>
+deployment = Deployment(id=ee6fc146-99ef-4e89-87cb-291bfc8e9d51)
+
+    async def test_startup_abort_and_competing_admission_lock_workers_in_one_order(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        worker_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+    ):
+        await _require_postgres_17(db)
+        active, workers, _ = await deployed_graph(db, session, worker_api, deployment)
+        contender, _, execution_headers = await deployed_graph(
+            db, session, worker_api, deployment, workers=workers, admit=False
+        )
+        ordered = sorted(workers, key=lambda item: item[0])
+        # Choose the higher-ID caller: locking its row first would invert admission's
+        # lower-ID-first order and create an actual PostgreSQL deadlock here.
+        caller_id, caller = ordered[1]
+        abort_task: asyncio.Task[httpx.Response] | None = None
+        try:
+            with pytest.raises(NativeStreamError) as refused:
+                async with db.session_context(begin_transaction=True) as holder:
+                    for model, clause in (
+                        (db.FlowRun, db.FlowRun.id == contender.flow_run_id),
+                        (
+                            db.StreamExecutionAuthority,
+                            db.StreamExecutionAuthority.flow_run_id
+                            == contender.flow_run_id,
+                        ),
+                        (db.StreamGraphRevision, db.StreamGraphRevision.id == contender.id),
+                    ):
+                        await holder.execute(
+                            sa.select(model.id).where(clause).with_for_update()
+                        )
+                    await holder.execute(
+                        sa.select(db.Worker.id)
+                        .where(db.Worker.id == ordered[0][0])
+                        .with_for_update()
+                    )
+                    abort_task = asyncio.create_task(
+                        worker_api.post(
+                            f"/streams/v2/workers/{caller_id}/graphs/{active.id}/startup-abort",
+                            json=s.StreamWorkerStartupAbortRequest(
+                                principal=caller
+                            ).model_dump(mode="json"),
+                        )
+                    )
+                    async with db.session_context() as observer:
+>                       async with asyncio.timeout(5):
+                                   ^^^^^^^^^^^^^^^^^^
+
+tests/server/api/test_stream_workers.py:322: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x7ff602c90040>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+>               raise TimeoutError from exc_val
+E               TimeoutError
+
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_worker_api'
+Connecting to postgres at 'postgres://native_recovery:native_recovery@127.0.0.1:55436/postgres'
+Creating test postgres database 'native_epoch2_worker_api_tests_master'
+Using test database connection URL 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_worker_api_tests_master'
+Running hosted API server on port 51779
+---------------------------- Captured stderr setup -----------------------------
+23:33:59.331 | INFO    | uvicorn.error - Started server process [154907]
+23:33:59.339 | INFO    | uvicorn.error - Waiting for application startup.
+23:33:59.526 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+23:33:59.533 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+23:33:59.534 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+23:33:59.534 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+23:33:59.534 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+23:33:59.535 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+23:33:59.535 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+23:33:59.535 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+23:33:59.535 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+23:33:59.535 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+23:33:59.536 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+23:33:59.536 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+23:33:59.536 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+23:33:59.536 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+23:33:59.537 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+23:33:59.537 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+23:33:59.537 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+23:33:59.539 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+23:33:59.540 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+23:33:59.542 | INFO    | uvicorn.error - Application startup complete.
+23:33:59.543 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 51779) (Press CTRL+C to quit)
+23:33:59.561 | INFO    | uvicorn.access - 127.0.0.1:42090 - "GET /api/health HTTP/1.1" 200
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.418 seconds
+23:34:00.771 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.418 seconds
+23:34:00.784 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-3a08ee28e4fa404597fe70da9a8ce2a5 because it does not have a base job template
+23:34:00.798 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1a8e9-8d5e-758b-a6e6-ff3be559d122 for resource: prefect.work-pool.24141bf0-5ac8-4335-a0d7-badd5c3ba6f5
+23:34:00.836 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1a8e9-8d7f-70a8-a63a-40e531d41024 for resource: prefect.work-pool.24141bf0-5ac8-4335-a0d7-badd5c3ba6f5
+23:34:01.030 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-3a08ee28e4fa404597fe70da9a8ce2a5 because it does not have a base job template
+23:34:02.019 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-3a08ee28e4fa404597fe70da9a8ce2a5 because it does not specify a variables schema
+23:34:07.515 | ERROR   | sqlalchemy.pool.impl.AsyncAdaptedQueuePool - Exception terminating connection <AdaptedConnection <asyncpg.connection.Connection object at 0x7ff60321f4d0>>
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py", line 372, in _close_connection
+    self._dialect.do_terminate(connection)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 1127, in do_terminate
+    dbapi_connection.terminate()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/connectors/asyncio.py", line 402, in terminate
+    self.await_(asyncio.shield(self._terminate_graceful_close()))  # type: ignore[attr-defined] # noqa: E501
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+asyncio.exceptions.CancelledError: Cancelled via cancel scope 7ff6032cd630 by <Task cancelling name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899>
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.418 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-3a08ee28e4fa404597fe70da9a8ce2a5 because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1a8e9-8d5e-758b-a6e6-ff3be559d122 for resource: prefect.work-pool.24141bf0-5ac8-4335-a0d7-badd5c3ba6f5
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1a8e9-8d7f-70a8-a63a-40e531d41024 for resource: prefect.work-pool.24141bf0-5ac8-4335-a0d7-badd5c3ba6f5
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-3a08ee28e4fa404597fe70da9a8ce2a5 because it does not have a base job template
+INFO     prefect.server.api.validation:validation.py:177 Cannot validate job variables for work pool physical-3a08ee28e4fa404597fe70da9a8ce2a5 because it does not specify a variables schema
+ERROR    sqlalchemy.pool.impl.AsyncAdaptedQueuePool:base.py:376 Exception terminating connection <AdaptedConnection <asyncpg.connection.Connection object at 0x7ff60321f4d0>>
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/pool/base.py", line 372, in _close_connection
+    self._dialect.do_terminate(connection)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 1127, in do_terminate
+    dbapi_connection.terminate()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/connectors/asyncio.py", line 402, in terminate
+    self.await_(asyncio.shield(self._terminate_graceful_close()))  # type: ignore[attr-defined] # noqa: E501
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+asyncio.exceptions.CancelledError: Cancelled via cancel scope 7ff6032cd630 by <Task cancelling name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899>
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+23:34:07.704 | INFO    | uvicorn.error - Shutting down
+23:34:07.809 | INFO    | uvicorn.error - Waiting for application shutdown.
+23:34:07.813 | INFO    | uvicorn.error - Application shutdown complete.
+23:34:07.814 | INFO    | uvicorn.error - Finished server process [154907]
+Executing <Task finished name='Task-180' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.278 seconds
+23:34:08.998 | WARNING | asyncio - Executing <Task finished name='Task-180' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.278 seconds
+---------------------------- Captured log teardown -----------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task finished name='Task-180' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.278 seconds
+=========================== short test summary info ============================
+FAILED tests/server/api/test_stream_workers.py::test_startup_abort_and_competing_admission_lock_workers_in_one_order
+1 failed, 21 deselected in 19.98s

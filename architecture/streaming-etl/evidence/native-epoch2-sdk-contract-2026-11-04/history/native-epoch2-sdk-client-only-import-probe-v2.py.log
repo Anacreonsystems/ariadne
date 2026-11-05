@@ -1,0 +1,37 @@
+import importlib.abc
+import sys
+
+forbidden = (
+    'prefect.server.database', 'prefect.server.models', 'prefect.server.schemas',
+    'prefect.server.services', 'prefect.server.orchestration', 'prefect.server.utilities',
+)
+
+
+class ClientBoundary(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.startswith(forbidden):
+            raise ImportError('Client imported a server-only module')
+        return None
+
+
+sys.meta_path.insert(0, ClientBoundary())
+from prefect.client.orchestration import PrefectClient, SyncPrefectClient
+from prefect.client.schemas.stream_subtasks import StreamOperatorSpec
+from prefect.client.schemas.native_deployments import NativeStreamDeclaration
+from prefect._internal.stream_execution import SubtaskExecutionContext
+from prefect._internal.stream_event_auth import canonical_physical_event_witness
+
+operator = StreamOperatorSpec.model_validate({
+    'operator_uid': 'A', 'role': 'SOURCE', 'task_name': 'source', 'task_key': 'source-key',
+    'task_version': 'v1', 'artifact_digest': 'a' * 64, 'entrypoint': 'flow.py:source',
+    'context_key': 'ctx', 'parameters': [{'split': 0}, {'split': 1}],
+    'task_policy': {'retries': 2},
+})
+assert operator.parallelism == 2
+assert NativeStreamDeclaration.model_validate({
+    'profile': 'partitioned-fixed-v1', 'flow_version': 'v1', 'flow_code_digest': 'b' * 64,
+    'resource_profile': 'bounded-default-v1', 'flow_retries': 2,
+}).profile == 'partitioned-fixed-v1'
+assert not any(name.startswith(forbidden) for name in sys.modules)
+print('PASS_CLIENT_ONLY_IMPORT_WITH_SERVER_ONLY_MODULES_BLOCKED')
+print('NO_NATIVE_ACCEPTANCE; no wheel installation or subprocess/PG proof')

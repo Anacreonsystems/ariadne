@@ -1,0 +1,158 @@
+{
+  "schema": "ni2-010-contract-impact-review-v1",
+  "status": "planning-review",
+  "captured_at": "2026-11-04T23:04:10.646819+00:00",
+  "base_commit": "3bc947a069e8d6db2c897a7fd91ddc2514932767",
+  "native_completion_credit_percent": 0,
+  "implementation_started": false,
+  "prerequisite": "NI2-006 real frozen-source two-registered-worker gate and independent Principal verification. Current one-worker/distribution component proofs do not satisfy it.",
+  "references": [
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0043-physical-graph-and-partitioned-channels.md",
+      "sha256": "6cfa3e7903c519d8e34e4a55527dfd320213fd379d8108a7e5e58c80a4023874"
+    },
+    {
+      "path": "architecture/streaming-etl/adr/ADR-0044-multi-input-turns-and-state-materialization.md",
+      "sha256": "5f611e401371d73370f1561c864fc43e0d276b7fc672b9e083a9ce9be3bae24a"
+    },
+    {
+      "path": "architecture/streaming-etl/todo.md",
+      "sha256": "c0497f02964bf421ca37bcdc8ceb5d370e4ae33a60b7b3e0a77b198768d2f3c7"
+    },
+    {
+      "path": "src/prefect/client/schemas/stream_subtasks.py",
+      "sha256": "fc08848b5c2c3d21bb0032dd850d1395884c1f03eba2f73e2932d47089dac83a"
+    },
+    {
+      "path": "src/prefect/client/schemas/streams.py",
+      "sha256": "a5d5ff5ea4eb5348107b51429f55148c8afd90b6c11a62e6f9f9d20ac822f7dd"
+    },
+    {
+      "path": "src/prefect/_internal/stream_execution.py",
+      "sha256": "9c395332e424221d016630eabbc91c9fbff1df6f16f3f506010a5152f244812a"
+    },
+    {
+      "path": "src/prefect/_internal/stream_routing.py",
+      "sha256": "cd0633b687dea0a27f965e5c3ef233b11eba3b438ec7cf254f3ce971e5ea52d2"
+    },
+    {
+      "path": "src/prefect/server/database/orm_models.py",
+      "sha256": "33585eb3de3ca03f4182684558c63b4e7b9090d7d90d4bbafda7088a02e96b39"
+    }
+  ],
+  "existing_contract": {
+    "profile": "partitioned-fixed-v1 finite SOURCE→OPERATOR P2; named logical operators, four physical TaskRuns and four producer StreamPartition rows.",
+    "input_shape": "One scalar input_stream_id and one StreamConsumer per physical TaskRun; no native fan-in or join.",
+    "authority": "Current immutable child scope binds graph/assignment/subtask/grant/physical epoch and own input/output; upcoming persisted-worker-placement successor must be accepted before this review becomes implementation handoff.",
+    "store": "Existing StreamPartition/Record/Consumer/Completion remain the data plane. StreamSubmission unique upstream and consumer/TaskRun coupling are concrete fan-out/multi-input constraints."
+  },
+  "stories": [
+    "As a developer, I want explicit named ports and branch exchanges without creating a TaskRun per document.",
+    "As a user, I want replacing branch B to leave branch C accepted records and cursor unchanged.",
+    "As a system, I want all bounded route references, output/state/receipt and input completion to commit atomically under one sealed routing revision."
+  ],
+  "task_impacts": [
+    {
+      "task": "NI2-010",
+      "criteria": [
+        "A43-02"
+      ],
+      "changes_needed": [
+        "Versioned logical port/edge manifest with stable operator/output/input/subscriber identities; acyclic validation and typed port compatibility before task starts.",
+        "Explicit profile/version boundary preserving the accepted bounded-linear-v1 and partitioned-fixed-v1 interpretation.",
+        "Reject fan-in/multiple physical inputs until NI2-021 supplies a mailbox and shared-state apply order; a DAG with branches is not a correlated join."
+      ],
+      "architect_decisions": [
+        "Portable port type/schema identity and whether to start with one named output per ordinary Task.",
+        "Duplicate subscriber identity and explicit edge identity independent of physical TaskRun attempts.",
+        "Finite-prefix/tail dependency and terminal aggregate behavior when one branch fails."
+      ]
+    },
+    {
+      "task": "NI2-011",
+      "criteria": [
+        "A43-03",
+        "A43-09"
+      ],
+      "changes_needed": [
+        "Persist forward/rebalance/broadcast/keyed route targets at producer terminal append. Readers consume persisted targets; a retry never reroutes using replacement-local state.",
+        "Use existing StreamPartition for ordered edge partitions and existing immutable producer envelopes; route references/pins are metadata, not a second independent record store.",
+        "Extend both source append and operator YIELD terminal transactions. Existing epoch-1 state-only RETURN must retain its current decoding.",
+        "Freeze canonical key codec/hash/group/routing versions and assignment. Do not use Python hash() or a process-local round-robin counter.",
+        "Admit a bounded terminal-write budget for the complete route set. One full target must refuse the whole turn without partial fan-out/cursor/state advancement."
+      ],
+      "architect_decisions": [
+        "Concrete route-reference representation and composite foreign keys to original immutable record/turn identities.",
+        "Stable route digest lookup after lost ACK, attempt change and later assignment transfer.",
+        "Lock order over Flow authority, graph/subtask fence, TaskRun, sorted producer/edge partitions and subscriber state.",
+        "Independent subscriber retention/pins and branch failure policy; online GC remains NI2-040+ work."
+      ]
+    },
+    {
+      "task": "NI2-012",
+      "criteria": [
+        "A42-02",
+        "A43-02",
+        "A43-04"
+      ],
+      "changes_needed": [
+        "Paired client/server DTOs for ports, edges, exchanges and immutable routing manifests, without importing server modules into the client.",
+        "Update graph authoring descriptors and packaged worker bootstrap while preserving ordinary Task definitions and one TaskRun per physical subtask.",
+        "Keep child credentials restricted to own granted resources. Producer route fan-out is server-derived from sealed scope; the child cannot nominate arbitrary target streams.",
+        "Preserve persisted worker placement, one Flow lease and ordinary task/tag lease ownership. The complete live branch region must fit or be safely queued before sources start."
+      ],
+      "architect_decisions": [
+        "Exact public SDK spelling; this review deliberately defines no speculative new SDK method or profile literal.",
+        "Whether existing scalar child input context can remain for single-input fan-out and how an edge/subscriber lineage key is exposed to user code.",
+        "Bounded graph/subtask/worker/route-limit projection without capabilities or sibling parameters in child bootstrap."
+      ]
+    },
+    {
+      "task": "NI2-013",
+      "criteria": [
+        "A43-03",
+        "A43-09"
+      ],
+      "changes_needed": [
+        "Exact route-set retries around accepted/lost ACK and branch-only process replacement.",
+        "Persisted branch subscriber cursors; completing B must not acknowledge C, even when they share one producer envelope.",
+        "Keep durable logical/input lineage independent of TaskRun attempt and later assignment identity."
+      ],
+      "architect_decisions": [
+        "Failure cuts before/after producer commit and before/after consumer completion on each branch.",
+        "Retention behavior of a failed mandatory branch while another branch is healthy; no invented atomic guarantee across external sinks."
+      ]
+    },
+    {
+      "task": "NI2-014",
+      "criteria": [
+        "A43-02",
+        "A43-03",
+        "A43-09"
+      ],
+      "changes_needed": [
+        "Real SDK/HTTP/PostgreSQL/process branched gate on a frozen commit/source map, independently executed by Principal.",
+        "Different exchange and partition counts, real branch failure, exact route digests, stable healthy process identities and no cross-branch ACK.",
+        "500/5000 records with fixed operator/subtask/partition execution-metadata counts, bounded admitted routing overhead and no TaskRun per document."
+      ],
+      "architect_decisions": [
+        "Fixed graph oracle and exact target cardinalities before implementation.",
+        "Scope of distinct workers versus cross-host authority: two workers on one host do not establish ADR-0047 verified-stop/cross-host acceptance."
+      ]
+    }
+  ],
+  "proposed_acceptance_oracles": [
+    "As a system, I can reject a cycle, incompatible port, duplicate subscriber, unsupported fan-in/profile or incompatible forward parallelism before user code and unsafe resource allocation.",
+    "As a user, I got branch B replacement at its first incomplete coordinate while branch C retained the same accepted prefix and healthy process identity.",
+    "As a system, I got an identical route set/digest after an accepted append ACK was lost; output references and subscriber cursors have no duplicate or omission.",
+    "As a system, I can refuse one turn when any required route target lacks capacity, observing no partial producer/output/state/receipt/cursor commit.",
+    "As a developer, I can inspect named original producer/edge/partition/sequence lineage and the documented absence of implicit cross-partition total order.",
+    "As a developer, I got client wheel/source distributions whose graph DTOs and scoped worker/child transports import without server-only modules."
+  ],
+  "deferred_scope": [
+    "Multi-input state ownership/apply_ordinal and correlated join (NI2-020+).",
+    "Explicit tagged NO_OUTPUT/cardinality0..1; preserve old state-only RETURN.",
+    "Continuous sources/timers, online retention, cross-host stop authority and rescale under their own ADR gates."
+  ],
+  "review_limits": "Read-only contract impact analysis; no source/runtime/server changes, speculative wire implementation, task acceptance or readiness claim."
+}

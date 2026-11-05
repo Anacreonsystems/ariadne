@@ -180,6 +180,11 @@ cross-host, network or verified-stop acceptance. The fixed-P2 implementation
 must first satisfy the separate [two-worker placement agreement](../evidence/flink-architecture-2026-11-04/ni2-006-two-worker-placement-agreement-2026-11-04.json)
 on two real registered workers; that same-host gate still does not close
 ADR-0047.
+The bounded [ARC/static follow-up](../evidence/native-epoch2-host-preflight-2026-11-04/run-41931304288/receipt.json)
+also remained `UNPROVEN`: the static job was never assigned and executed no
+steps, so cancellation after the queue observation provides no second-host
+evidence. No further infrastructure probes are planned without a product
+criterion that needs a new observation.
 
 The [first physical CI discovery](../evidence/native-epoch2-physical-ci-2026-11-04/discovery.json)
 is also retained without readiness credit. Its initial SQLite run exposed an
@@ -195,6 +200,54 @@ The [combined one-worker transition snapshot](../evidence/native-epoch2-local-pr
 retains the 46-file WIP source/test inventory before the placement refactor. It
 was not executed as one frozen suite and does not retroactively bind the earlier
 8/500-document discovery runs or satisfy any acceptance criterion.
+
+The first [two-worker eight-document observation](../evidence/native-epoch2-two-worker-discovery-2026-11-04/first-eight-documents/receipt.json)
+completed four physical Task processes on two registered ProcessWorkers, but
+its combined source snapshot was captured after the run and shared files were
+still under implementation. It is a real milestone observation, not the N2.1
+gate: both input-200 coordinates, 500/5000, named failure/security controls and
+the independent frozen matrix remain required, with zero earned percentage.
+The separate [preflight-order successor](../evidence/flink-architecture-2026-11-04/ni2-006-preflight-order-successor-2026-11-04.json)
+records the final claim/import/register barrier without rewriting the earlier
+agreement or treating application import as a hostile-code sandbox.
+
+The [worker API component archive](../evidence/native-epoch2-worker-api-2026-11-04/index.json)
+and [paired SDK archive](../evidence/native-epoch2-sdk-contract-2026-11-04/index.json)
+retain their failure histories and current PostgreSQL/SQLite/client successors.
+They remain component evidence because the participating runtime, worker and
+server union has not yet been frozen and rerun. The
+[500-record request inventory](../evidence/native-epoch2-control-overhead-2026-11-04/baseline-500-loss/counts.json)
+is likewise an observation of functional control traffic, not a throughput or
+industrial-readiness result. None of these records changes the 0% earned value.
+Its [two-case successor comparison](../evidence/native-epoch2-control-overhead-2026-11-04/fixture-successor-comparison.json)
+also remains discovery-only because its recorded 55-file inventory omitted
+participating fixture/control files; the complete source union must be frozen
+and rerun independently.
+The [worker component archive](../evidence/native-epoch2-worker-2026-11-04/index.json)
+likewise retains the supervisor race and exact failed-start cleanup successors,
+including the independent component rerun. It does not replace the final
+two-worker process matrix and earns no percentage by itself.
+The [server component archive](../evidence/native-epoch2-server-2026-11-05/index.json)
+retains the paired PostgreSQL/SQLite, migration, legacy-profile and scoped-type
+successors with their original failures. It remains component-only and adds no
+earned percentage before the whole-union gate.
+The [startup-cleanup HTTP adjunct](../evidence/native-epoch2-startup-cleanup-http-2026-11-05/index.json)
+adds a real PostgreSQL/TCP/Popen control for the formerly unsafe unknown-wait
+path. It is retained as component evidence and does not change readiness.
+The [compatibility discovery archive](../evidence/native-epoch2-compatibility-discovery-2026-11-05/index.json)
+preserves the strict-type correction and complete ordinary/finite source-bound
+successors. It is regression evidence on the live candidate, not the final
+owned-checkout acceptance, so earned readiness stays 0%.
+The [runtime component archive](../evidence/native-epoch2-runtime-2026-11-05/index.json)
+preserves the pre-seal mutation failure and successor, two-worker discovery
+cuts and their source qualifications. It does not replace the final frozen
+5000-document and full-matrix runs.
+The [product checkpoint receipt](../evidence/native-epoch2-product-checkpoint-2026-11-05/receipt.json)
+binds the committed implementation and the isolated checkout used by the
+Principal. It is a publication/source boundary only; the 13-case process
+matrix and complete frozen profiles remain the acceptance authority.
+The [checkpoint documentation graph](../evidence/flink-architecture-2026-11-04/ni2-006-product-checkpoint-graph-2026-11-05.json)
+binds these append-only status and evidence links with zero earned readiness.
 
 The [ADR graph](../adr/README.md), [reference comparison](../research/flink-2.3-architecture.md)
 and [Principal discussion](../evidence/flink-architecture-2026-11-04/principal-discussion.json)

@@ -1,0 +1,3761 @@
+diff --git a/src/prefect/_internal/stream_engine.py b/src/prefect/_internal/stream_engine.py
+index 036495c..5f43c9e 100644
+--- a/src/prefect/_internal/stream_engine.py
++++ b/src/prefect/_internal/stream_engine.py
+@@ -22,6 +22,7 @@ from prefect.streams import (
+     StreamProtocolError,
+     StreamRunResult,
+     StreamSourceConfig,
++    _PartitionMetadata,  # pyright: ignore[reportPrivateUsage]
+ )
+ from prefect.utilities.asyncutils import run_coro_as_sync
+ from prefect.utilities.callables import call_with_parameters
+@@ -83,11 +84,13 @@ class _StreamRun:
+         self.task_run = task_run
+         self.registration_verified = False
+         self.source = source
++        self.partition = _PartitionMetadata()
+ 
+ 
+ def _fail_unstarted_run(run: _StreamRun, error: str) -> None:
+     """Compensate a confirmed Pending registration through normal task events."""
+     # utilities.engine imports Task; defer until Task initialization is complete.
++    from prefect._internal.stream_execution import get_stream_subtask_execution
+     from prefect.utilities.engine import emit_task_run_state_change_event
+ 
+     task_run = run.task_run
+@@ -103,13 +106,25 @@ def _fail_unstarted_run(run: _StreamRun, error: str) -> None:
+     failed = Failed(message=f"Stream startup failed: {error}")
+     failed.state_details.task_run_id = task_run.id
+     failed.state_details.flow_run_id = task_run.flow_run_id
++    physical = get_stream_subtask_execution()
++    if physical is not None:
++        failed.state_details.retriable = False
+     task_run.state = failed
+     task_run.state_id = failed.id
+     task_run.state_type = failed.type
+     task_run.state_name = failed.name
+-    emit_task_run_state_change_event(
+-        task_run=task_run, initial_state=initial, validated_state=failed
+-    )
++    if physical is None:
++        emit_task_run_state_change_event(
++            task_run=task_run, initial_state=initial, validated_state=failed
++        )
++    else:
++        from prefect._internal.stream_subtask_entrypoint import emit_physical_task_event
++        from prefect.client.orchestration import get_client
++        from prefect.utilities.engine import build_task_run_state_change_event
++
++        event = build_task_run_state_change_event(task_run, initial, failed)
++        with get_client(sync_client=True) as client:
++            emit_physical_task_event(client, event)
+ 
+ 
+ async def reject_stream_submission(run: _StreamRun, error: str) -> None:
+@@ -184,6 +199,7 @@ def _parameters(engine: Any, record: Any, consumer_id: str) -> dict[str, Any]:
+         input_sequence=record.sequence,
+         attempt=engine.task_run.run_count,
+         managed_state=_state_copy(record.managed_state),
++        _partition=validate_stream_parameters(engine.task, engine.parameters).partition,
+     )
+     return parameters
+ 
+@@ -350,7 +366,11 @@ def _source_execution(
+         if key != "__prefect_stream_run__"
+     }
+     context = SourceContext(
+-        engine.task_run.id, run.output.stream_id, engine.task_run.run_count, 0
++        engine.task_run.id,
++        run.output.stream_id,
++        engine.task_run.run_count,
++        0,
++        _partition=run.partition,
+     )
+     parameters[engine.task.stream.context] = context
+     return run, storage, context, parameters
+diff --git a/src/prefect/_internal/stream_reconstruction.py b/src/prefect/_internal/stream_reconstruction.py
+index 9639c59..4e91cb5 100644
+--- a/src/prefect/_internal/stream_reconstruction.py
++++ b/src/prefect/_internal/stream_reconstruction.py
+@@ -188,14 +188,14 @@ class StreamReconstruction:
+             entry.future.result()
+ 
+ 
+-def reconstruction() -> StreamReconstruction | None:
++def reconstruction() -> Any:
+     execution = get_stream_execution()
+     return (
+         getattr(execution, "_reconstruction", None) if execution is not None else None
+     )
+ 
+ 
+-def _begin(flow_run: Any) -> StreamReconstruction | None:
++def _begin(flow_run: Any) -> Any:
+     execution = get_stream_execution()
+     if execution is None:
+         return None
+@@ -204,6 +204,22 @@ def _begin(flow_run: Any) -> StreamReconstruction | None:
+     previous = reconstruction()
+     if previous is not None and previous.flow_attempt == flow_run.run_count:
+         return previous
++    from prefect.context import FlowRunContext
++
++    context = FlowRunContext.get()
++    flow = context.flow if context is not None else None
++    if (
++        flow is not None
++        and flow.streaming is not None
++        and flow.streaming.profile == "partitioned-fixed-v1"
++    ):
++        from prefect._internal.stream_partitioned import PartitionedStreamReconstruction
++
++        if previous is not None:
++            previous.abort()
++        graph = PartitionedStreamReconstruction(execution, flow_run, flow)
++        object.__setattr__(execution, "_reconstruction", graph)
++        return graph
+     if previous is not None:
+         if previous.phase != "ABORTED":
+             raise StreamProtocolError(
+@@ -228,9 +244,16 @@ def stream_flow_scope(flow_run: Any):
+         yield
+         if graph is not None:
+             graph.finish()
+-    except BaseException:
++    except BaseException as original:
+         if graph is not None:
+-            graph.abort()
++            if getattr(graph, "_activated", False):
++                try:
++                    graph.finish()
++                except BaseException as cleanup:
++                    if cleanup is not original:
++                        raise original from cleanup
++            else:
++                graph.abort()
+         raise
+ 
+ 
+@@ -241,9 +264,16 @@ async def async_stream_flow_scope(flow_run: Any):
+         yield
+         if graph is not None:
+             await run_sync(graph.finish)
+-    except BaseException:
++    except BaseException as original:
+         if graph is not None:
+-            graph.abort()
++            if getattr(graph, "_activated", False):
++                try:
++                    await run_sync(graph.finish)
++                except BaseException as cleanup:
++                    if cleanup is not original:
++                        raise original from cleanup
++            else:
++                graph.abort()
+         raise
+ 
+ 
+@@ -274,6 +304,13 @@ def submit_reconstructed_stream(
+         raise StreamProtocolError(
+             "Keyed stream submission requires its native flow execution"
+         )
++    if (
++        context.flow.streaming is not None
++        and context.flow.streaming.profile == "partitioned-fixed-v1"
++    ):
++        raise StreamProtocolError(
++            "Use submit_partitioned_stream for the fixed-P2 profile"
++        )
+     if TaskRunContext.get() is not None or not isinstance(
+         context.task_runner, ThreadPoolTaskRunner
+     ):
+@@ -462,6 +499,10 @@ def submit_reconstructed_stream(
+ def prepare_flow_state(state: Any) -> None:
+     """A sealed graph permits task retries and explicit generation takeover only."""
+     graph = reconstruction()
++    if getattr(graph, "profile", None) == "partitioned-fixed-v1":
++        if state.is_failed() and (graph.admission_attempted or graph.plan is not None):
++            state.state_details.retriable = False
++        return
+     if (
+         graph is not None
+         and (
+@@ -478,6 +519,8 @@ def prepare_flow_state(state: Any) -> None:
+ 
+ def reconcile_unstarted_graph(flow_run: Any) -> None:
+     graph = reconstruction()
++    if getattr(graph, "profile", None) == "partitioned-fixed-v1":
++        return
+     if (
+         graph is None
+         or graph.phase != "ABORTED"
+diff --git a/src/prefect/runner/_starter_native.py b/src/prefect/runner/_starter_native.py
+index 3e1afb9..578ef3c 100644
+--- a/src/prefect/runner/_starter_native.py
++++ b/src/prefect/runner/_starter_native.py
+@@ -53,6 +53,22 @@ def linux_process_identity(pid: int) -> tuple[UUID, UUID, int]:
+     return host, boot, int(fields[19])
+ 
+ 
++def create_native_stream_credentials() -> tuple[UUID, str, bytes, str]:
++    """Create one holder identity, opaque capability and Ed25519 signing pair."""
++    private = Ed25519PrivateKey.generate()
++    private_bytes = private.private_bytes(
++        serialization.Encoding.Raw,
++        serialization.PrivateFormat.Raw,
++        serialization.NoEncryption(),
++    )
++    public = (
++        private.public_key()
++        .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
++        .hex()
++    )
++    return uuid4(), secrets.token_hex(32), private_bytes, public
++
++
+ class NativeProcessStarter:
+     """Register a blocked child before one-use private bootstrap delivery."""
+ 
+@@ -144,18 +160,7 @@ class NativeProcessStarter:
+ 
+     @staticmethod
+     def _credentials() -> tuple[UUID, str, bytes, str]:
+-        private = Ed25519PrivateKey.generate()
+-        private_bytes = private.private_bytes(
+-            serialization.Encoding.Raw,
+-            serialization.PrivateFormat.Raw,
+-            serialization.NoEncryption(),
+-        )
+-        public = (
+-            private.public_key()
+-            .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+-            .hex()
+-        )
+-        return uuid4(), secrets.token_hex(32), private_bytes, public
++        return create_native_stream_credentials()
+ 
+     def _bind_execution(self, holder: UUID, capability: str, private: bytes) -> None:
+         self.execution = StreamExecutionContext(
+@@ -176,7 +181,7 @@ class NativeProcessStarter:
+         )
+         if plan.work_pool_id != self.work_pool_id:
+             raise StreamProtocolError("Native deployment belongs to another work pool")
+-        holder, capability, private, public = self._credentials()
++        holder, capability, private, public = create_native_stream_credentials()
+         self.enrollment = await self._request(
+             "enroll_native_stream_deployment",
+             flow_run_id=self.flow_run.id,
+@@ -293,7 +298,7 @@ class NativeProcessStarter:
+             )
+         ):
+             return await retire()
+-        holder, capability, private, public = self._credentials()
++        holder, capability, private, public = create_native_stream_credentials()
+         launcher = uuid4()
+         supervisor, supervisor_capability = uuid4(), secrets.token_hex(32)
+         launcher_host, launcher_boot, launcher_ticks = linux_process_identity(
+diff --git a/src/prefect/server/models/native_deployments.py b/src/prefect/server/models/native_deployments.py
+index e985839..ffe2f40 100644
+--- a/src/prefect/server/models/native_deployments.py
++++ b/src/prefect/server/models/native_deployments.py
+@@ -22,6 +22,10 @@ from prefect.server.models.stream_executions import (
+     _claim_execution,
+     require_execution,
+ )
++from prefect.server.models.stream_subtask_authority import (
++    require_bounded_flow_recovery,
++    require_no_assigned_physical_slots,
++)
+ from prefect.server.orchestration.core_policy import CoreFlowPolicy, CoreTaskPolicy
+ from prefect.server.schemas.core import FlowRunPolicy
+ from prefect.server.schemas.native_deployments import (
+@@ -788,6 +792,7 @@ async def recovery_candidates(
+             .where(
+                 db.NativeStreamDeploymentSnapshot.work_pool_id == work_pool_id,
+                 db.NativeStreamDeploymentSnapshot.state == "ACTIVE",
++                db.NativeStreamDeploymentSnapshot.profile == "bounded-linear-v1",
+                 db.NativeStreamLaunchIdentity.last_renewed_at <= stale_before,
+                 db.NativeStreamLaunchIdentity.generation
+                 == db.StreamExecutionAuthority.generation,
+@@ -901,6 +906,7 @@ async def authorize_replacement(
+         raise NativeStreamError(
+             "UNSUPPORTED_BACKEND", "Native replacements require PostgreSQL 17"
+         )
++    await require_bounded_flow_recovery(session, db, request.flow_run_id)
+     flow = await session.scalar(
+         sa.select(db.FlowRun)
+         .where(db.FlowRun.id == request.flow_run_id)
+@@ -1027,6 +1033,7 @@ async def confirm_replacement(
+         raise NativeStreamError(
+             "UNSUPPORTED_BACKEND", "Native replacements require PostgreSQL 17"
+         )
++    await require_bounded_flow_recovery(session, db, request.flow_run_id)
+     flow = await session.scalar(
+         sa.select(db.FlowRun)
+         .where(db.FlowRun.id == request.flow_run_id)
+@@ -1199,6 +1206,8 @@ async def apply_control(
+         )
+     if authority is None or authority.generation != request.expected_generation:
+         raise NativeStreamError("STALE_EXECUTION", "Control generation changed")
++    if kind == "CANCEL":
++        await require_no_assigned_physical_slots(session, db, request.flow_run_id)
+     material = request.model_dump(mode="json") | {
+         "schema": "native-stream-control-v1",
+         "kind": kind,
+@@ -1298,6 +1307,7 @@ async def finalize_cancelled_launch(
+         )
+     if authority is None or authority.generation != request.expected_generation:
+         raise NativeStreamError("STALE_EXECUTION", "Cancellation generation changed")
++    await require_no_assigned_physical_slots(session, db, request.flow_run_id)
+     material = request.model_dump(mode="json", exclude={"challenge_capability"}) | {
+         "schema": "native-stream-cancel-finalization-v1"
+     }
+@@ -1469,6 +1479,7 @@ async def retire_verified_dead_launch(
+         raise NativeStreamError(
+             "UNSUPPORTED_BACKEND", "Native retirement requires PostgreSQL 17"
+         )
++    await require_bounded_flow_recovery(session, db, request.flow_run_id)
+     flow = await session.scalar(
+         sa.select(db.FlowRun)
+         .where(db.FlowRun.id == request.flow_run_id)
+diff --git a/src/prefect/server/schemas/native_deployments.py b/src/prefect/server/schemas/native_deployments.py
+index 724d2b5..cd35deb 100644
+--- a/src/prefect/server/schemas/native_deployments.py
++++ b/src/prefect/server/schemas/native_deployments.py
+@@ -19,7 +19,7 @@ class NativeStreamDeclaration(BaseModel):
+ 
+     schema_version: Literal[1] = 1
+     protocol_version: Literal[1] = 1
+-    profile: Literal["bounded-linear-v1"]
++    profile: Literal["bounded-linear-v1", "partitioned-fixed-v1"]
+     flow_version: str = Field(min_length=1, max_length=255)
+     flow_code_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+     resource_profile: Literal["bounded-default-v1"]
+diff --git a/src/prefect/streams.py b/src/prefect/streams.py
+index 38675ee..25d4ed8 100644
+--- a/src/prefect/streams.py
++++ b/src/prefect/streams.py
+@@ -8,6 +8,9 @@ from __future__ import annotations
+ 
+ import asyncio
+ import inspect
++import json
++import threading
++import time
+ from dataclasses import dataclass, field
+ from typing import (
+     TYPE_CHECKING,
+@@ -16,10 +19,12 @@ from typing import (
+     Literal,
+     Protocol,
+     TypeVar,
++    cast,
+ )
+ from uuid import UUID
+ 
+ from anyio.to_thread import run_sync
++from pydantic import JsonValue
+ 
+ from prefect.exceptions import PrefectException
+ 
+@@ -52,15 +57,19 @@ class NativeStreamFlowConfig:
+     """
+ 
+     protocol_version: Literal[1] = 1
+-    profile: Literal["bounded-linear-v1"] = "bounded-linear-v1"
++    profile: Literal["bounded-linear-v1", "partitioned-fixed-v1"] = "bounded-linear-v1"
+     resource_profile: Literal["bounded-default-v1"] = "bounded-default-v1"
++    partition_count: int = 1
+ 
+     def __post_init__(self) -> None:
+         if (
+             type(self.protocol_version) is not int
+             or self.protocol_version != 1
+-            or self.profile != "bounded-linear-v1"
++            or self.profile not in {"bounded-linear-v1", "partitioned-fixed-v1"}
+             or self.resource_profile != "bounded-default-v1"
++            or type(self.partition_count) is not int
++            or self.partition_count
++            != (2 if self.profile == "partitioned-fixed-v1" else 1)
+         ):
+             raise StreamProtocolError("Unsupported native Flow capability profile")
+ 
+@@ -179,18 +188,98 @@ class SourceRecord(Generic[T]):
+             raise StreamProtocolError("A source position must be a positive integer")
+ 
+ 
++@dataclass(frozen=True, init=False)
++class StreamPartitionCall:
++    """One explicit JSON parameter snapshot for a physical partition.
++
++    Source calls must identify two distinct user-owned splits. The runtime does
++    not infer a split or duplicate a full-source scan. Values returned by
++    `parameters` are copies; callers cannot mutate a sealed declaration.
++    """
++
++    _parameters: bytes = field(repr=False)
++
++    def __init__(self, *, parameters: dict[str, JsonValue]) -> None:
++        def validate(value: Any) -> None:
++            if value is None or type(value) in (bool, int, float, str):
++                return
++            if type(value) is list:
++                for item in value:
++                    validate(item)
++                return
++            if type(value) is dict and all(type(key) is str for key in value):
++                for item in value.values():
++                    validate(item)
++                return
++            raise StreamProtocolError("Partition parameters require strict JSON values")
++
++        if type(parameters) is not dict:
++            raise StreamProtocolError("Partition parameters require a JSON dictionary")
++        try:
++            validate(parameters)
++            encoded = json.dumps(
++                parameters,
++                sort_keys=True,
++                ensure_ascii=False,
++                allow_nan=False,
++                separators=(",", ":"),
++            ).encode("utf-8")
++        except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
++            raise StreamProtocolError(
++                "Partition parameters require finite JSON"
++            ) from exc
++        if len(encoded) > 64 * 1024:
++            raise StreamProtocolError("Partition parameter snapshot exceeds 64 KiB")
++        object.__setattr__(self, "_parameters", encoded)
++
++    @property
++    def parameters(self) -> dict[str, JsonValue]:
++        return json.loads(self._parameters)
++
++
++@dataclass(frozen=True)
++class _PartitionMetadata:
++    index: int = 0
++    count: int = 1
++    operator_uid: str | None = None
++    assignment_epoch: int | None = None
++
++
++class _PartitionContext:
++    _partition: _PartitionMetadata
++
++    @property
++    def partition_index(self) -> int:
++        return self._partition.index
++
++    @property
++    def partition_count(self) -> int:
++        return self._partition.count
++
++    @property
++    def operator_uid(self) -> str | None:
++        return self._partition.operator_uid
++
++    @property
++    def assignment_epoch(self) -> int | None:
++        return self._partition.assignment_epoch
++
++
+ @dataclass
+-class SourceContext:
++class SourceContext(_PartitionContext):
+     """Injected source metadata; only platform acceptance advances position."""
+ 
+     task_run_id: UUID
+     stream_id: str
+     attempt: int
+     accepted_source_position: int
++    _partition: _PartitionMetadata = field(
++        default_factory=_PartitionMetadata, repr=False
++    )
+ 
+ 
+ @dataclass
+-class StreamContext:
++class StreamContext(_PartitionContext):
+     """Per-input context; managed state is saved with terminal acceptance."""
+ 
+     task_run_id: UUID
+@@ -198,6 +287,9 @@ class StreamContext:
+     input_sequence: int
+     attempt: int
+     managed_state: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
++    _partition: _PartitionMetadata = field(
++        default_factory=_PartitionMetadata, repr=False
++    )
+ 
+ 
+ @dataclass(frozen=True)
+@@ -319,6 +411,63 @@ class Stream(Generic[T]):
+         return self.completion.result(timeout=timeout)
+ 
+ 
++class PartitionedStream(Generic[T]):
++    """Two physical streams without an implied global order or collection.
++
++    A source declaration is pending until its one operator is declared. Physical
++    identities are bound once from the sealed server graph, never guessed.
++    """
++
++    def __init__(self, *, _ready: threading.Event | None = None) -> None:
++        self._partitions: tuple[Stream[T], Stream[T]] | None = None
++        self._binding_lock = threading.Lock()
++        self._shared_readiness = _ready is not None
++        self._ready = threading.Event() if _ready is None else _ready
++
++    def _bind(self, partitions: object) -> None:
++        with self._binding_lock:
++            if self._partitions is not None:
++                raise StreamProtocolError(
++                    "Physical stream identities are already bound"
++                )
++            if (
++                type(partitions) is not tuple
++                or len(partitions) != 2
++                or any(not isinstance(partition, Stream) for partition in partitions)
++            ):
++                raise StreamProtocolError(
++                    "A partitioned stream requires exactly two streams"
++                )
++            self._partitions = cast(tuple[Stream[T], Stream[T]], partitions)
++            if not self._shared_readiness:
++                self._ready.set()
++
++    @property
++    def partitions(self) -> tuple[Stream[T], Stream[T]]:
++        if self._partitions is None or not self._ready.is_set():
++            raise StreamProtocolError(
++                "The partitioned graph requires its operator declaration"
++            )
++        return self._partitions
++
++    def wait(self, timeout: float | None = None) -> tuple[Any, Any]:
++        deadline = None if timeout is None else time.monotonic() + timeout
++        results = []
++        failures: list[Exception] = []
++        for partition in self.partitions:
++            remaining = (
++                None if deadline is None else max(0, deadline - time.monotonic())
++            )
++            try:
++                results.append(partition.wait(timeout=remaining))
++            except Exception as exc:
++                failures.append(exc)
++                results.append(None)
++        if failures:
++            raise failures[0]
++        return results[0], results[1]
++
++
+ class StreamCollection(Generic[T]):
+     """An explicitly bounded finite dependency on a stream prefix."""
+ 
+diff --git a/src/prefect/task_engine.py b/src/prefect/task_engine.py
+index 743a087..4e0f24c 100644
+--- a/src/prefect/task_engine.py
++++ b/src/prefect/task_engine.py
+@@ -52,13 +52,21 @@ from prefect._internal.stream_engine import (
+     finish_stream_sync,
+     reject_stream_execution,
+ )
+-from prefect._internal.stream_execution import get_stream_execution
++from prefect._internal.stream_execution import (
++    get_stream_execution,
++    get_stream_subtask_execution,
++)
+ from prefect._internal.stream_finite import (
+     admit_finite_attempt,
+     complete_finite_result,
+     finite_run,
+     replay_finite_result,
+ )
++from prefect._internal.stream_subtask_entrypoint import (
++    PhysicalStreamExecutionStopped,
++    aemit_physical_task_event,
++    emit_physical_task_event,
++)
+ from prefect._internal.uuid7 import uuid7
+ from prefect.cache_policies import CachePolicy
+ from prefect.client.orchestration import PrefectClient, SyncPrefectClient, get_client
+@@ -90,9 +98,11 @@ from prefect.exceptions import (
+     TerminationSignal,
+     UpstreamTaskError,
+ )
++from prefect.filesystems import LocalFileSystem, NullFileSystem
+ from prefect.logging.loggers import get_logger, patch_print, task_run_logger
+ from prefect.results import (
+     ResultRecord,
++    ResultStore,
+     _aget_default_persist_result,
+     _format_user_supplied_storage_key,  # type: ignore[reportPrivateUsage]
+     _get_default_persist_result,
+@@ -129,6 +139,7 @@ from prefect.utilities.asyncutils import run_coro_as_sync
+ from prefect.utilities.callables import call_with_parameters, parameters_to_args_kwargs
+ from prefect.utilities.collections import visit_collection
+ from prefect.utilities.engine import (
++    build_task_run_state_change_event,
+     collect_task_run_inputs_sync,
+     emit_task_run_state_change_event,
+     link_state_to_task_run_result,
+@@ -263,17 +274,29 @@ class BaseTaskRunEngine(Generic[P, R]):
+     _is_started: bool = False
+     _task_name_set: bool = False
+     _last_event: Optional[PrefectEvent] = None
++    _physical_transport_failed: bool = False
+     _telemetry: RunTelemetry = field(default_factory=RunTelemetry)
+ 
+     def __post_init__(self) -> None:
+         if self.parameters is None:
+             self.parameters = {}
+         execution = get_stream_execution()
++        physical = get_stream_subtask_execution()
++        if physical is not None:
++            if (
++                self.task.stream is None
++                or self.task_run is None
++                or self.task_run.id != physical.task_run_id
++                or self.task_run.flow_run_id != physical.flow_run_id
++                or FlowRunContext.get() is not None
++            ):
++                raise StreamProtocolError(
++                    "Physical execution requires its exact assigned stream TaskRun"
++                )
++            self.retries = max(self.retries, self.task_run.run_count)
+         if execution is not None and (
+             self.task_run is None or execution.manifest_digest(self.task_run.id) is None
+         ):
+-            from prefect.streams import StreamProtocolError
+-
+             raise StreamProtocolError(
+                 "An enrolled native flow accepts only its keyed stream tasks"
+             )
+@@ -290,9 +313,12 @@ class BaseTaskRunEngine(Generic[P, R]):
+     def _stream_initial_retry_delay(self) -> float:
+         execution = get_stream_execution()
+         if (
+-            execution is None
++            (execution is None and get_stream_subtask_execution() is None)
+             or self.task_run is None
+-            or execution.manifest_digest(self.task_run.id) is None
++            or (
++                execution is not None
++                and execution.manifest_digest(self.task_run.id) is None
++            )
+             or self.task_run.state is None
+             or not self.task_run.state.is_scheduled()
+         ):
+@@ -302,6 +328,28 @@ class BaseTaskRunEngine(Generic[P, R]):
+             return 0
+         return max(0, (scheduled - prefect.types._datetime.now("UTC")).total_seconds())
+ 
++    def _emit_state_event(
++        self,
++        initial_state: State[Any] | None,
++        validated_state: State[Any],
++    ) -> PrefectEvent | None:
++        assert self.task_run is not None
++        if get_stream_subtask_execution() is None:
++            return emit_task_run_state_change_event(
++                task_run=self.task_run,
++                initial_state=initial_state,
++                validated_state=validated_state,
++                follows=self._last_event,
++            )
++        event = build_task_run_state_change_event(
++            self.task_run, initial_state, validated_state, self._last_event
++        )
++        try:
++            return emit_physical_task_event(getattr(self, "client"), event)
++        except PhysicalStreamExecutionStopped:
++            self._physical_transport_failed = True
++            raise
++
+     @property
+     def state(self) -> State:
+         if not self.task_run or not self.task_run.state:
+@@ -475,12 +523,7 @@ class BaseTaskRunEngine(Generic[P, R]):
+             message="Task rolled back as part of transaction",
+         )
+ 
+-        self._last_event = emit_task_run_state_change_event(
+-            task_run=self.task_run,
+-            initial_state=self.state,
+-            validated_state=rolled_back_state,
+-            follows=self._last_event,
+-        )
++        self._last_event = self._emit_state_event(self.state, rolled_back_state)
+ 
+ 
+ @dataclass
+@@ -617,6 +660,10 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+         last_state = self.state
+         if not self.task_run:
+             raise ValueError("Task run is not set")
++        if get_stream_subtask_execution() is not None and (
++            state.is_failed() or state.is_crashed()
++        ):
++            state.state_details.retriable = False
+ 
+         self.task_run.state = new_state = state
+ 
+@@ -655,12 +702,7 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+             link_state_to_task_run_result(new_state, result)
+ 
+         # emit a state change event
+-        self._last_event = emit_task_run_state_change_event(
+-            task_run=self.task_run,
+-            initial_state=last_state,
+-            validated_state=self.task_run.state,
+-            follows=self._last_event,
+-        )
++        self._last_event = self._emit_state_event(last_state, self.task_run.state)
+         self._telemetry.update_state(new_state)
+         return new_state
+ 
+@@ -831,8 +873,17 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+         with ExitStack() as stack:
+             if log_prints := should_log_prints(self.task):
+                 stack.enter_context(patch_print())
+-            result_store = get_result_store().update_for_task(self.task, _sync=True)
+-            if self.task.persist_result is not None:
++            physical = get_stream_subtask_execution()
++            result_store = (
++                ResultStore(
++                    result_storage=LocalFileSystem(), metadata_storage=NullFileSystem()
++                )
++                if physical is not None
++                else get_result_store().update_for_task(self.task, _sync=True)
++            )
++            if physical is not None:
++                persist_result = False
++            elif self.task.persist_result is not None:
+                 persist_result = self.task.persist_result
+             elif settings.tasks.default_persist_result is not None:
+                 persist_result = settings.tasks.default_persist_result
+@@ -850,7 +901,8 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+                     persist_result=persist_result,
+                 )
+             )
+-            stack.enter_context(ConcurrencyContext())
++            if physical is None:
++                stack.enter_context(ConcurrencyContext())
+ 
+             self.logger: "logging.Logger" = task_run_logger(
+                 task_run=self.task_run, task=self.task
+@@ -860,6 +912,9 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+ 
+     @contextmanager
+     def asset_context(self):
++        if get_stream_subtask_execution() is not None:
++            yield
++            return
+         parent_asset_ctx = AssetContext.get()
+ 
+         if parent_asset_ctx and parent_asset_ctx.copy_to_child_ctx:
+@@ -895,7 +950,11 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+                 parent_task_run_context = TaskRunContext.get()
+ 
+                 try:
+-                    _emit_pending = False
++                    _emit_pending = (
++                        get_stream_subtask_execution() is not None
++                        and self.task_run is not None
++                        and self.task_run.state.is_pending()
++                    )
+                     if not self.task_run:
+                         self.task_run = _create_task_run_locally(
+                             task=self.task,
+@@ -914,10 +973,8 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+                         # rather than whatever TaskRunContext may be active from
+                         # an enclosing scope (e.g. a parent task).
+                         if _emit_pending:
+-                            self._last_event = emit_task_run_state_change_event(
+-                                task_run=self.task_run,
+-                                initial_state=None,
+-                                validated_state=self.task_run.state,
++                            self._last_event = self._emit_state_event(
++                                None, self.task_run.state
+                             )
+ 
+                         # setup_run_context might update the task run name, so log creation here
+@@ -949,6 +1006,8 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+                 except GeneratorExit:
+                     # Do not capture generator exits as crashes
+                     raise
++                except PhysicalStreamExecutionStopped:
++                    raise
+                 except BaseException as exc:
+                     # BaseExceptions are caught and handled as crashes
+                     self.handle_crash(exc)
+@@ -1010,12 +1069,18 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+                     self.call_hooks()
+                     return
+ 
+-                with _concurrency(
+-                    names=[f"tag:{tag}" for tag in self.task_run.tags],
+-                    occupy=1,
+-                    holder=ConcurrencyLeaseHolder(type="task_run", id=self.task_run.id),
+-                    lease_duration=60,
+-                    suppress_warnings=True,
++                with (
++                    nullcontext()
++                    if get_stream_subtask_execution() is not None
++                    else _concurrency(
++                        names=[f"tag:{tag}" for tag in self.task_run.tags],
++                        occupy=1,
++                        holder=ConcurrencyLeaseHolder(
++                            type="task_run", id=self.task_run.id
++                        ),
++                        lease_duration=60,
++                        suppress_warnings=True,
++                    )
+                 ):
+                     raise_if_flow_run_suspension_requested()
+                     self.begin_run()
+@@ -1125,6 +1190,28 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+             raise RuntimeError("Engine has not started.")
+         return self._client
+ 
++    async def _aemit_state_event(
++        self,
++        initial_state: State[Any] | None,
++        validated_state: State[Any],
++    ) -> PrefectEvent | None:
++        assert self.task_run is not None
++        if get_stream_subtask_execution() is None:
++            return emit_task_run_state_change_event(
++                task_run=self.task_run,
++                initial_state=initial_state,
++                validated_state=validated_state,
++                follows=self._last_event,
++            )
++        event = build_task_run_state_change_event(
++            self.task_run, initial_state, validated_state, self._last_event
++        )
++        try:
++            return await aemit_physical_task_event(self.client, event)
++        except PhysicalStreamExecutionStopped:
++            self._physical_transport_failed = True
++            raise
++
+     async def can_retry(self, exc_or_state: Exception | State[R]) -> bool:
+         retry_condition: Optional[
+             Callable[["Task[P, Coroutine[Any, Any, R]]", TaskRun, State[R]], bool]
+@@ -1262,6 +1349,10 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+         last_state = self.state
+         if not self.task_run:
+             raise ValueError("Task run is not set")
++        if get_stream_subtask_execution() is not None and (
++            state.is_failed() or state.is_crashed()
++        ):
++            state.state_details.retriable = False
+ 
+         self.task_run.state = new_state = state
+ 
+@@ -1301,11 +1392,8 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+             link_state_to_task_run_result(new_state, result)
+ 
+         # emit a state change event
+-        self._last_event = emit_task_run_state_change_event(
+-            task_run=self.task_run,
+-            initial_state=last_state,
+-            validated_state=self.task_run.state,
+-            follows=self._last_event,
++        self._last_event = await self._aemit_state_event(
++            last_state, self.task_run.state
+         )
+ 
+         self._telemetry.update_state(new_state)
+@@ -1482,8 +1570,17 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+         with ExitStack() as stack:
+             if log_prints := should_log_prints(self.task):
+                 stack.enter_context(patch_print())
+-            result_store = await get_result_store().aupdate_for_task(self.task)
+-            if self.task.persist_result is not None:
++            physical = get_stream_subtask_execution()
++            result_store = (
++                ResultStore(
++                    result_storage=LocalFileSystem(), metadata_storage=NullFileSystem()
++                )
++                if physical is not None
++                else await get_result_store().aupdate_for_task(self.task)
++            )
++            if physical is not None:
++                persist_result = False
++            elif self.task.persist_result is not None:
+                 persist_result = self.task.persist_result
+             elif settings.tasks.default_persist_result is not None:
+                 persist_result = settings.tasks.default_persist_result
+@@ -1501,7 +1598,8 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+                     persist_result=persist_result,
+                 )
+             )
+-            stack.enter_context(ConcurrencyContext())
++            if physical is None:
++                stack.enter_context(ConcurrencyContext())
+ 
+             self.logger: "logging.Logger" = task_run_logger(
+                 task_run=self.task_run, task=self.task
+@@ -1511,6 +1609,9 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+ 
+     @asynccontextmanager
+     async def asset_context(self):
++        if get_stream_subtask_execution() is not None:
++            yield
++            return
+         parent_asset_ctx = AssetContext.get()
+ 
+         if parent_asset_ctx and parent_asset_ctx.copy_to_child_ctx:
+@@ -1546,7 +1647,11 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+                 parent_task_run_context = TaskRunContext.get()
+ 
+                 try:
+-                    _emit_pending = False
++                    _emit_pending = (
++                        get_stream_subtask_execution() is not None
++                        and self.task_run is not None
++                        and self.task_run.state.is_pending()
++                    )
+                     if not self.task_run:
+                         self.task_run = await self.task.create_local_run(
+                             id=task_run_id,
+@@ -1564,10 +1669,8 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+                         # rather than whatever TaskRunContext may be active from
+                         # an enclosing scope (e.g. a parent task).
+                         if _emit_pending:
+-                            self._last_event = emit_task_run_state_change_event(
+-                                task_run=self.task_run,
+-                                initial_state=None,
+-                                validated_state=self.task_run.state,
++                            self._last_event = await self._aemit_state_event(
++                                None, self.task_run.state
+                             )
+ 
+                         # setup_run_context might update the task run name, so log creation here
+@@ -1599,6 +1702,8 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+                 except GeneratorExit:
+                     # Do not capture generator exits as crashes
+                     raise
++                except PhysicalStreamExecutionStopped:
++                    raise
+                 except BaseException as exc:
+                     # BaseExceptions are caught and handled as crashes
+                     await self.handle_crash(exc)
+@@ -1662,12 +1767,18 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
+                     await self.call_hooks()
+                     return
+ 
+-                async with _aconcurrency(
+-                    names=[f"tag:{tag}" for tag in self.task_run.tags],
+-                    occupy=1,
+-                    holder=ConcurrencyLeaseHolder(type="task_run", id=self.task_run.id),
+-                    lease_duration=60,
+-                    suppress_warnings=True,
++                async with (
++                    nullcontext()
++                    if get_stream_subtask_execution() is not None
++                    else _aconcurrency(
++                        names=[f"tag:{tag}" for tag in self.task_run.tags],
++                        occupy=1,
++                        holder=ConcurrencyLeaseHolder(
++                            type="task_run", id=self.task_run.id
++                        ),
++                        lease_duration=60,
++                        suppress_warnings=True,
++                    )
+                 ):
+                     raise_if_flow_run_suspension_requested()
+                     await self.begin_run()
+@@ -1783,7 +1894,11 @@ def run_task_sync(
+             run_coro_as_sync(reject_stream_execution(engine, type(exc).__name__))
+         raise
+     finally:
+-        if task.stream is not None and engine.task_run is not None:
++        if (
++            task.stream is not None
++            and engine.task_run is not None
++            and not engine._physical_transport_failed
++        ):
+             finish_stream_sync(engine)
+ 
+     return engine.state if return_type == "state" else engine.result()
+@@ -1823,7 +1938,11 @@ async def run_task_async(
+             await reject_stream_execution(engine, type(exc).__name__)
+         raise
+     finally:
+-        if task.stream is not None and engine.task_run is not None:
++        if (
++            task.stream is not None
++            and engine.task_run is not None
++            and not engine._physical_transport_failed
++        ):
+             await finish_stream_async(engine)
+ 
+     return engine.state if return_type == "state" else await engine.result()
+diff --git a/src/prefect/tasks.py b/src/prefect/tasks.py
+index 73b6d98..22a2749 100644
+--- a/src/prefect/tasks.py
++++ b/src/prefect/tasks.py
+@@ -80,7 +80,9 @@ from prefect.results import (
+ from prefect.settings.context import get_current_settings
+ from prefect.states import Pending, Scheduled, State
+ from prefect.streams import (
++    PartitionedStream,
+     Stream,
++    StreamPartitionCall,
+     StreamProtocolError,
+     StreamSourceConfig,
+     StreamTaskConfig,
+@@ -1273,6 +1275,16 @@ class Task(Generic[P, R]):
+         the result is wrapped in a Prefect State which provides error handling.
+         """
+         if get_stream_execution() is not None:
++            context = FlowRunContext.get()
++            if (
++                context is not None
++                and context.flow is not None
++                and context.flow.streaming is not None
++                and context.flow.streaming.profile == "partitioned-fixed-v1"
++            ):
++                raise StreamProtocolError(
++                    "Finite tasks are outside the fixed-P2 graph profile"
++                )
+             from prefect._internal.stream_finite import call_finite_task
+ 
+             return call_finite_task(self, args, kwargs, return_state, wait_for)
+@@ -1637,6 +1649,26 @@ class Task(Generic[P, R]):
+             return submit_reconstructed_stream(self, args, kwargs, wait_for)
+         return self._submit_stream(args, kwargs, wait_for)
+ 
++    def submit_partitioned_stream(
++        self,
++        *,
++        operator_uid: str,
++        partitions: tuple[StreamPartitionCall, StreamPartitionCall],
++        upstream: PartitionedStream[Any] | None = None,
++    ) -> PartitionedStream[R]:
++        """Declare one fixed-P2 source or its same-index operator.
++
++        Requires a native `partitioned-fixed-v1` Flow. Each source descriptor
++        explicitly identifies a different user-owned split. The two physical
++        streams have independent order and recovery; no global merge is implied.
++        Declare both logical tasks before accessing the physical handles.
++        """
++        from prefect._internal.stream_partitioned import submit_partitioned_stream
++
++        return submit_partitioned_stream(
++            self, operator_uid=operator_uid, partitions=partitions, upstream=upstream
++        )
++
+     @overload
+     def map(
+         self: "Task[P, R]",
+diff --git a/src/prefect/utilities/engine/__init__.py b/src/prefect/utilities/engine/__init__.py
+index 5c18070..d6ed74f 100644
+--- a/src/prefect/utilities/engine/__init__.py
++++ b/src/prefect/utilities/engine/__init__.py
+@@ -6,6 +6,7 @@ import threading
+ import time
+ import weakref
+ from collections.abc import Awaitable, Callable, Generator
++from datetime import timedelta
+ from functools import partial
+ from logging import Logger
+ from typing import (
+@@ -26,7 +27,10 @@ from typing_extensions import TypeIs
+ import prefect
+ import prefect.exceptions
+ from prefect._internal.concurrency.cancellation import get_deadline
+-from prefect._internal.stream_execution import stream_task_event_resource
++from prefect._internal.stream_execution import (
++    get_stream_subtask_execution,
++    stream_task_event_resource,
++)
+ from prefect.client.schemas import FlowRunResult, OrchestrationResult, TaskRun
+ from prefect.client.schemas.objects import (
+     FlowRun,
+@@ -887,12 +891,13 @@ async def check_api_reachable(client: "PrefectClient", fail_message: str) -> Non
+     API_HEALTHCHECKS[api_url] = get_deadline(60 * 10)
+ 
+ 
+-def emit_task_run_state_change_event(
++def build_task_run_state_change_event(
+     task_run: TaskRun,
+     initial_state: Optional[State[Any]],
+     validated_state: State[Any],
+     follows: Optional[Event] = None,
+-) -> Optional[Event]:
++) -> Event:
++    """Build the ordinary signed TaskRun event without choosing a transport."""
+     state_message_truncation_length = 100_000
+ 
+     if _is_result_record(validated_state.data) and should_persist_result():
+@@ -971,19 +976,54 @@ def emit_task_run_state_change_event(
+         "prefect.orchestration": "client",
+     }
+     resource = stream_task_event_resource(task_run, validated_state, payload, resource)
+-    return emit_event(
+-        id=validated_state.id,
+-        occurred=validated_state.timestamp,
+-        event=f"prefect.task-run.{validated_state.name}",
+-        payload=payload,
+-        resource=resource,
+-        related=[
++    related = [
++        {"prefect.resource.id": f"prefect.tag.{tag}", "prefect.resource.role": "tag"}
++        for tag in sorted(task_run.tags)
++    ]
++    if get_stream_subtask_execution() is not None:
++        # Ordinary EventsWorker supplies this relation from the Flow context.
++        # Physical Tasks intentionally have no such context or worker transport.
++        related.append(
+             {
+-                "prefect.resource.id": f"prefect.tag.{tag}",
+-                "prefect.resource.role": "tag",
++                "prefect.resource.id": f"prefect.flow-run.{task_run.flow_run_id}",
++                "prefect.resource.role": "flow-run",
+             }
+-            for tag in sorted(task_run.tags)
+-        ],
++        )
++    return Event.model_validate(
++        {
++            "id": validated_state.id,
++            "occurred": validated_state.timestamp,
++            "event": f"prefect.task-run.{validated_state.name}",
++            "payload": payload,
++            "resource": resource,
++            "related": related,
++            "follows": (
++                follows.id
++                if follows is not None
++                and abs(validated_state.timestamp - follows.occurred)
++                < timedelta(minutes=5)
++                else None
++            ),
++        }
++    )
++
++
++def emit_task_run_state_change_event(
++    task_run: TaskRun,
++    initial_state: Optional[State[Any]],
++    validated_state: State[Any],
++    follows: Optional[Event] = None,
++) -> Optional[Event]:
++    event = build_task_run_state_change_event(
++        task_run, initial_state, validated_state, follows
++    )
++    return emit_event(
++        id=event.id,
++        occurred=event.occurred,
++        event=event.event,
++        payload=event.payload,
++        resource=dict(event.resource),
++        related=[dict(resource) for resource in event.related],
+         follows=follows,
+     )
+ 
+diff --git a/src/prefect/_internal/stream_partitioned.py b/src/prefect/_internal/stream_partitioned.py
+new file mode 100644
+index 0000000..f970bbc
+--- /dev/null
++++ b/src/prefect/_internal/stream_partitioned.py
+@@ -0,0 +1,538 @@
++"""Trusted coordinator for the finite, same-host fixed-P2 process profile."""
++
++from __future__ import annotations
++
++# This module deliberately composes private task, storage and runner interfaces.
++# pyright: reportPrivateUsage=false
++import concurrent.futures
++import inspect
++import math
++import re
++import threading
++import time
++from contextvars import copy_context
++from pathlib import Path
++from typing import Any
++from uuid import NAMESPACE_URL, UUID, uuid5
++
++import httpx
++
++from prefect._internal.stream_code import NativeTaskCodeError, native_task_code_identity
++from prefect._internal.stream_execution import get_stream_execution
++from prefect._internal.stream_subtask_entrypoint import (
++    subtask_environment as subtask_environment,
++)
++from prefect._internal.stream_subtask_protocol import (
++    METADATA_POLL_INTERVAL_SECONDS,
++    STARTUP_ABORT_ERROR,
++    startup_abort_operation_id,
++)
++from prefect.cache_policies import NO_CACHE
++from prefect.client.orchestration._streams.client import StreamRequestError
++from prefect.client.schemas.objects import TaskRunPolicy
++from prefect.client.schemas.stream_subtasks import StreamOperatorSpec
++from prefect.client.stream_storage import PrefectStreamStorage
++from prefect.context import FlowRunContext, TagsContext, TaskRunContext
++from prefect.futures import PrefectConcurrentFuture
++from prefect.streams import (
++    PartitionedStream,
++    SourceRunResult,
++    Stream,
++    StreamPartitionCall,
++    StreamProtocolError,
++    StreamRunResult,
++    StreamSourceConfig,
++    StreamTaskConfig,
++)
++from prefect.utilities.asyncutils import run_coro_as_sync
++
++
++def validate_partitioned_task(task: Any) -> None:
++    """Refuse unsupported task options before metadata or task user code."""
++    config = task.stream
++    if not isinstance(config, (StreamSourceConfig, StreamTaskConfig)):
++        raise StreamProtocolError("Partitioned submission requires a stream task")
++    config.__post_init__()
++    config.validate_function(task.fn)
++    if type(task.retries) is not int or not 1 <= task.retries <= 63:
++        raise StreamProtocolError("Physical tasks require 1..63 explicit retries")
++    delays = task.retry_delay_seconds
++    numbers = (list(delays) if isinstance(delays, list) else [delays]) + [
++        task.retry_jitter_factor
++    ]
++    if any(
++        number is not None
++        and (
++            type(number) not in (int, float) or not math.isfinite(number) or number < 0
++        )
++        for number in numbers
++    ):
++        raise StreamProtocolError(
++            "Physical retry delay and jitter require finite nonnegative numbers"
++        )
++    if (
++        task.cache_policy != NO_CACHE
++        or task.cache_key_fn is not None
++        or task.persist_result is not False
++        or task.result_storage is not None
++        or task.result_storage_key is not None
++        or task.result_serializer is not None
++        or task.cache_expiration is not None
++        or task.refresh_cache is not None
++        or task.retry_condition_fn is not None
++        or task.on_commit_hooks
++        or task.on_rollback_hooks
++        or task.on_running_hooks
++        or task.on_completion_hooks
++        or task.on_failure_hooks
++        or task.asset_deps
++        or task.task_run_name is not None
++    ):
++        raise StreamProtocolError(
++            "The fixed-P2 profile does not support caching, result persistence, custom retry conditions, hooks or assets"
++        )
++
++
++def bind_partition_calls(
++    task: Any,
++    partitions: tuple[StreamPartitionCall, StreamPartitionCall],
++) -> list[dict[str, Any]]:
++    """Bind strict snapshots without invoking user code or allocating metadata."""
++    if (
++        type(partitions) is not tuple
++        or len(partitions) != 2
++        or any(type(partition) is not StreamPartitionCall for partition in partitions)
++    ):
++        raise StreamProtocolError(
++            "Exactly two explicit StreamPartitionCall values are required"
++        )
++    snapshots = [
++        bind_partition_parameters(task, partition.parameters)
++        for partition in partitions
++    ]
++    if isinstance(task.stream, StreamSourceConfig) and (
++        not all(snapshots)
++        or StreamPartitionCall(parameters=snapshots[0])
++        == StreamPartitionCall(parameters=snapshots[1])
++    ):
++        raise StreamProtocolError(
++            "A source requires two distinct nonempty bound split snapshots"
++        )
++    return snapshots
++
++
++def bind_partition_parameters(task: Any, parameters: dict[str, Any]) -> dict[str, Any]:
++    """Bind one own split; preflight never needs a sibling's parameters."""
++    validate_partitioned_task(task)
++    config = task.stream
++    excluded = {config.context}
++    if isinstance(config, StreamTaskConfig):
++        excluded.add(config.input)
++    signature = inspect.signature(task.fn)
++    signature = signature.replace(
++        parameters=[
++            parameter
++            for name, parameter in signature.parameters.items()
++            if name not in excluded
++        ]
++    )
++    values = StreamPartitionCall(parameters=parameters).parameters
++    if excluded.intersection(values):
++        raise StreamProtocolError(
++            "Injected context and stream input are not partition parameters"
++        )
++    try:
++        bound = signature.bind(**values)
++        bound.apply_defaults()
++    except TypeError as exc:
++        raise StreamProtocolError(
++            "Partition parameters do not match the task signature"
++        ) from exc
++    return StreamPartitionCall(parameters=dict(bound.arguments)).parameters
++
++
++class PartitionedStreamReconstruction:
++    """Declare and observe worker-owned fixed-P2 processes through durable metadata."""
++
++    profile = "partitioned-fixed-v1"
++
++    def __init__(self, execution: Any, flow_run: Any, flow: Any) -> None:
++        self.execution = execution
++        self.flow_run = flow_run
++        self.flow = flow
++        self.flow_attempt = flow_run.run_count
++        self.phase = "OPEN"
++        self.admission_attempted = False
++        self.lock = threading.RLock()
++        self.ready = threading.Event()
++        self.entries: dict[str, Any] = {}
++        self.finite_entries: dict[str, Any] = {}
++        self.handles: list[PartitionedStream[Any]] = []
++        self.specifications: list[dict[str, Any]] = []
++        self.completions: dict[UUID, concurrent.futures.Future[Any]] = {}
++        self.plan: Any = None
++        self._monitor: threading.Thread | None = None
++        self._stopping = threading.Event()
++        self._activated = False
++        self.storage = PrefectStreamStorage(execution.flow_run_id, execution.api_url)
++
++    def request(self, method: str, **kwargs: Any) -> Any:
++        return run_coro_as_sync(self.storage._request(method, **kwargs))
++
++    def declare(
++        self,
++        task: Any,
++        *,
++        operator_uid: str,
++        partitions: tuple[StreamPartitionCall, StreamPartitionCall],
++        upstream: PartitionedStream[Any] | None,
++    ) -> PartitionedStream[Any]:
++        snapshots = bind_partition_calls(task, partitions)
++        if type(operator_uid) is not str or not re.fullmatch(
++            r"[A-Za-z0-9_.-]{1,64}", operator_uid
++        ):
++            raise StreamProtocolError("An explicit stable operator_uid is required")
++        if not task.version or not self.flow.version:
++            raise StreamProtocolError(
++                "Partitioned tasks and flows require explicit versions"
++            )
++        try:
++            identity = native_task_code_identity(task.fn)
++        except NativeTaskCodeError as exc:
++            raise StreamProtocolError(str(exc)) from exc
++        module = inspect.getmodule(task.fn)
++        if (
++            module is None
++            or not module.__file__
++            or vars(module).get(task.fn.__name__) is not task
++        ):
++            raise StreamProtocolError(
++                "Physical tasks require their exact module-level Task binding"
++            )
++        entrypoint = f"{Path(module.__file__).resolve()}:{task.fn.__name__}"
++        source = isinstance(task.stream, StreamSourceConfig)
++        with self.lock:
++            if self.phase != "OPEN" or len(self.specifications) >= 2:
++                raise StreamProtocolError(
++                    "The fixed graph accepts one source and one operator"
++                )
++            if operator_uid in self.entries:
++                raise StreamProtocolError("operator_uid must be unique in the graph")
++            if source:
++                if self.specifications or upstream is not None:
++                    raise StreamProtocolError("The fixed graph begins with one source")
++            elif (
++                not self.specifications
++                or upstream is not self.handles[0]
++                or len(self.specifications) != 1
++            ):
++                raise StreamProtocolError(
++                    "The operator requires this graph's source handle"
++                )
++            spec = StreamOperatorSpec(
++                operator_uid=operator_uid,
++                role="SOURCE" if source else "OPERATOR",
++                task_name=task.name,
++                task_key=identity.task_key,
++                task_version=task.version,
++                artifact_digest=identity.artifact_digest,
++                entrypoint=entrypoint,
++                parameters=snapshots,
++                input_key=None if source else task.stream.input,
++                context_key=task.stream.context,
++                upstream_operator_uid=None
++                if source
++                else self.specifications[0]["operator_uid"],
++                task_policy=TaskRunPolicy(
++                    retries=task.retries,
++                    retry_delay=task.retry_delay_seconds,
++                    retry_jitter_factor=task.retry_jitter_factor,
++                ),
++                timeout_seconds=task.timeout_seconds,
++                tags=sorted(set(task.tags) | TagsContext.get().current_tags),
++            )
++            handle: PartitionedStream[Any] = PartitionedStream(_ready=self.ready)
++            self.entries[operator_uid] = task
++            self.specifications.append(spec.model_dump(mode="json"))
++            self.handles.append(handle)
++            if not source:
++                self.seal()
++            return handle
++
++    def _bind_handles(self) -> None:
++        if (
++            self.plan.flow_run_id != self.flow_run.id
++            or len({item.manifest.task_run_id for item in self.plan.subtasks}) != 4
++        ):
++            raise StreamProtocolError(
++                "Sealed graph has an incompatible TaskRun identity set"
++            )
++        placement: dict[int, UUID] = {}
++        for item in self.plan.subtasks:
++            if item.assigned_worker_id is None:
++                raise StreamProtocolError(
++                    "Physical graph requires assigned registered workers"
++                )
++            previous = placement.setdefault(item.subtask_index, item.assigned_worker_id)
++            if previous != item.assigned_worker_id:
++                raise StreamProtocolError(
++                    "Fixed-P2 placement must preserve same-index worker ownership"
++                )
++        if (
++            set(placement) != {0, 1}
++            or len(set(placement.values())) != 2
++            or self.plan.placement_digest is None
++        ):
++            raise StreamProtocolError(
++                "Fixed-P2 execution requires two distinct assigned workers"
++            )
++        for index, spec in enumerate(self.specifications):
++            assignments = sorted(
++                [
++                    item
++                    for item in self.plan.subtasks
++                    if item.operator_uid == spec["operator_uid"]
++                ],
++                key=lambda item: item.subtask_index,
++            )
++            if len(assignments) != 2 or [
++                item.subtask_index for item in assignments
++            ] != [0, 1]:
++                raise StreamProtocolError(
++                    "Sealed operator does not contain its two physical partitions"
++                )
++            physical: list[Stream[Any]] = []
++            for item in assignments:
++                if (
++                    item.manifest.role != spec["role"]
++                    or item.manifest.flow_run_id != self.flow_run.id
++                ):
++                    raise StreamProtocolError(
++                        "Physical role or FlowRun differs from the declaration"
++                    )
++                completion: concurrent.futures.Future[Any] = concurrent.futures.Future()
++                self.completions[item.manifest.task_run_id] = completion
++                stream = Stream(
++                    self.storage,
++                    str(item.manifest.stream_id),
++                    producer_task_run_id=item.manifest.task_run_id,
++                )
++                stream._bind_completion(
++                    PrefectConcurrentFuture(item.manifest.task_run_id, completion)
++                )
++                physical.append(stream)
++            self.handles[index]._bind((physical[0], physical[1]))
++
++    def seal(self) -> None:
++        with self.lock:
++            if self.phase == "READY":
++                return
++            if self.phase != "OPEN" or len(self.specifications) != 2:
++                raise StreamProtocolError(
++                    "The partitioned graph requires its operator declaration"
++                )
++            if self.flow_run.deployment_id is None:
++                raise StreamProtocolError(
++                    "The fixed-P2 profile requires its enrolled deployment and two workers"
++                )
++            try:
++                self.admission_attempted = True
++                self.plan = self.request(
++                    "seal_stream_graph",
++                    flow_run_id=self.flow_run.id,
++                    operation_id=uuid5(NAMESPACE_URL, f"fixed-p2/{self.flow_run.id}"),
++                    flow_version=self.flow.version,
++                    deployment_id=self.flow_run.deployment_id,
++                    deployment_version=self.flow_run.deployment_version,
++                    working_directory=str(Path.cwd().resolve()),
++                    operators=self.specifications,
++                )
++                self.plan = self.request(
++                    "admit_stream_region",
++                    graph_revision_id=self.plan.id,
++                    operation_id=uuid5(self.plan.id, "admit"),
++                    graph_digest=self.plan.graph_digest,
++                    metadata_lag=True,
++                )
++                self._bind_handles()
++                context = copy_context()
++                self._monitor = threading.Thread(
++                    target=context.run, args=(self._supervise,), daemon=True
++                )
++                self._monitor.start()
++                deadline = time.monotonic() + 120
++                while self.plan.startup_completed_at is None:
++                    if self.plan.state in {"ABORTING", "RELEASED"}:
++                        raise StreamProtocolError(
++                            "Assigned workers refused the physical startup barrier"
++                        )
++                    grants = [item.current_grant_id for item in self.plan.subtasks]
++                    if all(grant is not None for grant in grants):
++                        try:
++                            self.plan = self.request(
++                                "activate_stream_graph",
++                                graph_revision_id=self.plan.id,
++                                operation_id=uuid5(self.plan.id, "activate"),
++                                graph_digest=self.plan.graph_digest,
++                                grant_ids=grants,
++                            )
++                        except StreamRequestError as refusal:
++                            if (
++                                refusal.code != "METADATA_NOT_READY"
++                                or not refusal.retryable
++                            ):
++                                raise
++                    if self.plan.startup_completed_at is not None:
++                        break
++                    if time.monotonic() >= deadline:
++                        raise StreamProtocolError(
++                            "Assigned workers did not complete physical registration"
++                        )
++                    time.sleep(METADATA_POLL_INTERVAL_SECONDS)
++                    self.plan = self.request(
++                        "read_stream_graph", graph_revision_id=self.plan.id
++                    )
++                self._activated = True
++                self.phase = "READY"
++                self.ready.set()
++            except BaseException:
++                if not self._activated:
++                    self.abort()
++                raise
++
++    def _observe(self) -> bool:
++        self.plan = self.request("read_stream_graph", graph_revision_id=self.plan.id)
++        for item in self.plan.subtasks:
++            completion = self.completions[item.manifest.task_run_id]
++            if completion.done():
++                continue
++            task_run = self.request(
++                "read_task_run", task_run_id=item.manifest.task_run_id
++            )
++            if task_run.state is None or not task_run.state.is_final():
++                continue
++            info = self.request("read_stream", stream_id=item.manifest.stream_id)
++            if (
++                info.id != item.manifest.stream_id
++                or info.flow_run_id != self.flow_run.id
++            ):
++                raise StreamProtocolError(
++                    "Physical output identity differs from its manifest"
++                )
++            if not item.physical_slot_released:
++                continue
++            if task_run.state.is_completed():
++                if info.state != "COMPLETED":
++                    raise StreamProtocolError(
++                        "Completed TaskRun has no matching durable EOF"
++                    )
++                completion.set_result(
++                    SourceRunResult(task_run.id, str(info.id), info.producer_position)
++                    if item.manifest.role == "SOURCE"
++                    else StreamRunResult(str(task_run.id), str(info.id))
++                )
++            else:
++                if info.state == "OPEN":
++                    raise StreamProtocolError(
++                        "Released physical slot retains an unfinished output"
++                    )
++                completion.set_exception(
++                    StreamProtocolError(f"Physical task ended in {task_run.state.name}")
++                )
++        return all(completion.done() for completion in self.completions.values())
++
++    def _supervise(self) -> None:
++        while not self.ready.wait(METADATA_POLL_INTERVAL_SECONDS):
++            if self._stopping.is_set():
++                return
++        while not self._stopping.is_set():
++            try:
++                if self._observe():
++                    return
++            except httpx.TransportError:
++                # An unavailable control API cannot prove a child is stopped.
++                # Retain authority and resume observation when it is reachable.
++                pass
++            except StreamRequestError as refusal:
++                if not refusal.retryable:
++                    for completion in self.completions.values():
++                        if not completion.done():
++                            completion.set_exception(refusal)
++                    return
++            except BaseException as exc:
++                for completion in self.completions.values():
++                    if not completion.done():
++                        completion.set_exception(exc)
++                return
++            self._stopping.wait(METADATA_POLL_INTERVAL_SECONDS)
++
++    def finish(self) -> None:
++        self.seal()
++        failures: list[Exception] = []
++        for handle in self.handles:
++            try:
++                handle.wait()
++            except Exception as exc:
++                failures.append(exc)
++        if self._monitor is not None:
++            self._monitor.join()
++        if failures:
++            raise failures[0]
++
++    def abort(self) -> None:
++        with self.lock:
++            if self._activated:
++                self.finish()
++                return
++            self.phase = "ABORTED"
++            self._stopping.set()
++            if self.plan is not None:
++                deadline = time.monotonic() + 120
++                while True:
++                    self.plan = self.request(
++                        "abort_stream_graph",
++                        graph_revision_id=self.plan.id,
++                        operation_id=startup_abort_operation_id(self.plan.id),
++                        graph_digest=self.plan.graph_digest,
++                        error=STARTUP_ABORT_ERROR,
++                    )
++                    if self.plan.state == "RELEASED":
++                        break
++                    if time.monotonic() >= deadline:
++                        raise StreamProtocolError(
++                            "Startup abort awaits assigned-worker stop receipts"
++                        )
++                    time.sleep(METADATA_POLL_INTERVAL_SECONDS)
++            if (
++                self._monitor is not None
++                and self._monitor is not threading.current_thread()
++            ):
++                self._monitor.join()
++
++
++def submit_partitioned_stream(
++    task: Any,
++    *,
++    operator_uid: str,
++    partitions: tuple[StreamPartitionCall, StreamPartitionCall],
++    upstream: PartitionedStream[Any] | None,
++) -> PartitionedStream[Any]:
++    execution = get_stream_execution()
++    context = FlowRunContext.get()
++    if (
++        execution is None
++        or context is None
++        or context.flow is None
++        or TaskRunContext.get() is not None
++    ):
++        raise StreamProtocolError(
++            "Partitioned submission requires its native Flow coordinator"
++        )
++    graph = getattr(execution, "_reconstruction", None)
++    if not isinstance(graph, PartitionedStreamReconstruction):
++        raise StreamProtocolError(
++            "submit_partitioned_stream requires partitioned-fixed-v1"
++        )
++    return graph.declare(
++        task, operator_uid=operator_uid, partitions=partitions, upstream=upstream
++    )
+diff --git a/src/prefect/_internal/stream_subtask_entrypoint.py b/src/prefect/_internal/stream_subtask_entrypoint.py
+new file mode 100644
+index 0000000..8154a8f
+--- /dev/null
++++ b/src/prefect/_internal/stream_subtask_entrypoint.py
+@@ -0,0 +1,487 @@
++"""Private physical task bootstrap and exact ordinary-event HTTP transport."""
++
++from __future__ import annotations
++
++# The physical launcher intentionally composes private engine/context boundaries.
++# pyright: reportPrivateUsage=false
++import asyncio
++import json
++import os
++import sys
++import time
++from dataclasses import dataclass
++from pathlib import Path
++from typing import Any
++from uuid import UUID
++
++import anyio
++import httpx
++
++from prefect._internal.stream_execution import (
++    SubtaskExecutionContext,
++    get_stream_subtask_execution,
++    stream_subtask_execution_context,
++)
++from prefect._internal.stream_subtask_protocol import (
++    BOOTSTRAP_MAX_BYTES,
++    PREFLIGHT_ERROR,
++    PREFLIGHT_MAX_BYTES,
++    PREFLIGHT_READY,
++)
++from prefect.client.orchestration import get_client
++from prefect.client.orchestration._streams.client import StreamRequestError
++from prefect.events.schemas.events import Event
++from prefect.exceptions import PrefectSignal
++from prefect.runner._starter_native import linux_process_identity
++from prefect.streams import StreamProtocolError
++
++
++class PhysicalStreamExecutionStopped(PrefectSignal):
++    """No further user work or new state event is safe for this physical grant."""
++
++
++def subtask_environment(home: Path, api_url: str) -> dict[str, str]:
++    """Drop inherited platform credentials and profile providers before import."""
++    environment = {
++        key: value
++        for key, value in os.environ.items()
++        if not key.startswith("PREFECT_") and key != "ARIADNE_NATIVE_STREAM_TEST_DSN"
++    }
++    environment.update(
++        {
++            "PREFECT_API_URL": api_url,
++            "PREFECT_HOME": str(home),
++            "PREFECT_PROFILES_PATH": str(home / "profiles.toml"),
++            "PREFECT_LOGGING_TO_API_ENABLED": "false",
++            "PREFECT_SERVER_ALLOW_EPHEMERAL_MODE": "false",
++        }
++    )
++    return environment
++
++
++def _validate_event_receipt(event: Event, result: Any) -> None:
++    execution = get_stream_subtask_execution()
++    if execution is None or (
++        not result.accepted
++        or result.event_id != event.id
++        or result.task_run_id != execution.task_run_id
++        or result.run_count != event.payload["task_run"]["run_count"]
++        or result.state_type.value != event.payload["validated_state"]["type"]
++    ):
++        raise PhysicalStreamExecutionStopped(
++            "Physical TaskRun event was fenced or its receipt differs"
++        )
++
++
++def _event_is_recorded(event: Event, task_run: Any) -> bool:
++    return (
++        str(task_run.id) == event.resource["prefect.resource.id"].rsplit(".", 1)[1]
++        and task_run.state is not None
++        and task_run.state.id == event.id
++        and task_run.run_count == event.payload["task_run"]["run_count"]
++        and task_run.state.type.value == event.payload["validated_state"]["type"]
++        and task_run.state.name == event.payload["validated_state"]["name"]
++    )
++
++
++def emit_physical_task_event(
++    client: Any, event: Event, *, timeout: float = 20.0
++) -> Event:
++    """Replay exactly one signed event across ACK loss; never invent Failed."""
++    execution = get_stream_subtask_execution()
++    if execution is None:
++        raise PhysicalStreamExecutionStopped("Physical task event has no grant")
++    payload = event.model_dump(mode="json")
++    deadline = time.monotonic() + timeout
++    while True:
++        try:
++            result = client.emit_stream_subtask_event(
++                subtask_id=execution.subtask_id, event=payload
++            )
++            _validate_event_receipt(event, result)
++            return event
++        except httpx.TransportError as exc:
++            if time.monotonic() >= deadline:
++                try:
++                    task_run = client.read_stream_subtask_task_run(
++                        subtask_id=execution.subtask_id
++                    )
++                    if _event_is_recorded(event, task_run):
++                        return event
++                except (httpx.TransportError, StreamRequestError):
++                    pass
++                raise PhysicalStreamExecutionStopped(
++                    "Physical event acknowledgement remains unknown"
++                ) from exc
++            time.sleep(min(0.05, max(0, deadline - time.monotonic())))
++        except StreamRequestError as exc:
++            raise PhysicalStreamExecutionStopped(
++                "Physical event transport refused this grant"
++            ) from exc
++        except PhysicalStreamExecutionStopped:
++            raise
++        except BaseException as exc:
++            raise PhysicalStreamExecutionStopped(
++                "Physical event delivery has no verified receipt"
++            ) from exc
++
++
++async def aemit_physical_task_event(
++    client: Any, event: Event, *, timeout: float = 20.0
++) -> Event:
++    execution = get_stream_subtask_execution()
++    if execution is None:
++        raise PhysicalStreamExecutionStopped("Physical task event has no grant")
++    payload = event.model_dump(mode="json")
++    deadline = time.monotonic() + timeout
++    while True:
++        try:
++            result = await client.emit_stream_subtask_event(
++                subtask_id=execution.subtask_id, event=payload
++            )
++            _validate_event_receipt(event, result)
++            return event
++        except httpx.TransportError as exc:
++            if time.monotonic() >= deadline:
++                try:
++                    task_run = await client.read_stream_subtask_task_run(
++                        subtask_id=execution.subtask_id
++                    )
++                    if _event_is_recorded(event, task_run):
++                        return event
++                except (httpx.TransportError, StreamRequestError):
++                    pass
++                raise PhysicalStreamExecutionStopped(
++                    "Physical event acknowledgement remains unknown"
++                ) from exc
++            await anyio.sleep(min(0.05, max(0, deadline - time.monotonic())))
++        except StreamRequestError as exc:
++            raise PhysicalStreamExecutionStopped(
++                "Physical event transport refused this grant"
++            ) from exc
++        except PhysicalStreamExecutionStopped:
++            raise
++        except BaseException as exc:
++            raise PhysicalStreamExecutionStopped(
++                "Physical event delivery has no verified receipt"
++            ) from exc
++
++
++def read_bootstrap(descriptor: int) -> SubtaskExecutionContext:
++    """Verify private delivery against the actual kernel identity before context."""
++    with os.fdopen(descriptor, "rb") as pipe:
++        raw = pipe.read(BOOTSTRAP_MAX_BYTES + 1)
++    if not raw or len(raw) > BOOTSTRAP_MAX_BYTES:
++        raise StreamProtocolError("Physical bootstrap is absent or oversized")
++    value = json.loads(raw)
++    _, _, ticks = linux_process_identity(os.getpid())
++    if type(value.get("child_process_id")) is not int or (
++        value["child_process_id"] != os.getpid()
++        or value.get("process_start_ticks") != ticks
++    ):
++        raise StreamProtocolError(
++            "Physical bootstrap was delivered to a different process"
++        )
++    for name in (
++        "flow_run_id",
++        "graph_revision_id",
++        "subtask_id",
++        "grant_id",
++        "holder_id",
++        "task_run_id",
++        "output_stream_id",
++    ):
++        value[name] = UUID(value[name])
++    if value["input_stream_id"] is not None:
++        value["input_stream_id"] = UUID(value["input_stream_id"])
++    value["event_private_key"] = bytes.fromhex(value["event_private_key"])
++    return SubtaskExecutionContext(**value)
++
++
++@dataclass(frozen=True)
++class _Preflight:
++    task: Any
++    role: str
++    configuration: bytes
++
++
++def _configuration_bytes(value: dict[str, Any]) -> bytes:
++    return json.dumps(
++        value,
++        sort_keys=True,
++        ensure_ascii=False,
++        allow_nan=False,
++        separators=(",", ":"),
++    ).encode("utf-8")
++
++
++def read_preflight(descriptor: int) -> _Preflight:
++    """Resolve and retain this exact Task with no platform execution authority."""
++    from prefect._internal.stream_code import native_task_code_identity
++    from prefect._internal.stream_execution import get_stream_execution
++    from prefect._internal.stream_partitioned import (
++        bind_partition_parameters,
++        validate_partitioned_task,
++    )
++    from prefect.client.schemas.objects import TaskRunPolicy
++    from prefect.client.schemas.stream_subtasks import StreamWorkerTaskConfiguration
++    from prefect.streams import (
++        StreamPartitionCall,
++        StreamSourceConfig,
++        StreamTaskConfig,
++    )
++    from prefect.tasks import Task
++    from prefect.utilities.importtools import import_object
++
++    if get_stream_execution() is not None or get_stream_subtask_execution() is not None:
++        raise StreamProtocolError("Task preflight must not inherit platform authority")
++    with os.fdopen(descriptor, "rb") as pipe:
++        raw = pipe.read(PREFLIGHT_MAX_BYTES + 1)
++    if not raw or len(raw) > PREFLIGHT_MAX_BYTES:
++        raise StreamProtocolError("Physical preflight is absent or oversized")
++    payload = json.loads(raw)
++    if (
++        type(payload) is not dict
++        or set(payload) != {"configuration", "role"}
++        or payload["role"] not in {"SOURCE", "OPERATOR"}
++    ):
++        raise StreamProtocolError(
++            "Physical preflight requires one own task configuration and role"
++        )
++    configuration = StreamWorkerTaskConfiguration.model_validate(
++        payload["configuration"]
++    )
++    task = import_object(configuration.entrypoint)
++    if not isinstance(task, Task) or task.stream is None:
++        raise StreamProtocolError("Physical entrypoint must resolve a declared Task")
++    validate_partitioned_task(task)
++    identity = native_task_code_identity(task.fn)
++    source = isinstance(task.stream, StreamSourceConfig)
++    policy = TaskRunPolicy(
++        retries=task.retries,
++        retry_delay=task.retry_delay_seconds,
++        retry_jitter_factor=task.retry_jitter_factor,
++    )
++    parameters = bind_partition_parameters(task, configuration.parameters)
++    if (
++        configuration.role != payload["role"]
++        or identity.task_key != configuration.task_key
++        or identity.artifact_digest != configuration.artifact_digest
++        or task.version != configuration.task_version
++        or task.timeout_seconds != configuration.timeout_seconds
++        or task.stream.context != configuration.context_key
++        or policy != configuration.task_policy
++        or not set(task.tags).issubset(configuration.effective_tags)
++        or source != (payload["role"] == "SOURCE")
++        or (
++            not source
++            and (
++                not isinstance(task.stream, StreamTaskConfig)
++                or task.stream.input != configuration.input_key
++            )
++        )
++        or StreamPartitionCall(parameters=parameters)
++        != StreamPartitionCall(parameters=configuration.parameters)
++        or source
++        and not parameters
++    ):
++        raise StreamProtocolError(
++            "Physical preflight differs from the sealed task definition"
++        )
++    return _Preflight(
++        task,
++        payload["role"],
++        _configuration_bytes(configuration.model_dump(mode="json")),
++    )
++
++
++def validate_bootstrap_task(task: Any, bootstrap: Any) -> None:
++    """Compare the imported definition with its own immutable server witnesses."""
++    from prefect._internal.stream_code import native_task_code_identity
++    from prefect._internal.stream_partitioned import validate_partitioned_task
++    from prefect.client.schemas.objects import TaskRunPolicy
++    from prefect.streams import StreamSourceConfig, StreamTaskConfig
++    from prefect.tasks import Task
++
++    if not isinstance(task, Task) or task.stream is None:
++        raise StreamProtocolError("Physical entrypoint must resolve a declared Task")
++    validate_partitioned_task(task)
++    identity = native_task_code_identity(task.fn)
++    policy = TaskRunPolicy(
++        retries=task.retries,
++        retry_delay=task.retry_delay_seconds,
++        retry_jitter_factor=task.retry_jitter_factor,
++    )
++    source = isinstance(task.stream, StreamSourceConfig)
++    if (
++        identity.artifact_digest != bootstrap.artifact_digest
++        or identity.task_key != bootstrap.task_run.task_key
++        or task.version != bootstrap.task_version
++        or task.timeout_seconds != bootstrap.timeout_seconds
++        or task.stream.context != bootstrap.context_key
++        or policy != bootstrap.task_policy
++        or bootstrap.task_run.empirical_policy != bootstrap.task_policy
++        or sorted(set(bootstrap.task_run.tags)) != bootstrap.effective_tags
++        or not set(task.tags).issubset(bootstrap.effective_tags)
++        or source != (bootstrap.assignment.manifest.role == "SOURCE")
++        or (
++            not source
++            and (
++                not isinstance(task.stream, StreamTaskConfig)
++                or task.stream.input != bootstrap.input_key
++            )
++        )
++    ):
++        raise StreamProtocolError(
++            "Physical task code or options differ from the sealed manifest"
++        )
++
++
++def execute_bootstrap(
++    execution: SubtaskExecutionContext, preflight: _Preflight | None = None
++) -> None:
++    # Task imports task_engine; keep these after bootstrap identity validation.
++    from prefect._internal.stream_engine import _StreamRun, reject_stream_submission
++    from prefect.client.stream_storage import PrefectStreamStorage
++    from prefect.streams import (
++        Stream,
++        _PartitionMetadata,
++    )
++    from prefect.task_engine import run_task_async, run_task_sync
++    from prefect.utilities.asyncutils import run_coro_as_sync
++    from prefect.utilities.importtools import import_object
++
++    with stream_subtask_execution_context(execution):
++        with get_client(sync_client=True) as client:
++            bootstrap = client.read_stream_subtask_bootstrap(
++                subtask_id=execution.subtask_id
++            )
++        if bootstrap.task_run.flow_run_run_count != bootstrap.flow_run_run_count:
++            raise StreamProtocolError(
++                "Physical TaskRun does not match its Flow attempt"
++            )
++    source = bootstrap.assignment.manifest.role == "SOURCE"
++    storage = PrefectStreamStorage(execution.flow_run_id, execution.api_url)
++    output = Stream(
++        storage,
++        str(execution.output_stream_id),
++        producer_task_run_id=execution.task_run_id,
++    )
++    run = _StreamRun(output, bootstrap.task_run, source=source)
++    run.registration_verified = True
++    try:
++        task = (
++            preflight.task
++            if preflight is not None
++            else import_object(bootstrap.entrypoint)
++        )
++        validate_bootstrap_task(task, bootstrap)
++        if preflight is not None:
++            configuration = {
++                "entrypoint": bootstrap.entrypoint,
++                "task_key": bootstrap.task_run.task_key,
++                "role": bootstrap.assignment.manifest.role,
++                "task_version": bootstrap.task_version,
++                "artifact_digest": bootstrap.artifact_digest,
++                "context_key": bootstrap.context_key,
++                "timeout_seconds": bootstrap.timeout_seconds,
++                "task_policy": bootstrap.task_policy.model_dump(mode="json"),
++                "effective_tags": bootstrap.effective_tags,
++                "input_key": bootstrap.input_key,
++                "parameters": bootstrap.parameters,
++            }
++            if (
++                preflight.role != bootstrap.assignment.manifest.role
++                or preflight.configuration != _configuration_bytes(configuration)
++            ):
++                raise StreamProtocolError(
++                    "Physical bootstrap changed after same-child preflight"
++                )
++    except PhysicalStreamExecutionStopped:
++        raise
++    except BaseException as exc:
++        with stream_subtask_execution_context(execution):
++            run_coro_as_sync(reject_stream_submission(run, type(exc).__name__))
++        raise
++    with stream_subtask_execution_context(execution):
++        run.partition = _PartitionMetadata(
++            bootstrap.assignment.subtask_index,
++            2,
++            bootstrap.assignment.operator_uid,
++            execution.assignment_epoch,
++        )
++        parameters: dict[str, Any] = dict(bootstrap.parameters)
++        parameters[task.stream.context] = None
++        parameters["__prefect_stream_run__"] = run
++        if not source:
++            assert bootstrap.input_key is not None
++            parameters[bootstrap.input_key] = Stream(
++                storage, str(execution.input_stream_id)
++            )
++        with get_client(sync_client=True) as lease_client:
++            lease_client.renew_stream_subtask_lease(subtask_id=execution.subtask_id)
++            transport_stopped = False
++            try:
++                if task.isasync:
++                    asyncio.run(
++                        run_task_async(
++                            task, task_run=bootstrap.task_run, parameters=parameters
++                        )
++                    )
++                else:
++                    run_task_sync(
++                        task, task_run=bootstrap.task_run, parameters=parameters
++                    )
++            except PhysicalStreamExecutionStopped:
++                transport_stopped = True
++                raise
++            finally:
++                if not transport_stopped:
++                    final = lease_client.read_stream_subtask_task_run(
++                        subtask_id=execution.subtask_id
++                    )
++                    info = lease_client.read_stream(execution.output_stream_id)
++                    if (
++                        final.state is not None
++                        and final.state.is_final()
++                        and info.state != "OPEN"
++                    ):
++                        lease_client.release_stream_subtask_lease(
++                            subtask_id=execution.subtask_id
++                        )
++
++
++def main() -> None:
++    if len(sys.argv) not in (3, 5):
++        raise StreamProtocolError(
++            "Physical entrypoint requires private bootstrap and GO descriptors"
++        )
++    preflight = None
++    if len(sys.argv) == 5:
++        with os.fdopen(int(sys.argv[4]), "wb", buffering=0) as ready:
++            try:
++                preflight = read_preflight(int(sys.argv[3]))
++            except BaseException:
++                ready.write(PREFLIGHT_ERROR)
++                raise
++            ready.write(PREFLIGHT_READY)
++    execution = read_bootstrap(int(sys.argv[1]))
++    with os.fdopen(int(sys.argv[2]), "rb", buffering=0) as pipe:
++        if pipe.read(1) != b"G":
++            raise StreamProtocolError(
++                "The coordinator refused the physical startup barrier"
++            )
++    execute_bootstrap(execution, preflight)
++
++
++if __name__ == "__main__":
++    # TaskEngine imports this module for its fencing signal and transport.
++    # Keep one class identity when Python executes this entrypoint via -m.
++    canonical = sys.modules.get("prefect._internal.stream_subtask_entrypoint")
++    if canonical is None:
++        sys.modules["prefect._internal.stream_subtask_entrypoint"] = sys.modules[
++            __name__
++        ]
++        main()
++    else:
++        canonical.main()
+diff --git a/src/prefect/_internal/stream_subtask_protocol.py b/src/prefect/_internal/stream_subtask_protocol.py
+new file mode 100644
+index 0000000..a968fa1
+--- /dev/null
++++ b/src/prefect/_internal/stream_subtask_protocol.py
+@@ -0,0 +1,17 @@
++"""Shared fixed-profile control operation identities; no execution credentials."""
++
++from uuid import UUID, uuid5
++
++STARTUP_ABORT_OPERATION = "prefect-stream-startup-abort-v1"
++STARTUP_ABORT_ERROR = "Physical startup did not cross the activation barrier"
++PREFLIGHT_MAX_BYTES = 256 * 1024
++PREFLIGHT_TIMEOUT_SECONDS = 30.0
++PREFLIGHT_READY = b"R"
++PREFLIGHT_ERROR = b"E"
++BOOTSTRAP_MAX_BYTES = 16 * 1024
++METADATA_POLL_INTERVAL_SECONDS = 1.0
++
++
++def startup_abort_operation_id(graph_revision_id: UUID) -> UUID:
++    """Coordinate one exact preactivation abort across Flow and worker actors."""
++    return uuid5(graph_revision_id, STARTUP_ABORT_OPERATION)
+diff --git a/tests/test_stream_partitioned_runtime.py b/tests/test_stream_partitioned_runtime.py
+new file mode 100644
+index 0000000..6821d97
+--- /dev/null
++++ b/tests/test_stream_partitioned_runtime.py
+@@ -0,0 +1,519 @@
++"""Controls for fixed-P2 declarations and physical task event delivery."""
++
++import inspect
++import json
++import os
++import subprocess
++import sys
++from concurrent.futures import ThreadPoolExecutor
++from dataclasses import FrozenInstanceError
++from pathlib import Path
++from types import SimpleNamespace
++from typing import Any, get_type_hints
++from uuid import UUID, uuid4
++
++import httpx
++import pytest
++
++from prefect import task
++from prefect._internal.stream_execution import (
++    SubtaskExecutionContext,
++    stream_subtask_execution_context,
++)
++from prefect._internal.stream_partitioned import (
++    PartitionedStreamReconstruction,
++    bind_partition_calls,
++    subtask_environment,
++)
++from prefect._internal.stream_subtask_entrypoint import (
++    PhysicalStreamExecutionStopped,
++    aemit_physical_task_event,
++    emit_physical_task_event,
++)
++from prefect.client.schemas.objects import TaskRun
++from prefect.runner._starter_native import linux_process_identity
++from prefect.states import Pending, Running
++from prefect.streams import (
++    NativeStreamFlowConfig,
++    PartitionedStream,
++    SourceContext,
++    SourceRecord,
++    Stream,
++    StreamContext,
++    StreamPartitionCall,
++    StreamProtocolError,
++    StreamSourceConfig,
++    StreamTaskConfig,
++)
++from prefect.tasks import Task
++from prefect.utilities.engine import build_task_run_state_change_event
++
++
++@task(version="p2-v1", retries=2, stream=StreamSourceConfig())
++def split_source(ctx: SourceContext, split: str, limit: int = 2):
++    for position in range(ctx.accepted_source_position + 1, limit + 1):
++        yield SourceRecord(position, {"split": split, "position": position})
++
++
++@task(version="p2-v1", retries=2, stream=StreamTaskConfig(input="document"))
++def split_operator(ctx: StreamContext, document: dict[str, Any], suffix: str = "!"):
++    yield {**document, "suffix": suffix}
++
++
++def physical_context() -> SubtaskExecutionContext:
++    return SubtaskExecutionContext(
++        flow_run_id=uuid4(),
++        graph_revision_id=uuid4(),
++        assignment_epoch=1,
++        subtask_id=uuid4(),
++        grant_id=uuid4(),
++        physical_epoch=1,
++        holder_id=uuid4(),
++        scope_digest="a" * 64,
++        manifest_digest="b" * 64,
++        task_run_id=uuid4(),
++        input_stream_id=None,
++        output_stream_id=uuid4(),
++        child_process_id=os.getpid(),
++        process_start_ticks=1,
++        api_url="http://localhost:4200/api",
++        capability="c" * 64,
++        event_private_key=bytes(range(32)),
++    )
++
++
++def physical_event(execution: SubtaskExecutionContext):
++    initial = Pending()
++    running = Running()
++    run = TaskRun(
++        id=execution.task_run_id,
++        flow_run_id=execution.flow_run_id,
++        name="split-source[0]",
++        task_key="key",
++        dynamic_key="physical/source/0",
++        state=running,
++        run_count=1,
++    )
++    return build_task_run_state_change_event(run, initial, running)
++
++
++def receipt(event: Any, *, accepted: bool = True) -> Any:
++    return SimpleNamespace(
++        accepted=accepted,
++        event_id=event.id,
++        task_run_id=uuid4() if not accepted else UUID_FROM_RESOURCE(event),
++        run_count=event.payload["task_run"]["run_count"],
++        state_type=SimpleNamespace(value=event.payload["validated_state"]["type"]),
++    )
++
++
++def UUID_FROM_RESOURCE(event: Any):
++    from uuid import UUID
++
++    return UUID(event.resource["prefect.resource.id"].rsplit(".", 1)[1])
++
++
++def test_existing_submit_stream_annotation_is_unchanged():
++    assert get_type_hints(Task.submit_stream)["return"] == Stream[Any]
++    annotation = get_type_hints(Task.submit_partitioned_stream)["return"]
++    assert annotation.__origin__ is PartitionedStream
++    assert annotation.__args__[0].__name__ == "R"
++    signature = inspect.signature(Task.submit_partitioned_stream)
++    assert all(
++        p.kind == p.KEYWORD_ONLY
++        for name, p in signature.parameters.items()
++        if name != "self"
++    )
++
++
++def test_native_defaults_preserve_legacy_profile():
++    assert NativeStreamFlowConfig().partition_count == 1
++    assert (
++        NativeStreamFlowConfig(
++            profile="partitioned-fixed-v1", partition_count=2
++        ).partition_count
++        == 2
++    )
++
++
++@pytest.mark.parametrize(
++    "profile,count",
++    [
++        ("bounded-linear-v1", 2),
++        ("partitioned-fixed-v1", 1),
++        ("partitioned-fixed-v1", True),
++        ("unknown", 2),
++    ],
++)
++def test_incompatible_profile_count_is_refused(profile: str, count: Any):
++    with pytest.raises(StreamProtocolError):
++        NativeStreamFlowConfig(profile=profile, partition_count=count)
++
++
++def test_partition_parameter_snapshot_is_frozen_and_defensively_copied():
++    original: dict[str, Any] = {"split": {"ids": [1, 2]}}
++    call = StreamPartitionCall(parameters=original)
++    original["split"]["ids"].append(3)
++    copy = call.parameters
++    copy["split"]["ids"].append(4)
++    assert call.parameters == {"split": {"ids": [1, 2]}}
++    with pytest.raises(FrozenInstanceError):
++        call._parameters = b"{}"
++
++
++@pytest.mark.parametrize(
++    "value",
++    [
++        [],
++        {1: "x"},
++        {"x": float("nan")},
++        {"x": (1, 2)},
++        {"x": b"value"},
++        {"x": object()},
++        {"x": "\ud800"},
++    ],
++)
++def test_non_json_partition_parameters_are_refused(value: Any):
++    with pytest.raises(StreamProtocolError):
++        StreamPartitionCall(parameters=value)
++
++
++def test_source_binds_defaults_and_requires_explicit_distinct_splits():
++    calls = (
++        StreamPartitionCall(parameters={"split": "left"}),
++        StreamPartitionCall(parameters={"split": "right"}),
++    )
++    assert bind_partition_calls(split_source, calls) == [
++        {"split": "left", "limit": 2},
++        {"split": "right", "limit": 2},
++    ]
++    with pytest.raises(StreamProtocolError):
++        bind_partition_calls(
++            split_source,
++            (calls[0], StreamPartitionCall(parameters={"split": "left", "limit": 2})),
++        )
++
++
++@pytest.mark.parametrize(
++    "option,value",
++    [
++        ("retry_condition_fn", lambda *args: False),
++        ("on_completion_hooks", [lambda *args: None]),
++        ("on_failure_hooks", [lambda *args: None]),
++        ("on_running_hooks", [lambda *args: None]),
++        ("on_commit_hooks", [lambda *args: None]),
++        ("on_rollback_hooks", [lambda *args: None]),
++        ("persist_result", True),
++        ("result_storage", "storage-ref"),
++        ("result_serializer", "json"),
++        ("refresh_cache", True),
++        ("task_run_name", "custom-{split}"),
++    ],
++)
++def test_unsupported_mutated_task_options_fail_before_metadata(
++    option: str, value: Any, monkeypatch: pytest.MonkeyPatch
++):
++    monkeypatch.setattr(split_source, option, value)
++    calls = (
++        StreamPartitionCall(parameters={"split": "a"}),
++        StreamPartitionCall(parameters={"split": "b"}),
++    )
++    with pytest.raises(StreamProtocolError):
++        bind_partition_calls(split_source, calls)
++
++
++def test_source_is_only_a_local_declaration_until_operator(
++    monkeypatch: pytest.MonkeyPatch,
++):
++    execution = physical_context()
++    graph = PartitionedStreamReconstruction(
++        execution,
++        SimpleNamespace(id=execution.flow_run_id, run_count=1),
++        SimpleNamespace(version="v1"),
++    )
++    calls = []
++
++    def refuse_metadata(*args: Any, **kwargs: Any):
++        calls.append((args, kwargs))
++        raise AssertionError("Incomplete graph mutated the server")
++
++    monkeypatch.setattr(graph, "request", refuse_metadata)
++    source = graph.declare(
++        split_source,
++        operator_uid="source.documents",
++        partitions=(
++            StreamPartitionCall(parameters={"split": "left"}),
++            StreamPartitionCall(parameters={"split": "right"}),
++        ),
++        upstream=None,
++    )
++    with pytest.raises(StreamProtocolError):
++        _ = source.partitions
++    with pytest.raises(StreamProtocolError):
++        graph.finish()
++    assert calls == []
++
++
++def test_aliased_task_binding_is_refused_before_metadata(
++    monkeypatch: pytest.MonkeyPatch,
++):
++    execution = physical_context()
++    graph = PartitionedStreamReconstruction(
++        execution,
++        SimpleNamespace(id=execution.flow_run_id, run_count=1),
++        SimpleNamespace(version="v1"),
++    )
++    alias = split_source.with_options(name="alias")
++    with pytest.raises(StreamProtocolError, match="module-level"):
++        graph.declare(
++            alias,
++            operator_uid="source.documents",
++            partitions=(
++                StreamPartitionCall(parameters={"split": "left"}),
++                StreamPartitionCall(parameters={"split": "right"}),
++            ),
++            upstream=None,
++        )
++    assert graph.plan is None
++    assert graph.entries == {}
++
++
++@pytest.mark.parametrize(
++    "calls",
++    [
++        [StreamPartitionCall(parameters={"split": "a"})] * 2,
++        (),
++        ({"parameters": {"split": "a"}}, {"parameters": {"split": "b"}}),
++    ],
++)
++def test_descriptors_are_not_coerced(calls: Any):
++    with pytest.raises(StreamProtocolError):
++        bind_partition_calls(split_source, calls)
++
++
++@pytest.mark.parametrize("name", ["ctx", "document"])
++def test_operator_injected_parameters_cannot_be_overridden(name: str):
++    call = StreamPartitionCall(parameters={name: None})
++    with pytest.raises(StreamProtocolError):
++        bind_partition_calls(split_operator, (call, call))
++
++
++def test_operator_parameters_may_be_equal():
++    call = StreamPartitionCall(parameters={})
++    assert bind_partition_calls(split_operator, (call, call)) == [{"suffix": "!"}] * 2
++
++
++def test_pending_handle_has_no_provisional_ids_or_global_collection():
++    handle = PartitionedStream()
++    with pytest.raises(StreamProtocolError):
++        _ = handle.partitions
++    with pytest.raises(StreamProtocolError):
++        handle.wait()
++    assert not hasattr(handle, "collect")
++    assert not hasattr(handle, "stream_id")
++
++
++def test_physical_binding_is_single_assignment_under_concurrency():
++    handle = PartitionedStream()
++    streams = (Stream(None, str(uuid4())), Stream(None, str(uuid4())))
++
++    def bind() -> bool:
++        try:
++            handle._bind(streams)
++            return True
++        except StreamProtocolError:
++            return False
++
++    with ThreadPoolExecutor(max_workers=4) as pool:
++        assert sum(pool.map(lambda _: bind(), range(16))) == 1
++    assert handle.partitions == streams
++
++
++@pytest.mark.parametrize(
++    "context",
++    [SourceContext(uuid4(), "stream", 1, 0), StreamContext(uuid4(), "consumer", 1, 1)],
++)
++def test_legacy_context_has_no_partition_epoch_or_operator(context: Any):
++    assert (
++        context.partition_index,
++        context.partition_count,
++        context.operator_uid,
++        context.assignment_epoch,
++    ) == (0, 1, None, None)
++    with pytest.raises(AttributeError):
++        context.partition_index = 1
++
++
++def test_child_environment_drops_all_platform_auth_and_profiles(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
++):
++    for name in (
++        "PREFECT_API_KEY",
++        "PREFECT_API_AUTH_STRING",
++        "PREFECT_SERVER_API_AUTH_STRING",
++        "PREFECT_PROFILES_PATH",
++        "PREFECT_STREAM_CAPABILITY",
++    ):
++        monkeypatch.setenv(name, "private-value")
++    env = subtask_environment(tmp_path, "http://localhost:4200/api")
++    assert "private-value" not in env.values()
++    assert env["PREFECT_LOGGING_TO_API_ENABLED"] == "false"
++    assert env["PREFECT_PROFILES_PATH"] == str(tmp_path / "profiles.toml")
++
++
++@pytest.mark.parametrize("asynchronous", [False, True])
++async def test_ack_loss_reuses_exact_signed_event(asynchronous: bool):
++    execution = physical_context()
++    with stream_subtask_execution_context(execution):
++        event = physical_event(execution)
++        attempts = []
++
++        def deliver(**kwargs: Any):
++            attempts.append(kwargs["event"])
++            if len(attempts) == 1:
++                raise httpx.ReadError("ack lost")
++            return receipt(event)
++
++        async def adeliver(**kwargs: Any):
++            return deliver(**kwargs)
++
++        client = SimpleNamespace(
++            emit_stream_subtask_event=adeliver if asynchronous else deliver
++        )
++        result = (
++            await aemit_physical_task_event(client, event)
++            if asynchronous
++            else emit_physical_task_event(client, event)
++        )
++        assert result is event
++        assert len(attempts) == 2
++        assert attempts[0] is attempts[1]
++        assert attempts[0] == event.model_dump(mode="json")
++        assert attempts[0]["resource"]["prefect.stream-event-signature"]
++        assert attempts[0]["related"][-1] == {
++            "prefect.resource.id": f"prefect.flow-run.{execution.flow_run_id}",
++            "prefect.resource.role": "flow-run",
++        }
++
++
++@pytest.mark.parametrize("asynchronous", [False, True])
++@pytest.mark.parametrize("recorded", [False, True])
++async def test_unknown_ack_resolves_only_exact_recorded_state(
++    asynchronous: bool, recorded: bool
++):
++    execution = physical_context()
++    with stream_subtask_execution_context(execution):
++        event = physical_event(execution)
++        attempts = []
++
++        def deliver(**kwargs: Any):
++            attempts.append(kwargs["event"])
++            raise httpx.ReadError("lost response")
++
++        def read(**kwargs: Any):
++            return SimpleNamespace(
++                id=execution.task_run_id,
++                state=Running(id=event.id if recorded else uuid4()),
++                run_count=1,
++            )
++
++        async def adeliver(**kwargs: Any):
++            return deliver(**kwargs)
++
++        async def aread(**kwargs: Any):
++            return read(**kwargs)
++
++        client = SimpleNamespace(
++            emit_stream_subtask_event=adeliver if asynchronous else deliver,
++            read_stream_subtask_task_run=aread if asynchronous else read,
++        )
++        if recorded:
++            result = (
++                await aemit_physical_task_event(client, event, timeout=0)
++                if asynchronous
++                else emit_physical_task_event(client, event, timeout=0)
++            )
++            assert result is event
++        else:
++            with pytest.raises(PhysicalStreamExecutionStopped):
++                if asynchronous:
++                    await aemit_physical_task_event(client, event, timeout=0)
++                else:
++                    emit_physical_task_event(client, event, timeout=0)
++        assert len(attempts) == 1
++        assert attempts[0]["event"] == "prefect.task-run.Running"
++
++
++@pytest.mark.parametrize("asynchronous", [False, True])
++async def test_http_200_fenced_receipt_stops_without_failed_event(asynchronous: bool):
++    execution = physical_context()
++    with stream_subtask_execution_context(execution):
++        event = physical_event(execution)
++        attempts = []
++
++        def deliver(**kwargs: Any):
++            attempts.append(kwargs["event"])
++            return receipt(event, accepted=False)
++
++        async def adeliver(**kwargs: Any):
++            return deliver(**kwargs)
++
++        client = SimpleNamespace(
++            emit_stream_subtask_event=adeliver if asynchronous else deliver
++        )
++        with pytest.raises(PhysicalStreamExecutionStopped):
++            if asynchronous:
++                await aemit_physical_task_event(client, event)
++            else:
++                emit_physical_task_event(client, event)
++        assert [attempt["event"] for attempt in attempts] == [
++            "prefect.task-run.Running"
++        ]
++
++
++@pytest.mark.skipif(sys.platform != "linux", reason="Fixed-P2 requires Linux identity")
++@pytest.mark.parametrize("identity", ["another-pid", "another-start", "current"])
++def test_actual_child_checks_exact_kernel_identity_before_go(
++    tmp_path: Path, identity: str
++):
++    execution = physical_context()
++    payload = {
++        key: str(value) if isinstance(value, UUID) else value
++        for key, value in vars(execution).items()
++    }
++    payload["event_private_key"] = execution.event_private_key.hex()
++    read_fd, write_fd = os.pipe()
++    go_read, go_write = os.pipe()
++    child = subprocess.Popen(
++        [
++            sys.executable,
++            "-m",
++            "prefect._internal.stream_subtask_entrypoint",
++            str(read_fd),
++            str(go_read),
++        ],
++        pass_fds=(read_fd, go_read),
++        env=subtask_environment(tmp_path, execution.api_url),
++        stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE,
++    )
++    os.close(read_fd)
++    os.close(go_read)
++    _, _, ticks = linux_process_identity(child.pid)
++    payload["child_process_id"] = (
++        os.getpid() if identity == "another-pid" else child.pid
++    )
++    payload["process_start_ticks"] = ticks + (identity == "another-start")
++    with os.fdopen(write_fd, "wb") as pipe:
++        pipe.write(json.dumps(payload).encode())
++    os.close(go_write)
++    stdout, stderr = child.communicate(timeout=20)
++    assert child.returncode != 0
++    if identity == "current":
++        assert b"refused the physical startup barrier" in stderr
++        assert b"delivered to a different process" not in stderr
++    else:
++        assert b"delivered to a different process" in stderr
++        assert b"refused the physical startup barrier" not in stderr
++    assert b"Traceback" in stderr
++    assert stdout == b""
+diff --git a/tests/test_native_partitioned_stream_http.py b/tests/test_native_partitioned_stream_http.py
+new file mode 100644
+index 0000000..8fa0e4f
+--- /dev/null
++++ b/tests/test_native_partitioned_stream_http.py
+@@ -0,0 +1,685 @@
++"""Discovery and acceptance on migrated PostgreSQL and a real ProcessWorker."""
++
++import json
++import os
++import subprocess
++import sys
++import time
++from collections.abc import Generator
++from pathlib import Path
++from typing import Any
++from uuid import UUID, uuid4
++
++import pytest
++import sqlalchemy as sa
++
++from prefect.client.orchestration import get_client
++from prefect.client.schemas.actions import GlobalConcurrencyLimitCreate, WorkPoolCreate
++from prefect.deployments.runner import RunnerDeployment
++from prefect.exceptions import ObjectAlreadyExists
++from prefect.flows import load_flow_from_entrypoint
++from prefect.settings import (
++    PREFECT_API_AUTH_STRING,
++    PREFECT_API_URL,
++    temporary_settings,
++)
++from prefect.workers.process import ProcessWorker
++from tests.test_native_stream_http import native_backend as native_backend
++from tests.test_native_stream_recovery_http import RestartableAPI
++
++
++@pytest.fixture
++def execution_api(
++    native_backend: None, tmp_path: Path
++) -> Generator[RestartableAPI, None, None]:
++    server = RestartableAPI(tmp_path)
++    server.environment.update(
++        PREFECT_DEBUG_MODE="false",
++        PREFECT_LOGGING_LEVEL="INFO",
++        PREFECT_SERVER_LOGGING_LEVEL="INFO",
++        PREFECT_LOGGING_INTERNAL_LEVEL="WARNING",
++        PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED="true",
++        PREFECT_API_SERVICES_TASK_RUN_RECORDER_ENABLED="true",
++    )
++    try:
++        server.start()
++        yield server
++    finally:
++        server.stop()
++        server.socket.close()
++
++
++def _phase_observation(
++    directory: Path, ready_ns: int | None, final_ns: int | None
++) -> dict[str, Any]:
++    traces = {
++        path.stem: [json.loads(line) for line in path.read_text().splitlines()]
++        for path in directory.glob("calls-*.jsonl")
++    }
++    all_calls = [item for values in traces.values() for item in values]
++    first_data = [
++        int(path.read_text()) for path in directory.glob("source-first-accepted-*.time")
++    ]
++    steady = {}
++    for name, values in traces.items():
++        bounded = [item for item in values if 1 <= item["sequence"] <= 199]
++        if len(bounded) >= 199:
++            seconds = (bounded[-1]["monotonic_ns"] - bounded[0]["monotonic_ns"]) / 1e9
++            steady[name] = {
++                "records": 198,
++                "seconds": seconds,
++                "records_per_second": 198 / seconds,
++            }
++    fault = (
++        json.loads((directory / "operator-loss").read_text())
++        if (directory / "operator-loss").exists()
++        else None
++    )
++    recovered = traces.get("calls-0-2", [])
++    return {
++        "clock_scope": "Same Linux host monotonic clock; functional timing, no throughput SLO",
++        "workers_ready_to_first_accepted_data_seconds": (min(first_data) - ready_ns)
++        / 1e9
++        if first_data and ready_ns is not None
++        else None,
++        "steady_inputs_1_through_199": steady,
++        "fault_to_recovered_input_seconds": (
++            recovered[0]["monotonic_ns"] - fault["monotonic_ns"]
++        )
++        / 1e9
++        if recovered and fault
++        else None,
++        "recovered_first_sequence": recovered[0]["sequence"] if recovered else None,
++        "recovered_suffix_seconds": (
++            recovered[-1]["monotonic_ns"] - recovered[0]["monotonic_ns"]
++        )
++        / 1e9
++        if recovered
++        else None,
++        "last_input_to_terminal_and_physical_stop_observation_seconds": (
++            final_ns - max(item["monotonic_ns"] for item in all_calls)
++        )
++        / 1e9
++        if all_calls and final_ns is not None
++        else None,
++        "workers_ready_to_terminal_seconds": (final_ns - ready_ns) / 1e9
++        if final_ns is not None and ready_ns is not None
++        else None,
++    }
++
++
++async def _deployment_slots(db: Any, deployment_id: UUID) -> int:
++    async with db.session_context() as session:
++        slots = await session.scalar(
++            sa.select(db.ConcurrencyLimitV2.active_slots)
++            .join(
++                db.Deployment,
++                db.Deployment.concurrency_limit_id == db.ConcurrencyLimitV2.id,
++            )
++            .where(db.Deployment.id == deployment_id)
++        )
++        assert slots is not None
++        return slots
++
++
++@pytest.mark.parametrize(
++    "count,fault,asynchronous",
++    [
++        pytest.param(
++            count,
++            fault,
++            asynchronous,
++            marks=pytest.mark.timeout(1200 if count == 5000 else 900),
++        )
++        for count, fault, asynchronous in [
++            (8, "none", False),
++            (8, "none", True),
++            (500, "none", False),
++            (500, "operator-loss-200", False),
++            (500, "operator-before-yield-200", False),
++            (500, "operator-loss-200", True),
++            (5000, "none", False),
++            (5000, "none", True),
++            (8, "before-declaration", False),
++            (8, "after-activation", False),
++            (8, "import-probe", False),
++            (8, "import-exit", False),
++            (8, "terminal-exit-stall", False),
++        ]
++    ],
++)
++async def test_actual_process_worker_runs_four_partition_tasks(
++    execution_api: RestartableAPI,
++    tmp_path: Path,
++    db: Any,
++    count: int,
++    fault: str,
++    asynchronous: bool,
++):
++    server = execution_api
++    for number in range(1, count + 1):
++        (tmp_path / f"document-{number}.json").write_text(
++            json.dumps({"number": number, "document_id": f"invoice-{number}"})
++        )
++    definition = load_flow_from_entrypoint(
++        "tests/fixtures/native_partitioned_stream_flow.py:"
++        + ("partitioned_documents_async" if asynchronous else "partitioned_documents")
++    )
++    pool = "partitioned-" + uuid4().hex
++    worker_names = ["left-" + uuid4().hex, "right-" + uuid4().hex]
++    with temporary_settings(
++        {PREFECT_API_URL: server.url, PREFECT_API_AUTH_STRING: server.auth}
++    ):
++        async with get_client() as client:
++            try:
++                await client.create_global_concurrency_limit(
++                    GlobalConcurrencyLimitCreate(
++                        name="tag:partitioned-fixed-capacity", limit=4
++                    )
++                )
++            except ObjectAlreadyExists:
++                existing = await client.read_global_concurrency_limit_by_name(
++                    "tag:partitioned-fixed-capacity"
++                )
++                assert existing.limit == 4 and existing.active_slots == 0
++            template = ProcessWorker.get_default_base_job_template()
++            template["prefect_native_streaming"] = {
++                "schema_version": 1,
++                "profile": "bounded-linear-v1",
++            }
++            await client.create_work_pool(
++                WorkPoolCreate(name=pool, type="process", base_job_template=template)
++            )
++            deployment = RunnerDeployment.from_flow(
++                definition,
++                name="partitioned",
++                work_pool_name=pool,
++                concurrency_limit=1,
++                job_variables={"working_dir": str(Path.cwd()), "stream_output": True},
++            )
++            deployment_id = await deployment.aapply()
++    environment = {
++        key: value
++        for key, value in os.environ.items()
++        if key
++        not in {
++            "PREFECT_SERVER_DATABASE_CONNECTION_URL",
++            "PREFECT_API_DATABASE_CONNECTION_URL",
++        }
++    }
++    environment.update(
++        PREFECT_API_URL=server.url,
++        PREFECT_API_AUTH_STRING=server.auth,
++        PREFECT_LOGGING_LEVEL="INFO",
++        PREFECT_LOGGING_INTERNAL_LEVEL="WARNING",
++        PREFECT_DEBUG_MODE="false",
++        PREFECT_WORKER_QUERY_SECONDS="1",
++        PREFECT_WORKER_HEARTBEAT_SECONDS="1",
++    )
++    if fault in {"import-probe", "import-exit"}:
++        environment.update(
++            NATIVE_PARTITIONED_IMPORT_PROBE="exit"
++            if fault == "import-exit"
++            else "observe",
++            NATIVE_PARTITIONED_IMPORT_DIRECTORY=str(tmp_path),
++        )
++    logs = [tmp_path / "worker-left.log", tmp_path / "worker-right.log"]
++    workers = []
++    for name, log in zip(worker_names, logs):
++        with log.open("wb") as output:
++            workers.append(
++                subprocess.Popen(
++                    [
++                        sys.executable,
++                        "-m",
++                        "prefect",
++                        "worker",
++                        "start",
++                        "--pool",
++                        pool,
++                        "--type",
++                        "process",
++                        "--name",
++                        name,
++                        "--limit",
++                        "1",
++                    ],
++                    env=environment,
++                    stdout=output,
++                    stderr=subprocess.STDOUT,
++                )
++            )
++
++    def diagnostics() -> str:
++        return "\n".join(path.name + "\n" + path.read_text()[-24000:] for path in logs)
++
++    run = None
++    registered = []
++    ready_ns = None
++    final_ns = None
++    passed = False
++    lifecycle_checks: dict[str, Any] = {}
++    try:
++        deadline = time.monotonic() + 40
++        while True:
++            assert all(worker.poll() is None for worker in workers), diagnostics()
++            with server.client() as client:
++                registered = [
++                    worker
++                    for worker in client.read_workers_for_work_pool(pool)
++                    if worker.name in worker_names and worker.status.value == "ONLINE"
++                ]
++            if len(registered) == 2:
++                async with db.session_context() as session:
++                    capabilities = (
++                        await session.scalars(
++                            sa.select(db.StreamWorkerCapability.worker_id).where(
++                                db.StreamWorkerCapability.worker_id.in_(
++                                    [worker.id for worker in registered]
++                                )
++                            )
++                        )
++                    ).all()
++                if len(capabilities) == 2:
++                    ready_ns = time.monotonic_ns()
++                    break
++            assert time.monotonic() < deadline, diagnostics()
++            time.sleep(0.1)
++        with server.client() as client:
++            run = client.create_flow_run_from_deployment(
++                deployment_id,
++                parameters={"directory": str(tmp_path), "count": count, "fault": fault},
++            )
++        deadline = time.monotonic() + (1140 if count == 5000 else 840)
++        observed = False
++        while True:
++            assert all(worker.poll() is None for worker in workers), diagnostics()
++            if (
++                fault == "before-declaration"
++                and not observed
++                and (tmp_path / "before-declaration").exists()
++            ):
++                async with db.session_context() as session:
++                    for model in (
++                        db.TaskRun,
++                        db.StreamGraphRevision,
++                        db.StreamPartition,
++                    ):
++                        assert (
++                            await session.scalar(
++                                sa.select(sa.func.count())
++                                .select_from(model)
++                                .where(model.flow_run_id == run.id)
++                            )
++                            == 0
++                        )
++                (tmp_path / "declaration-observed").touch()
++                observed = True
++            if (
++                fault in {"operator-loss-200", "operator-before-yield-200"}
++                and not observed
++                and (tmp_path / "operator-loss").exists()
++            ):
++                for name in ("source-0-1.pid", "source-1-1.pid", "operator-1-1.pid"):
++                    os.kill(int((tmp_path / name).read_text()), 0)
++                with server.client() as client:
++                    assert (
++                        client.read_global_concurrency_limit_by_name(
++                            "tag:partitioned-fixed-capacity"
++                        ).active_slots
++                        == 4
++                    )
++                    cut_flow = client.read_flow_run(run.id)
++                assert cut_flow.state is not None and cut_flow.state.is_running()
++                lease_id = cut_flow.state.state_details.deployment_concurrency_lease_id
++                assert lease_id is not None
++                assert await _deployment_slots(db, deployment_id) == 1
++                lifecycle_checks["fault_cut_flow_lease_id"] = str(lease_id)
++                lifecycle_checks["fault_cut_flow_slots"] = 1
++                cut = json.loads((tmp_path / "operator-loss").read_text())
++                async with db.session_context() as session:
++                    cursor = await session.get(
++                        db.StreamConsumer, UUID(cut["task_run_id"])
++                    )
++                    assert cursor is not None
++                    assert cursor.completed_through == (
++                        199 if fault == "operator-before-yield-200" else 200
++                    )
++                    assert cursor.inflight_sequence == cursor.completed_through + 1
++                (tmp_path / "cut-observed").touch()
++                observed = True
++            if (
++                fault == "terminal-exit-stall"
++                and not observed
++                and (tmp_path / "terminal-stall-entered").exists()
++            ):
++                stall_pid = int((tmp_path / "terminal-stall-entered").read_text())
++                os.kill(stall_pid, 0)
++                with server.client() as client:
++                    held_flow = client.read_flow_run(run.id)
++                assert held_flow.state is not None and held_flow.state.is_running()
++                lease_id = held_flow.state.state_details.deployment_concurrency_lease_id
++                assert lease_id is not None
++                assert await _deployment_slots(db, deployment_id) == 1
++                async with db.session_context() as session:
++                    row = (
++                        await session.execute(
++                            sa.select(
++                                db.StreamPhysicalSubtask.id,
++                                db.StreamPhysicalSubtask.physical_slot_released,
++                                db.TaskRun.state_type,
++                                db.StreamPartition.state,
++                                db.StreamSubtaskAllocation.released,
++                            )
++                            .join(
++                                db.StreamOperatorRun,
++                                db.StreamOperatorRun.id
++                                == db.StreamPhysicalSubtask.operator_run_id,
++                            )
++                            .join(
++                                db.StreamGraphRevision,
++                                db.StreamGraphRevision.id
++                                == db.StreamPhysicalSubtask.graph_revision_id,
++                            )
++                            .join(
++                                db.TaskRun,
++                                db.TaskRun.id == db.StreamPhysicalSubtask.task_run_id,
++                            )
++                            .join(
++                                db.StreamPartition,
++                                db.StreamPartition.id
++                                == db.StreamPhysicalSubtask.output_stream_id,
++                            )
++                            .join(
++                                db.StreamSubtaskAllocation,
++                                db.StreamSubtaskAllocation.subtask_id
++                                == db.StreamPhysicalSubtask.id,
++                            )
++                            .where(
++                                db.StreamGraphRevision.flow_run_id == run.id,
++                                db.StreamOperatorRun.operator_uid == "operator.sign",
++                                db.StreamPhysicalSubtask.subtask_index == 0,
++                            )
++                        )
++                    ).one()
++                    assert row.state_type.value == "COMPLETED"
++                    assert row.state == "COMPLETED"
++                    assert row.physical_slot_released is False
++                    assert row.released is True
++                    pending = (
++                        sa.select(sa.func.count())
++                        .select_from(db.StreamSubtaskAllocation)
++                        .where(
++                            db.StreamSubtaskAllocation.concurrency_limit_id
++                            == db.ConcurrencyLimitV2.id,
++                            db.StreamSubtaskAllocation.released.is_(False),
++                        )
++                        .correlate(db.ConcurrencyLimitV2)
++                        .scalar_subquery()
++                    )
++                    tag_slots, allocations = (
++                        await session.execute(
++                            sa.select(
++                                db.ConcurrencyLimitV2.active_slots, pending
++                            ).where(
++                                db.ConcurrencyLimitV2.name
++                                == "tag:partitioned-fixed-capacity"
++                            )
++                        )
++                    ).one()
++                    assert tag_slots == allocations
++                lifecycle_checks["terminal_stall"] = {
++                    "subtask_id": str(row.id),
++                    "pid": stall_pid,
++                    "task_state": "COMPLETED",
++                    "output_state": "COMPLETED",
++                    "physical_slot_released": False,
++                    "logical_tag_allocation_released": True,
++                    "flow_state": "RUNNING",
++                    "flow_lease_id": str(lease_id),
++                    "flow_slots": 1,
++                    "tag_slots": tag_slots,
++                    "unreleased_tag_allocations": allocations,
++                }
++                observed = True
++            with server.client() as client:
++                completed = client.read_flow_run(run.id)
++            if completed.state is not None and completed.state.is_final():
++                final_ns = time.monotonic_ns()
++                break
++            assert time.monotonic() < deadline, diagnostics()
++            time.sleep(1)
++        if fault in {"after-activation", "import-exit"}:
++            assert completed.state.is_failed(), diagnostics()
++        else:
++            assert completed.state.is_completed(), diagnostics()
++        assert completed.run_count == (2 if fault == "before-declaration" else 1)
++        assert await _deployment_slots(db, deployment_id) == 0
++        lifecycle_checks["final_flow_slots"] = 0
++        with server.client() as client:
++            assert (
++                client.read_global_concurrency_limit_by_name(
++                    "tag:partitioned-fixed-capacity"
++                ).active_slots
++                == 0
++            )
++        pids = [int(path.read_text()) for path in tmp_path.glob("*.pid")]
++        assert (
++            len(pids)
++            == len(set(pids))
++            == (
++                0
++                if fault == "import-exit"
++                else (
++                    5
++                    if fault in {"operator-loss-200", "operator-before-yield-200"}
++                    else 4
++                )
++            )
++        )
++        signed = [
++            json.loads(path.read_text()) for path in tmp_path.glob("signed-*.json")
++        ]
++        assert len(signed) == (0 if fault == "import-exit" else count)
++        assert all(item["partition"] == (item["number"] - 1) % 2 for item in signed)
++        if fault in {"import-probe", "import-exit"}:
++            imports = [
++                json.loads(path.read_text()) for path in tmp_path.glob("import-*.json")
++            ]
++            assert (
++                (1 <= len(imports) <= 4)
++                if fault == "import-exit"
++                else len(imports) == 4
++            )
++            assert all(
++                item
++                == {
++                    "physical_context": False,
++                    "flow_context": False,
++                    "headers_present": False,
++                    "auth_present": False,
++                    "http_status": 401,
++                    "import_count": 1,
++                }
++                for item in imports
++            )
++        if fault in {"operator-loss-200", "operator-before-yield-200"}:
++            assert observed
++            replay = 200 if fault == "operator-before-yield-200" else 201
++            assert (tmp_path / "replacement-started").read_text() == str(replay)
++            first = [
++                json.loads(line)
++                for line in (tmp_path / "calls-0-1.jsonl").read_text().splitlines()
++            ]
++            second = [
++                json.loads(line)
++                for line in (tmp_path / "calls-0-2.jsonl").read_text().splitlines()
++            ]
++            assert [item["sequence"] for item in first] == list(range(1, 201))
++            assert [item["sequence"] for item in second] == list(
++                range(replay, count // 2 + 1)
++            )
++            assert {item["task_run_id"] for item in first} == {
++                item["task_run_id"] for item in second
++            }
++            assert len(list(tmp_path.glob("source-*.pid"))) == 2
++            assert len(list(tmp_path.glob("operator-1-*.pid"))) == 1
++        async with db.session_context() as session:
++            task_runs = (
++                await session.scalars(
++                    sa.select(db.TaskRun).where(db.TaskRun.flow_run_id == run.id)
++                )
++            ).all()
++            assert len(task_runs) == 4
++            for task_run in task_runs:
++                states = (
++                    await session.scalars(
++                        sa.select(db.TaskRunState.type)
++                        .where(db.TaskRunState.task_run_id == task_run.id)
++                        .order_by(db.TaskRunState.timestamp)
++                    )
++                ).all()
++                assert states[0].value == "PENDING"
++                if fault == "import-exit":
++                    assert {state.value for state in states} == {"PENDING", "FAILED"}
++                    assert task_run.run_count == 0
++                else:
++                    assert {state.value for state in states} >= {
++                        "PENDING",
++                        "RUNNING",
++                        "COMPLETED",
++                    }
++                    assert states[-1].value == "COMPLETED"
++                    assert task_run.run_count == (
++                        2
++                        if fault in {"operator-loss-200", "operator-before-yield-200"}
++                        and task_run.name.startswith("partitioned_operator")
++                        and task_run.name.endswith("[0]")
++                        else 1
++                    )
++            assert (
++                await session.scalar(
++                    sa.select(sa.func.count())
++                    .select_from(db.StreamPartition)
++                    .where(db.StreamPartition.flow_run_id == run.id)
++                )
++                == 4
++            )
++            placement = (
++                await session.execute(
++                    sa.select(
++                        db.StreamPhysicalSubtask.subtask_index,
++                        db.StreamOperatorRun.operator_uid,
++                        db.StreamPhysicalSubtask.assigned_worker_id,
++                        db.StreamPhysicalSubtask.physical_slot_released,
++                    )
++                    .join(
++                        db.StreamOperatorRun,
++                        db.StreamOperatorRun.id
++                        == db.StreamPhysicalSubtask.operator_run_id,
++                    )
++                    .join(
++                        db.StreamGraphRevision,
++                        db.StreamGraphRevision.id
++                        == db.StreamPhysicalSubtask.graph_revision_id,
++                    )
++                    .where(db.StreamGraphRevision.flow_run_id == run.id)
++                )
++            ).all()
++            assert len(placement) == 4
++            assert {item.assigned_worker_id for item in placement} == {
++                worker.id for worker in registered
++            }
++            assert all(item.physical_slot_released for item in placement)
++            if fault == "terminal-exit-stall":
++                assert observed
++                assert not (tmp_path / "terminal-stall-natural-exit").exists()
++                stall = lifecycle_checks["terminal_stall"]
++                with pytest.raises(ProcessLookupError):
++                    os.kill(stall["pid"], 0)
++                retirement = (
++                    await session.scalars(
++                        sa.select(db.StreamSubtaskReplacement).where(
++                            db.StreamSubtaskReplacement.subtask_id
++                            == UUID(stall["subtask_id"])
++                        )
++                    )
++                ).one()
++                assert retirement.state == "RETIRED"
++                assert retirement.death_witness["child_process_id"] == stall["pid"]
++                assert retirement.retirement_outcome["task_state"] == "COMPLETED"
++                assert (
++                    retirement.retirement_outcome["outcome_kind"]
++                    == "COMPLETED_RECONCILED"
++                )
++                lifecycle_checks["terminal_stall_retirement"] = {
++                    "state": retirement.state,
++                    "death_witness_kind": retirement.death_witness["kind"],
++                    "outcome_kind": retirement.retirement_outcome["outcome_kind"],
++                    "physical_slot_released": True,
++                    "natural_exit_marker_present": False,
++                }
++            worker_pids = {
++                worker.id: workers[worker_names.index(worker.name)].pid
++                for worker in registered
++            }
++            if fault != "import-exit":
++                for item in placement:
++                    prefix = (
++                        "source"
++                        if item.operator_uid == "source.documents"
++                        else "operator"
++                    )
++                    assert (
++                        int(
++                            (
++                                tmp_path / f"{prefix}-{item.subtask_index}-1.ppid"
++                            ).read_text()
++                        )
++                        == worker_pids[item.assigned_worker_id]
++                    )
++        passed = True
++    finally:
++        for worker in workers:
++            if worker.poll() is None:
++                worker.terminate()
++        for worker in workers:
++            try:
++                worker.wait(timeout=15)
++            except subprocess.TimeoutExpired:
++                worker.kill()
++                worker.wait(timeout=5)
++        try:
++            observation = {
++                "status": "PASS" if passed else "FAIL",
++                "count": count,
++                "fault": fault,
++                "asynchronous": asynchronous,
++                "flow_run_id": str(run.id) if run is not None else None,
++                "workers": [
++                    {
++                        "worker_id": str(item.id),
++                        "name": item.name,
++                        "pid": workers[worker_names.index(item.name)].pid,
++                    }
++                    for item in registered
++                ],
++                "phase_timings": _phase_observation(tmp_path, ready_ns, final_ns),
++                "lifecycle_checks": lifecycle_checks,
++            }
++        except Exception as timing_error:
++            (tmp_path / "case-observation.json").write_text(
++                json.dumps(
++                    {
++                        "status": "TIMING_CAPTURE_FAILED",
++                        "error_type": type(timing_error).__name__,
++                    }
++                )
++                + "\n"
++            )
++            if passed:
++                raise
++        else:
++            (tmp_path / "case-observation.json").write_text(
++                json.dumps(observation, indent=2) + "\n"
++            )
+diff --git a/tests/fixtures/native_partitioned_stream_flow.py b/tests/fixtures/native_partitioned_stream_flow.py
+new file mode 100644
+index 0000000..e583cb7
+--- /dev/null
++++ b/tests/fixtures/native_partitioned_stream_flow.py
+@@ -0,0 +1,315 @@
++"""Versioned fixed-P2 Tasks used by real ProcessWorker acceptance."""
++
++import asyncio
++import atexit
++import json
++import os
++import sys
++import time
++from pathlib import Path
++from uuid import uuid4
++
++import httpx
++
++from prefect import flow, task
++from prefect._internal.stream_execution import (
++    get_stream_execution,
++    get_stream_subtask_execution,
++    stream_subtask_headers,
++)
++from prefect.streams import (
++    NativeStreamFlowConfig,
++    SourceContext,
++    SourceRecord,
++    StreamContext,
++    StreamPartitionCall,
++    StreamSourceConfig,
++    StreamTaskConfig,
++)
++
++if (
++    os.environ.get("NATIVE_PARTITIONED_IMPORT_PROBE")
++    and Path(sys.argv[0]).name == "stream_subtask_entrypoint.py"
++):
++    probe_directory = Path(os.environ["NATIVE_PARTITIONED_IMPORT_DIRECTORY"])
++    probe_path = probe_directory / f"import-{os.getpid()}.json"
++    prior_imports = (
++        json.loads(probe_path.read_text())["import_count"] if probe_path.exists() else 0
++    )
++    probe_api = os.environ["PREFECT_API_URL"]
++    probe = {
++        "import_count": prior_imports + 1,
++        "physical_context": get_stream_subtask_execution() is not None,
++        "flow_context": get_stream_execution() is not None,
++        "headers_present": bool(
++            stream_subtask_headers(probe_api, probe_api + "/streams/v1/create", "POST")
++        ),
++        "auth_present": any(
++            os.environ.get(name)
++            for name in (
++                "PREFECT_API_AUTH_STRING",
++                "PREFECT_SERVER_API_AUTH_STRING",
++                "PREFECT_API_KEY",
++            )
++        ),
++    }
++    probe_response = httpx.post(
++        probe_api + "/streams/v1/create",
++        json={
++            "flow_run_id": os.environ.get(
++                "NATIVE_PARTITIONED_IMPORT_FLOW", str(uuid4())
++            ),
++            "stream_id": str(uuid4()),
++        },
++        timeout=5,
++    )
++    probe["http_status"] = probe_response.status_code
++    probe_path.write_text(json.dumps(probe))
++    assert not any(
++        probe[key]
++        for key in (
++            "physical_context",
++            "flow_context",
++            "headers_present",
++            "auth_present",
++        )
++    )
++    assert probe_response.status_code == 401
++    if os.environ["NATIVE_PARTITIONED_IMPORT_PROBE"] == "exit":
++        raise SystemExit(73)
++
++
++@task(
++    version="native-partitioned-v1",
++    retries=2,
++    tags={"partitioned-fixed-capacity"},
++    stream=StreamSourceConfig(),
++)
++def partitioned_source(
++    ctx: SourceContext, split: int, count: int, directory: str, fault: str = "none"
++):
++    target = Path(directory)
++    (target / f"source-{split}-{ctx.attempt}.pid").write_text(str(os.getpid()))
++    (target / f"source-{split}-{ctx.attempt}.ppid").write_text(str(os.getppid()))
++    for position in range(ctx.accepted_source_position + 1, count // 2 + 1):
++        number = 2 * (position - 1) + split + 1
++        yield SourceRecord(
++            position,
++            {"number": number, "document_ref": str(target / f"document-{number}.json")},
++        )
++        if position == 1:
++            (target / f"source-first-accepted-{split}.time").write_text(
++                str(time.monotonic_ns())
++            )
++    if fault in {"operator-loss-200", "operator-before-yield-200"}:
++        deadline = time.monotonic() + 90
++        while not (target / "replacement-started").exists():
++            if time.monotonic() > deadline:
++                raise TimeoutError(
++                    "Replacement did not start while healthy sources waited"
++                )
++            time.sleep(0.02)
++
++
++@task(
++    version="native-partitioned-v1",
++    retries=2,
++    tags={"partitioned-fixed-capacity"},
++    stream=StreamTaskConfig(input="document"),
++)
++def partitioned_operator(
++    ctx: StreamContext, document: dict, directory: str, fault: str = "none"
++):
++    target = Path(directory)
++    if (
++        fault == "terminal-exit-stall"
++        and ctx.partition_index == 0
++        and ctx.attempt == 1
++        and ctx.input_sequence == 1
++    ):
++
++        def stall_after_terminal() -> None:
++            (target / "terminal-stall-entered").write_text(str(os.getpid()))
++            time.sleep(30)
++            (target / "terminal-stall-natural-exit").touch()
++
++        atexit.register(stall_after_terminal)
++    (target / f"operator-{ctx.partition_index}-{ctx.attempt}.pid").write_text(
++        str(os.getpid())
++    )
++    (target / f"operator-{ctx.partition_index}-{ctx.attempt}.ppid").write_text(
++        str(os.getppid())
++    )
++    if (
++        ctx.partition_index == 0
++        and ctx.attempt > 1
++        and not (target / "replacement-started").exists()
++    ):
++        if fault in {"operator-loss-200", "operator-before-yield-200"}:
++            deadline = time.monotonic() + 30
++            while not (target / "cut-observed").exists():
++                if time.monotonic() > deadline:
++                    raise TimeoutError(
++                        "Recovery observer did not record the durable cursor"
++                    )
++                time.sleep(0.02)
++        (target / "replacement-started").write_text(str(ctx.input_sequence))
++    if (
++        fault == "operator-loss-200"
++        and ctx.partition_index == 0
++        and ctx.attempt == 1
++        and ctx.input_sequence == 201
++    ):
++        (target / "operator-loss").write_text(
++            json.dumps(
++                {
++                    "pid": os.getpid(),
++                    "task_run_id": str(ctx.task_run_id),
++                    "monotonic_ns": time.monotonic_ns(),
++                }
++            )
++        )
++        os._exit(77)
++    with (target / f"calls-{ctx.partition_index}-{ctx.attempt}.jsonl").open(
++        "a"
++    ) as calls:
++        calls.write(
++            json.dumps(
++                {
++                    "sequence": ctx.input_sequence,
++                    "task_run_id": str(ctx.task_run_id),
++                    "pid": os.getpid(),
++                    "assignment_epoch": ctx.assignment_epoch,
++                    "operator_uid": ctx.operator_uid,
++                    "monotonic_ns": time.monotonic_ns(),
++                }
++            )
++            + "\n"
++        )
++    value = json.loads(Path(document["document_ref"]).read_text())
++    signed = {
++        **value,
++        "signed": True,
++        "partition": ctx.partition_index,
++        "input_sequence": ctx.input_sequence,
++    }
++    (target / f"signed-{value['number']}.json").write_text(json.dumps(signed))
++    if (
++        fault == "operator-before-yield-200"
++        and ctx.partition_index == 0
++        and ctx.attempt == 1
++        and ctx.input_sequence == 200
++    ):
++        # The stable document filename is client-owned idempotence. This effect
++        # can repeat because the platform has not accepted the terminal yield.
++        (target / "operator-loss").write_text(
++            json.dumps(
++                {
++                    "pid": os.getpid(),
++                    "task_run_id": str(ctx.task_run_id),
++                    "monotonic_ns": time.monotonic_ns(),
++                }
++            )
++        )
++        os._exit(77)
++    yield {
++        "number": value["number"],
++        "signed_ref": str(target / f"signed-{value['number']}.json"),
++    }
++
++
++@task(
++    version="native-partitioned-v1",
++    retries=2,
++    tags={"partitioned-fixed-capacity"},
++    stream=StreamSourceConfig(),
++)
++async def partitioned_source_async(
++    ctx: SourceContext, split: int, count: int, directory: str, fault: str = "none"
++):
++    for record in partitioned_source.fn(ctx, split, count, directory, fault):
++        await asyncio.sleep(0)
++        yield record
++
++
++@task(
++    version="native-partitioned-v1",
++    retries=2,
++    tags={"partitioned-fixed-capacity"},
++    stream=StreamTaskConfig(input="document"),
++)
++async def partitioned_operator_async(
++    ctx: StreamContext, document: dict, directory: str, fault: str = "none"
++):
++    await asyncio.sleep(0)
++    for value in partitioned_operator.fn(ctx, document, directory, fault):
++        yield value
++
++
++def _partitioned_graph(directory: str, count: int, fault: str, asynchronous: bool):
++    target = Path(directory)
++    if fault == "before-declaration" and not (target / "before-declaration").exists():
++        (target / "before-declaration").touch()
++        deadline = time.monotonic() + 30
++        while not (target / "declaration-observed").exists():
++            if time.monotonic() > deadline:
++                raise TimeoutError("No pre-declaration observation")
++            time.sleep(0.02)
++        raise RuntimeError("Application error before graph declaration")
++    source_task = partitioned_source_async if asynchronous else partitioned_source
++    operator_task = partitioned_operator_async if asynchronous else partitioned_operator
++    source = source_task.submit_partitioned_stream(
++        operator_uid="source.documents",
++        partitions=(
++            StreamPartitionCall(
++                parameters={
++                    "split": 0,
++                    "count": count,
++                    "directory": directory,
++                    "fault": fault,
++                }
++            ),
++            StreamPartitionCall(
++                parameters={
++                    "split": 1,
++                    "count": count,
++                    "directory": directory,
++                    "fault": fault,
++                }
++            ),
++        ),
++    )
++    output = operator_task.submit_partitioned_stream(
++        operator_uid="operator.sign",
++        upstream=source,
++        partitions=(
++            StreamPartitionCall(parameters={"directory": directory, "fault": fault}),
++            StreamPartitionCall(parameters={"directory": directory, "fault": fault}),
++        ),
++    )
++    if fault == "after-activation":
++        raise RuntimeError("Application error after graph activation")
++    return output
++
++
++@flow(
++    version="native-partitioned-v1",
++    retries=2,
++    streaming=NativeStreamFlowConfig(profile="partitioned-fixed-v1", partition_count=2),
++)
++def partitioned_documents(directory: str, count: int = 8, fault: str = "none"):
++    _partitioned_graph(directory, count, fault, False).wait()
++    return {"documents": count}
++
++
++@flow(
++    version="native-partitioned-v1",
++    retries=2,
++    streaming=NativeStreamFlowConfig(profile="partitioned-fixed-v1", partition_count=2),
++)
++async def partitioned_documents_async(
++    directory: str, count: int = 8, fault: str = "none"
++):
++    output = _partitioned_graph(directory, count, fault, True)
++    await asyncio.to_thread(output.wait)
++    return {"documents": count}

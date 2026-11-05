@@ -1,0 +1,147 @@
+F
+=================================== FAILURES ===================================
+______ test_immutable_p2_graph_reuses_four_ordinary_tasks_and_partitions _______
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fdc67a96f30>
+flow_run = FlowRun(id=18a068fc-b5e7-40d2-9d23-8b983d33784f)
+
+    async def test_immutable_p2_graph_reuses_four_ordinary_tasks_and_partitions(
+        db, flow_run
+    ):
+>       request, plan, credentials = await prepare(db, flow_run)
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/server/models/test_stream_subtasks.py:232: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/server/models/test_stream_subtasks.py:97: in prepare
+    authority = await guard_flow_lifecycle(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fdc6617a5a0>
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fdc67a96f30>
+flow_run_id = UUID('18a068fc-b5e7-40d2-9d23-8b983d33784f')
+credentials = StreamExecutionCredentials(generation=1, holder_id=UUID('5766e17a-bd0a-42ec-b31c-e6a363a4f78b'))
+proposed_state = Running(message=None, type=RUNNING, result=None), force = False
+
+    async def guard_flow_lifecycle(
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        flow_run_id: UUID,
+        credentials: StreamExecutionCredentials | None,
+        proposed_state: State[Any],
+        *,
+        force: bool,
+    ) -> orm_models.StreamExecutionAuthority | None:
+        """Fence an enrolled FlowRun state proposal before orchestration."""
+    
+        flow = await session.scalar(
+            sa.select(db.FlowRun).where(db.FlowRun.id == flow_run_id).with_for_update()
+        )
+        if flow is None:
+            return None
+        authority = await require_execution(
+            session,
+            db,
+            flow_run_id,
+            credentials,
+            allowed_states=("CLAIMED", "ACTIVE", "RECOVERING"),
+            update=True,
+            allow_unclaimed_snapshot=True,
+        )
+        if authority is None:
+            snapshot = await session.scalar(
+                sa.select(db.NativeStreamDeploymentSnapshot.id).where(
+                    db.NativeStreamDeploymentSnapshot.flow_run_id == flow_run_id
+                )
+            )
+            if snapshot is not None and (
+                proposed_state.is_running() or proposed_state.is_completed()
+            ):
+                raise NativeStreamError(
+                    "RECOVERY_NOT_READY",
+                    "Native deployment FlowRun must enrol its worker before execution",
+                )
+            return None
+        if force:
+            raise NativeStreamError(
+                "PROTOCOL_ERROR", "Enrolled FlowRun lifecycle cannot bypass policy"
+            )
+        if authority.cancel_requested and not (
+            proposed_state.is_cancelling() or proposed_state.is_cancelled()
+        ):
+            raise NativeStreamError(
+                "CANCEL_REQUESTED", "Cancelled execution refuses later lifecycle writes"
+            )
+        if proposed_state.is_running():
+            snapshot = await session.scalar(
+                sa.select(db.NativeStreamDeploymentSnapshot.id).where(
+                    db.NativeStreamDeploymentSnapshot.flow_run_id == flow_run_id
+                )
+            )
+            if snapshot is not None:
+                launch_state = await session.scalar(
+                    sa.select(db.NativeStreamLaunchIdentity.state).where(
+                        db.NativeStreamLaunchIdentity.flow_run_id == flow_run_id,
+                        db.NativeStreamLaunchIdentity.generation == authority.generation,
+                    )
+                )
+                if launch_state != "PROCESS_REGISTERED":
+                    raise NativeStreamError(
+                        "RECOVERY_NOT_READY",
+                        "FlowRun cannot start before its worker process is registered",
+                    )
+        if (
+            proposed_state.is_running()
+            and authority.state == "ACTIVE"
+            and authority.manifest_set_digest is not None
+            and flow.state_type != StateType.RUNNING
+        ):
+>           raise NativeStreamError(
+                "RECOVERY_NOT_READY",
+                "A sealed execution requires an explicit newer-generation takeover",
+            )
+E           prefect.server.models._stream_errors.NativeStreamError: A sealed execution requires an explicit newer-generation takeover
+
+src/prefect/server/models/stream_executions.py:563: NativeStreamError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_server'
+Connecting to postgres at 'postgres://native_recovery:native_recovery@127.0.0.1:55436/postgres'
+Creating test postgres database 'native_epoch2_server_tests_master'
+Using test database connection URL 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_server_tests_master'
+Running hosted API server on port 40083
+---------------------------- Captured stderr setup -----------------------------
+21:57:07.094 | INFO    | uvicorn.error - Started server process [136937]
+21:57:07.098 | INFO    | uvicorn.error - Waiting for application startup.
+21:57:07.251 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+21:57:07.257 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+21:57:07.258 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+21:57:07.258 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+21:57:07.258 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+21:57:07.258 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+21:57:07.258 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+21:57:07.258 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+21:57:07.259 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+21:57:07.259 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+21:57:07.259 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+21:57:07.259 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+21:57:07.259 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+21:57:07.259 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+21:57:07.259 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+21:57:07.260 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+21:57:07.260 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+21:57:07.261 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+21:57:07.262 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+21:57:07.264 | INFO    | uvicorn.error - Application startup complete.
+21:57:07.265 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 40083) (Press CTRL+C to quit)
+21:57:07.365 | INFO    | uvicorn.access - 127.0.0.1:58416 - "GET /api/health HTTP/1.1" 200
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+21:57:08.271 | INFO    | uvicorn.error - Shutting down
+21:57:08.372 | INFO    | uvicorn.error - Waiting for application shutdown.
+21:57:08.374 | INFO    | uvicorn.error - Application shutdown complete.
+21:57:08.374 | INFO    | uvicorn.error - Finished server process [136937]
+=========================== short test summary info ============================
+FAILED tests/server/models/test_stream_subtasks.py::test_immutable_p2_graph_reuses_four_ordinary_tasks_and_partitions
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 8.43s

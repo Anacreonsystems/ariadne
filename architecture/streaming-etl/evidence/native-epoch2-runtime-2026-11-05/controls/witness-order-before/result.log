@@ -1,0 +1,85 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_witness_failure_leaves_no_partial_local_declaration ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fd60aa67140>
+
+    def test_witness_failure_leaves_no_partial_local_declaration(
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(id=execution.flow_run_id, run_count=1),
+            SimpleNamespace(version="v1"),
+        )
+    
+        def refuse_witness(task: Any) -> bytes:
+            raise StreamProtocolError("Definition changed during validation")
+    
+        monkeypatch.setattr(
+            "prefect._internal.stream_partitioned._direct_task_witness", refuse_witness
+        )
+        with pytest.raises(StreamProtocolError, match="changed during validation"):
+            graph.declare(
+                split_source,
+                operator_uid="source.documents",
+                partitions=(
+                    StreamPartitionCall(parameters={"split": "left"}),
+                    StreamPartitionCall(parameters={"split": "right"}),
+                ),
+                upstream=None,
+            )
+>       assert graph.entries == {}
+E       AssertionError: assert {'source.docu...7fd60c3c04a0>} == {}
+E         
+E         Left contains 1 more item:
+E         {'source.documents': <prefect.tasks.Task object at 0x7fd60c3c04a0>}
+E         Use -v to get more diff
+
+tests/test_stream_partitioned_runtime.py:308: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_runtime'
+Connecting to postgres at 'postgres://native_recovery:native_recovery@127.0.0.1:55436/postgres'
+Creating test postgres database 'native_epoch2_runtime_tests_master'
+Using test database connection URL 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_runtime_tests_master'
+Running hosted API server on port 47603
+---------------------------- Captured stderr setup -----------------------------
+00:36:39.779 | INFO    | uvicorn.error - Started server process [167970]
+00:36:39.792 | INFO    | uvicorn.error - Waiting for application startup.
+00:36:40.058 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+00:36:40.106 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+00:36:40.109 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+00:36:40.109 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+00:36:40.110 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+00:36:40.110 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+00:36:40.110 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+00:36:40.110 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+00:36:40.110 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+00:36:40.111 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+00:36:40.111 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+00:36:40.111 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+00:36:40.111 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+00:36:40.111 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+00:36:40.112 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+00:36:40.113 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+00:36:40.113 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+00:36:40.118 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+00:36:40.121 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+00:36:40.128 | INFO    | uvicorn.error - Application startup complete.
+00:36:40.193 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 47603) (Press CTRL+C to quit)
+00:36:40.266 | INFO    | uvicorn.access - 127.0.0.1:38796 - "GET /api/health HTTP/1.1" 200
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+00:36:40.497 | INFO    | uvicorn.error - Shutting down
+00:36:40.600 | INFO    | uvicorn.error - Waiting for application shutdown.
+00:36:40.618 | INFO    | uvicorn.error - Application shutdown complete.
+00:36:40.620 | INFO    | uvicorn.error - Finished server process [167970]
+Executing <Task finished name='Task-23' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.631 seconds
+00:36:42.143 | WARNING | asyncio - Executing <Task finished name='Task-23' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.631 seconds
+---------------------------- Captured log teardown -----------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task finished name='Task-23' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.631 seconds
+=========================== short test summary info ============================
+FAILED tests/test_stream_partitioned_runtime.py::test_witness_failure_leaves_no_partial_local_declaration
+1 failed, 60 deselected in 12.71s

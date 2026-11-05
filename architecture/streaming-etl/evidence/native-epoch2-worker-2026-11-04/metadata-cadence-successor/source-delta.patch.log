@@ -1,0 +1,69 @@
+--- a/src/prefect/workers/_stream_subtasks.py
++++ b/src/prefect/workers/_stream_subtasks.py
+@@ -23,6 +23,7 @@
+ 
+ from prefect._internal.stream_subtask_entrypoint import subtask_environment
+ from prefect._internal.stream_subtask_protocol import (
++    METADATA_POLL_INTERVAL_SECONDS,
+     PREFLIGHT_MAX_BYTES,
+     PREFLIGHT_READY,
+     PREFLIGHT_TIMEOUT_SECONDS,
+@@ -31,7 +32,10 @@
+ from prefect.client.schemas import stream_subtasks as s
+ from prefect.client.schemas.objects import StateType
+ from prefect.runner._native_process import NativePidfdScope, verify_native_process_death
+-from prefect.runner._starter_native import NativeProcessStarter, linux_process_identity
++from prefect.runner._starter_native import (
++    create_native_stream_credentials,
++    linux_process_identity,
++)
+ from prefect.streams import StreamProtocolError
+ 
+ 
+@@ -313,7 +317,7 @@
+                             # server. Its existing protocol remains usable;
+                             # the new profile will refuse admission there.
+                             return
+-                    await anyio.sleep(0.1)
++                    await anyio.sleep(METADATA_POLL_INTERVAL_SECONDS)
+         finally:
+             # Shutdown never invents a server stop receipt. If the worker exits
+             # during live execution, its slots remain fenced until a separately
+@@ -394,7 +398,7 @@
+             raise StreamProtocolError("The physical grant has another launcher")
+ 
+     def _new_run(self, item: s.StreamWorkerAssignment) -> _ManagedSubtask:
+-        credentials = NativeProcessStarter._credentials()
++        credentials = create_native_stream_credentials()
+         holder, capability, _, public = credentials
+         claim = {
+             "operation_id": uuid5(item.assignment.id, "assigned-worker-claim-v1"),
+@@ -662,7 +666,7 @@
+             self.runs.pop(run.item.assignment.id, None)
+             return
+         if operation.credentials is None:
+-            operation.credentials = NativeProcessStarter._credentials()
++            operation.credentials = create_native_stream_credentials()
+         if operation.child is None:
+             if self._live_children() >= 2:
+                 return
+--- a/tests/workers/test_stream_subtasks.py
++++ b/tests/workers/test_stream_subtasks.py
+@@ -23,7 +23,7 @@
+ from prefect.client.schemas.objects import TaskRunPolicy, WorkPool
+ from prefect.client.schemas.stream_subtasks import StreamWorkerTaskConfiguration
+ from prefect.logging import get_logger
+-from prefect.runner._starter_native import NativeProcessStarter
++from prefect.runner._starter_native import create_native_stream_credentials
+ from prefect.streams import StreamProtocolError
+ from prefect.utilities.importtools import import_object
+ from prefect.workers import _stream_subtasks as worker_subtasks
+@@ -101,7 +101,7 @@
+ 
+ 
+ def bootstrap_payload(child: _SubtaskProcess, api_url: str) -> dict[str, Any]:
+-    holder, capability, private, _ = NativeProcessStarter._credentials()
++    holder, capability, private, _ = create_native_stream_credentials()
+     return {
+         "flow_run_id": str(uuid4()),
+         "graph_revision_id": str(uuid4()),
