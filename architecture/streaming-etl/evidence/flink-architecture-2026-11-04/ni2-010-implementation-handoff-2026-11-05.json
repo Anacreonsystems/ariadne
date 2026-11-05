@@ -1,0 +1,133 @@
+{
+  "acceptance": [
+    "Compile, persist and read a byte-stable A1/B1/C2 metadata plan on PostgreSQL17 and the SQLite internal metadata path; SQLite public execution remains fail-closed.",
+    "Refuse invalid topology before TaskRun/grant/DATA/user-code side effects.",
+    "For the A1/B1/C2 fixture, seal four stable unassigned TaskRuns/subtasks and atomically admit them on two workers. Also prove generic N=sum(P) with an N=6/three-worker metadata admission and exact two-worker refusal; no hardcoded four-subtask profile rule.",
+    "Preserve old fixed-P2 API/eligibility while capable workers advertise both profiles.",
+    "Architect repeats selected server/client/runtime controls before done.",
+    "DAG claim, register and activation are typed EXECUTION_PROFILE_NOT_READY; production workers keep advertising/polling fixed-P2 only in NI2-010."
+  ],
+  "approval_version": "fae53c90aa3b44dbc45032833b4d193001e5c8bd",
+  "bounds": {
+    "first_gate_physical_subtasks": 4,
+    "max_edges": 32,
+    "max_operators": 16,
+    "max_parallelism_per_operator": 16,
+    "max_physical_subtasks": 128,
+    "port_schema_ids": [
+      "json-value-v1"
+    ]
+  },
+  "claims": {
+    "adr43_status": "progress",
+    "earned_percent_delta": 0,
+    "native_ready": false
+  },
+  "contract": {
+    "authoring": "A new StreamGraph builder validates add() locally and seals the complete graph only through explicit graph.seal(). Context-manager exit never performs HTTP or implicit seal. Existing Task.submit_partitioned_stream and PartitionedStream keep fixed-P2 behavior and typing.",
+    "execution_fence": "NI2-010 public API ends at graph.seal()->SealedStreamGraph. Server admission exists only as an internal/protected metadata/capacity operation. Production ProcessWorker does not advertise or poll partitioned-dag-v1 yet, and DAG claim/register/activate refuses with EXECUTION_PROFILE_NOT_READY. NI2-012 adds worker advertisement, sealed.start() and a running/wait handle after routing/runtime exists.",
+    "identity": "Stable graph revision, operator UID, port UID, edge UID, subscriber UID and edge-partition identity exclude TaskRun attempts. Physical subtasks remain ordinary TaskRuns.",
+    "keyed_yield": "Later keyed edges use explicit KeyedStreamOutput(value,key) encoded by tagged-key-v1. Plain yield remains unchanged; no reserved payload field or server-side callback.",
+    "placement": "Seal persists the complete topology plus N=sum(operator parallelism) stable unassigned TaskRuns/subtasks, bounded by 128. Admission locks enough eligible workers/capabilities for N placements under the shared max-two-live-children capacity, writes every assigned_worker_id and allocation row atomically, or writes none. SEALED rows are not occupied slots and are invisible to worker poll/claim. Four subtasks/two workers is only the first real A1/B1/C2 fixture; it is not a profile constant.",
+    "port_schema_digest": "json-value-v1 digest is SHA256 of canonical UTF-8 JSON {\"id\":\"json-value-v1\",\"type\":\"json-value\",\"version\":1} using sorted keys and compact separators.",
+    "ports": "One named output and at most one named logical input per operator. Portable schema ID json-value-v1 uses exact version/digest equality; Python annotations are not wire identity.",
+    "sqlite_boundary": "SQLite supports internal model/service topology compile, metadata seal and read-plan tests without grants, activation or DATA. Public executing seal/admit remains PostgreSQL17-only and returns exact UNSUPPORTED_BACKEND on SQLite.",
+    "storage": "Reuse existing StreamPartition/StreamRecord/StreamConsumer/StreamCompletion; no second store or client mailbox.",
+    "tail": "Flow code after graph.wait is supported. A finite Task tail is typed unsupported until its witness binds graph revision, full leaf set and physical retirements.",
+    "topology": "Reject cycles, duplicate operator/port/edge/subscriber identities, missing sources, fan-in, multiple outputs, incompatible schemas and unsupported profiles before grant, DATA or user code.",
+    "worker_capability": "Capabilities are additive per (worker, protocol, version); fixed-P2 and DAG coexist and share one max-two-live-children occupancy counter."
+  },
+  "deferred": {
+    "NI2-011": [
+      "terminal PAYLOAD/REFERENCE routing",
+      "exchanges",
+      "independent cursors and route replay"
+    ],
+    "NI2-012+": [
+      "fan-out execution and branch replacement"
+    ],
+    "NI2-020+": [
+      "fan-in/join"
+    ],
+    "NI2-070+": [
+      "finite Task tail and full acceptance"
+    ]
+  },
+  "dependency": {
+    "NI2-006": "PASS_N2_1_SCOPED",
+    "evidence": "../native-epoch2-n2-1-principal-acceptance-2026-11-05.json"
+  },
+  "first_server_slice": [
+    "Paired PostgreSQL/SQLite migrations for immutable port, edge and edge-partition topology referencing existing StreamPartition rows.",
+    "Versioned seal/read-plan DTO/API and additive profile capability.",
+    "Transactional topology validation creates N=sum(P) stable unassigned TaskRuns/subtasks; admission atomically persists sufficient-worker placement and N allocation rows, with zero grants/DATA and no partial placement on refusal. Include metadata-only N=6/three-worker positive and two-worker capacity-refusal controls.",
+    "PG17 and SQLite controls for cycle, duplicate subscriber, schema mismatch, unsupported fan-in and insufficient region capacity."
+  ],
+  "ownership": {
+    "architect": [
+      "ADR/status/AC map",
+      "wire decisions",
+      "independent verification"
+    ],
+    "client": [
+      "paired DTO/HTTP mirror after server DTO freeze",
+      "public local builder and sealed handle only; no public admit/start/wait in NI2-010"
+    ],
+    "root": [
+      "CI, source freeze, Git"
+    ],
+    "runtime": [
+      "local StreamGraph validation/seal coordinator only after wire freeze",
+      "no DAG claim/child execution until NI2-012"
+    ],
+    "server": [
+      "schemas/ORM/migrations/models/API and NI2-010 tests"
+    ],
+    "worker": [
+      "additive capability and shared occupancy"
+    ]
+  },
+  "profile": {
+    "first_native_shape": {
+      "edges": [
+        {
+          "exchange": "forward",
+          "uid": "A-B"
+        },
+        {
+          "exchange": "broadcast",
+          "uid": "A-C"
+        }
+      ],
+      "operators": [
+        {
+          "parallelism": 1,
+          "role": "SOURCE",
+          "uid": "A"
+        },
+        {
+          "parallelism": 1,
+          "role": "OPERATOR",
+          "uid": "B"
+        },
+        {
+          "parallelism": 2,
+          "role": "OPERATOR",
+          "uid": "C"
+        }
+      ],
+      "physical_slots_per_worker": 2,
+      "physical_task_runs": 4,
+      "workers": 2
+    },
+    "new": "partitioned-dag-v1",
+    "preserve": [
+      "bounded-linear-v1",
+      "partitioned-fixed-v1"
+    ]
+  },
+  "recorded_at": "2026-11-05",
+  "schema": "native-epoch2-ni2-010-implementation-handoff-v1",
+  "status": "authorized-for-implementation",
+  "task": "NI2-010"
+}

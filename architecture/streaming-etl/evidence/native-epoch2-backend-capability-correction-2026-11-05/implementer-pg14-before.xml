@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="7.232" timestamp="2026-11-05T01:24:28.126016+00:00" hostname="f8abb611283c"><testcase classname="tests.server.api.test_stream_subtasks" name="test_capability_is_not_echoed_from_validation_or_off_allowlist" time="7.021"><failure message="assert 422 in (401, 404)&#10; +  where 422 = &lt;Response [422 Unprocessable Entity]&gt;.status_code">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fdc50531760&gt;
+physical_api = &lt;httpx.AsyncClient object at 0x7fdc4e96fbf0&gt;
+
+    async def test_capability_is_not_echoed_from_validation_or_off_allowlist(
+        db: PrefectDBInterface, physical_api: httpx.AsyncClient
+    ):
+        secret = "ab" * 32
+        basic = "Basic " + base64.b64encode(b"native-physical:test").decode()
+        body = {"operation_id": str(uuid4()), "capability": secret, "unexpected": secret}
+        response = await physical_api.post(
+            f"/streams/v2/subtasks/{uuid4()}/claim",
+            json=body,
+            headers={"Authorization": basic},
+        )
+        assert response.status_code == 422
+        assert secret not in response.text
+        scoped = s.StreamSubtaskCredentials(grant_id=uuid4(), capability=secret)
+        wrong_resource = await physical_api.get(
+            f"/streams/v1/{uuid4()}", headers=headers(scoped)
+        )
+&gt;       assert wrong_resource.status_code in (
+            (401, 404) if db.dialect.name == "postgresql" else (422,)
+        )
+E       assert 422 in (401, 404)
+E        +  where 422 = &lt;Response [422 Unprocessable Entity]&gt;.status_code
+
+tests/server/api/test_stream_subtasks.py:170: AssertionError</failure></testcase></testsuite></testsuites>

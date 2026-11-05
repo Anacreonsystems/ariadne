@@ -39,7 +39,7 @@ the agreed durable-yield protocol and Prefect lifecycle authority.
 | Capability | Native today | Direction / required proof |
 | --- | --- | --- |
 | Finite linear per-record streaming | Accepted within `bounded-linear-v1` | Preserve [epoch 1 evidence](../evidence/native-epoch1-final-acceptance-2026-11-04.json). |
-| Separate physical operator processes / partitions | Not implemented | [ADR-0043](../adr/ADR-0043-physical-graph-and-partitioned-channels.md): stable logical operator, TaskRun per physical subtask, independent owners and resource admission. |
+| Separate physical operator processes / partitions | Accepted for the finite fixed-P2 N2.1 slice | [ADR-0043](../adr/ADR-0043-physical-graph-and-partitioned-channels.md): stable logical operator, TaskRun per physical subtask, independent owners and resource admission; branched DAG routing remains open. |
 | Fan-out, named inputs, correlated join | Historical prototype evidence only | [ADR-0043](../adr/ADR-0043-physical-graph-and-partitioned-channels.md) / [ADR-0044](../adr/ADR-0044-multi-input-turns-and-state-materialization.md): real native DAG and business-key match oracle. |
 | Journaled state with derived snapshots | Narrow standalone experiment in this cycle | [ADR-0044](../adr/ADR-0044-multi-input-turns-and-state-materialization.md): no accepted-body replay; then native integration. |
 | Continuous split sources / event time / timers | Not implemented | [ADR-0045](../adr/ADR-0045-continuous-sources-event-time-and-timers.md). |
@@ -57,9 +57,10 @@ the agreed durable-yield protocol and Prefect lifecycle authority.
    real process termination. This tests a theory, not native product completion.
 5. Review the resulting documents and validate their graph.
 
-The current cycle earns **zero new native capability completion**. Overall
-original-objective progress is not inferred from seven ADR files or a passing
-model. Keep the foundation's historical percentage and the new scope separate.
+Architecture documents and the standalone model earned no capability by
+themselves. The later fixed-P2 implementation and independent N2.1 gate now
+earn 15%; keep the foundation's historical percentage and the new scope
+separate.
 
 ## First proposed native vertical slice
 
@@ -155,12 +156,12 @@ The milestone percentages below measure the **new epoch-2 profile problem**,
 separately from epoch 1's accepted bounded foundation. The
 [sprint board](../sprint_board.md) divides them into 24 short sub-sprints with
 concrete exits. Planned shares total 100%; earned native readiness is currently
-**0%**.
+**15%**.
 
 | Sprint | State | Cumulative target | Share | Tasks | Native exit |
 | --- | --- | ---: | ---: | --- | --- |
-| N2.1 — Fixed physical execution | `progress` | 15% | +15% | NI2-001…006 | Immutable P2 plan, ordinary TaskRun per physical subtask, strict subtask grant, existing PostgreSQL data-plane reuse, separate source/operator processes, input 200/201 recovery, constant metadata at 500/5000, SQLite refusal and independent Principal gate. |
-| N2.2 — Branched DAG and exchanges | `planned` | 27% | +12% | NI2-010…014 | Versioned forward/rebalance/broadcast/keyed exchanges, fan-out, independent subscribers and exact route replay pass real SDK/API/PostgreSQL faults. |
+| N2.1 — Fixed physical execution | `done` | 15% | +15% | NI2-001…006 | Immutable P2 plan, ordinary TaskRun per physical subtask, strict subtask grant, existing PostgreSQL data-plane reuse, separate source/operator processes, input 200/201 recovery, constant metadata at 500/5000, SQLite refusal and independent Principal gate. |
+| N2.2 — Branched DAG and exchanges | `progress` | 27% | +12% | NI2-010…014 | Versioned forward/rebalance/broadcast/keyed exchanges, fan-out, independent subscribers and exact route replay pass real SDK/API/PostgreSQL faults. |
 | N2.3 — Multi-input state and join | `planned` | 42% | +15% | NI2-020…025 | Journaled turn state, mailbox order, OUTPUT/NO_OUTPUT compatibility, correlated join and complete barrier cuts pass native process faults without accepted-body replay. |
 | N2.4 — Continuous source/event time | `planned` | 55% | +13% | NI2-030…035 | Split enumerator/readers, ordered controls, drain, watermarks, idleness and timers pass real continuous native gates. |
 | N2.5 — Pressure and online retention | `planned` | 67% | +12% | NI2-040…045 | Full-turn reservations, fair credits, branch pressure, online segment/object GC and bounded PostgreSQL storage plateau pass. |
@@ -169,9 +170,9 @@ concrete exits. Planned shares total 100%; earned native readiness is currently
 | N2.8 — Full profile acceptance | `planned` | 100% | +10% | NI2-070…075 | Source → fan-out → keyed join → sink, continuous pressure, recovery, rescale, load/resource limits, regressions, packaging/UI and independent evidence graph all pass on frozen source. |
 
 No intermediate task earns a fraction of its sprint. A share moves to earned
-only when that sprint's exit, every mapped ADR criterion, and independent
-source-bound verification pass. Historical or standalone prototype evidence is
-never substituted for a native gate.
+only when that sprint's declared exit and independent source-bound verification
+pass. Partial ADR criteria remain explicitly open for later sprints; historical
+or standalone prototype evidence is never substituted for a native gate.
 
 The [first host preflight](../evidence/native-epoch2-host-preflight-2026-11-04/run-41928669274/receipt.json)
 is retained as an `UNPROVEN` infrastructure observation: its two ARC jobs did
@@ -253,3 +254,30 @@ The [ADR graph](../adr/README.md), [reference comparison](../research/flink-2.3-
 and [Principal discussion](../evidence/flink-architecture-2026-11-04/principal-discussion.json)
 provide navigation into the design. Each new ADR stays `planning` or `progress`
 until its own implemented scope and every acceptance criterion have evidence.
+
+## N2.1 scoped acceptance — 2026-11-05
+
+The [Principal N2.1 acceptance](../evidence/native-epoch2-n2-1-principal-acceptance-2026-11-05.json)
+closes NI2-001…006 and earns the first 15% share. Its independent frozen matrix
+passes all thirteen fixed-P2 cases: sync/async, both input-200 recovery cuts,
+500 and 5000 records, authority/import/startup failures and delayed process
+retirement. The [native13 archive](../evidence/native-epoch2-final-native13-2026-11-05/index.json)
+binds the unchanged 2,232-file input map and the copied generated build module.
+
+Complementary PostgreSQL17 and SQLite controls, PostgreSQL14 backend refusal,
+paired migration successors, SDK/package/type regressions and exact startup
+cleanup are mapped by hash in the acceptance record. The
+[source-relevance bridge](../evidence/native-epoch2-n2-1-source-relevance-2026-11-05.json)
+keeps two later test-oracle corrections separate from the frozen product run;
+production and DDL bytes did not change. Hosted successor status is tracked as
+publication evidence and does not rewrite the independent local results.
+The [hosted parent failure archive](../evidence/native-epoch2-ci-parent-1e0ac8d-2026-11-05/index.json)
+retains the actual PostgreSQL14 and legacy SQLite job logs that triggered the
+two test-only corrections.
+
+This is the fixed finite P2 execution primitive only. ADR-0043 remains
+`progress`: branched DAG sealing, independent branch cursors and immutable
+multi-exchange routing stay open in N2.2, while the later ADRs retain their
+original planning gates.
+The [N2.1 documentation graph](../evidence/native-epoch2-n2-1-graph-2026-11-05.json)
+validates the resulting statuses and local evidence links.

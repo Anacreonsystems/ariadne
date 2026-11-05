@@ -167,14 +167,23 @@ async def test_capability_is_not_echoed_from_validation_or_off_allowlist(
     wrong_resource = await physical_api.get(
         f"/streams/v1/{uuid4()}", headers=headers(scoped)
     )
-    assert wrong_resource.status_code in (
-        (401, 404) if db.dialect.name == "postgresql" else (422,)
-    )
+    engine = await db.engine()
+    async with engine.connect() as connection:
+        version = connection.dialect.server_version_info or ()
+        supported_backend = connection.dialect.name == "postgresql" and version[:1] == (
+            17,
+        )
+    if supported_backend:
+        assert wrong_resource.status_code in (401, 404)
+    else:
+        assert wrong_resource.status_code == 422
+        assert wrong_resource.json()["detail"]["code"] == "UNSUPPORTED_BACKEND"
     assert secret not in wrong_resource.text
     redirected = await physical_api.get(
         "/streams/v1/finite/plan?flow_run_id=" + str(uuid4()), headers=headers(scoped)
     )
     assert redirected.status_code == 401
+    assert secret not in redirected.text
 
 
 async def test_profile_admission_fails_closed_without_protected_api(

@@ -8,9 +8,10 @@ Current direction: [Native integration epoch 2](epochs/epoch-02-native-streaming
 implements the explicitly approved [ADR-0042](adr/ADR-0042-flink-informed-native-streaming-architecture.md)–[ADR-0048](adr/ADR-0048-rescaling-compatibility-and-native-acceptance.md)
 set. The user approved version `fae53c90aa3b44dbc45032833b4d193001e5c8bd`
 on 2026-11-04; the [approval record](evidence/flink-architecture-2026-11-04/epoch2-work-approval-2026-11-04.json)
-binds the decision bytes. The original broader objective remains unfinished,
-and earned epoch-2 native readiness remains **0%** until implementation gates
-pass.
+binds the decision bytes. The original broader objective remains unfinished.
+The independently verified fixed-P2 slice earns **15%** of the epoch-2 target;
+branched DAG, state, continuous input, cross-host recovery and rescale remain
+open.
 
 Historical foundation: [Native integration epoch 1](epochs/epoch-01-native-prefect.md)
 is `accepted`, with **100% earned native foundation readiness** for the selected scope. Its [first-stage contract](adr/ADR-0032-native-task-stream-contract.md)
@@ -54,22 +55,22 @@ edges start at the completed ADR-0032–ADR-0040 foundation and proceed through
 ADR-0043–ADR-0048. Stable `Axx-yy` IDs refer to the unchanged criterion mapping
 appended to each approved ADR.
 
-### N2.1 — Fixed physical execution (`+15%`, earned `0%`)
+### N2.1 — Fixed physical execution (`+15%`, earned `15%`)
 
 | ID | State | Depends | Size/risk | Deliverable and mapped criteria |
 | --- | --- | --- | --- | --- |
-| NI2-001 | `progress` | ADR-0032…0040, A43-01 | M/H | Immutable graph revision, logical operator and physical subtask/grant topology with paired migrations. Reuse existing StreamPartition/Record/Consumer/Completion and ordinary TaskRun; no second data plane. |
-| NI2-002 | `progress` | NI2-001 | M/H | Freeze reserve/seal/read-plan and subtask claim/register/renew/replacement server DTO/API with secret-free projection. A child gets only an exact subtask credential, never Basic/Flow-wide/admin authority. A43-01, A43-05, A43-07. |
-| NI2-003 | `progress` | NI2-001, NI2-002 | L/H | Extend existing append/read/complete/status, task-event and task-lease guards with graph/assignment/subtask/attempt authority. Scope the former one-source restriction only for `partitioned-fixed-v1`; preserve `bounded-linear-v1`. Reserve the runnable P2 region before any source starts. A43-03, A43-05, A43-08. |
+| NI2-001 | `done` | ADR-0032…0040, A43-01 | M/H | Immutable graph revision, logical operator and physical subtask/grant topology with paired migrations. Reuse existing StreamPartition/Record/Consumer/Completion and ordinary TaskRun; no second data plane. |
+| NI2-002 | `done` | NI2-001 | M/H | Freeze reserve/seal/read-plan and subtask claim/register/renew/replacement server DTO/API with secret-free projection. A child gets only an exact subtask credential, never Basic/Flow-wide/admin authority. A43-01, A43-05, A43-07. |
+| NI2-003 | `done` | NI2-001, NI2-002 | L/H | Extend existing append/read/complete/status, task-event and task-lease guards with graph/assignment/subtask/attempt authority. Scope the former one-source restriction only for `partitioned-fixed-v1`; preserve `bounded-linear-v1`. Reserve the runnable P2 region before any source starts. A43-03, A43-05, A43-08. |
 | NI2-004 | `done` | approved ADR-0043 | S/M | Internal `tagged-key-v1` exact codec/group mapping and cross-runtime/hash-seed golden controls; [independent component verification](evidence/flink-architecture-2026-11-04/ni2-004-principal-verification-2026-11-04.json) passed 85/85 without skips. No public wire, admission or readiness claim yet. A43-06, A43-10. |
-| NI2-005 | `progress` | NI2-002, NI2-003, NI2-004 | L/H | Thin source/operator subtask subprocess bootstrap over existing TaskRun engines and ProcessHandle/pidfd. P2 has A0/A1 source and B0/B1 operator TaskRuns, each with existing output partitions; one Flow lease and ordinary task/tag leases. A43-04, A43-05, A43-07, A43-08. |
-| NI2-006 | `progress` | NI2-001…005 | M/H | Real SDK/HTTP/PostgreSQL P2 gate: sync/async, 500/5000 inputs, B0 loss, healthy A0/A1/B1, 200/201 recovery, cross-subtask capability and slot-starvation controls, SQLite fail-closed, finite regressions, packaging and Principal execution. The [reviewable product checkpoint](evidence/native-epoch2-product-checkpoint-2026-11-05/receipt.json) is frozen; final Principal execution remains open. A42-01, A43-01, A43-03…08, A43-10. |
+| NI2-005 | `done` | NI2-002, NI2-003, NI2-004 | L/H | Thin source/operator subtask subprocess bootstrap over existing TaskRun engines and ProcessHandle/pidfd. P2 has A0/A1 source and B0/B1 operator TaskRuns, each with existing output partitions; one Flow lease and ordinary task/tag leases. A43-04, A43-05, A43-07, A43-08. |
+| NI2-006 | `done` | NI2-001…005 | M/H | Real SDK/HTTP/PostgreSQL P2 gate: sync/async, 500/5000 inputs, B0 loss, healthy A0/A1/B1, 200/201 recovery, cross-subtask capability and slot-starvation controls, SQLite fail-closed, finite regressions, packaging and [Principal acceptance](evidence/native-epoch2-n2-1-principal-acceptance-2026-11-05.json). A42-01, A43-01, A43-03…08, A43-10. |
 
 ### N2.2 — Branched DAG and durable exchanges (`+12%`)
 
 | ID | State | Depends | Size/risk | Deliverable and mapped criteria |
 | --- | --- | --- | --- | --- |
-| NI2-010 | `planned` | NI2-006 | M/H | Seal named typed ports, DAG revision and acyclic topology; reject cycles, duplicate subscribers and unsupported edges before user code. A43-02. |
+| NI2-010 | `progress` | NI2-006 | M/H | Seal named typed ports, DAG revision and acyclic topology; reject cycles, duplicate subscribers and unsupported edges before user code. The [implementation handoff](evidence/flink-architecture-2026-11-04/ni2-010-implementation-handoff-2026-11-05.json) freezes the first A1 → B1/C2 shape and compatibility bounds. A43-02. |
 | NI2-011 | `planned` | NI2-010 | L/H | Materialize bounded forward/rebalance/broadcast/keyed routes in the existing terminal transaction, with independent edge partitions/cursors/pins. A43-03, A43-09. |
 | NI2-012 | `planned` | NI2-010, NI2-011 | M/H | SDK/client/worker graph bootstrap and fan-out while retaining ordinary Task definitions and constant metadata per fixed graph. A42-02, A43-02, A43-04. |
 | NI2-013 | `planned` | NI2-011, NI2-012 | M/H | Exact append/read retry and branch replacement with immutable route digest, different partition counts and no cross-branch acknowledgement. A43-03, A43-09. |

@@ -308,3 +308,19 @@ the explicit eight-module server type gate and the copied generated build-info
 module. It also records the separate owned checkout and import-path proof used
 for the independent matrix. The checkpoint makes the implementation
 reviewable; it does not itself accept A43 or earn readiness.
+
+The [N2.1 Principal acceptance](../evidence/native-epoch2-n2-1-principal-acceptance-2026-11-05.json)
+now accepts the fixed-P2 implementation slice and earns its planned 15% epoch
+share. The [source-bound native13 archive](../evidence/native-epoch2-final-native13-2026-11-05/index.json)
+passes thirteen real two-worker process cases with zero source drift, including
+both input-200 cuts and sync/async 5000-document runs. Complementary server,
+migration, SDK, worker and backend-security evidence is linked by hash from the
+acceptance record; the two post-run test-oracle corrections changed no product
+or DDL input.
+
+ADR-0043 remains `progress`. A43-04 passes for the fixed graph, and A43-01,
+A43-05, A43-07 and A43-08 have scoped fixed-P2 evidence. A43-02 and A43-09 stay
+open; A43-03, A43-06 and A43-10 retain the explicit partial boundaries in the
+criterion map until the branched DAG, routed exchanges and cross-host profiles
+run. This acceptance does not convert the linear slice into a general DAG
+claim.
