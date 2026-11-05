@@ -1,0 +1,36 @@
+............................................F                            [100%]
+=================================== FAILURES ===================================
+____________ test_lifecycle_sqlite_refuses_before_locator_or_write _____________
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7ff297c37c50>
+
+    async def test_lifecycle_sqlite_refuses_before_locator_or_write(
+        db: PrefectDBInterface,
+    ):
+        async with db.session_context(begin_transaction=True) as session:
+            before = await session.scalar(
+                sa.select(sa.func.count()).select_from(db.StreamDAGLifecycleOperation)
+            )
+            with pytest.raises(NativeStreamError) as error:
+                await m.read_stream_dag_execution(session, db, uuid4(), None)
+>           assert error.value.code == "UNSUPPORTED_BACKEND"
+E           AssertionError: assert 'UNPROTECTED_API' == 'UNSUPPORTED_BACKEND'
+E             
+E             - UNSUPPORTED_BACKEND
+E             + UNPROTECTED_API
+
+tests/server/models/test_stream_dag_executions.py:2001: AssertionError
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+20:33:52.833 | INFO    | uvicorn.error - Shutting down
+20:33:52.938 | INFO    | uvicorn.error - Waiting for application shutdown.
+20:33:52.944 | INFO    | uvicorn.error - Application shutdown complete.
+20:33:52.945 | INFO    | uvicorn.error - Finished server process [345307]
+Executing <Task finished name='Task-4420' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.342 seconds
+20:33:54.209 | WARNING | asyncio - Executing <Task finished name='Task-4420' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.342 seconds
+---------------------------- Captured log teardown -----------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task finished name='Task-4420' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.342 seconds
+=========================== short test summary info ============================
+FAILED tests/server/models/test_stream_dag_executions.py::test_lifecycle_sqlite_refuses_before_locator_or_write
+1 failed, 44 passed in 276.44s (0:04:36)

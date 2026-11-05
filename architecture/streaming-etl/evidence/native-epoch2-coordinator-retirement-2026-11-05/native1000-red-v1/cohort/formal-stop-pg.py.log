@@ -1,0 +1,31 @@
+"""Collect exact owned teardown and source-map facts; never kill any process."""
+import asyncio,hashlib,json,re,sys
+from pathlib import Path
+import asyncpg
+
+trial=Path(sys.argv[1]);lease_path=Path(sys.argv[2]);root=Path('/workspace/ariadne')
+config=json.loads(Path('/tmp/native-ni012-runtime-test-env.json').read_text());database=json.loads((trial/'database.json').read_text());lease=json.loads(lease_path.read_text())
+pids=set()
+for p in (trial/'audit').glob('*.jsonl'):
+ for line in p.read_text().splitlines():pids.add(json.loads(line)['pid'])
+if (trial/'observer-session.json').exists():pids.add(json.loads((trial/'observer-session.json').read_text())['pid'])
+if (trial/'health-session.json').exists():pids.add(json.loads((trial/'health-session.json').read_text())['monitor_pid'])
+async def db_status():
+ c=await asyncpg.connect(config['admin_dsn'])
+ try:
+  names=[database['name'],database['name']+'_tests_master']
+  sessions=await c.fetch('SELECT pid,datname,state FROM pg_stat_activity WHERE datname=ANY($1::text[])',names)
+  databases=await c.fetch('SELECT datname FROM pg_database WHERE datname=ANY($1::text[])',names)
+  return [dict(r) for r in sessions],[dict(r) for r in databases]
+ finally:await c.close()
+sessions,databases=asyncio.run(db_status());after={};drift=[]
+for name,before in lease['files'].items():
+ p=Path(name);p=p if p.is_absolute() else root/p;b=p.read_bytes();item={'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()};after[name]=item
+ if item!=before:drift.append(name)
+(trial/'source-lease-after.json').write_text(json.dumps(after,indent=2,sort_keys=True)+'\n')
+lease_result={'lease_sha256':hashlib.sha256(lease_path.read_bytes()).hexdigest(),'files':len(after),'drift':drift,'pytest_exit':int((trial/'exit').read_text())}
+(trial/'source-lease-drift.json').write_text(json.dumps(lease_result,indent=2)+'\n')
+markers={str(p.relative_to(trial)):json.loads(p.read_text()) for p in (trial/'pytest').rglob('*.pid.json')}
+result={**lease_result,'observed_pids':sorted(pids),'remaining_observed_pids':[pid for pid in sorted(pids) if Path('/proc',str(pid)).exists()],'remaining_database_sessions':sessions,'remaining_owned_databases':databases,'physical_task_markers':markers,'signal_sent':False}
+(trial/'formal-stop.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+print(json.dumps({'trial':str(trial),'exit':lease_result['pytest_exit'],'formal_stop_sha256':hashlib.sha256((trial/'formal-stop.json').read_bytes()).hexdigest(),'observed_pid_count':len(pids),'remaining_pids':result['remaining_observed_pids'],'db_sessions':len(sessions),'source_files':len(after),'source_drift':drift}),flush=True)

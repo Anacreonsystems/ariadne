@@ -233,6 +233,8 @@ def author(directory, count, mode, asynchronous, c_exchange="broadcast"):
 @flow(version="dag-lifecycle-v1", retries=0, persist_result=False,
       streaming=NativeStreamFlowConfig(profile="partitioned-dag-v1", partition_count=None))
 def documents(directory: str, count: int = 8, mode: str = "normal", wait_timeout: float = 150, c_exchange: str = "broadcast"):
+    if mode == "preseal-failure":
+        raise ValueError("Application failure before DAG authoring")
     sealed = author(directory, count, mode, False, c_exchange)
     if mode == "preview":
         return {"preview": True}
@@ -249,6 +251,8 @@ def documents(directory: str, count: int = 8, mode: str = "normal", wait_timeout
 @flow(version="dag-lifecycle-v1", retries=0, persist_result=False,
       streaming=NativeStreamFlowConfig(profile="partitioned-dag-v1", partition_count=None))
 async def documents_async(directory: str, count: int = 8, mode: str = "normal", wait_timeout: float = 150, c_exchange: str = "broadcast"):
+    if mode == "preseal-failure":
+        raise ValueError("Application failure before DAG authoring")
     sealed = author(directory, count, mode, True, c_exchange)
     if mode == "preview":
         return {"preview": True}
@@ -283,6 +287,19 @@ async def test_public_dag_lifecycle_two_real_workers_postgres(
 ):
     await _run_dag_lifecycle(
         execution_api, tmp_path, db, asynchronous=asynchronous, mode=mode
+    )
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.timeout(180)
+async def test_public_dag_preseal_failure_two_real_workers_postgres(
+    execution_api: RestartableAPI,
+    tmp_path: Path,
+    db: Any,
+    asynchronous: bool,
+):
+    await _run_dag_lifecycle(
+        execution_api, tmp_path, db, asynchronous=asynchronous, mode="preseal-failure"
     )
 
 
@@ -369,6 +386,148 @@ async def test_public_dag_branch_recovery_postgres(
         wait_timeout=750,
         observation_timeout=840,
     )
+
+
+def _terminal_worker_health(
+    logs: list[Path], terminal_timestamp: float, *, strict_all: bool
+) -> dict[str, Any]:
+    """Keep expected faults, but reject genuine terminal infrastructure errors."""
+    errors: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for path in logs:
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            fields = line.split("|", 2)
+            if len(fields) != 3 or fields[1].strip() != "ERROR":
+                continue
+            infrastructure = (
+                fields[2]
+                .strip()
+                .startswith(
+                    ("prefect.runner.", "prefect.workers.", "prefect.flow_runs.worker")
+                )
+            )
+            try:
+                hours, minutes, seconds = fields[0].strip().split(":")
+                if not (
+                    0 <= int(hours) < 24
+                    and 0 <= int(minutes) < 60
+                    and 0 <= float(seconds) < 60
+                ):
+                    raise ValueError("Invalid console clock")
+                clock = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+                # A bounded (<12h) run can cross midnight. Choose the nearest
+                # UTC day to the authoritative final Flow state timestamp.
+                delta = (clock - terminal_timestamp % 86400 + 43200) % 86400 - 43200
+            except ValueError:
+                delta = None
+            error = {
+                "file": path.name,
+                "line": number,
+                "text": line,
+                "seconds_after_final": delta,
+            }
+            errors.append(error)
+            if strict_all or (infrastructure and (delta is None or delta >= -0.001)):
+                rejected.append(error)
+    return {
+        "terminal_utc_epoch_seconds": terminal_timestamp,
+        "strict_all_errors": strict_all,
+        "errors": errors,
+        "rejected": rejected,
+    }
+
+
+async def _coordinator_progress(db: Any, flow_run_id: Any) -> dict[str, Any]:
+    """Read the parent coordinator independently of the terminal DAG proof."""
+    async with db.session_context() as session:
+        authority = await session.scalar(
+            sa.select(db.StreamExecutionAuthority).where(
+                db.StreamExecutionAuthority.flow_run_id == flow_run_id
+            )
+        )
+        snapshot = await session.scalar(
+            sa.select(db.NativeStreamDeploymentSnapshot).where(
+                db.NativeStreamDeploymentSnapshot.flow_run_id == flow_run_id
+            )
+        )
+        launches = (
+            await session.scalars(
+                sa.select(db.NativeStreamLaunchIdentity).where(
+                    db.NativeStreamLaunchIdentity.flow_run_id == flow_run_id
+                )
+            )
+        ).all()
+        return {
+            "authority_state": None if authority is None else authority.state,
+            "snapshot_state": None if snapshot is None else snapshot.state,
+            "launch_states": [row.state for row in launches],
+        }
+
+
+async def _preseal_execution_counts(db: Any, flow_run_id: Any) -> dict[str, int]:
+    """Prove this failed parent never created a DAG or any native child data."""
+    tasks = sa.select(db.TaskRun.id).where(db.TaskRun.flow_run_id == flow_run_id)
+    subtasks = sa.select(db.StreamPhysicalSubtask.id).where(
+        db.StreamPhysicalSubtask.task_run_id.in_(tasks)
+    )
+    streams = sa.select(db.StreamPartition.id).where(
+        db.StreamPartition.flow_run_id == flow_run_id
+    )
+    async with db.session_context() as session:
+        return {
+            model.__tablename__: int(
+                await session.scalar(
+                    sa.select(sa.func.count()).select_from(model).where(predicate)
+                )
+                or 0
+            )
+            for model, predicate in (
+                (
+                    db.StreamGraphRevision,
+                    db.StreamGraphRevision.flow_run_id == flow_run_id,
+                ),
+                (db.TaskRun, db.TaskRun.flow_run_id == flow_run_id),
+                (db.StreamSubmission, db.StreamSubmission.flow_run_id == flow_run_id),
+                (
+                    db.StreamFiniteSubmission,
+                    db.StreamFiniteSubmission.flow_run_id == flow_run_id,
+                ),
+                (db.StreamPartition, db.StreamPartition.flow_run_id == flow_run_id),
+                (
+                    db.StreamPhysicalSubtask,
+                    db.StreamPhysicalSubtask.task_run_id.in_(tasks),
+                ),
+                (db.StreamSubtaskGrant, db.StreamSubtaskGrant.subtask_id.in_(subtasks)),
+                (
+                    db.StreamDAGLaunchAttempt,
+                    db.StreamDAGLaunchAttempt.task_run_id.in_(tasks),
+                ),
+                (
+                    db.StreamPhysicalSlotAllocation,
+                    db.StreamPhysicalSlotAllocation.subtask_id.in_(subtasks),
+                ),
+                (
+                    db.StreamSubtaskAllocation,
+                    db.StreamSubtaskAllocation.subtask_id.in_(subtasks),
+                ),
+                (
+                    db.StreamDAGLifecycleOperation,
+                    db.StreamDAGLifecycleOperation.flow_run_id == flow_run_id,
+                ),
+                (db.StreamRecord, db.StreamRecord.stream_id.in_(streams)),
+                (
+                    db.StreamRouteReceipt,
+                    db.StreamRouteReceipt.flow_run_id == flow_run_id,
+                ),
+                (
+                    db.StreamConsumer,
+                    sa.or_(
+                        db.StreamConsumer.input_stream_id.in_(streams),
+                        db.StreamConsumer.output_stream_id.in_(streams),
+                    ),
+                ),
+            )
+        }
 
 
 async def _dag_progress(db: Any, flow_run_id: Any) -> dict[str, Any] | None:
@@ -881,10 +1040,71 @@ async def _run_dag_lifecycle(
             "CANCELLED"
             if mode == "cancel"
             else "FAILED"
-            if mode == "failure"
+            if mode in {"failure", "preseal-failure"}
             else "COMPLETED"
         )
         assert current.state.type.value == expected, str(current.state)
+        # Flow finality precedes the starter's observed-terminal release RPC.
+        # Wait for that separate metadata transition, without changing any
+        # platform request timeout or accepting the graph proof as its proxy.
+        retirement_deadline = time.monotonic() + 30
+        while time.monotonic() < retirement_deadline:
+            assert all(worker.poll() is None for worker in workers)
+            coordinator = await _coordinator_progress(db, run.id)
+            if (
+                coordinator["authority_state"] == "RELEASED"
+                and coordinator["snapshot_state"] == "RELEASED"
+                and coordinator["launch_states"]
+                and set(coordinator["launch_states"]) == {"RELEASED"}
+            ):
+                break
+            await asyncio.sleep(0.2)
+        else:
+            (tmp_path / "coordinator-retirement.json").write_text(
+                json.dumps(coordinator, sort_keys=True, indent=2)
+            )
+            raise AssertionError(f"Final coordinator was not retired: {coordinator}")
+        (tmp_path / "coordinator-retirement.json").write_text(
+            json.dumps(coordinator, sort_keys=True, indent=2)
+        )
+        await asyncio.sleep(0.2)
+        worker_health = _terminal_worker_health(
+            logs, current.state.timestamp.timestamp(), strict_all=mode == "normal"
+        )
+        (tmp_path / "worker-health.json").write_text(
+            json.dumps(worker_health, sort_keys=True, indent=2)
+        )
+        assert worker_health["rejected"] == [], worker_health
+        if mode == "preseal-failure":
+            counts = await _preseal_execution_counts(db, run.id)
+            assert set(counts.values()) == {0}, counts
+            assert list(tmp_path.glob("*.pid.json")) == []
+            with server.client() as client:
+                assert (
+                    client.read_global_concurrency_limit_by_name(
+                        "tag:" + _TAG
+                    ).active_slots
+                    == 0
+                )
+            (tmp_path / "observations.json").write_text(
+                json.dumps(
+                    {
+                        "flow_run_id": str(run.id),
+                        "flow_state": expected,
+                        "graph_revision_id": None,
+                        "mode": mode,
+                        "count": count,
+                        "asynchronous": asynchronous,
+                        "task_runs": 0,
+                        "zero_execution_counts": counts,
+                        "worker_ids": [str(worker.id) for worker in registered],
+                        "workers": [worker.pid for worker in workers],
+                    },
+                    sort_keys=True,
+                    indent=2,
+                )
+            )
+            return
         async with db.session_context() as session:
             graph = (
                 await session.scalars(

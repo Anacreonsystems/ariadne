@@ -1,0 +1,159 @@
+--- native-five-held-c171.py
++++ native-preseal-successor.py
+@@ -233,6 +233,8 @@
+ @flow(version="dag-lifecycle-v1", retries=0, persist_result=False,
+       streaming=NativeStreamFlowConfig(profile="partitioned-dag-v1", partition_count=None))
+ def documents(directory: str, count: int = 8, mode: str = "normal", wait_timeout: float = 150, c_exchange: str = "broadcast"):
++    if mode == "preseal-failure":
++        raise ValueError("Application failure before DAG authoring")
+     sealed = author(directory, count, mode, False, c_exchange)
+     if mode == "preview":
+         return {"preview": True}
+@@ -249,6 +251,8 @@
+ @flow(version="dag-lifecycle-v1", retries=0, persist_result=False,
+       streaming=NativeStreamFlowConfig(profile="partitioned-dag-v1", partition_count=None))
+ async def documents_async(directory: str, count: int = 8, mode: str = "normal", wait_timeout: float = 150, c_exchange: str = "broadcast"):
++    if mode == "preseal-failure":
++        raise ValueError("Application failure before DAG authoring")
+     sealed = author(directory, count, mode, True, c_exchange)
+     if mode == "preview":
+         return {"preview": True}
+@@ -283,6 +287,19 @@
+ ):
+     await _run_dag_lifecycle(
+         execution_api, tmp_path, db, asynchronous=asynchronous, mode=mode
++    )
++
++
++@pytest.mark.parametrize("asynchronous", [False, True])
++@pytest.mark.timeout(180)
++async def test_public_dag_preseal_failure_two_real_workers_postgres(
++    execution_api: RestartableAPI,
++    tmp_path: Path,
++    db: Any,
++    asynchronous: bool,
++):
++    await _run_dag_lifecycle(
++        execution_api, tmp_path, db, asynchronous=asynchronous, mode="preseal-failure"
+     )
+ 
+ 
+@@ -444,6 +461,72 @@
+             "authority_state": None if authority is None else authority.state,
+             "snapshot_state": None if snapshot is None else snapshot.state,
+             "launch_states": [row.state for row in launches],
++        }
++
++
++async def _preseal_execution_counts(db: Any, flow_run_id: Any) -> dict[str, int]:
++    """Prove this failed parent never created a DAG or any native child data."""
++    tasks = sa.select(db.TaskRun.id).where(db.TaskRun.flow_run_id == flow_run_id)
++    subtasks = sa.select(db.StreamPhysicalSubtask.id).where(
++        db.StreamPhysicalSubtask.task_run_id.in_(tasks)
++    )
++    streams = sa.select(db.StreamPartition.id).where(
++        db.StreamPartition.flow_run_id == flow_run_id
++    )
++    async with db.session_context() as session:
++        return {
++            model.__tablename__: int(
++                await session.scalar(
++                    sa.select(sa.func.count()).select_from(model).where(predicate)
++                )
++                or 0
++            )
++            for model, predicate in (
++                (
++                    db.StreamGraphRevision,
++                    db.StreamGraphRevision.flow_run_id == flow_run_id,
++                ),
++                (db.TaskRun, db.TaskRun.flow_run_id == flow_run_id),
++                (db.StreamSubmission, db.StreamSubmission.flow_run_id == flow_run_id),
++                (
++                    db.StreamFiniteSubmission,
++                    db.StreamFiniteSubmission.flow_run_id == flow_run_id,
++                ),
++                (db.StreamPartition, db.StreamPartition.flow_run_id == flow_run_id),
++                (
++                    db.StreamPhysicalSubtask,
++                    db.StreamPhysicalSubtask.task_run_id.in_(tasks),
++                ),
++                (db.StreamSubtaskGrant, db.StreamSubtaskGrant.subtask_id.in_(subtasks)),
++                (
++                    db.StreamDAGLaunchAttempt,
++                    db.StreamDAGLaunchAttempt.task_run_id.in_(tasks),
++                ),
++                (
++                    db.StreamPhysicalSlotAllocation,
++                    db.StreamPhysicalSlotAllocation.subtask_id.in_(subtasks),
++                ),
++                (
++                    db.StreamSubtaskAllocation,
++                    db.StreamSubtaskAllocation.subtask_id.in_(subtasks),
++                ),
++                (
++                    db.StreamDAGLifecycleOperation,
++                    db.StreamDAGLifecycleOperation.flow_run_id == flow_run_id,
++                ),
++                (db.StreamRecord, db.StreamRecord.stream_id.in_(streams)),
++                (
++                    db.StreamRouteReceipt,
++                    db.StreamRouteReceipt.flow_run_id == flow_run_id,
++                ),
++                (
++                    db.StreamConsumer,
++                    sa.or_(
++                        db.StreamConsumer.input_stream_id.in_(streams),
++                        db.StreamConsumer.output_stream_id.in_(streams),
++                    ),
++                ),
++            )
+         }
+ 
+ 
+@@ -957,7 +1040,7 @@
+             "CANCELLED"
+             if mode == "cancel"
+             else "FAILED"
+-            if mode == "failure"
++            if mode in {"failure", "preseal-failure"}
+             else "COMPLETED"
+         )
+         assert current.state.type.value == expected, str(current.state)
+@@ -992,6 +1075,36 @@
+             json.dumps(worker_health, sort_keys=True, indent=2)
+         )
+         assert worker_health["rejected"] == [], worker_health
++        if mode == "preseal-failure":
++            counts = await _preseal_execution_counts(db, run.id)
++            assert set(counts.values()) == {0}, counts
++            assert list(tmp_path.glob("*.pid.json")) == []
++            with server.client() as client:
++                assert (
++                    client.read_global_concurrency_limit_by_name(
++                        "tag:" + _TAG
++                    ).active_slots
++                    == 0
++                )
++            (tmp_path / "observations.json").write_text(
++                json.dumps(
++                    {
++                        "flow_run_id": str(run.id),
++                        "flow_state": expected,
++                        "graph_revision_id": None,
++                        "mode": mode,
++                        "count": count,
++                        "asynchronous": asynchronous,
++                        "task_runs": 0,
++                        "zero_execution_counts": counts,
++                        "worker_ids": [str(worker.id) for worker in registered],
++                        "workers": [worker.pid for worker in workers],
++                    },
++                    sort_keys=True,
++                    indent=2,
++                )
++            )
++            return
+         async with db.session_context() as session:
+             graph = (
+                 await session.scalars(

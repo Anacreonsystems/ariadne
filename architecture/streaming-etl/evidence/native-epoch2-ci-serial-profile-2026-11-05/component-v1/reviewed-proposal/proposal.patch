@@ -1,0 +1,51 @@
+--- a/.github/workflows/python-tests.yaml
++++ b/.github/workflows/python-tests.yaml
+@@ -916,6 +916,7 @@
+           assert not required.difference(nodes), f"Required native runtime cases missing: {required.difference(nodes)}"
+           assert not any("sqlite" in node for node in nodes)
+           assert len(nodes) <= 64, "Review runner capacity before expanding the native runtime matrix"
++          nodes.sort(key=lambda node: ("5000" in node, "exchange_modes_postgres" not in node))
+           matrix = {
+               "include": [
+                   {"node": node, "id": hashlib.sha256(node.encode()).hexdigest()[:12]}
+@@ -947,6 +948,7 @@
+     timeout-minutes: 85
+     strategy:
+       fail-fast: false
++      max-parallel: 1
+       matrix: ${{ fromJSON(needs.plan-native-runtime-cases.outputs.cases) }}
+     services:
+       postgres:
+--- a/tests/_internal/test_verify_test_selection.py
++++ b/tests/_internal/test_verify_test_selection.py
+@@ -298,6 +298,30 @@
+         matrix = json.loads((tmp_path / "native-runtime-matrix.json").read_text())
+         assert {item["node"] for item in matrix["include"]} == expected
+         assert len({item["id"] for item in matrix["include"]}) == len(expected)
++        selected = [item["node"] for item in matrix["include"]]
++        exchanges = [
++            "tests/test_native_stream_dag_execution_http.py::"
++            f"test_public_dag_exchange_modes_postgres[{kind}]"
++            for kind in ("rebalance", "keyed")
++        ]
++        heavy = [
++            "tests/test_native_stream_dag_execution_http.py::"
++            f"test_public_dag_bounded_volume_postgres[{asynchronous}-5000]"
++            for asynchronous in (False, True)
++        ] + [
++            "tests/test_native_partitioned_stream_http.py::"
++            "test_actual_process_worker_runs_four_partition_tasks"
++            f"[5000-none-{asynchronous}]"
++            for asynchronous in (False, True)
++        ]
++        assert selected[:2] == exchanges
++        assert selected[-4:] == heavy
++        assert selected[2:-4] == [
++            node for node in nodes if node in expected and node not in exchanges + heavy
++        ]
++        workflow = yaml.safe_load(WORKFLOW.read_text())
++        runtime_strategy = workflow["jobs"]["run-native-runtime-case"]["strategy"]
++        assert runtime_strategy["max-parallel"] == 1
+         assert json.loads(output.read_text().removeprefix("cases=")) == matrix
+ 
+ 

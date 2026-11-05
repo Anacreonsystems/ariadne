@@ -217,11 +217,16 @@ def _required_runtime_nodes() -> list[str]:
         for mode in ("accepted200", "incomplete200")
         for asynchronous in (False, True)
     ]
+    preseal = [
+        f"{dag}preseal_failure_two_real_workers_postgres[{asynchronous}]"
+        for asynchronous in (False, True)
+    ]
     exchanges = [
         f"{dag}exchange_modes_postgres[{kind}]" for kind in ("rebalance", "keyed")
     ]
     return (
         lifecycle
+        + preseal
         + volume
         + recovery
         + exchanges
@@ -237,6 +242,7 @@ def _required_runtime_nodes() -> list[str]:
         "missing-5000",
         "missing-recovery",
         "missing-exchange",
+        "missing-preseal",
         "empty",
         "sqlite-only",
         "additional-case",
@@ -255,6 +261,8 @@ def test_actual_runtime_matrix_covers_every_required_case(
         nodes.remove(next(node for node in nodes if "[False-incomplete200]" in node))
     elif fault == "missing-exchange":
         nodes.remove(next(node for node in nodes if "[keyed]" in node))
+    elif fault == "missing-preseal":
+        nodes.remove(next(node for node in nodes if "preseal_failure" in node))
     elif fault == "empty":
         nodes.clear()
     elif fault == "sqlite-only":
@@ -290,6 +298,30 @@ def test_actual_runtime_matrix_covers_every_required_case(
         matrix = json.loads((tmp_path / "native-runtime-matrix.json").read_text())
         assert {item["node"] for item in matrix["include"]} == expected
         assert len({item["id"] for item in matrix["include"]}) == len(expected)
+        selected = [item["node"] for item in matrix["include"]]
+        exchanges = [
+            "tests/test_native_stream_dag_execution_http.py::"
+            f"test_public_dag_exchange_modes_postgres[{kind}]"
+            for kind in ("rebalance", "keyed")
+        ]
+        heavy = [
+            "tests/test_native_stream_dag_execution_http.py::"
+            f"test_public_dag_bounded_volume_postgres[{asynchronous}-5000]"
+            for asynchronous in (False, True)
+        ] + [
+            "tests/test_native_partitioned_stream_http.py::"
+            "test_actual_process_worker_runs_four_partition_tasks"
+            f"[5000-none-{asynchronous}]"
+            for asynchronous in (False, True)
+        ]
+        assert selected[:2] == exchanges
+        assert selected[-4:] == heavy
+        assert selected[2:-4] == [
+            node for node in nodes if node in expected and node not in exchanges + heavy
+        ]
+        workflow = yaml.safe_load(WORKFLOW.read_text())
+        runtime_strategy = workflow["jobs"]["run-native-runtime-case"]["strategy"]
+        assert runtime_strategy["max-parallel"] == 1
         assert json.loads(output.read_text().removeprefix("cases=")) == matrix
 
 

@@ -1,0 +1,79 @@
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+import yaml
+
+ROOT = Path('/tmp/ariadne-native-5000-diagnosis-v1')
+OUT = Path('/tmp/native-ni014-ci-serial-gate-v1')
+HOLD = Path('/tmp/native-ni012-restored-principal-2026-11-05/coordinator-personal-v2-b4a5f1ed7abc-1f6a8ec8/final-hold-native-v3.json')
+PATHS = [
+    '.github/workflows/python-tests.yaml',
+    'tests/_internal/test_verify_test_selection.py',
+    'src/prefect/server/models/streams.py',
+    'src/prefect/server/models/stream_dag_executions.py',
+    'tests/server/models/test_stream_dag_executions.py',
+    'tests/test_native_stream_dag_execution_http.py',
+]
+
+
+def snapshot():
+    return {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in PATHS}
+
+
+def main():
+    OUT.mkdir(mode=0o700)
+    env = os.environ.copy()
+    env.update(UV_NO_SYNC='1', UV_PROJECT_ENVIRONMENT='/workspace/ariadne/.venv', PYTHONPATH=str(ROOT / 'src') + ':' + str(ROOT))
+    for name in ('PREFECT_SERVER_DATABASE_CONNECTION_URL', 'PREFECT_API_DATABASE_CONNECTION_URL'):
+        env.pop(name, None)
+    before = snapshot()
+    (OUT / 'before.json').write_text(json.dumps(before, indent=2) + '\n')
+    head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    commands = []
+
+    def run(name, cmd, *, cwd=ROOT, stdin=None, extra=None):
+        started = time.monotonic()
+        with (OUT / (name + '.log')).open('wb') as log:
+            p = subprocess.run(cmd, cwd=cwd, env={**env, **(extra or {})}, input=stdin, stdout=log, stderr=subprocess.STDOUT)
+        row = {'name': name, 'command': cmd, 'cwd': str(cwd), 'exit_code': p.returncode, 'seconds': time.monotonic() - started}
+        commands.append(row)
+        (OUT / 'commands.json').write_text(json.dumps(commands, indent=2) + '\n')
+        print(json.dumps(row), flush=True)
+        assert p.returncode == 0, name
+
+    run('guards', [sys.executable, '-m', 'pytest', 'tests/_internal/test_verify_test_selection.py', '-q', '-o', 'addopts=', '--junitxml=' + str(OUT / 'guards.xml'), '--basetemp=' + str(OUT / 'pytest')])
+    cases = ET.parse(OUT / 'guards.xml').findall('.//testcase')
+    assert len(cases) == 41 and all(case.find(tag) is None for case in cases for tag in ('failure', 'error', 'skipped'))
+    run('collection', [sys.executable, '-m', 'pytest', 'tests/test_native_stream_dag_execution_http.py', 'tests/test_native_partitioned_stream_http.py', '--collect-only', '-q', '-k', 'not sqlite', '-o', 'addopts='])
+    (OUT / 'native-runtime-collection.log').write_bytes((OUT / 'collection.log').read_bytes())
+    workflow = yaml.safe_load((ROOT / PATHS[0]).read_text())
+    step = next(s for s in workflow['jobs']['plan-native-runtime-cases']['steps'] if s.get('name') == 'Require complete coverage and create one job per large case')
+    program = step['run'].split('\n', 1)[1].rsplit('\nPY', 1)[0]
+    (OUT / 'actual-planner-program.py.log').write_text(program)
+    run('planner', [sys.executable, '-'], cwd=OUT, stdin=program.encode(), extra={'GITHUB_OUTPUT': str(OUT / 'outputs')})
+    matrix = json.loads((OUT / 'native-runtime-matrix.json').read_text())['include']
+    assert len(matrix) == len({row['node'] for row in matrix}) == 19
+    assert matrix[0]['node'].endswith('exchange_modes_postgres[rebalance]')
+    assert matrix[1]['node'].endswith('exchange_modes_postgres[keyed]')
+    assert all('5000' in row['node'] for row in matrix[-4:])
+    run('actionlint', ['/tmp/native-ni2-004-ci-tools/actionlint', '-config-file', str(ROOT / '.github/actionlint.yaml'), '-shellcheck=', '-pyflakes=', '-oneline', str(ROOT / PATHS[0])])
+    after = snapshot()
+    assert after == before
+    assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip() == head
+    (OUT / 'after.json').write_text(json.dumps(after, indent=2) + '\n')
+    prior = json.loads(HOLD.read_text())['files']
+    drift = [name for name, meta in prior.items() if hashlib.sha256((ROOT / name).read_bytes()).hexdigest() != meta['sha256']]
+    assert set(drift) == set(PATHS[:2]), drift
+    receipt = {'head': head, 'guards_actual': 41, 'required_actual_runtime_cases': 19, 'source_drift_during_checks': [], 'prior_personal_lease_files': len(prior), 'changes_after_personal_STOP': drift, 'core_four_paths_unchanged': True, 'source_hashes': after, 'new_runtime_bodies': 0, 'qualification': 'CI scheduling-only successor. JSON include order is declared order, not a GitHub FIFO guarantee. Other jobs can overlap; no full host isolation or CPU-causality claim. SDK/platform request budgets and data/health oracles unchanged. External shellcheck and pyflakes not executed.'}
+    (OUT / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    print(json.dumps(receipt), flush=True)
+
+
+if __name__ == '__main__':
+    main()

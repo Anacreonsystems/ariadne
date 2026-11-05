@@ -1,0 +1,62 @@
+from pathlib import Path
+import asyncio,collections,datetime,hashlib,json,re,subprocess,xml.etree.ElementTree as ET
+from urllib.parse import urlsplit,urlunsplit
+import asyncpg
+ROOT=Path('/workspace/ariadne');BASE=Path('/tmp/native-ni012-restored-principal-2026-11-05/normal1000-f416080900b5-7c343978');trial=next(BASE.glob('run-async-normal1000-*'));fixture=next(p for p in (trial/'pytest').glob('test_normal_async1000_post_*') if p.is_dir() and not p.is_symlink());lease=json.loads((BASE/'lease.json').read_text());stop=json.loads((trial/'formal-stop.json').read_text());health=json.loads((trial/'health-summary.json').read_text());cases=ET.parse(trial/'pytest.xml').findall('.//testcase')
+assert int((trial/'exit').read_text())==int((BASE/'controller-async1000.exit').read_text())==0
+assert len(cases)==1 and all(cases[0].find(tag) is None for tag in ['failure','error','skipped'])
+assert health['status']=='NO_OBSERVED_HEALTH_VIOLATION' and health['trigger'] is None
+assert not stop['drift'] and not stop['remaining_observed_pids'] and not stop['remaining_database_sessions']
+assert json.loads((trial/'source-before.json').read_text())==json.loads((trial/'source-after.json').read_text())
+assert stop['files']==len(lease['files'])==1608
+observations=json.loads((fixture/'observations.json').read_text());final=json.loads((fixture/'final-progress.json').read_text());accepted=json.loads((fixture/'accepted-cursors.json').read_text())
+assert observations['count']==1000 and observations['asynchronous'] and observations['flow_state']=='COMPLETED' and observations['task_runs']==4
+assert len(final['subtasks'])==4 and final['task_run_count']==4 and len(final['channels'])==7 and final['consumers']==[]
+assert all(x['state']=='COMPLETED' and x['last_sequence']==x['tail_sequence']==1000 for x in final['channels'])
+assert len(accepted['consumers'])==3 and all(x['completed_through']==1000 and x['inflight_sequence'] is None for x in accepted['consumers'])
+assert all(x['run_count']==x['physical_epoch']==1 and x['physical_slot_released'] for x in final['subtasks'])
+assert len(final['grants'])==4 and all(x['state']=='RETIRED' for x in final['grants'])
+assert len(final['launches'])==4 and all(x['state']=='CLOSED' for x in final['launches'])
+source=[json.loads(line) for line in (fixture/'source-accepted.jsonl').read_text().splitlines()];assert [x['position'] for x in source]==list(range(1,1001)) and len({x['pid'] for x in source})==1
+business={}
+for branch in ['B-0','C-0','C-1']:
+ p=fixture/('calls-'+branch+'.jsonl');calls=[json.loads(line) for line in p.read_text().splitlines()];assert [x['sequence'] for x in calls]==list(range(1,1001));assert [x['number'] for x in calls]==list(range(1,1001));assert {x['attempt'] for x in calls}=={1} and len({x['pid'] for x in calls})==len({x['task_run_id'] for x in calls})==1
+ files=list((fixture/branch).glob('document-*.json'));assert len(files)==1000
+ for number in range(1,1001):assert json.loads((fixture/branch/f'document-{number}.json').read_text())=={'document_id':f'document-{number}','number':number}
+ business[branch]={'calls':len(calls),'unique_pid':calls[0]['pid'],'task_run_id':calls[0]['task_run_id'],'documents':len(files),'strict_range_once':True,'client_effect_idempotency':'Client-owned document-ID overwrite; no unfinished effect repetition observed in this normal probe'}
+imports={};bad=[]
+for p in (trial/'audit').glob('*.jsonl'):
+ rows=[json.loads(line) for line in p.read_text().splitlines()];imports[p.stem]=len(rows)
+ for x in rows:
+  name=str(Path(x['path']).relative_to(ROOT))
+  if name not in lease['files'] or x['source_sha256']!=lease['files'][name]['sha256']:bad.append({'pid':x['pid'],'path':name})
+assert not bad
+logcounts=[]
+for p in trial.rglob('*.log'):
+ if p.name not in {'worker-left.log','worker-right.log','pytest.private.log'} and not re.fullmatch(r'api-[0-9a-f]{32}\.log',p.name):continue
+ raw=p.read_bytes();plain=re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]',b'',raw)
+ row={'path':str(p.relative_to(trial)),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),'http5xx_mentions':len(re.findall(rb'HTTP/\d(?:\.\d)?["\s]+5\d\d\b',plain,re.I)),'timeout_mentions':plain.count(b'TimeoutError'),'recovery_discovery_warning_mentions':plain.count(b'Native recovery discovery is temporarily unavailable'),'traceback_headers':plain.count(b'Traceback (most recent call last)'),'error_level_lines':len(re.findall(rb'^.*\bERROR\b.*$',plain,re.M))};logcounts.append(row)
+assert all(x['http5xx_mentions']==x['timeout_mentions']==x['recovery_discovery_warning_mentions']==0 for x in logcounts)
+assert sum(x['error_level_lines'] for x in logcounts)==2
+assert sum(x['traceback_headers'] for x in logcounts)==433
+config=json.loads(Path('/tmp/native-ni012-runtime-test-env.json').read_text());database=json.loads((trial/'database.json').read_text())['name'];u=urlsplit(config['admin_dsn'])
+async def metadata_and_cleanup():
+ own_dsn=urlunsplit((u.scheme,u.netloc,'/'+database+'_tests_master',u.query,''));c=await asyncpg.connect(own_dsn,timeout=3)
+ try:
+  snapshot={'flow_states':[dict(x) for x in await c.fetch('SELECT id,state_type,run_count FROM flow_run ORDER BY id')],'graphs':[dict(x) for x in await c.fetch('SELECT id,state,terminal_operation_id FROM stream_graph_revision ORDER BY id')],'active_physical_slots':await c.fetchval('SELECT count(*) FROM stream_physical_slot_allocation WHERE NOT released'),'active_tag_allocations':await c.fetchval('SELECT count(*) FROM stream_subtask_allocation WHERE NOT released'),'tag_counters':[dict(x) for x in await c.fetch("SELECT name,active_slots FROM concurrency_limit_v2 WHERE name='tag:native-dag-runtime-capacity'")],'history_counts':{table:await c.fetchval('SELECT count(*) FROM '+table) for table in ['stream_record','stream_route_receipt','stream_completion','stream_consumer']}}
+  assert all(x['state_type']=='COMPLETED' and x['run_count']==1 for x in snapshot['flow_states'])
+  assert all(x['state']=='RELEASED' and x['terminal_operation_id'] is not None for x in snapshot['graphs'])
+  assert snapshot['active_physical_slots']==snapshot['active_tag_allocations']==0 and all(x['active_slots']==0 for x in snapshot['tag_counters'])
+  assert all(n==0 for n in snapshot['history_counts'].values())
+ finally:await c.close()
+ c=await asyncpg.connect(config['admin_dsn'],timeout=3)
+ try:
+  names=[database,database+'_tests_master'];sessions=[dict(x) for x in await c.fetch('SELECT pid,datname,state FROM pg_stat_activity WHERE datname=ANY($1::text[])',names)];assert not sessions
+  remaining=[x['datname'] for x in await c.fetch('SELECT datname FROM pg_database WHERE datname=ANY($1::text[])',names)]
+  assert sorted(remaining)==sorted(names)
+  return {'post_native_metadata':snapshot,'operational_cleanup':{'remaining_sessions':sessions,'dropped_exact_owned_databases':[],'remaining_owned_databases':remaining,'preserved_for_terminal_error_diagnosis':True,'force_used':False,'old_soak_or_forensic_databases_touched':False}}
+ finally:await c.close()
+cleanup=asyncio.run(metadata_and_cleanup())
+head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip();assert head==lease['head']=='f416080900b5b15f8d9bc8ac1bc0921221dfe2b1'
+r={'schema':'ariadne-independent-native-async1000-v1','status':'NATIVE_ASYNC1000_STRICT_BODY_PASS_TERMINAL_RUNNER_HEALTH_RED','verifier_attempt1':{'status':'RED_FINAL_ADDITIONAL_HEALTH_ASSERTION','log':'normal1000-verifier-attempt1.log','reason':'433 traceback headers including429 DEBUG queue.Empty and2 post-terminal runner ERROR lines; not5xx orTask retry'},'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source_head':head,'trial':str(trial),'workload_documents':1000,'fixture_sha256':lease['files']['tests/test_native_stream_dag_execution_http.py']['sha256'],'pytest':{'tests':1,'passed':1,'failed':0,'errors':0,'skips':0,'seconds':float(cases[0].get('time')),'exit':0},'formal_stop_sha256':hashlib.sha256((trial/'formal-stop.json').read_bytes()).hexdigest(),'lease_sha256':hashlib.sha256((BASE/'lease.json').read_bytes()).hexdigest(),'source_files':1608,'source_drift':[],'remaining_observed_pids':[],'remaining_db_sessions_at_formal_stop':[],'health':{'samples':health['samples'],'status':health['status'],'trigger':None,'final_log_counters':logcounts,'monitor_scope':'Triggers only observedHTTP5xx ornormalTaskrun_count>1; final independent log audit is broader','final_independent_audit':'TERMINAL_RUNNER_HEALTH_RED','terminal_errors':{'count':2,'first_utc':'2026-11-05T19:37:43.420+00:00','release':'NativeStarter.start:445→release_stream_flow→409EXECUTION_PROFILE_NOT_READY','second_utc':'2026-11-05T19:37:43.488+00:00','state_proposal':'FlowRunExecutor.submit exception path→propose_crashed→409RECOVERY_NOT_READY','same_flow_as_case':True,'actual_body_retry_observed':False},'debug_queue_empty_tracebacks':429},'business':business,'imports':{'pid_modules':imports,'source_mismatches':bad},'native_shape':{'ordinary_task_runs':4,'channels':7,'accepted_subscriber_cursors':[1000,1000,1000],'eof_tails':[1000]*7,'retired_grants':4,'closed_launches':4,'all_physical_epochs':1,'all_task_run_counts':1,'all_physical_and_tag_slots_released':True},'phases':json.loads((fixture/'phases.json').read_text()),**cleanup,'qualification':['Temporary external wrapper invokes unchanged29ccc real SDK/HTTP/PG17/twoProcessWorker helper and strict original oracle with explicit1000 documents.','At input764 source had already accepted its tail1000 and stopped appending; EOF is only after final cursor latch. This does not reproduce historical source1522/consumer763 concurrent-append context.','The historical read cause remains not reproduced/unresolved; no throughput gain or5000 readiness is claimed.','Native resource release independently verified before operational cleanup; both owned zero-session DBs retained to investigate the terminal runner error.','The original strict native helper passed, but additional final runner health audit failed; no whole-runtime-clean-health or5000GO claim.'],'readiness_credit':0,'earned_epoch2_percent':15}
+p=BASE/'principal-normal1000-qualified-receipt-v1.json';p.write_text(json.dumps(r,indent=2,sort_keys=True,default=str)+'\n');p.chmod(0o600);print(json.dumps({'receipt':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'pytest':r['pytest'],'source_files':1608,'drift':[],'health_samples':health['samples'],'all_final_error_counters_zero':True,'native_shape':r['native_shape'],'ownedDBs_dropped':0,'terminal_runner_errors':2}))

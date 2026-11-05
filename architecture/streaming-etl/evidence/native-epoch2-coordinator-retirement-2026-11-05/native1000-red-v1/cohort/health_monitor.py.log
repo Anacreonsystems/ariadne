@@ -1,0 +1,62 @@
+"""Read own normal-probe log prefixes/metadata and stop promptly on a RED."""
+from pathlib import Path
+import datetime,hashlib,json,re,subprocess,sys,time
+
+trial=Path(sys.argv[1]);base=trial.parent
+status_pattern=re.compile(rb'HTTP/\d(?:\.\d)?["\s]+(5\d\d)\b',re.I)
+tracked={};samples=0;trigger=None
+
+def metadata():
+    path=trial/'db-observations.jsonl'
+    if not path.exists():return None
+    with path.open('rb') as stream:
+        stream.seek(max(0,path.stat().st_size-131072));raw=stream.read()
+    result=None
+    for line in raw.splitlines()[-4:]:
+        try:result=json.loads(line)
+        except (ValueError,UnicodeDecodeError):pass
+    return result
+
+
+def log_counts():
+    for path in sorted(trial.rglob('*.log')):
+        if path.name not in {'worker-left.log','worker-right.log','pytest.private.log'} and re.fullmatch(r'api-[0-9a-f]{32}\.log',path.name) is None:continue
+        key=str(path.relative_to(trial));state=tracked.setdefault(key,{'offset':0,'sha':hashlib.sha256(),'carry':b'','http5xx':0,'generation':1,'timeouts':0,'deferred':0})
+        size=path.stat().st_size
+        if size<state['offset']:
+            state.update(offset=0,sha=hashlib.sha256(),carry=b'',generation=state['generation']+1)
+        with path.open('rb') as stream:stream.seek(state['offset']);raw=stream.read()
+        state['offset']+=len(raw);state['sha'].update(raw)
+        lines=(state['carry']+raw).split(b'\n');state['carry']=lines.pop()
+        for line in lines:
+            state['http5xx']+=len(status_pattern.findall(line))
+            state['timeouts']+=line.count(b'TimeoutError')
+            state['deferred']+=line.count(b'Native recovery discovery is temporarily unavailable')
+    return {key:{'captured_prefix_bytes':x['offset'],'prefix_sha256':x['sha'].hexdigest(),'generation':x['generation'],'http5xx_mentions':x['http5xx'],'timeout_mentions':x['timeouts'],'discovery_warning_mentions':x['deferred']} for key,x in tracked.items()}
+
+
+while True:
+    logs=log_counts();observed=metadata();subtasks=[]
+    if observed:
+        subtasks=[{k:x[k] for k in ['operator_uid','subtask_index','task_run_id','run_count','physical_epoch','state_type','output_sequence','output_state']} for x in observed['snapshot']['subtasks']]
+    samples+=1
+    sample={'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'monotonic_ns':time.monotonic_ns(),'logs':logs,'subtasks':subtasks,'database_sample_ns':observed['monotonic_ns'] if observed else None,'qualification':'Own as-read log prefix mentions and read-only state; not deduplicated incidents or successful finalization.'}
+    with (trial/'health-samples.jsonl').open('a') as output:output.write(json.dumps(sample,sort_keys=True)+'\n')
+    reasons=[]
+    if any(x['http5xx_mentions'] for x in logs.values()):reasons.append('UNEXPECTED_HTTP5XX_IN_NORMAL_PROBE')
+    if any(x['run_count']>1 for x in subtasks):reasons.append('UNEXPECTED_TASK_RETRY_IN_NORMAL_PROBE')
+    if reasons:
+        trigger={**sample,'status':'RED_HEALTH_ORACLE','reasons':reasons,'workload_documents':1000}
+        (trial/'health-red.json').write_text(json.dumps(trigger,indent=2,sort_keys=True)+'\n')
+        with (trial/'health-stop.private.log').open('wb') as output:
+            try:
+                subprocess.run([sys.executable,str(base/'capture_before_stop.py'),str(base)],stdout=output,stderr=subprocess.STDOUT,timeout=8,check=False)
+            except subprocess.TimeoutExpired:
+                (trial/'capture-time-limit.json').write_text(json.dumps({'status':'DIAGNOSTIC_CAPTURE_BOUND_REACHED','seconds':8})+'\n')
+            subprocess.run([sys.executable,str(base/'stop_owned.py'),str(trial)],stdout=output,stderr=subprocess.STDOUT,timeout=25,check=False)
+        break
+    if (trial/'exit').exists():break
+    time.sleep(2)
+
+summary={'status':'RED_HEALTH_ORACLE' if trigger else 'NO_OBSERVED_HEALTH_VIOLATION','samples':samples,'trigger':trigger,'workload_documents':1000,'scope':'Not a standalone execution acceptance; compare pytest/finalization/source/cleanup evidence.','monotonic_ns':time.monotonic_ns()}
+(trial/'health-summary.json').write_text(json.dumps(summary,indent=2,sort_keys=True)+'\n')

@@ -72,7 +72,7 @@ appended to each approved ADR.
 | --- | --- | --- | --- | --- |
 | NI2-010 | `accepted` | NI2-006 | M/H | Seal named typed ports, DAG revision and acyclic topology; reject cycles, duplicate subscribers and unsupported edges before user code. The [Principal acceptance](evidence/native-epoch2-ni2-010-principal-acceptance-2026-11-05/acceptance.json) closes the metadata-only component with zero earned epoch percentage; public execution remains fenced. A43-02 remains partial until NI2-012…014. |
 | NI2-011 | `accepted` | NI2-010 | L/H | Materialize bounded forward/rebalance/broadcast/keyed routes in the existing terminal transaction, with independent edge partitions/cursors/pins. The [Principal acceptance](evidence/native-epoch2-routed-server-2026-11-05/principal-v1/acceptance.json) closes the finite storage component with zero earned epoch percentage; public DAG execution remains fenced until NI2-012. A43-03 and A43-09 remain partial. |
-| NI2-012 | `progress` | NI2-010, NI2-011 | M/H | SDK/client/worker graph bootstrap and fan-out while retaining ordinary Task definitions and constant metadata per fixed graph. Real normal/lifecycle/500 and all four branch-recovery cases have passing records, including the terminal-PREPARE successor; exchange controls passed. The latest `835b8c2` normal 5000 attempts were interrupted on renewal/read liveness. The renewal component is independently verified; partition causality remains unresolved, so native 1000/5000 and final hosted acceptance remain open. Earlier d504 GC failures are retained as history. A42-02, A43-02, A43-04. |
+| NI2-012 | `progress` | NI2-010, NI2-011 | M/H | SDK/client/worker graph bootstrap and fan-out while retaining ordinary Task definitions and constant metadata per fixed graph. Real normal/lifecycle/500 and all four branch-recovery cases have passing records, including the terminal-PREPARE successor; exchange controls passed. Historical `835b8c2` normal 5000 attempts were interrupted on renewal/read liveness. The latest `f416080` async 1000 probe passed its strict data helper but failed the broader final runner-health audit on coordinator retirement. The renewal component is independently verified; partition causality remains unresolved, and corrected native 5000/final hosted acceptance remain open. Earlier d504 GC failures are retained as history. A42-02, A43-02, A43-04. |
 | NI2-013 | `planned` | NI2-011, NI2-012 | M/H | Exact append/read retry and branch replacement with immutable route digest, different partition counts and no cross-branch acknowledgement. A43-03, A43-09. |
 | NI2-014 | `planned` | NI2-010…013 | M/H | Real branched native process gate and independent Principal verification on frozen source. A43-02, A43-03, A43-09. |
 
@@ -896,3 +896,184 @@ links the scoped renew proof, retained-volume read probe and actual hosted
 failures. Read non-reproduction is not root-cause closure; the next native 1000
 probe remains unexecuted until its exact candidate is published. No task/ADR
 acceptance or readiness credit changes here.
+
+
+## N2.2 native 1000 coordinator hold — 2026-11-05
+
+The [f416 native-1000 evidence](evidence/native-epoch2-coordinator-retirement-2026-11-05/native1000-red-v1/index.json) retains strict
+async helper **1 PASS / 471.607 seconds**, no source drift, no Task retry or
+HTTP 5xx, and complete graph data/physical closure. The broader final audit is
+RED on two coordinator cleanup errors: legacy DAG release was refused, leaving
+the native authority TERMINAL, snapshot ACTIVE and coordinator launch
+PROCESS_REGISTERED. A narrow terminal-path correction and real native
+worker-health controls are required before corrected 5000 runs. The historical
+partition-read cause remains unresolved; this 1000 probe stopped source append
+before crossing consumer input 764. N2.2 remains `progress` at **15% earned**,
+with zero additional acceptance credit.
+
+
+## N2.2 hosted rebalance runtime RED — 2026-11-05
+
+As a developer, I can inspect the [actual hosted rebalance failure](evidence/native-epoch2-ci-rebalance-runtime-2026-11-05/b4-red-v1/index.json)
+on immutable `b4a5f1ed7abc9cdd35ebb4451c2c1ef628e4c145`,
+[run 42099724610, job 127501239557](https://github.com/Anacreonsystems/ariadne/actions/runs/42099724610/job/127501239557).
+The single runtime case failed in 229.934 seconds after all 64 source inputs
+and the four stable Task bodies completed. At the SDK wait deadline, the
+observed graph was still ADMITTED with physical C slots unreleased. The Flow
+assertion is FAILED. Graph RELEASED is observed only after timeout and fail
+cleanup; it does not demonstrate normal closure before the deadline.
+
+The [observation windows](evidence/native-epoch2-ci-rebalance-runtime-2026-11-05/b4-red-v1/timeline-observation-windows.json)
+retain direct log timestamps separately from estimated monotonic-to-wall
+mapping. The later retire409 follows timeout/fail control and is not evidence
+that the separate native-1000 post-terminal release refusal caused this case.
+The [resource addendum](evidence/native-epoch2-ci-rebalance-runtime-2026-11-05/b4-red-v1/resource-and-trace-addendum-v1.json)
+is an after-command observation, not a controlled CPU experiment. The cause
+of release latency remains unresolved; no CPU, renewal or coordinator cause
+is assigned, and no timeout or oracle change is justified by this record.
+
+Separately, the current coordinator correction has an
+[implementation report](evidence/native-epoch2-coordinator-retirement-2026-11-05/implementation-report-v1/index.json)
+of five native controls passing in 118.14 seconds on its recorded four-file
+candidate source set. This is an implementation component result. Independent
+Principal verification is pending, and any later fixture successor must retain
+its own source binding. It is not the source tested by the b4 hosted case.
+
+Acceptance criteria remain open: as a system, I still need normal graph and
+coordinator closure before the existing deadline, clean infrastructure health,
+and the remaining source-bound native and hosted matrix. N2.2 stays `progress`;
+this record changes no earned readiness or ADR acceptance.
+
+
+## N2.2 hosted async 500 RED and scoped CI controls — 2026-11-05
+
+As a developer, I can inspect the separate
+[b4 async-500 failure](evidence/native-epoch2-ci-volume-runtime-2026-11-05/b4-async500-red-v1/index.json)
+from [job 127501239543](https://github.com/Anacreonsystems/ariadne/actions/runs/42099724610/job/127501239543).
+The source accepted all 500 records, but immediately before fail control the
+three consumer cursors were only 438/432/435 and all four TaskRuns remained
+RUNNING. Worker fenced exceptions occurred after `/fail` returned 200. They
+are downstream observations, not the identified initiating error. The async
+Flow's original trigger and slow-drain cause remain UNKNOWN. No PG error
+trace is retained, and no CPU, renewal, coordinator or common sync-500 cause
+is assigned. This differs from rebalance's completed-body release delay.
+
+The separate [generic Python-3.14 job](evidence/native-epoch2-ci-generic-envelope-2026-11-05/component-v1/index.json)
+recorded 4413 PASS and 11 ordinary skips in its 800.25-second test step, but
+the required whole job was CANCELLED at the 15-minute envelope. Its reviewed
+conditional gives only the runner/worker/settings/input/CLI generic bucket
+20 minutes; the other generic buckets retain 15. This changes job setup/body/
+cleanup headroom, not native wait budgets or test oracles, and is not a green
+rerun. The independent one-line proposal review is bound to that historical
+proposal; it does not accept the later combined workflow.
+
+The combined [CI guard component](evidence/native-epoch2-coordinator-ci-guards-2026-11-05/component-v1/index.json)
+has 41 actual passing guard cases on its recorded workflow/test hashes. It
+requires both preseal runtime nodes and rejects missing preseal collection.
+Those guard cases do not execute the native preseal bodies or close the
+runtime matrix. Actionlint passed with external shellcheck and pyflakes
+disabled; those external checks were not run.
+
+Acceptance criteria remain open: as a system, I still need the source-bound
+native and hosted runtime exits. These archives and scoped CI results change
+no earned readiness, task completion or ADR acceptance; N2.2 stays `progress`.
+
+
+## N2.2 separate hosted sync 500 deadline RED — 2026-11-05
+
+As a developer, I can inspect the separate
+[b4 sync-500 record](evidence/native-epoch2-ci-volume-runtime-2026-11-05/b4-sync500-red-v1/index.json)
+from [job 127501239501](https://github.com/Anacreonsystems/ariadne/actions/runs/42099724610/job/127501239501).
+This job directly retained the public wait TimeoutError after 752.86 seconds
+against the existing 750-second wait. All source positions and three accepted
+cursors reached 500, but normal physical closure was not observed before the
+deadline. The graph remained ADMITTED with C1 unreleased in a later progress
+observation; Graph RELEASED was first observed only after `/fail` cleanup.
+The final Flow assertion is FAILED, despite the completed Task bodies.
+
+The first all-Task-completed observation maps to 20:41:58.335 and the direct
+timeout log is 20:41:58.230. That estimated 105 ms difference is not a precise
+database transaction ordering proof. The
+[source-binding erratum](evidence/native-epoch2-ci-volume-runtime-2026-11-05/b4-sync500-binding-erratum-v1/index.json)
+also retains that the reused blob-binding note's missing-initiator wording
+belongs to async500; the sync record directly retains its TimeoutError. The
+three source hashes themselves remain valid.
+
+Acceptance criteria remain open: as a system, I still need the native runtime
+exits within their existing contracts. The latency cause remains UNKNOWN;
+this record assigns no CPU, renewal, coordinator or shared async/rebalance
+cause. An isolated CI runtime profile remains a proposal, with no implemented
+or executed profile claimed here. No readiness or ADR acceptance changes.
+
+
+## N2.2 hosted accepted-200 recovery remains RED — 2026-11-05
+
+As a developer, I can inspect the
+[b4 sync accepted-200 recovery record](evidence/native-epoch2-ci-recovery-runtime-2026-11-05/b4-sync-accepted200-red-v1/index.json)
+from [job 127501239596](https://github.com/Anacreonsystems/ariadne/actions/runs/42099724610/job/127501239596).
+The observed replacement retained B's TaskRun, changed its process, and first
+processed input 201 after accepted input 200. Fault-to-first-replacement-body
+time was 60.123 seconds. The retained B calls cover 1–407 once. These are
+partial recovery observations; the complete case still failed its 750.38-second
+wait and did not pass the final recovery/effect/signature assertions.
+
+The source accepted all 500 inputs, while the final accepted consumer cursors
+were B=407 and the two C partitions=451/448. C body-call counts 452/449 include
+in-flight work and must not replace those accepted cursor positions.
+
+Two genuine HTTP 500 errors are retained: replacement launch `prepare` at
+20:52:42.903 and `record` at 20:53:06.364. Their traces wait on the Flow row
+with `FOR UPDATE`, ending in asyncpg timeout; PostgreSQL records two statement
+cancellations while locking `flow_run`. The blocking transaction was not
+captured. These callers are replacement prepare/record, not renewal, and no
+causal attribution to the separate terminal coordinator correction is made.
+Whether these waits dominate the later unfinished drain or only add latency
+remains UNKNOWN. Later fenced worker failures follow `/fail` cleanup.
+
+Acceptance criteria remain open: as a system, I still need the entire recovery
+case and the source-bound native/hosted exits. This record awards no epoch or
+ADR credit, changes no oracle or native wait budget, and supplies no independent
+verdict on the current coordinator candidate. N2.2 remains `progress`.
+
+
+## N2.2 scoped coordinator verification and serial CI configuration — 2026-11-05
+
+As a developer, I can inspect the
+[Principal's independent coordinator component proof](evidence/native-epoch2-coordinator-retirement-2026-11-05/principal-v1/index.json):
+**52 actual PASS** comprising 45 PostgreSQL controls, five native lifecycle
+scenarios and two native preseal scenarios. The historical 1599-file leases
+have no source or import drift. All 50 captured process identities closed,
+and the six owned component databases were dropped with no remaining sessions.
+These operational checks accompany persisted coordinator authority, snapshot
+and launch RELEASED proofs; they do not replace them.
+
+Sync/async normal execution retained four ordinary TaskRuns and exact client
+documents. Preview, failure and cancellation preserve their intended outcomes.
+Both preseal failures created no TaskRuns, operator processes or streaming
+execution metadata. All seven native scenarios reject post-terminal
+infrastructure errors. Expected injected-failure errors remain explicitly
+classified. The model phase retains 214 harness file-handle ResourceWarnings;
+the native/preseal v3 driver corrected context managers without changing warning
+filters, product code, budgets or oracles. The original phase-specific driver
+and hold hashes, fixture bridge and scoped Principal verdict are preserved.
+
+Separately, the [serial CI component](evidence/native-epoch2-ci-serial-profile-2026-11-05/component-v1/index.json)
+retains 41 passing guard cases, actual collection of 30 selected cases from 31
+and a planner mapping all 19 required native cases to jobs, including both
+preseal cases. The initial wrong-PATH harness produced 41 setup errors and
+zero executed test bodies; its correction uses the existing virtual environment
+and installs nothing. After the personal phases stopped, only the workflow
+and guard changed; all four runtime/test source hashes stayed equal to the
+personal proof. Historical personal manifests are not relabeled as new CI runs.
+
+The configured matrix declares exchanges first and heavy 5000 cases last,
+with at most one job from this matrix running concurrently. JSON include order
+is not a GitHub FIFO guarantee, and Physical PostgreSQL and other jobs can still
+overlap. No host isolation, CPU cause or native budget change is claimed.
+
+Acceptance criteria remain open: as a system, I still need the remaining
+source-bound recovery, volume and hosted exits. The b4 recovery prepare/record
+500 errors and their Flow-row blocker remain unresolved; corrected full 5000
+and actual hosted serial-profile acceptance are unexecuted. This scoped
+component result does not complete N2.2 or an ADR. Earned readiness remains
+**15%**, with no additional credit.

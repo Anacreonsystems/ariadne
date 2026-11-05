@@ -1,0 +1,30 @@
+from pathlib import Path
+import ast,copy,hashlib,json,datetime
+root=Path('/tmp/ariadne-native-5000-diagnosis-v1');base=Path('/tmp/native-ni014-coordinator-retirement-v1');name='tests/test_native_stream_dag_execution_http.py'
+a=(base/'green-native-final/source'/name).read_bytes();b=(root/name).read_bytes();bridge=json.loads((base/'fixture-successor-bridge.json').read_text());assert hashlib.sha256(a).hexdigest()==bridge['before_sha256'];assert hashlib.sha256(b).hexdigest()==bridge['after_sha256']
+old=ast.parse(a);new=ast.parse(b)
+def find(tree,name):return next(n for n in tree.body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name==name)
+def uservalue(tree):return next(n for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='_USER_MODULE' for t in n.targets))
+olduser=uservalue(old);newuser=uservalue(new);ua=ast.parse(ast.literal_eval(olduser.value));ub=ast.parse(ast.literal_eval(newuser.value))
+for name in ['documents','documents_async']:
+ fn=find(ub,name);assert isinstance(fn.body[0],ast.If) and ast.unparse(fn.body[0].test)=="mode == 'preseal-failure'";assert isinstance(fn.body[0].body[0],ast.Raise);fn.body.pop(0)
+assert ast.dump(ua,include_attributes=False)==ast.dump(ub,include_attributes=False)
+# Normalize only the declared, new-mode-exclusive fixture additions.
+newuser.value=copy.deepcopy(olduser.value)
+new.body=[n for n in new.body if not (isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name in {'test_public_dag_preseal_failure_two_real_workers_postgres','_preseal_execution_counts'})]
+ohelper=find(old,'_run_dag_lifecycle');nhelper=find(new,'_run_dag_lifecycle');restored=removed=0
+for i,n in enumerate(nhelper.body):
+ if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='expected' for t in n.targets):
+  prior=next(o for o in ohelper.body if isinstance(o,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='expected' for t in o.targets));nhelper.body[i]=copy.deepcopy(prior);restored+=1
+ if isinstance(n,ast.Try):
+  for j,t in enumerate(n.body):
+   if isinstance(t,ast.Assign) and any(isinstance(x,ast.Name) and x.id=='expected' for x in t.targets):
+    ot=next(o for o in ohelper.body if isinstance(o,ast.Try));prior=next(o for o in ot.body if isinstance(o,ast.Assign) and any(isinstance(x,ast.Name) and x.id=='expected' for x in o.targets));n.body[j]=copy.deepcopy(prior);restored+=1
+  cut=[t for t in n.body if isinstance(t,ast.If) and ast.unparse(t.test)=="mode == 'preseal-failure'"]
+  assert len(cut)==1;n.body.remove(cut[0]);removed+=1
+assert restored==removed==1
+assert ast.dump(old,include_attributes=False)==ast.dump(new,include_attributes=False)
+files={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in ['src/prefect/server/models/streams.py','src/prefect/server/models/stream_dag_executions.py','tests/server/models/test_stream_dag_executions.py']}
+held=json.loads((base/'green-native-final/native-final-receipt.json').read_text())['source_hashes'];assert all(files[p]==held[p] for p in files)
+r={'schema':'ariadne-independent-preseal-fixture-successor-review-v1','utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'verdict':'APPROVE_TEST_ONLY_BRIDGE_NOT_RELABELLING_EXECUTIONS','fixture_before_sha256':bridge['before_sha256'],'fixture_after_sha256':bridge['after_sha256'],'normalization':'Remove only exactnewpresealmode earlyraise inbothuserfunctions, two-caseentry/helper, modeonlyexpectedstate+zero-dataearlyreturn; allpriorASTexactequal','existing_user_code_after_new_mode_guards_AST_equal':True,'all_prior_fixture_AST_equal_after_exact_additions_removed':True,'runtime_and_model_test_hashes_unchanged':files,'model_repeat_required_due_to_fixture_successor':False,'qualification':['Prior45PGmodel/28APIresults remain boundtooriginalmanifest; production/modeltestsource unchanged andtest-onlysuccessor doesnotjustify rerunningthem solelyforfixturehash','Prior5native execution remainc171bound; do notrenameexecutions tof1fc','Twoactualnewpresealcontrols must finishonf1fc; independentlyplannednewnative5/preseal2 willbindfreshheldsource','No5000/epochacceptance orreadinesscredit']}
+p=Path('/tmp/native-ni012-restored-principal-2026-11-05/preseal-fixture-bridge-review-v1.json');p.write_text(json.dumps(r,indent=2,sort_keys=True)+'\n');print(json.dumps({'receipt':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'prior_ast_equal':True,'new_test_bodies':0}))
