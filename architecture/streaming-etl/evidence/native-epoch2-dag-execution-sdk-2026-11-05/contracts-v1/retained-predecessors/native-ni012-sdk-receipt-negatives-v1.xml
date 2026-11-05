@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="3" time="0.474" timestamp="2026-11-05T10:30:13.526122+00:00" hostname="f8abb611283c"><testcase classname="tests.client.test_stream_dag_executions" name="test_activate_ack_binds_the_accepted_activation_operation" time="0.002"><failure message="Failed: DID NOT RAISE StreamRequestError">def test_activate_ack_binds_the_accepted_activation_operation():
+        current = execution()
+        op = uuid4()
+        current.update(phase="ACTIVE", activation_operation_id=uuid4(), readiness_set_digest="c" * 64)
+        body = s.StreamDAGOperationResult(receipt=dict(operation_id=op, graph_revision_id=current["graph_revision_id"],
+            kind="ACTIVATE", request_digest="a" * 64, outcome_digest="b" * 64, accepted_at=STAMP,
+            effective_control_kind=None, control_operation_id=None), execution=current).model_dump(mode="json")
+        with httpx.Client(base_url="http://test", transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body))) as http:
+&gt;           with pytest.raises(StreamRequestError, match="does not match"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE StreamRequestError
+
+tests/client/test_stream_dag_executions.py:392: Failed</failure></testcase><testcase classname="tests.client.test_stream_dag_launches" name="test_scoped_status_rejects_other_own_port[input]" time="0.003"><failure message="Failed: DID NOT RAISE StreamRequestError">direction = 'input'
+
+    @pytest.mark.parametrize("direction", ["input", "output"])
+    def test_scoped_status_rejects_other_own_port(direction: str):
+        b = bootstrap()
+        context = DAGSubtaskExecutionContext(flow_run_id=UUID(b["flow_run_id"]),
+            graph_revision_id=UUID(b["assignment"]["graph_revision_id"]), assignment_epoch=1,
+            subtask_id=UUID(b["assignment"]["id"]), grant_id=UUID(b["grant"]["id"]), physical_epoch=1,
+            holder_id=UUID(b["grant"]["holder_id"]), scope_digest=b["grant"]["scope_digest"],
+            manifest_digest=b["assignment"]["manifest"]["manifest_digest"], task_run_id=UUID(b["task_run"]["id"]),
+            input_stream_id=UUID(b["assignment"]["input_stream_id"]), output_stream_id=UUID(b["output"]["stream_id"]),
+            child_process_id=101, process_start_ticks=103, api_url="http://test", capability="a" * 64, event_private_key=b"b" * 32)
+        wrong = "output" if direction == "input" else "input"
+        response = StreamInfo(id=b["assignment"][wrong + "_stream_id"], flow_run_id=b["flow_run_id"], protocol_version=1,
+            state="OPEN", error=None, last_sequence=0, tail_sequence=None, producer_position=0,
+            record_count=0, byte_count=0, limits={}, released=False).model_dump(mode="json")
+        with stream_subtask_execution_context(context), httpx.Client(base_url="http://test", transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response))) as http:
+&gt;           with pytest.raises(StreamRequestError, match="does not match"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE StreamRequestError
+
+tests/client/test_stream_dag_launches.py:532: Failed</failure></testcase><testcase classname="tests.client.test_stream_dag_launches" name="test_scoped_status_rejects_other_own_port[output]" time="0.002"><failure message="Failed: DID NOT RAISE StreamRequestError">direction = 'output'
+
+    @pytest.mark.parametrize("direction", ["input", "output"])
+    def test_scoped_status_rejects_other_own_port(direction: str):
+        b = bootstrap()
+        context = DAGSubtaskExecutionContext(flow_run_id=UUID(b["flow_run_id"]),
+            graph_revision_id=UUID(b["assignment"]["graph_revision_id"]), assignment_epoch=1,
+            subtask_id=UUID(b["assignment"]["id"]), grant_id=UUID(b["grant"]["id"]), physical_epoch=1,
+            holder_id=UUID(b["grant"]["holder_id"]), scope_digest=b["grant"]["scope_digest"],
+            manifest_digest=b["assignment"]["manifest"]["manifest_digest"], task_run_id=UUID(b["task_run"]["id"]),
+            input_stream_id=UUID(b["assignment"]["input_stream_id"]), output_stream_id=UUID(b["output"]["stream_id"]),
+            child_process_id=101, process_start_ticks=103, api_url="http://test", capability="a" * 64, event_private_key=b"b" * 32)
+        wrong = "output" if direction == "input" else "input"
+        response = StreamInfo(id=b["assignment"][wrong + "_stream_id"], flow_run_id=b["flow_run_id"], protocol_version=1,
+            state="OPEN", error=None, last_sequence=0, tail_sequence=None, producer_position=0,
+            record_count=0, byte_count=0, limits={}, released=False).model_dump(mode="json")
+        with stream_subtask_execution_context(context), httpx.Client(base_url="http://test", transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response))) as http:
+&gt;           with pytest.raises(StreamRequestError, match="does not match"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE StreamRequestError
+
+tests/client/test_stream_dag_launches.py:532: Failed</failure></testcase></testsuite></testsuites>

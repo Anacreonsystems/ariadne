@@ -1,0 +1,302 @@
+"""Server-recorded process births and exact replay under a winning stop fence."""
+
+from uuid import uuid5
+
+import httpx
+import pytest
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from prefect.server.database import PrefectDBInterface, orm_models
+from prefect.server.models import stream_dag_executions as lifecycle
+from prefect.server.models import stream_dag_launches as m
+from prefect.server.models._stream_errors import NativeStreamError
+from prefect.server.schemas import stream_dag_executions as s
+from prefect.server.schemas.native_deployments import NativeStreamProcessDeathWitness
+from prefect.types._datetime import now
+from tests.server.api.test_stream_dag_executions import (
+    execution_api as execution_api,
+)
+from tests.server.api.test_stream_dag_executions import (
+    parent_body,
+)
+from tests.server.models.test_stream_dag_executions import start_deployed_region
+
+pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
+
+
+async def test_launch_lost_ack_and_delayed_record_after_stop_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+):
+    plan, credentials, workers = await start_deployed_region(
+        db, session, execution_api, deployment
+    )
+    worker_id, principal = workers[0]
+    async with db.session_context(begin_transaction=True) as transaction:
+        assignments = await m.poll_worker_stream_dag_subtasks(
+            transaction,
+            db,
+            worker_id,
+            s.StreamDAGWorkerPollRequest(principal=principal),
+        )
+        target = assignments[0]
+        prepare = s.StreamDAGLaunchPrepareRequest(
+            principal=principal,
+            operation_id=uuid5(
+                target.assignment.id,
+                "prefect-stream-dag-launch-v1/" + str(target.start_operation_id),
+            ),
+            start_operation_id=target.start_operation_id,
+            replacement_operation_id=None,
+        )
+        first = await m.prepare_worker_stream_dag_launch(
+            transaction, db, worker_id, target.assignment.id, prepare
+        )
+        assert (
+            first.current.state == "PREPARED" and first.disposition == "SPAWN_ALLOWED"
+        )
+        assert (
+            await m.prepare_worker_stream_dag_launch(
+                transaction, db, worker_id, target.assignment.id, prepare
+            )
+            == first
+        )
+    async with db.session_context(begin_transaction=True) as transaction:
+        stopped = await lifecycle.fail_stream_dag(
+            transaction,
+            db,
+            plan.id,
+            s.StreamDAGFailRequest.model_validate(
+                parent_body(plan.id, "fail", plan.graph_digest)
+            ),
+            credentials,
+        )
+        assert stopped.execution.phase == "STOPPING"
+        assert stopped.execution.counts.physical_slots_remaining == 4
+        record = s.StreamDAGLaunchRecordRequest(
+            principal=principal,
+            operation_id=uuid5(first.current.id, "prefect-stream-dag-record-v1"),
+            child_process_id=4545,
+            process_start_ticks=99999,
+            local_journal_digest="11" * 32,
+        )
+        recorded = await m.record_worker_stream_dag_launch(
+            transaction, db, worker_id, target.assignment.id, first.current.id, record
+        )
+        assert recorded.disposition == "STOP_REQUIRED"
+        assert recorded.current.state == "PID_RECORDED"
+        assert (
+            await m.record_worker_stream_dag_launch(
+                transaction,
+                db,
+                worker_id,
+                target.assignment.id,
+                first.current.id,
+                record,
+            )
+            == recorded
+        )
+        with pytest.raises(NativeStreamError) as error:
+            await m.record_worker_stream_dag_launch(
+                transaction,
+                db,
+                worker_id,
+                target.assignment.id,
+                first.current.id,
+                record.model_copy(update={"child_process_id": 4546}),
+            )
+        assert error.value.code == "IDENTITY_CONFLICT"
+        with pytest.raises(NativeStreamError) as error:
+            await m.close_worker_stream_dag_launch(
+                transaction,
+                db,
+                worker_id,
+                target.assignment.id,
+                first.current.id,
+                s.StreamDAGLaunchCloseRequest(
+                    principal=principal,
+                    operation_id=uuid5(first.current.id, "prefect-stream-dag-close-v1"),
+                    proof=s.StreamDAGLaunchUnstartedProof(
+                        kind="CLOSED_UNSTARTED",
+                        local_journal_digest="22" * 32,
+                        recovery_complete=True,
+                        spawn_fence_closed=True,
+                    ),
+                ),
+            )
+        assert error.value.code == "PHYSICAL_STOP_REQUIRED"
+        assert (
+            await lifecycle.read_stream_dag_execution(
+                transaction, db, plan.id, credentials
+            )
+        ).counts.physical_slots_remaining == 4
+
+
+@pytest.mark.parametrize("record_pid", [False, True])
+async def test_all_attempts_close_before_last_stop_commits_failed_flow_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    record_pid: bool,
+):
+    plan, credentials, workers = await start_deployed_region(
+        db, session, execution_api, deployment
+    )
+    worker_id, principal = workers[0]
+    async with db.session_context(begin_transaction=True) as transaction:
+        assignment = (
+            await m.poll_worker_stream_dag_subtasks(
+                transaction,
+                db,
+                worker_id,
+                s.StreamDAGWorkerPollRequest(principal=principal),
+            )
+        )[0]
+        target_id = assignment.assignment.id
+        prepared = await m.prepare_worker_stream_dag_launch(
+            transaction,
+            db,
+            worker_id,
+            target_id,
+            s.StreamDAGLaunchPrepareRequest(
+                principal=principal,
+                operation_id=uuid5(
+                    target_id,
+                    "prefect-stream-dag-launch-v1/"
+                    + str(assignment.start_operation_id),
+                ),
+                start_operation_id=assignment.start_operation_id,
+                replacement_operation_id=None,
+            ),
+        )
+        if record_pid:
+            await m.record_worker_stream_dag_launch(
+                transaction,
+                db,
+                worker_id,
+                target_id,
+                prepared.current.id,
+                s.StreamDAGLaunchRecordRequest(
+                    principal=principal,
+                    operation_id=uuid5(
+                        prepared.current.id, "prefect-stream-dag-record-v1"
+                    ),
+                    child_process_id=5555,
+                    process_start_ticks=12345,
+                    local_journal_digest="ab" * 32,
+                ),
+            )
+        failed = await lifecycle.fail_stream_dag(
+            transaction,
+            db,
+            plan.id,
+            s.StreamDAGFailRequest.model_validate(
+                parent_body(plan.id, "fail", plan.graph_digest)
+            ),
+            credentials,
+        )
+        assert failed.execution.control is not None
+        control_id = failed.execution.control.operation_id
+        stop = s.StreamDAGWorkerStopRequest(
+            principal=principal,
+            operation_id=uuid5(
+                control_id, "prefect-stream-dag-stop-v1/" + str(target_id)
+            ),
+            control_operation_id=control_id,
+        )
+        with pytest.raises(NativeStreamError) as error:
+            await m.stop_worker_stream_dag_subtask(
+                transaction, db, worker_id, target_id, stop
+            )
+        assert error.value.code == "PHYSICAL_STOP_REQUIRED"
+        flow = await transaction.get(db.FlowRun, plan.flow_run_id)
+        assert flow is not None and flow.state_type.value == "RUNNING"
+        proof: s.StreamDAGLaunchDeathProof | s.StreamDAGLaunchUnstartedProof
+        if record_pid:
+            proof = s.StreamDAGLaunchDeathProof(
+                kind="DEATH",
+                death_witness=NativeStreamProcessDeathWitness(
+                    kind="WAITPID",
+                    observed_at=now("UTC"),
+                    host_id=principal.host_id,
+                    boot_id=principal.boot_id,
+                    child_process_id=5555,
+                    process_start_ticks=12345,
+                    exit_code=0,
+                ),
+            )
+        else:
+            proof = s.StreamDAGLaunchUnstartedProof(
+                kind="CLOSED_UNSTARTED",
+                local_journal_digest="cd" * 32,
+                recovery_complete=True,
+                spawn_fence_closed=True,
+            )
+        close = s.StreamDAGLaunchCloseRequest(
+            principal=principal,
+            operation_id=uuid5(prepared.current.id, "prefect-stream-dag-close-v1"),
+            proof=proof,
+        )
+        receipt = await m.close_worker_stream_dag_launch(
+            transaction, db, worker_id, target_id, prepared.current.id, close
+        )
+        assert (
+            await m.close_worker_stream_dag_launch(
+                transaction, db, worker_id, target_id, prepared.current.id, close
+            )
+            == receipt
+        )
+    stop_receipts = []
+    for own_worker, identity in workers:
+        async with db.session_context(begin_transaction=True) as transaction:
+            assignments = await m.poll_worker_stream_dag_subtasks(
+                transaction,
+                db,
+                own_worker,
+                s.StreamDAGWorkerPollRequest(principal=identity),
+            )
+            for own in assignments:
+                request = s.StreamDAGWorkerStopRequest(
+                    principal=identity,
+                    operation_id=uuid5(
+                        control_id,
+                        "prefect-stream-dag-stop-v1/" + str(own.assignment.id),
+                    ),
+                    control_operation_id=control_id,
+                )
+                stopped = await m.stop_worker_stream_dag_subtask(
+                    transaction, db, own_worker, own.assignment.id, request
+                )
+                assert stopped.physical_slot_released and stopped.task_state == "FAILED"
+                assert (
+                    await m.stop_worker_stream_dag_subtask(
+                        transaction, db, own_worker, own.assignment.id, request
+                    )
+                    == stopped
+                )
+                stop_receipts.append(stopped)
+    async with db.session_context(begin_transaction=True) as transaction:
+        terminal = await lifecycle.read_stream_dag_execution(
+            transaction, db, plan.id, credentials
+        )
+        assert terminal.phase == "TERMINAL" and terminal.terminal_state == "FAILED"
+        assert (
+            terminal.counts.stopped == 4
+            and terminal.counts.physical_slots_remaining == 0
+        )
+        assert terminal.counts.terminal_tasks == 4 and terminal.cleanup_complete
+        flow = await transaction.get(db.FlowRun, plan.flow_run_id)
+        assert flow is not None and flow.state_type.value == "FAILED"
+        assert flow.state.state_details.retriable is False
+        assert (
+            await transaction.scalar(
+                sa.select(sa.func.count())
+                .select_from(db.TaskRunState)
+                .where(db.TaskRunState.type == "FAILED")
+            )
+            == 4
+        )

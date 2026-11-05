@@ -3,8 +3,12 @@
 import pytest
 from pydantic import ValidationError
 
+from prefect import flow
+from prefect._internal.stream_code import native_task_code_identity
+from prefect._internal.stream_deployment import native_deployment_declaration
 from prefect.client.schemas import native_deployments as client_schemas
 from prefect.server.schemas import native_deployments as server_schemas
+from prefect.streams import NativeStreamFlowConfig, StreamProtocolError
 
 
 @pytest.mark.parametrize(
@@ -77,3 +81,140 @@ def test_undeclared_native_profiles_remain_refused():
                 "flow_retries": 2,
             }
         )
+
+
+def _declaration(profile: str, retries: object) -> dict[str, object]:
+    return {
+        "profile": profile,
+        "flow_version": "v1",
+        "flow_code_digest": "a" * 64,
+        "resource_profile": "bounded-default-v1",
+        "flow_retries": retries,
+    }
+
+
+@pytest.mark.parametrize("retries", [0, 1, 63])
+def test_dag_declaration_accepts_exact_retry_bounds(retries: int):
+    wire = _declaration("partitioned-dag-v1", retries)
+    server = server_schemas.NativeStreamDeclaration.model_validate(wire)
+    client = client_schemas.NativeStreamDeclaration.model_validate_json(
+        server.model_dump_json()
+    )
+    assert client.flow_retries == retries
+    assert client.model_dump_json() == server.model_dump_json()
+
+
+@pytest.mark.parametrize("profile", ["bounded-linear-v1", "partitioned-fixed-v1"])
+def test_legacy_profiles_still_refuse_zero_flow_retries(profile: str):
+    for schema in (client_schemas, server_schemas):
+        with pytest.raises(ValidationError, match="Zero Flow retries"):
+            schema.NativeStreamDeclaration.model_validate(_declaration(profile, 0))
+
+
+@pytest.mark.parametrize(
+    "profile", ["bounded-linear-v1", "partitioned-fixed-v1", "partitioned-dag-v1"]
+)
+@pytest.mark.parametrize("retries", [-1, 64, True, False, 0.0, 1.0, "0", "1", None])
+def test_all_profiles_refuse_invalid_or_coerced_retry_count(
+    profile: str, retries: object
+):
+    for schema in (client_schemas, server_schemas):
+        with pytest.raises(ValidationError):
+            schema.NativeStreamDeclaration.model_validate(
+                _declaration(profile, retries)
+            )
+
+
+@pytest.mark.parametrize("profile", ["bounded-linear-v1", "partitioned-fixed-v1"])
+@pytest.mark.parametrize("delay,encoded", [(None, "null"), (0.25, "0.25")])
+def test_legacy_minimum_retry_declaration_json_bytes_remain_exact(
+    profile: str, delay: float | None, encoded: str
+):
+    expected = (
+        '{"schema_version":1,"protocol_version":1,"profile":"'
+        + profile
+        + '","flow_version":"v1","flow_code_digest":"'
+        + "a" * 64
+        + '","resource_profile":"bounded-default-v1","flow_retries":1,"flow_retry_delay_seconds":'
+        + encoded
+        + "}"
+    ).encode()
+    for schema in (client_schemas, server_schemas):
+        declaration = schema.NativeStreamDeclaration.model_validate(
+            _declaration(profile, 1) | {"flow_retry_delay_seconds": delay}
+        )
+        assert declaration.model_dump_json().encode() == expected
+
+
+def _unexecuted_declaration_body():
+    raise AssertionError("Declaration construction must not execute the Flow body")
+
+
+def _actual_declared_flow(profile: str):
+    config = NativeStreamFlowConfig(
+        profile=profile,
+        partition_count={
+            "bounded-linear-v1": 1,
+            "partitioned-fixed-v1": 2,
+            "partitioned-dag-v1": None,
+        }[profile],
+    )
+    return flow(version="v1", retries=1, retry_delay_seconds=0.25, streaming=config)(
+        _unexecuted_declaration_body
+    )
+
+
+@pytest.mark.parametrize(
+    "profile,retries",
+    [
+        ("partitioned-dag-v1", 0),
+        ("partitioned-dag-v1", 1),
+        ("partitioned-dag-v1", 63),
+        ("bounded-linear-v1", 1),
+        ("bounded-linear-v1", 63),
+        ("partitioned-fixed-v1", 1),
+        ("partitioned-fixed-v1", 63),
+    ],
+)
+def test_actual_deployment_declaration_accepts_profile_retry_bounds(
+    profile: str, retries: int
+):
+    declared = _actual_declared_flow(profile)
+    declared.retries = retries
+    payload = native_deployment_declaration(declared)
+    assert payload == {
+        "schema_version": 1,
+        "protocol_version": 1,
+        "profile": profile,
+        "resource_profile": "bounded-default-v1",
+        "flow_version": "v1",
+        "flow_retries": retries,
+        "flow_retry_delay_seconds": 0.25,
+        "flow_code_digest": native_task_code_identity(declared.fn).artifact_digest,
+    }
+    for schema in (client_schemas, server_schemas):
+        assert (
+            schema.NativeStreamDeclaration.model_validate(payload).model_dump()
+            == payload
+        )
+
+
+@pytest.mark.parametrize(
+    "profile", ["bounded-linear-v1", "partitioned-fixed-v1", "partitioned-dag-v1"]
+)
+@pytest.mark.parametrize("retries", [-1, 64, True, False, 0.0, 1.0, "0", "1", None])
+def test_actual_deployment_declaration_refuses_noninteger_or_out_of_bounds(
+    profile: str, retries: object
+):
+    declared = _actual_declared_flow(profile)
+    declared.retries = retries
+    with pytest.raises(StreamProtocolError, match="configured Flow retries"):
+        native_deployment_declaration(declared)
+
+
+@pytest.mark.parametrize("profile", ["bounded-linear-v1", "partitioned-fixed-v1"])
+def test_actual_legacy_declaration_still_refuses_zero_retries(profile: str):
+    declared = _actual_declared_flow(profile)
+    declared.retries = 0
+    with pytest.raises(StreamProtocolError, match="1..63 configured Flow retries"):
+        native_deployment_declaration(declared)

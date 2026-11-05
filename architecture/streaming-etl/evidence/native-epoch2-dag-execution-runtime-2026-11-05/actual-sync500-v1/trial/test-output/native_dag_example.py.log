@@ -1,0 +1,144 @@
+import json
+import os
+import time
+from pathlib import Path
+import anyio
+from prefect import flow, task
+from prefect.streams import (NativeStreamFlowConfig, SourceRecord, StreamGraph,
+    StreamSourceConfig, StreamTaskConfig, StreamPort, StreamInput, StreamExchange,
+    StreamPartitionCall)
+
+
+def mark(directory, role, ctx):
+    for name in ("PREFECT_API_AUTH_STRING", "PREFECT_SERVER_API_AUTH_STRING",
+                 "PREFECT_API_KEY", "ARIADNE_NATIVE_STREAM_TEST_DSN"):
+        assert name not in os.environ, "Task process inherited administrative credentials"
+    root = Path(directory)
+    marker = root / (role + "-" + str(ctx.partition_index) + ".pid.json")
+    if not marker.exists():
+        marker.write_text(json.dumps({"pid": os.getpid(), "parent": os.getppid(),
+            "partition": ctx.partition_index, "partitions": ctx.partition_count,
+            "task_run_id": str(ctx.task_run_id), "attempt": ctx.attempt,
+            "accepted_source_position": getattr(ctx, "accepted_source_position", None)}))
+
+
+def trace(directory, name, value):
+    with (Path(directory) / (name + ".jsonl")).open("a") as output:
+        output.write(json.dumps({**value, "pid": os.getpid(),
+            "monotonic_ns": time.monotonic_ns()}) + "\n")
+
+
+def wait_for_cursor_observation(directory):
+    deadline = time.monotonic() + 720
+    while not (Path(directory) / "all-cursors-observed").exists():
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Observer did not verify the final accepted cursors")
+        time.sleep(0.02)
+
+
+async def wait_for_cursor_observation_async(directory):
+    deadline = time.monotonic() + 720
+    while not (Path(directory) / "all-cursors-observed").exists():
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Observer did not verify the final accepted cursors")
+        await anyio.sleep(0.02)
+
+
+@task(version="dag-lifecycle-v1", retries=2, tags={"native-dag-runtime-capacity"}, stream=StreamSourceConfig())
+def source(ctx, directory: str, count: int, mode: str):
+    mark(directory, "A", ctx)
+    for position in range(ctx.accepted_source_position + 1, count + 1):
+        yield SourceRecord(position, {"document_id": "document-" + str(position), "number": position})
+        trace(directory, "source-accepted", {"position": position})
+        if count > 8 and position == count and mode == "normal":
+            wait_for_cursor_observation(directory)
+        if mode in {"failure", "cancel"}:
+            time.sleep(60)
+
+
+@task(version="dag-lifecycle-v1", retries=2, tags={"native-dag-runtime-capacity"}, stream=StreamSourceConfig())
+async def source_async(ctx, directory: str, count: int, mode: str):
+    mark(directory, "A", ctx)
+    for position in range(ctx.accepted_source_position + 1, count + 1):
+        yield SourceRecord(position, {"document_id": "document-" + str(position), "number": position})
+        trace(directory, "source-accepted", {"position": position})
+        if count > 8 and position == count and mode == "normal":
+            await wait_for_cursor_observation_async(directory)
+        if mode in {"failure", "cancel"}:
+            await anyio.sleep(60)
+
+
+def signed(ctx, document, directory, role):
+    mark(directory, role, ctx)
+    root = Path(directory) / (role + "-" + str(ctx.partition_index))
+    root.mkdir(exist_ok=True)
+    (root / (document["document_id"] + ".json")).write_text(json.dumps(document))
+    trace(directory, "calls-" + role + "-" + str(ctx.partition_index),
+        {"sequence": ctx.input_sequence, "number": document["number"],
+         "task_run_id": str(ctx.task_run_id), "attempt": ctx.attempt})
+    return {**document, "signed_by": role}
+
+
+@task(version="dag-lifecycle-v1", retries=2, tags={"native-dag-runtime-capacity"}, stream=StreamTaskConfig(input="document"))
+def operator(ctx, document, directory: str, role: str, count: int = 8, mode: str = "normal"):
+    try:
+        yield signed(ctx, document, directory, role)
+    finally:
+        if count > 8 and document["number"] == count and mode == "normal":
+            wait_for_cursor_observation(directory)
+
+
+@task(version="dag-lifecycle-v1", retries=2, tags={"native-dag-runtime-capacity"}, stream=StreamTaskConfig(input="document"))
+async def operator_async(ctx, document, directory: str, role: str, count: int = 8, mode: str = "normal"):
+    try:
+        yield signed(ctx, document, directory, role)
+    finally:
+        if count > 8 and document["number"] == count and mode == "normal":
+            await wait_for_cursor_observation_async(directory)
+
+
+def author(directory, count, mode, asynchronous):
+    with StreamGraph() as graph:
+        a = graph.add(source_async if asynchronous else source, operator_uid="A",
+            partitions=(StreamPartitionCall(parameters={"directory": directory, "count": count, "mode": mode}),),
+            output=StreamPort("documents"))
+        for role, parallelism, exchange in (("B", 1, "forward"), ("C", 2, "broadcast")):
+            graph.add(operator_async if asynchronous else operator, operator_uid=role,
+                partitions=tuple(StreamPartitionCall(parameters={"directory": directory, "role": role,
+                    "count": count, "mode": mode}) for _ in range(parallelism)),
+                input=StreamInput(port=StreamPort("input"), upstream=a.output("documents"),
+                    edge_uid="A-"+role, subscriber_uid="subscriber-"+role,
+                    exchange=StreamExchange(kind=exchange)), output=StreamPort("result"))
+    return graph.seal()
+
+
+@flow(version="dag-lifecycle-v1", retries=0, persist_result=False,
+      streaming=NativeStreamFlowConfig(profile="partitioned-dag-v1", partition_count=None))
+def documents(directory: str, count: int = 8, mode: str = "normal", wait_timeout: float = 150):
+    sealed = author(directory, count, mode, False)
+    if mode == "preview":
+        return {"preview": True}
+    running = sealed.start(timeout=90)
+    if mode == "failure":
+        raise ValueError("Application failure after durable activation")
+    if mode == "cancel":
+        running.cancel(reason="Explicit application cancellation")
+        raise AssertionError("Cancellation returned normally")
+    running.wait(timeout=wait_timeout)
+    return {"documents": count}
+
+
+@flow(version="dag-lifecycle-v1", retries=0, persist_result=False,
+      streaming=NativeStreamFlowConfig(profile="partitioned-dag-v1", partition_count=None))
+async def documents_async(directory: str, count: int = 8, mode: str = "normal", wait_timeout: float = 150):
+    sealed = author(directory, count, mode, True)
+    if mode == "preview":
+        return {"preview": True}
+    running = await sealed.start(timeout=90)
+    if mode == "failure":
+        raise ValueError("Application failure after durable activation")
+    if mode == "cancel":
+        await running.cancel(reason="Explicit application cancellation")
+        raise AssertionError("Cancellation returned normally")
+    await running.wait(timeout=wait_timeout)
+    return {"documents": count}

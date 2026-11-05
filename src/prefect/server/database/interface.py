@@ -225,6 +225,20 @@ class PrefectDBInterface(metaclass=DBSingleton):
         return orm_models.StreamGraphRevision
 
     @property
+    def StreamDAGLifecycleOperation(
+        self,
+    ) -> type[orm_models.StreamDAGLifecycleOperation]:
+        return orm_models.StreamDAGLifecycleOperation
+
+    @property
+    def StreamDAGLaunchAttempt(self) -> type[orm_models.StreamDAGLaunchAttempt]:
+        return orm_models.StreamDAGLaunchAttempt
+
+    @property
+    def StreamDAGControlTarget(self) -> type[orm_models.StreamDAGControlTarget]:
+        return orm_models.StreamDAGControlTarget
+
+    @property
     def StreamOperatorRun(self) -> type[orm_models.StreamOperatorRun]:
         return orm_models.StreamOperatorRun
 

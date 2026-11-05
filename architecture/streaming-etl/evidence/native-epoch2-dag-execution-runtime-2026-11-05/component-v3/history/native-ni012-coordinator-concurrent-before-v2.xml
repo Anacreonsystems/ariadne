@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="0.096" timestamp="2026-11-05T11:51:38.489190+00:00" hostname="f8abb611283c"><testcase classname="tests.test_stream_dag_execution" name="test_finalizer_joins_inflight_rpc_and_prevents_late_running_handle[start_stream_dag]" time="0.003"><failure message="AssertionError">paused_method = 'start_stream_dag'
+
+    @pytest.mark.parametrize("paused_method", ["start_stream_dag", "activate_stream_dag"])
+    async def test_finalizer_joins_inflight_rpc_and_prevents_late_running_handle(
+        paused_method: str,
+    ):
+        import asyncio
+    
+        entered = asyncio.Event()
+        resume = asyncio.Event()
+    
+        class PausedRegistry(RecordingRegistry):
+            async def _dispatch(self, method: str, **body: Any):
+                result = await super()._dispatch(method, **body)
+                if method == paused_method:
+                    entered.set()
+                    await resume.wait()
+                return result
+    
+        registry = PausedRegistry()
+        registry.cleanup_timeout = 0.5
+        start = asyncio.create_task(registry.start(registry.sealed, timeout=1))
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        before = list(registry.calls)
+        finish = asyncio.create_task(registry.finalize(None))
+        try:
+            await asyncio.sleep(0)
+            assert registry._finalizing
+&gt;           assert registry.calls == before
+                   ^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+tests/test_stream_dag_execution.py:585: AssertionError</failure></testcase><testcase classname="tests.test_stream_dag_execution" name="test_finalizer_joins_inflight_rpc_and_prevents_late_running_handle[activate_stream_dag]" time="0.002"><failure message="AssertionError">paused_method = 'activate_stream_dag'
+
+    @pytest.mark.parametrize("paused_method", ["start_stream_dag", "activate_stream_dag"])
+    async def test_finalizer_joins_inflight_rpc_and_prevents_late_running_handle(
+        paused_method: str,
+    ):
+        import asyncio
+    
+        entered = asyncio.Event()
+        resume = asyncio.Event()
+    
+        class PausedRegistry(RecordingRegistry):
+            async def _dispatch(self, method: str, **body: Any):
+                result = await super()._dispatch(method, **body)
+                if method == paused_method:
+                    entered.set()
+                    await resume.wait()
+                return result
+    
+        registry = PausedRegistry()
+        registry.cleanup_timeout = 0.5
+        start = asyncio.create_task(registry.start(registry.sealed, timeout=1))
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        before = list(registry.calls)
+        finish = asyncio.create_task(registry.finalize(None))
+        try:
+            await asyncio.sleep(0)
+            assert registry._finalizing
+&gt;           assert registry.calls == before
+                   ^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+tests/test_stream_dag_execution.py:585: AssertionError</failure></testcase></testsuite></testsuites>

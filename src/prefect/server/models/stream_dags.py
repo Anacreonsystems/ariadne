@@ -16,6 +16,7 @@ from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.models.stream_executions import (
     guard_task_lifecycle,
     require_execution,
+    require_no_remaining_dag_flow_retry,
 )
 from prefect.server.models.stream_subtask_authority import (
     metadata_task_control,
@@ -137,11 +138,34 @@ async def _public_snapshot(
 
 
 async def dag_plan(
-    session: AsyncSession, db: PrefectDBInterface, graph: orm_models.StreamGraphRevision
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph: orm_models.StreamGraphRevision,
+    *,
+    _admission_witness: bool = False,
 ) -> s.StreamDAGPlan:
     request, digest = _validated(
         s.StreamDAGSealRequest.model_validate(graph.declaration)
     )
+    activation_valid = (
+        graph.startup_completed_at is None and graph.activation_operation_id is None
+    )
+    if (
+        graph.startup_completed_at is not None
+        and graph.activation_operation_id is not None
+    ):
+        activation = await session.get(
+            db.StreamDAGLifecycleOperation, graph.activation_operation_id
+        )
+        activation_valid = (
+            activation is not None
+            and activation.kind == "ACTIVATE"
+            and activation.graph_revision_id == graph.id
+            and activation.request_digest == graph.activation_request_digest
+            and activation.target_set_digest is not None
+            and graph.admission_operation_id is not None
+            and graph.state in {"ADMITTED", "RELEASED"}
+        )
     if (
         graph.profile != DAG_PROFILE
         or graph.graph_digest != digest
@@ -149,8 +173,7 @@ async def dag_plan(
         or graph.flow_run_id != request.flow_run_id
         or graph.operation_id != request.operation_id
         or graph.assignment_epoch != request.assignment_epoch
-        or graph.startup_completed_at is not None
-        or graph.activation_operation_id is not None
+        or not activation_valid
         or (
             graph.state == "SEALED"
             and any(
@@ -473,7 +496,8 @@ async def dag_plan(
                     manifest=NativeStreamStore.submission_response(manifest),
                     assigned_worker_id=subtask.assigned_worker_id,
                     physical_slot_reserved=allocation is not None,
-                    physical_slot_released=subtask.physical_slot_released,
+                    physical_slot_released=subtask.physical_slot_released
+                    and not (_admission_witness and graph.state == "ADMITTED"),
                 )
             )
     if graph.admission_operation_id is not None:
@@ -579,6 +603,35 @@ async def dag_plan(
             ),
         }
     )
+
+
+async def dag_admission_topology_witness(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph: orm_models.StreamGraphRevision,
+) -> s.StreamDAGPlan:
+    """Internal immutable admission witness, never current resource ownership.
+
+    Progressive physical release does not alter the original topology/placement.
+    The ordinary public plan keeps its strict current-slot projection. Every
+    execution mutation must independently lock and validate actual reservations.
+    """
+    start = (
+        await session.get(db.StreamDAGLifecycleOperation, graph.admission_operation_id)
+        if graph.admission_operation_id
+        else None
+    )
+    if (
+        start is None
+        or start.kind != "START"
+        or start.graph_revision_id != graph.id
+        or start.flow_run_id != graph.flow_run_id
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT",
+            "Immutable admission witness requires its persisted START",
+        )
+    return await dag_plan(session, db, graph, _admission_witness=True)
 
 
 async def _persist(
@@ -927,6 +980,7 @@ async def seal_dag(
             update=True,
         )
         await _public_snapshot(session, db, flow, request)
+        require_no_remaining_dag_flow_retry(flow)
         return await _persist(session, db, request, digest, flow, authority)
 
 
@@ -963,6 +1017,18 @@ async def read_dag_plan(
     if not metadata_only:
         stored, _ = _validated(s.StreamDAGSealRequest.model_validate(graph.declaration))
         await _public_snapshot(session, db, flow, stored)
+    if graph.state == "ADMITTED" and await session.scalar(
+        sa.select(
+            sa.exists().where(
+                db.StreamPhysicalSubtask.graph_revision_id == graph.id,
+                db.StreamPhysicalSubtask.physical_slot_released.is_(True),
+            )
+        )
+    ):
+        raise NativeStreamError(
+            "RECOVERY_NOT_READY",
+            "Progressive DAG release requires the dedicated execution projection",
+        )
     return await dag_plan(session, db, graph)
 
 

@@ -20,7 +20,7 @@ from prefect.settings import PREFECT_SERVER_API_AUTH_STRING
 Database = Annotated[PrefectDBInterface, Depends(provide_database_interface)]
 
 
-async def _trusted_worker(request: Request) -> None:
+async def trusted_worker(request: Request) -> None:
     """Keep worker controls inside the existing protected Basic boundary."""
     expected = PREFECT_SERVER_API_AUTH_STRING.value()
     header = request.headers.get("Authorization", "")
@@ -41,7 +41,7 @@ router: PrefectRouter = PrefectRouter(
     prefix="/streams/v2/workers",
     tags=["Streams"],
     route_class=SecretRedactingRoute,
-    dependencies=[Depends(_trusted_worker)],
+    dependencies=[Depends(trusted_worker)],
 )
 
 

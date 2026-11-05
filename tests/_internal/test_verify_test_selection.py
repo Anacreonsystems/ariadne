@@ -1,0 +1,337 @@
+"""Selection must account for isolated profiles without concealing missing tests."""
+
+import copy
+import json
+import os
+import shlex
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+
+SCRIPT = Path(__file__).parents[2] / "scripts" / "verify_test_selection.py"
+WORKFLOW = Path(__file__).parents[2] / ".github" / "workflows" / "python-tests.yaml"
+
+
+def check_selection(
+    directory: Path,
+    files: list[str],
+    *,
+    exclusions: str = "",
+    dedicated_command: str = "",
+) -> subprocess.CompletedProcess[str]:
+    workflow: dict[str, Any] = {
+        "env": {"NATIVE_DAG_TEST_EXCLUSIONS": exclusions},
+        "jobs": {
+            "run-tests": {
+                "strategy": {
+                    "matrix": {
+                        "test-type": [
+                            {"id": "regular", "name": "Regular", "modules": "tests/"}
+                        ]
+                    }
+                }
+            },
+            "isolated-profile": {"steps": [{"run": dedicated_command}]},
+        },
+    }
+    target = directory / ".github" / "workflows" / "python-tests.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text(yaml.safe_dump(workflow))
+    for name in files:
+        path = directory / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    return subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        cwd=directory,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_explicit_dedicated_module_covers_a_broadly_excluded_file(tmp_path: Path):
+    result = check_selection(
+        tmp_path,
+        ["tests/test_regular.py", "tests/test_isolated.py"],
+        exclusions="--ignore=tests/test_isolated.py",
+        dedicated_command=(
+            "uv run pytest tests/test_isolated.py -k 'not sqlite' "
+            "--junitxml=isolated.xml"
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "All 2 test files" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "dedicated_command",
+    ["", "uv run pytest tests/", "uv run pytest tests/test_regular.py"],
+)
+def test_exclusion_without_its_exact_dedicated_module_fails(
+    tmp_path: Path, dedicated_command: str
+):
+    result = check_selection(
+        tmp_path,
+        ["tests/test_regular.py", "tests/test_isolated.py"],
+        exclusions="--ignore=tests/test_isolated.py",
+        dedicated_command=dedicated_command,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "tests/test_isolated.py" in result.stdout
+    assert "Total uncovered: 1" in result.stdout
+
+
+def test_one_dedicated_file_does_not_implicitly_cover_its_sibling(tmp_path: Path):
+    result = check_selection(
+        tmp_path,
+        ["tests/isolated/test_declared.py", "tests/isolated/test_missing.py"],
+        exclusions="--ignore=tests/isolated",
+        dedicated_command="uv run pytest tests/isolated/test_declared.py::test_case",
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "tests/isolated/test_missing.py" in result.stdout
+    assert "Total uncovered: 1" in result.stdout
+
+
+@pytest.mark.parametrize("database", ["postgres:17", "sqlite"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "skipped",
+        "failure",
+        "error",
+        "duplicate",
+        "missing-module",
+        "empty",
+        "missing-report",
+    ],
+)
+def test_actual_dag_workflow_guard_requires_executed_unique_passing_modules(
+    tmp_path: Path, database: str, fault: str | None
+):
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    target = tmp_path / ".github" / "workflows" / "python-tests.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text(WORKFLOW.read_text())
+    steps = workflow["jobs"]["run-stream-dag-execution-tests"]["steps"]
+    for step in steps:
+        command = step.get("run", "").strip()
+        if not command.startswith("uv run pytest "):
+            continue
+        arguments = shlex.split(command)
+        report = next(
+            arg.split("=", 1)[1] for arg in arguments if arg.startswith("--junitxml=")
+        )
+        suite = ET.Element("testsuite")
+        for argument in arguments:
+            module = argument.split("::", 1)[0]
+            if module.startswith("tests/") and module.endswith(".py"):
+                ET.SubElement(
+                    suite,
+                    "testcase",
+                    classname=module[:-3].replace("/", "."),
+                    name="test_executed_case",
+                )
+        ET.ElementTree(suite).write(tmp_path / report)
+    report = tmp_path / "native-dag-contract.xml"
+    if fault == "missing-report":
+        report.unlink()
+    elif fault is not None:
+        tree = ET.parse(report)
+        suite = tree.getroot()
+        if fault in {"skipped", "failure", "error"}:
+            ET.SubElement(suite[0], fault)
+        elif fault == "duplicate":
+            suite.append(copy.deepcopy(suite[0]))
+        elif fault == "missing-module":
+            suite.remove(suite[0])
+        elif fault == "empty":
+            suite.clear()
+        tree.write(report)
+    guard = next(
+        step["run"]
+        for step in steps
+        if step.get("name") == "Require every declared DAG module to pass without skips"
+    )
+    assert guard.startswith("uv run python - <<'PY'\n")
+    program = guard.split("\n", 1)[1].rsplit("\nPY", 1)[0]
+    result = subprocess.run(
+        [sys.executable, "-"],
+        input=program,
+        cwd=tmp_path,
+        env={**os.environ, "NATIVE_DAG_DATABASE": database},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == (0 if fault is None else 1), (
+        result.stdout + result.stderr
+    )
+
+
+def _runtime_program(job_name: str, step_name: str) -> str:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    command = next(
+        step["run"]
+        for step in workflow["jobs"][job_name]["steps"]
+        if step.get("name") == step_name
+    )
+    assert command.startswith("uv run python - <<'PY'\n")
+    return command.split("\n", 1)[1].rsplit("\nPY", 1)[0]
+
+
+def _required_runtime_nodes() -> list[str]:
+    dag = "tests/test_native_stream_dag_execution_http.py::test_public_dag_"
+    p2 = "tests/test_native_partitioned_stream_http.py::test_actual_process_worker_runs_four_partition_tasks"
+    lifecycle = [
+        dag + "lifecycle_two_real_workers_postgres[" + case + "]"
+        for case in (
+            "False-normal",
+            "True-normal",
+            "False-preview",
+            "False-failure",
+            "False-cancel",
+        )
+    ]
+    volume = [
+        f"{dag}bounded_volume_postgres[{asynchronous}-{count}]"
+        for count in (500, 5000)
+        for asynchronous in (False, True)
+    ]
+    recovery = [
+        f"{dag}branch_recovery_postgres[{asynchronous}-{mode}]"
+        for mode in ("accepted200", "incomplete200")
+        for asynchronous in (False, True)
+    ]
+    exchanges = [
+        f"{dag}exchange_modes_postgres[{kind}]" for kind in ("rebalance", "keyed")
+    ]
+    return (
+        lifecycle
+        + volume
+        + recovery
+        + exchanges
+        + [f"{p2}[5000-none-{asynchronous}]" for asynchronous in (False, True)]
+    )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "duplicate",
+        "missing-5000",
+        "missing-recovery",
+        "missing-exchange",
+        "empty",
+        "sqlite-only",
+        "additional-case",
+    ],
+)
+def test_actual_runtime_matrix_covers_every_required_case(
+    tmp_path: Path, fault: str | None
+):
+    nodes = _required_runtime_nodes()
+    expected = set(nodes)
+    if fault == "duplicate":
+        nodes.append(nodes[0])
+    elif fault == "missing-5000":
+        nodes.remove(next(node for node in nodes if "[True-5000]" in node))
+    elif fault == "missing-recovery":
+        nodes.remove(next(node for node in nodes if "[False-incomplete200]" in node))
+    elif fault == "missing-exchange":
+        nodes.remove(next(node for node in nodes if "[keyed]" in node))
+    elif fault == "empty":
+        nodes.clear()
+    elif fault == "sqlite-only":
+        nodes = ["tests/test_native_stream_dag_execution_http.py::test_sqlite_refusal"]
+    elif fault == "additional-case":
+        additional = (
+            "tests/test_native_stream_dag_execution_http.py::test_new_postgres_gate"
+        )
+        nodes.append(additional)
+        expected.add(additional)
+    # Bounded P2 cases already run together. They must not silently multiply
+    # across the expensive-case matrix.
+    nodes.append(
+        "tests/test_native_partitioned_stream_http.py::test_actual_process_worker_runs_four_partition_tasks[8-none-False]"
+    )
+    (tmp_path / "native-runtime-collection.log").write_text("\n".join(nodes) + "\n")
+    output = tmp_path / "outputs"
+    result = subprocess.run(
+        [sys.executable, "-"],
+        input=_runtime_program(
+            "plan-native-runtime-cases",
+            "Require complete coverage and create one job per large case",
+        ),
+        cwd=tmp_path,
+        env={**os.environ, "GITHUB_OUTPUT": str(output)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    passing = fault in (None, "additional-case")
+    assert result.returncode == (0 if passing else 1), result.stdout + result.stderr
+    if passing:
+        matrix = json.loads((tmp_path / "native-runtime-matrix.json").read_text())
+        assert {item["node"] for item in matrix["include"]} == expected
+        assert len({item["id"] for item in matrix["include"]}) == len(expected)
+        assert json.loads(output.read_text().removeprefix("cases=")) == matrix
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "skipped",
+        "failure",
+        "error",
+        "duplicate",
+        "empty",
+        "foreign-module",
+        "wrong-case",
+        "missing-report",
+    ],
+)
+def test_actual_runtime_shard_guard_requires_its_exact_passing_case(
+    tmp_path: Path, fault: str | None
+):
+    node = _required_runtime_nodes()[-1]
+    module, name = node.split("::", 1)
+    suite = ET.Element("testsuite")
+    case = ET.SubElement(
+        suite, "testcase", classname=module[:-3].replace("/", "."), name=name
+    )
+    if fault in ("skipped", "failure", "error"):
+        ET.SubElement(case, fault)
+    elif fault == "duplicate":
+        suite.append(copy.deepcopy(case))
+    elif fault == "empty":
+        suite.clear()
+    elif fault == "foreign-module":
+        case.set("classname", "tests.unrelated")
+    elif fault == "wrong-case":
+        case.set("name", name.replace("5000", "500"))
+    if fault != "missing-report":
+        ET.ElementTree(suite).write(tmp_path / "native-runtime-case.xml")
+    result = subprocess.run(
+        [sys.executable, "-"],
+        input=_runtime_program(
+            "run-native-runtime-case", "Require that exact case to pass without skips"
+        ),
+        cwd=tmp_path,
+        env={**os.environ, "NATIVE_RUNTIME_NODE": node},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == (0 if fault is None else 1), (
+        result.stdout + result.stderr
+    )

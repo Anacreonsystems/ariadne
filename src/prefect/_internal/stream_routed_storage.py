@@ -12,28 +12,50 @@ import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import anyio
 import httpx
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
+from prefect._internal.stream_execution import (
+    DAGSubtaskExecutionContext,
+    get_stream_subtask_execution,
+)
 from prefect._internal.stream_key_wire import encode_tagged_key_wire_v1
 from prefect._internal.stream_routing import KeyEncodingError
+from prefect.client.schemas.stream_dag_executions import (
+    StreamDAGConsumerFinishRequest,
+    StreamDAGConsumerReadRequest,
+    StreamDAGSourceFinishRequest,
+    StreamDAGSubtaskBootstrap,
+)
 from prefect.client.schemas.stream_routes import (
     StreamDAGConsumerCompleteRequest,
     StreamDAGRouteContext,
     StreamDAGSourceAppendRequest,
 )
-from prefect.client.schemas.streams import ConsumerBinding, DeliveryToken, SourceBinding
+from prefect.client.schemas.streams import (
+    ConsumerBinding,
+    DeliveryToken,
+    SourceAdmission,
+    SourceBinding,
+    StreamDelivery,
+    StreamInfo,
+)
 from prefect.client.stream_storage import PrefectStreamStorage
-from prefect.streams import KeyedStreamOutput, StreamProtocolError, StreamRecord
+from prefect.streams import (
+    KeyedStreamOutput,
+    StreamProtocolError,
+    StreamRecord,
+    StreamStatus,
+)
 
 _RouteMethod = Literal["append_stream_dag_source", "complete_stream_dag_consumer"]
 _RouteIntent = StreamDAGSourceAppendRequest | StreamDAGConsumerCompleteRequest
 
 
-def _freeze(intent: _RouteIntent | StreamDAGRouteContext) -> bytes:
+def _freeze(intent: BaseModel) -> bytes:
     return json.dumps(
         intent.model_dump(mode="json"),
         sort_keys=True,
@@ -75,6 +97,7 @@ class PrefectRoutedStreamStorage(PrefectStreamStorage):
     """
 
     _context_bytes: bytes = field(repr=False)
+    _scope_bytes: bytes | None = field(repr=False, default=None)
 
     def __init__(
         self,
@@ -86,11 +109,299 @@ class PrefectRoutedStreamStorage(PrefectStreamStorage):
         poll_interval: float = 0.05,
     ) -> None:
         super().__init__(flow_run_id, api_url, admission_timeout, poll_interval)
+        object.__setattr__(self, "_scope_bytes", None)
         try:
             context = StreamDAGRouteContext.model_validate(route_context)
             object.__setattr__(self, "_context_bytes", _freeze(context))
         except (ValidationError, ValueError, TypeError, RecursionError) as error:
             raise StreamProtocolError("Invalid sealed DAG routing context") from error
+
+    @classmethod
+    def from_bootstrap(
+        cls, bootstrap: StreamDAGSubtaskBootstrap, *, api_url: str
+    ) -> PrefectRoutedStreamStorage:
+        """Freeze own public identity; this constructor performs no transport."""
+        if type(bootstrap) is not StreamDAGSubtaskBootstrap:
+            raise StreamProtocolError("DAG storage requires an exact own bootstrap")
+        own = StreamDAGSubtaskBootstrap.model_validate_json(bootstrap.model_dump_json())
+        storage = cls(own.flow_run_id, api_url, route_context=own.context)
+        grant = own.grant
+        scope = {
+            "flow_run_id": str(own.flow_run_id),
+            "graph_revision_id": str(own.context.graph_revision_id),
+            "subtask_id": str(own.assignment.id),
+            "task_run_id": str(own.task_run.id),
+            "grant_id": str(grant.id),
+            "physical_epoch": grant.physical_epoch,
+            "assignment_epoch": grant.assignment_epoch,
+            "holder_id": str(grant.holder_id),
+            "scope_digest": grant.scope_digest,
+            "manifest_digest": own.assignment.manifest.manifest_digest,
+            "input_stream_id": str(own.input.input_stream_id) if own.input else None,
+            "output_stream_id": str(own.output.stream_id),
+            "subscriber_id": str(own.input.subscriber_id) if own.input else None,
+            "child_process_id": grant.child_process_id,
+            "process_start_ticks": grant.process_start_ticks,
+        }
+        object.__setattr__(
+            storage, "_scope_bytes", json.dumps(scope, sort_keys=True).encode()
+        )
+        return storage
+
+    def _scope(self) -> dict[str, Any]:
+        execution = get_stream_subtask_execution()
+        if (
+            self._scope_bytes is None
+            or type(execution) is not DAGSubtaskExecutionContext
+        ):
+            raise StreamProtocolError("DAG storage requires its own scoped bootstrap")
+        scope: dict[str, Any] = json.loads(self._scope_bytes)
+        for name, expected in scope.items():
+            if name == "subscriber_id":
+                continue
+            actual = getattr(execution, name)
+            if isinstance(actual, UUID):
+                actual = str(actual)
+            if actual != expected:
+                raise StreamProtocolError("DAG storage differs from its current grant")
+        if execution.api_url.rstrip("/") != self.api_url:
+            raise StreamProtocolError("DAG storage differs from its current API")
+        return scope
+
+    def _binding(self, binding: SourceBinding | ConsumerBinding) -> None:
+        scope = self._scope()
+        expected = {
+            "flow_run_id": scope["flow_run_id"],
+            "owner_id": scope["holder_id"],
+        }
+        if isinstance(binding, SourceBinding):
+            if scope["input_stream_id"] is not None:
+                raise StreamProtocolError("An operator cannot acquire a source binding")
+            expected.update(
+                stream_id=scope["output_stream_id"], task_run_id=scope["task_run_id"]
+            )
+        else:
+            if scope["input_stream_id"] is None:
+                raise StreamProtocolError("A source cannot acquire a consumer binding")
+            expected.update(
+                consumer_id=scope["subscriber_id"],
+                input_stream_id=scope["input_stream_id"],
+                output_stream_id=scope["output_stream_id"],
+            )
+        if any(
+            str(getattr(binding, name)) != value for name, value in expected.items()
+        ):
+            raise StreamProtocolError("DAG binding differs from its frozen subscriber")
+
+    async def _dispatch(self, method: str, **kwargs: Any) -> Any:
+        if type(method) is not str or method not in {
+            "append_stream_dag_source",
+            "complete_stream_dag_consumer",
+            "open_stream_dag_source",
+            "open_stream_dag_consumer",
+            "read_stream_dag_consumer",
+            "finish_stream_dag_source",
+            "finish_stream_dag_consumer",
+            "read_stream_dag_input_status",
+            "read_stream_dag_output_status",
+        }:
+            raise StreamProtocolError("DAG storage refuses arbitrary or legacy routes")
+        if (
+            method not in {"append_stream_dag_source", "complete_stream_dag_consumer"}
+            or self._scope_bytes is not None
+        ):
+            self._scope()
+        return await super()._dispatch(method, **kwargs)
+
+    async def _dag_request(self, method: str, **kwargs: Any) -> Any:
+        self._scope()
+        frozen = json.dumps(
+            {
+                name: str(value) if type(value) is UUID else value
+                for name, value in kwargs.items()
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+        deadline = time.monotonic() + self.admission_timeout
+        while True:
+            try:
+                arguments = json.loads(frozen)
+                if method in {
+                    "read_stream_dag_input_status",
+                    "read_stream_dag_output_status",
+                }:
+                    # JSON owns the retry snapshot; the SDK method contract and
+                    # its own-scope ACK comparison require the validated UUID.
+                    arguments["subtask_id"] = UUID(arguments["subtask_id"])
+                return await self._dispatch(method, **arguments)
+            except httpx.TransportError:
+                if time.monotonic() >= deadline:
+                    raise
+            await anyio.sleep(self.poll_interval)
+
+    async def _request(
+        self, method: str, *, metadata_lag: bool = False, **kwargs: Any
+    ) -> Any:
+        raise StreamProtocolError("DAG storage refuses arbitrary or legacy requests")
+
+    async def open_source(
+        self, stream_id: str, task_run_id: UUID, owner_id: UUID, attempt: int
+    ) -> SourceAdmission:
+        scope = self._scope()
+        if (
+            str(stream_id) != scope["output_stream_id"]
+            or str(task_run_id) != scope["task_run_id"]
+            or scope["input_stream_id"] is not None
+        ):
+            raise StreamProtocolError("DAG source request differs from its bootstrap")
+        admission = SourceAdmission.model_validate(
+            await self._dag_request(
+                "open_stream_dag_source",
+                context=self.route_context.model_dump(mode="json"),
+            )
+        )
+        self._binding(admission.binding)
+        if admission.binding.attempt != attempt:
+            raise StreamProtocolError("DAG source attempt differs from its TaskRun")
+        return admission
+
+    async def open_consumer(
+        self,
+        input_id: str,
+        output_id: str,
+        consumer_id: str,
+        owner_id: str,
+        attempt: int,
+    ) -> ConsumerBinding:
+        scope = self._scope()
+        if (
+            str(input_id) != scope["input_stream_id"]
+            or str(output_id) != scope["output_stream_id"]
+            or str(consumer_id) != scope["task_run_id"]
+        ):
+            raise StreamProtocolError("DAG consumer request differs from its bootstrap")
+        binding = ConsumerBinding.model_validate(
+            await self._dag_request(
+                "open_stream_dag_consumer",
+                context=self.route_context.model_dump(mode="json"),
+            )
+        )
+        self._binding(binding)
+        if binding.attempt != attempt:
+            raise StreamProtocolError("DAG consumer attempt differs from its TaskRun")
+        return binding
+
+    async def read(self, binding: ConsumerBinding) -> StreamRecord[Any] | None:
+        self._binding(binding)
+        intent = StreamDAGConsumerReadRequest(
+            context=self.route_context, binding=binding
+        )
+        raw = await self._dag_request(
+            "read_stream_dag_consumer", **intent.model_dump(mode="json")
+        )
+        if raw is None:
+            return None
+        delivery = StreamDelivery.model_validate(raw)
+        if any(
+            getattr(delivery.token, name) != getattr(binding, name)
+            for name in ConsumerBinding.model_fields
+        ):
+            raise StreamProtocolError("DAG delivery differs from its admitted binding")
+        return StreamRecord(
+            delivery.token.sequence,
+            delivery.value,
+            delivery.managed_state,
+            delivery.token,
+        )
+
+    async def status(self, stream_id: str) -> StreamStatus:
+        scope = self._scope()
+        if str(stream_id) == scope["output_stream_id"]:
+            method = "read_stream_dag_output_status"
+        elif str(stream_id) == scope["input_stream_id"]:
+            method = "read_stream_dag_input_status"
+        else:
+            raise StreamProtocolError("DAG status requires its own input or output")
+        info = StreamInfo.model_validate(
+            await self._dag_request(method, subtask_id=UUID(scope["subtask_id"]))
+        )
+        if str(info.id) != str(stream_id) or info.flow_run_id != self.flow_run_id:
+            raise StreamProtocolError("DAG status response differs from its partition")
+        return StreamStatus(info.state, info.error)
+
+    async def close_source(
+        self, binding: SourceBinding, expected_position: int
+    ) -> None:
+        self._binding(binding)
+        intent = StreamDAGSourceFinishRequest(
+            operation_id=uuid5(
+                self.route_context.producer_subtask_id,
+                "prefect-stream-dag-source-finish-v1",
+            ),
+            context=self.route_context,
+            binding=binding,
+            expected_position=expected_position,
+        )
+        await self._dag_request(
+            "finish_stream_dag_source", **intent.model_dump(mode="json")
+        )
+
+    async def finish_consumer(
+        self, binding: ConsumerBinding, error: str | None = None
+    ) -> None:
+        if error is not None:
+            raise StreamProtocolError(
+                "DAG failure requires its signed terminal Task event"
+            )
+        self._binding(binding)
+        intent = StreamDAGConsumerFinishRequest(
+            operation_id=uuid5(
+                self.route_context.producer_subtask_id,
+                "prefect-stream-dag-consumer-finish-v1",
+            ),
+            context=self.route_context,
+            binding=binding,
+        )
+        await self._dag_request(
+            "finish_stream_dag_consumer", **intent.model_dump(mode="json")
+        )
+
+    async def create_stream(self, stream_id: str) -> None:
+        raise StreamProtocolError("DAG partitions belong to the sealed graph")
+
+    async def reserve_output(
+        self, stream_id: str, task_run_id: UUID, *, source: bool = False
+    ) -> None:
+        raise StreamProtocolError("DAG output reservation belongs to the sealed graph")
+
+    async def register_task_run(self, task: Any, task_run: Any) -> Any:
+        raise StreamProtocolError("DAG TaskRuns belong to the sealed graph")
+
+    async def reject_output(
+        self, stream_id: str, task_run_id: UUID, error: str, *, source: bool = False
+    ) -> None:
+        raise StreamProtocolError(
+            "DAG rejection requires its signed terminal Task event"
+        )
+
+    async def fail_task_output(
+        self,
+        stream_id: str,
+        task_run_id: UUID,
+        attempt: int,
+        error: str,
+        *,
+        source: bool = False,
+    ) -> None:
+        raise StreamProtocolError("DAG failure requires its signed terminal Task event")
+
+    async def finish(self, stream_id: str, error: str | None = None) -> None:
+        raise StreamProtocolError("DAG finish requires its dedicated current binding")
+
+    async def read_prefix(self, stream_id: str, limit: int) -> list[Any]:
+        raise StreamProtocolError("DAG child cannot collect an arbitrary prefix")
 
     @property
     def route_context(self) -> StreamDAGRouteContext:
@@ -141,6 +452,8 @@ class PrefectRoutedStreamStorage(PrefectStreamStorage):
         self, binding: SourceBinding, position: int, value: Any
     ) -> None:
         context = self.route_context
+        if self._scope_bytes is not None:
+            self._binding(binding)
         if binding.flow_run_id != self.flow_run_id:
             raise StreamProtocolError("DAG source belongs to another FlowRun")
         payload, key = _output(value, keyed=context.has_keyed_outgoing)
@@ -170,6 +483,8 @@ class PrefectRoutedStreamStorage(PrefectStreamStorage):
         managed_state: dict[str, Any],
     ) -> None:
         context = self.route_context
+        if self._scope_bytes is not None:
+            self._binding(binding)
         if binding.flow_run_id != self.flow_run_id:
             raise StreamProtocolError("DAG consumer belongs to another FlowRun")
         if kind == "RETURN":

@@ -187,7 +187,7 @@ async def test_actual_process_worker_runs_four_partition_tasks(
                 "schema_version": 1,
                 "profile": "bounded-linear-v1",
             }
-            await client.create_work_pool(
+            work_pool = await client.create_work_pool(
                 WorkPoolCreate(name=pool, type="process", base_job_template=template)
             )
             deployment = RunnerDeployment.from_flow(
@@ -276,11 +276,15 @@ async def test_actual_process_worker_runs_four_partition_tasks(
                             sa.select(db.StreamWorkerCapability.worker_id).where(
                                 db.StreamWorkerCapability.worker_id.in_(
                                     [worker.id for worker in registered]
-                                )
+                                ),
+                                db.StreamWorkerCapability.protocol
+                                == "partitioned-fixed-v1",
+                                db.StreamWorkerCapability.protocol_version == 1,
+                                db.StreamWorkerCapability.work_pool_id == work_pool.id,
                             )
                         )
                     ).all()
-                if len(capabilities) == 2:
+                if set(capabilities) == {worker.id for worker in registered}:
                     ready_ns = time.monotonic_ns()
                     break
             assert time.monotonic() < deadline, diagnostics()

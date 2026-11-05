@@ -138,6 +138,23 @@ async def clear_db(db, request):
                             orm_models.StreamRecord.graph_revision_id.is_not(None)
                         )
                     )
+                    # Launch identity points to grants (never the reverse), so
+                    # isolated-test history is purged before the graph hierarchy.
+                    await session.execute(
+                        orm_models.StreamDAGControlTarget.__table__.delete()
+                    )
+                    await session.execute(
+                        orm_models.StreamGraphRevision.__table__.update().values(
+                            current_control_operation_id=None,
+                            terminal_operation_id=None,
+                        )
+                    )
+                    await session.execute(
+                        orm_models.StreamDAGLaunchAttempt.__table__.delete()
+                    )
+                    await session.execute(
+                        orm_models.StreamDAGLifecycleOperation.__table__.delete()
+                    )
                     await session.execute(
                         orm_models.StreamPhysicalSlotAllocation.__table__.delete()
                     )

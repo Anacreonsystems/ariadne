@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.194" timestamp="2026-11-05T13:16:01.932056+00:00" hostname="f8abb611283c"><testcase classname="tests.client.test_native_deployment_schemas" name="test_actual_deployment_declaration_accepts_profile_retry_bounds[partitioned-dag-v1-0]" time="0.003"><failure message="prefect.streams.StreamProtocolError: Native deployment recovery requires 1..63 configured Flow retries">profile = 'partitioned-dag-v1', retries = 0
+
+    @pytest.mark.parametrize("profile,retries", [
+        ("partitioned-dag-v1", 0), ("partitioned-dag-v1", 1), ("partitioned-dag-v1", 63),
+        ("bounded-linear-v1", 1), ("bounded-linear-v1", 63),
+        ("partitioned-fixed-v1", 1), ("partitioned-fixed-v1", 63),
+    ])
+    def test_actual_deployment_declaration_accepts_profile_retry_bounds(profile: str, retries: int):
+        declared = _actual_declared_flow(profile)
+        declared.retries = retries
+&gt;       payload = native_deployment_declaration(declared)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/client/test_native_deployment_schemas.py:169: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+flow = &lt;prefect.flows.Flow object at 0x7ff219d44ec0&gt;
+
+    def native_deployment_declaration(flow: Any) -&gt; dict[str, Any] | None:
+        config = getattr(flow, "streaming", None)
+        if config is None:
+            return None
+        if not flow.version:
+            raise StreamProtocolError(
+                "A native deployment requires an explicit Flow version"
+            )
+        if type(flow.retries) is not int or not 1 &lt;= flow.retries &lt;= 63:
+&gt;           raise StreamProtocolError(
+                "Native deployment recovery requires 1..63 configured Flow retries"
+            )
+E           prefect.streams.StreamProtocolError: Native deployment recovery requires 1..63 configured Flow retries
+
+src/prefect/_internal/stream_deployment.py:25: StreamProtocolError</failure></testcase></testsuite></testsuites>

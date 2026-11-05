@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="12.265" timestamp="2026-11-05T13:10:41.820836+00:00" hostname="f8abb611283c"><testcase classname="tests.test_native_stream_dag_execution_http" name="test_public_dag_lifecycle_two_real_workers_postgres[False-normal]" time="12.008"><failure message="prefect.streams.StreamProtocolError: Native deployment recovery requires 1..63 configured Flow retries">execution_api = &lt;tests.test_native_stream_recovery_http.RestartableAPI object at 0x7efdde57d1c0&gt;
+tmp_path = PosixPath('/tmp/native-ni012-runtime-live/run-sync-f91fcd8d/pytest/test_public_dag_lifecycle_two_0')
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7efddfef8d10&gt;
+asynchronous = False, mode = 'normal'
+
+    @pytest.mark.parametrize(
+        "asynchronous,mode",
+        [
+            (False, "normal"),
+            (True, "normal"),
+            (False, "preview"),
+            (False, "failure"),
+            (False, "cancel"),
+        ],
+    )
+    @pytest.mark.timeout(300)
+    async def test_public_dag_lifecycle_two_real_workers_postgres(
+        execution_api: RestartableAPI,
+        tmp_path: Path,
+        db: Any,
+        asynchronous: bool,
+        mode: str,
+    ):
+        server = execution_api
+        user_module = tmp_path / "native_dag_example.py"
+        user_module.write_text(_USER_MODULE)
+        definition = load_flow_from_entrypoint(
+            str(user_module) + ":" + ("documents_async" if asynchronous else "documents")
+        )
+        pool = "dag-runtime-" + uuid4().hex
+        names = ["dag-left-" + uuid4().hex, "dag-right-" + uuid4().hex]
+        with temporary_settings(
+            {PREFECT_API_URL: server.url, PREFECT_API_AUTH_STRING: server.auth}
+        ):
+            async with get_client() as client:
+                try:
+                    await client.create_global_concurrency_limit(
+                        GlobalConcurrencyLimitCreate(name="tag:" + _TAG, limit=4)
+                    )
+                except ObjectAlreadyExists:
+                    limit = await client.read_global_concurrency_limit_by_name(
+                        "tag:" + _TAG
+                    )
+                    assert limit.limit == 4 and limit.active_slots == 0
+                template = ProcessWorker.get_default_base_job_template()
+                template["prefect_native_streaming"] = {
+                    "schema_version": 1,
+                    "profile": "bounded-linear-v1",
+                }
+                await client.create_work_pool(
+                    WorkPoolCreate(name=pool, type="process", base_job_template=template)
+                )
+&gt;               deployment = RunnerDeployment.from_flow(
+                    definition,
+                    name="dag-lifecycle",
+                    work_pool_name=pool,
+                    concurrency_limit=1,
+                    job_variables={"working_dir": str(Path.cwd()), "stream_output": True},
+                )
+
+tests/test_native_stream_dag_execution_http.py:188: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/deployments/runner.py:1111: in from_flow
+    cls._set_defaults_from_flow(deployment, flow)
+src/prefect/deployments/runner.py:948: in _set_defaults_from_flow
+    declaration = native_deployment_declaration(flow)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+flow = &lt;prefect.flows.Flow object at 0x7efdde59dd30&gt;
+
+    def native_deployment_declaration(flow: Any) -&gt; dict[str, Any] | None:
+        config = getattr(flow, "streaming", None)
+        if config is None:
+            return None
+        if not flow.version:
+            raise StreamProtocolError(
+                "A native deployment requires an explicit Flow version"
+            )
+        if type(flow.retries) is not int or not 1 &lt;= flow.retries &lt;= 63:
+&gt;           raise StreamProtocolError(
+                "Native deployment recovery requires 1..63 configured Flow retries"
+            )
+E           prefect.streams.StreamProtocolError: Native deployment recovery requires 1..63 configured Flow retries
+
+src/prefect/_internal/stream_deployment.py:25: StreamProtocolError</failure></testcase></testsuite></testsuites>

@@ -21,12 +21,15 @@ from prefect.server.models._stream_receipts import (
     finite_receipt_outcome_digest,
 )
 from prefect.server.models.stream_subtask_authority import (
+    dag_lifecycle_control_active,
+    dag_lifecycle_control_matches,
     metadata_task_control_active,
     metadata_task_control_matches,
     require_bounded_flow_recovery,
     require_no_assigned_physical_slots,
 )
 from prefect.server.orchestration.core_policy import CoreFlowPolicy, CoreTaskPolicy
+from prefect.server.schemas.native_deployments import NativeStreamDeclaration
 from prefect.server.schemas.responses import SetStateStatus
 from prefect.server.schemas.states import TERMINAL_STATES, State, StateType
 from prefect.server.schemas.streams import (
@@ -226,9 +229,42 @@ async def _claim_execution(
         )
     retries = flow.empirical_policy.retries
     if retries is None or retries < 1:
-        raise NativeStreamError(
-            "PROTOCOL_ERROR", "Recoverable execution requires FlowRun retries"
+        snapshot = await session.scalar(
+            sa.select(db.NativeStreamDeploymentSnapshot).where(
+                db.NativeStreamDeploymentSnapshot.flow_run_id == flow.id
+            )
         )
+        try:
+            declaration = (
+                NativeStreamDeclaration.model_validate(snapshot.declaration)
+                if snapshot is not None
+                else None
+            )
+        except ValueError as exc:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Native DAG declaration is invalid"
+            ) from exc
+        if (
+            retries != 0
+            or snapshot is None
+            or snapshot.profile != "partitioned-dag-v1"
+            or snapshot.state != "ACTIVE"
+            or flow.deployment_id != snapshot.deployment_id
+            or flow.deployment_version != snapshot.deployment_version
+            or flow.flow_version != snapshot.flow_version
+            or declaration is None
+            or declaration.profile != snapshot.profile
+            or declaration.flow_version != snapshot.flow_version
+            or declaration.flow_retries != 0
+            or declaration.flow_code_digest != snapshot.flow_code_digest
+            or declaration.resource_profile != snapshot.resource_profile
+            or declaration.protocol_version != snapshot.protocol_version
+            or _canonical(declaration.model_dump(mode="json"))[1]
+            != snapshot.declaration_digest
+        ):
+            raise NativeStreamError(
+                "PROTOCOL_ERROR", "Recoverable execution requires FlowRun retries"
+            )
 
     capability_digest = _secret_digest(request.holder_capability)
     supervisor_digest = _secret_digest(request.supervisor_capability)
@@ -438,6 +474,16 @@ async def _apply_takeover_locked(
     return binding
 
 
+def require_no_remaining_dag_flow_retry(flow: orm_models.FlowRun) -> None:
+    """One-lifetime DAGs cannot survive an automatic retry of this FlowRun."""
+    retries = flow.empirical_policy.retries
+    if retries is not None and flow.run_count <= retries:
+        raise NativeStreamError(
+            "UNSUPPORTED_FLOW_RETRY",
+            "A one-lifetime DAG cannot seal or start while automatic Flow retry capacity remains",
+        )
+
+
 async def require_execution(
     session: AsyncSession,
     db: PrefectDBInterface,
@@ -602,21 +648,213 @@ async def guard_flow_lifecycle(
     )
     if flow is None:
         return None
-    authority = await require_execution(
-        session,
-        db,
-        flow_run_id,
-        credentials,
-        allowed_states=("CLAIMED", "ACTIVE", "RECOVERING"),
-        update=True,
-        allow_unclaimed_snapshot=True,
-    )
+    if not force and (proposed_state.is_cancelling() or proposed_state.is_cancelled()):
+        dag_id = await session.scalar(
+            sa.select(db.StreamGraphRevision.id).where(
+                db.StreamGraphRevision.flow_run_id == flow_run_id,
+                db.StreamGraphRevision.profile == "partitioned-dag-v1",
+            )
+        )
+        if dag_id is not None and not dag_lifecycle_control_active(
+            session, flow_run_id
+        ):
+            # The DAG service imports these established lifecycle guards. Defer
+            # this inverse edge solely to break that genuine module cycle.
+            from prefect.server.models.stream_dag_executions import (
+                request_dag_flow_cancellation,
+            )
+
+            return await request_dag_flow_cancellation(
+                session, db, dag_id, proposed_state
+            )
+    controlled = dag_lifecycle_control_active(session, flow_run_id)
+    if controlled:
+        authority = await session.scalar(
+            sa.select(db.StreamExecutionAuthority)
+            .where(db.StreamExecutionAuthority.flow_run_id == flow_run_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    else:
+        authority = await require_execution(
+            session,
+            db,
+            flow_run_id,
+            credentials,
+            allowed_states=("CLAIMED", "ACTIVE", "RECOVERING"),
+            update=True,
+            allow_unclaimed_snapshot=True,
+        )
     graph = await session.scalar(
         sa.select(db.StreamGraphRevision)
         .where(db.StreamGraphRevision.flow_run_id == flow_run_id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )
+    if controlled and graph is not None:
+        if (
+            not dag_lifecycle_control_matches(session, graph, None)
+            or force
+            or graph.state != "RELEASED"
+            or not (
+                proposed_state.is_cancelled()
+                or (
+                    proposed_state.is_failed()
+                    and proposed_state.state_details.retriable is False
+                )
+            )
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "DAG final Flow control differs"
+            )
+        return authority
+    if (
+        graph is not None
+        and graph.profile == "partitioned-dag-v1"
+        and graph.terminal_operation_id is not None
+        and graph.current_control_operation_id is not None
+        and proposed_state.is_completed()
+    ):
+        control = await session.get(
+            db.StreamDAGLifecycleOperation, graph.current_control_operation_id
+        )
+        terminal = await session.get(
+            db.StreamDAGLifecycleOperation, graph.terminal_operation_id
+        )
+        if (
+            force
+            or authority is None
+            or graph.state != "RELEASED"
+            or any(
+                value is not None
+                for value in (
+                    graph.admission_operation_id,
+                    graph.admission_request_digest,
+                    graph.placement_digest,
+                    graph.activation_operation_id,
+                    graph.activation_request_digest,
+                    graph.startup_completed_at,
+                )
+            )
+            or control is None
+            or control.kind != "CONTROL"
+            or control.state != "COMPLETED"
+            or control.effective_control_kind != "PREVIEW_ABORT"
+            or control.first_cause != {"kind": "PREVIEW_ABORT"}
+            or control.graph_revision_id != graph.id
+            or graph.abort_operation_id != control.id
+            or control.outcome_digest != _canonical(control.accepted_receipt)[1]
+            or terminal is None
+            or terminal.kind != "FINALIZE"
+            or terminal.state != "COMPLETED"
+            or terminal.terminal_state != "FAILED"
+            or terminal.effective_control_kind != "PREVIEW_ABORT"
+            or terminal.control_operation_id != control.id
+            or terminal.graph_revision_id != graph.id
+            or terminal.terminal_outcome is None
+            or terminal.outcome_digest != _canonical(terminal.terminal_outcome)[1]
+            or terminal.terminal_outcome.get("control_operation_id") != str(control.id)
+            or terminal.terminal_outcome.get("stopped") != 0
+            or any(
+                operation.flow_run_id != flow_run_id
+                or operation.flow_generation != authority.generation
+                or operation.flow_holder_id != authority.holder_id
+                or operation.flow_run_run_count != flow.run_count
+                for operation in (control, terminal)
+            )
+        ):
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "DAG preview cleanup journal differs"
+            )
+        # Preview compensation fails never-started Tasks/partitions. Those are
+        # not executable stream EOFs; prove no execution existed before allowing
+        # the parent to finish normally through CoreFlowPolicy.
+        subtask_ids = sa.select(db.StreamPhysicalSubtask.id).where(
+            db.StreamPhysicalSubtask.graph_revision_id == graph.id
+        )
+        stream_ids = sa.select(db.StreamPartition.id).where(
+            db.StreamPartition.flow_run_id == flow_run_id
+        )
+        forbidden = await session.scalar(
+            sa.select(
+                sa.or_(
+                    sa.exists().where(
+                        db.StreamPhysicalSubtask.graph_revision_id == graph.id,
+                        sa.or_(
+                            db.StreamPhysicalSubtask.assigned_worker_id.is_not(None),
+                            db.StreamPhysicalSubtask.current_grant_id.is_not(None),
+                            db.StreamPhysicalSubtask.physical_epoch != 0,
+                            db.StreamPhysicalSubtask.physical_slot_released.is_(True),
+                        ),
+                    ),
+                    sa.exists().where(
+                        db.StreamSubtaskGrant.subtask_id.in_(subtask_ids)
+                    ),
+                    sa.exists().where(
+                        db.StreamDAGLaunchAttempt.graph_revision_id == graph.id
+                    ),
+                    sa.exists().where(
+                        db.StreamDAGControlTarget.graph_revision_id == graph.id
+                    ),
+                    sa.exists().where(
+                        db.StreamPhysicalSlotAllocation.graph_revision_id == graph.id
+                    ),
+                    sa.exists().where(
+                        db.StreamSubtaskAllocation.subtask_id.in_(subtask_ids)
+                    ),
+                    sa.exists().where(db.StreamRecord.stream_id.in_(stream_ids)),
+                    sa.exists().where(
+                        db.StreamConsumer.input_stream_id.in_(stream_ids)
+                    ),
+                    sa.exists().where(
+                        db.TaskRun.flow_run_id == flow_run_id,
+                        sa.or_(
+                            db.TaskRun.run_count != 0,
+                            db.TaskRun.state_type != StateType.FAILED,
+                        ),
+                    ),
+                    sa.exists().where(
+                        db.StreamPartition.flow_run_id == flow_run_id,
+                        sa.or_(
+                            db.StreamPartition.owner_id.is_not(None),
+                            db.StreamPartition.attempt != 0,
+                            db.StreamPartition.last_sequence != 0,
+                            db.StreamPartition.state != "FAILED",
+                        ),
+                    ),
+                )
+            )
+        )
+        if forbidden:
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "DAG preview contains execution evidence"
+            )
+        await require_no_assigned_physical_slots(session, db, flow_run_id)
+        return authority
+    if (
+        graph is not None
+        and graph.profile == "partitioned-dag-v1"
+        and graph.terminal_operation_id is not None
+        and graph.current_control_operation_id is None
+        and proposed_state.is_final()
+    ):
+        terminal = await session.get(
+            db.StreamDAGLifecycleOperation, graph.terminal_operation_id
+        )
+        if (
+            terminal is None
+            or terminal.kind != "FINALIZE"
+            or terminal.terminal_state != "COMPLETED"
+            or terminal.terminal_outcome is None
+            or terminal.outcome_digest != _canonical(terminal.terminal_outcome)[1]
+            or graph.state != "RELEASED"
+            or force
+        ):
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "Normal DAG terminal journal differs"
+            )
+        await require_no_assigned_physical_slots(session, db, flow_run_id)
+        return authority
     if (
         graph is not None
         and graph.profile == "partitioned-dag-v1"
@@ -845,7 +1083,8 @@ async def guard_task_lifecycle(
     if flow is None:
         return None
     metadata_control = metadata_task_control_active(session)
-    if metadata_control:
+    lifecycle_control = dag_lifecycle_control_active(session, flow_run_id)
+    if metadata_control or lifecycle_control:
         authority = await session.scalar(
             sa.select(db.StreamExecutionAuthority)
             .where(db.StreamExecutionAuthority.flow_run_id == flow_run_id)
@@ -885,6 +1124,20 @@ async def guard_task_lifecycle(
             raise NativeStreamError(
                 "IDENTITY_CONFLICT", "TaskRun is not bound to the exact immutable DAG"
             )
+        if (
+            lifecycle_control
+            and dag_lifecycle_control_matches(session, graph, task_run_id)
+            and not force
+            and proposed_state is not None
+            and (
+                proposed_state.is_cancelled()
+                or (
+                    proposed_state.is_failed()
+                    and proposed_state.state_details.retriable is False
+                )
+            )
+        ):
+            return authority
         if (
             metadata_control
             and metadata_task_control_matches(session, graph)

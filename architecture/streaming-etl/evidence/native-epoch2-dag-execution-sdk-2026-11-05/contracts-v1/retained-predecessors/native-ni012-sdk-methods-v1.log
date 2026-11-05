@@ -1,0 +1,204 @@
+.........FF..............FF....................                          [100%]
+=================================== FAILURES ===================================
+_____ test_exact_worker_child_methods[False-read_stream_dag_input_status] ______
+
+method = 'read_stream_dag_input_status', asynchronous = False
+
+    @pytest.mark.parametrize("method", WORKER_METHODS + CHILD_METHODS)
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_exact_worker_child_methods(method: str, asynchronous: bool):
+        kwargs, response, path, body = wire_case(method)
+        seen: list[bytes] = []
+    
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == path
+            assert request.method == ("GET" if body is None else "POST")
+            seen.append(request.content)
+            return httpx.Response(200, json=response)
+    
+        if asynchronous:
+            async with httpx.AsyncClient(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamAsyncClient(http)
+                result = await getattr(client, method)(**kwargs)
+                await getattr(client, method)(**kwargs)
+        else:
+            with httpx.Client(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamClient(http)
+                result = getattr(client, method)(**kwargs)
+                getattr(client, method)(**kwargs)
+        assert seen[0] == seen[1]
+        assert (json.loads(seen[0]) if seen[0] else None) == body
+        assert inspect.signature(getattr(StreamClient, method)) == inspect.signature(
+            getattr(StreamAsyncClient, method)
+        )
+        if method != "read_stream_dag_subtask_bootstrap":
+>           assert (
+                [row.model_dump(mode="json") for row in result]
+                if isinstance(result, list)
+                else result.model_dump(mode="json")
+            ) == response
+E           AssertionError: assert {'id': '0a76c...: 'OPEN', ...} == {'id': '0a76c...: 'OPEN', ...}
+E             
+E             Omitting 11 identical items, use -vv to show
+E             Differing items:
+E             {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000, 'max_state_bytes': 16384, ...}} != {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000}}
+E             Use -v to get more diff
+
+tests/client/test_stream_dag_launches.py:418: AssertionError
+_____ test_exact_worker_child_methods[False-read_stream_dag_output_status] _____
+
+method = 'read_stream_dag_output_status', asynchronous = False
+
+    @pytest.mark.parametrize("method", WORKER_METHODS + CHILD_METHODS)
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_exact_worker_child_methods(method: str, asynchronous: bool):
+        kwargs, response, path, body = wire_case(method)
+        seen: list[bytes] = []
+    
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == path
+            assert request.method == ("GET" if body is None else "POST")
+            seen.append(request.content)
+            return httpx.Response(200, json=response)
+    
+        if asynchronous:
+            async with httpx.AsyncClient(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamAsyncClient(http)
+                result = await getattr(client, method)(**kwargs)
+                await getattr(client, method)(**kwargs)
+        else:
+            with httpx.Client(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamClient(http)
+                result = getattr(client, method)(**kwargs)
+                getattr(client, method)(**kwargs)
+        assert seen[0] == seen[1]
+        assert (json.loads(seen[0]) if seen[0] else None) == body
+        assert inspect.signature(getattr(StreamClient, method)) == inspect.signature(
+            getattr(StreamAsyncClient, method)
+        )
+        if method != "read_stream_dag_subtask_bootstrap":
+>           assert (
+                [row.model_dump(mode="json") for row in result]
+                if isinstance(result, list)
+                else result.model_dump(mode="json")
+            ) == response
+E           AssertionError: assert {'id': '4fcac...: 'OPEN', ...} == {'id': '4fcac...: 'OPEN', ...}
+E             
+E             Omitting 11 identical items, use -vv to show
+E             Differing items:
+E             {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000, 'max_state_bytes': 16384, ...}} != {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000}}
+E             Use -v to get more diff
+
+tests/client/test_stream_dag_launches.py:418: AssertionError
+______ test_exact_worker_child_methods[True-read_stream_dag_input_status] ______
+
+method = 'read_stream_dag_input_status', asynchronous = True
+
+    @pytest.mark.parametrize("method", WORKER_METHODS + CHILD_METHODS)
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_exact_worker_child_methods(method: str, asynchronous: bool):
+        kwargs, response, path, body = wire_case(method)
+        seen: list[bytes] = []
+    
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == path
+            assert request.method == ("GET" if body is None else "POST")
+            seen.append(request.content)
+            return httpx.Response(200, json=response)
+    
+        if asynchronous:
+            async with httpx.AsyncClient(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamAsyncClient(http)
+                result = await getattr(client, method)(**kwargs)
+                await getattr(client, method)(**kwargs)
+        else:
+            with httpx.Client(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamClient(http)
+                result = getattr(client, method)(**kwargs)
+                getattr(client, method)(**kwargs)
+        assert seen[0] == seen[1]
+        assert (json.loads(seen[0]) if seen[0] else None) == body
+        assert inspect.signature(getattr(StreamClient, method)) == inspect.signature(
+            getattr(StreamAsyncClient, method)
+        )
+        if method != "read_stream_dag_subtask_bootstrap":
+>           assert (
+                [row.model_dump(mode="json") for row in result]
+                if isinstance(result, list)
+                else result.model_dump(mode="json")
+            ) == response
+E           AssertionError: assert {'id': '42555...: 'OPEN', ...} == {'id': '42555...: 'OPEN', ...}
+E             
+E             Omitting 11 identical items, use -vv to show
+E             Differing items:
+E             {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000, 'max_state_bytes': 16384, ...}} != {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000}}
+E             Use -v to get more diff
+
+tests/client/test_stream_dag_launches.py:418: AssertionError
+_____ test_exact_worker_child_methods[True-read_stream_dag_output_status] ______
+
+method = 'read_stream_dag_output_status', asynchronous = True
+
+    @pytest.mark.parametrize("method", WORKER_METHODS + CHILD_METHODS)
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_exact_worker_child_methods(method: str, asynchronous: bool):
+        kwargs, response, path, body = wire_case(method)
+        seen: list[bytes] = []
+    
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == path
+            assert request.method == ("GET" if body is None else "POST")
+            seen.append(request.content)
+            return httpx.Response(200, json=response)
+    
+        if asynchronous:
+            async with httpx.AsyncClient(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamAsyncClient(http)
+                result = await getattr(client, method)(**kwargs)
+                await getattr(client, method)(**kwargs)
+        else:
+            with httpx.Client(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamClient(http)
+                result = getattr(client, method)(**kwargs)
+                getattr(client, method)(**kwargs)
+        assert seen[0] == seen[1]
+        assert (json.loads(seen[0]) if seen[0] else None) == body
+        assert inspect.signature(getattr(StreamClient, method)) == inspect.signature(
+            getattr(StreamAsyncClient, method)
+        )
+        if method != "read_stream_dag_subtask_bootstrap":
+>           assert (
+                [row.model_dump(mode="json") for row in result]
+                if isinstance(result, list)
+                else result.model_dump(mode="json")
+            ) == response
+E           AssertionError: assert {'id': '64be0...: 'OPEN', ...} == {'id': '64be0...: 'OPEN', ...}
+E             
+E             Omitting 11 identical items, use -vv to show
+E             Differing items:
+E             {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000, 'max_state_bytes': 16384, ...}} != {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000}}
+E             Use -v to get more diff
+
+tests/client/test_stream_dag_launches.py:418: AssertionError
+=========================== short test summary info ============================
+FAILED tests/client/test_stream_dag_launches.py::test_exact_worker_child_methods[False-read_stream_dag_input_status]
+FAILED tests/client/test_stream_dag_launches.py::test_exact_worker_child_methods[False-read_stream_dag_output_status]
+FAILED tests/client/test_stream_dag_launches.py::test_exact_worker_child_methods[True-read_stream_dag_input_status]
+FAILED tests/client/test_stream_dag_launches.py::test_exact_worker_child_methods[True-read_stream_dag_output_status]
+4 failed, 43 passed in 0.60s

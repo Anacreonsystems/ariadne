@@ -1,0 +1,409 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="6" skipped="0" tests="70" time="1.249" timestamp="2026-11-05T11:32:40.775681+00:00" hostname="f8abb611283c"><testcase classname="tests.test_stream_dag_execution" name="test_intents_are_detached_stable_and_first_fail_wins" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_bad_timeout_has_zero_transport[0]" time="0.002" /><testcase classname="tests.test_stream_dag_execution" name="test_bad_timeout_has_zero_transport[-1]" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_bad_timeout_has_zero_transport[inf]" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_bad_timeout_has_zero_transport[nan]" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_bad_timeout_has_zero_transport[True]" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_bad_timeout_has_zero_transport[1]" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_exact_activation_ack_allows_fast_complete_or_failure[ACTIVE]" time="0.003" /><testcase classname="tests.test_stream_dag_execution" name="test_exact_activation_ack_allows_fast_complete_or_failure[STOPPING]" time="0.003" /><testcase classname="tests.test_stream_dag_execution" name="test_exact_activation_ack_allows_fast_complete_or_failure[TERMINAL]" time="0.003" /><testcase classname="tests.test_stream_dag_execution" name="test_wait_timeout_never_creates_a_control" time="0.005" /><testcase classname="tests.test_stream_dag_execution" name="test_start_timeout_freezes_one_fail_body_and_verifies_cleanup" time="0.005" /><testcase classname="tests.test_stream_dag_execution" name="test_unused_preview_finalizer_aborts_without_start_or_execution" time="0.003" /><testcase classname="tests.test_stream_dag_execution" name="test_abandoned_active_fails_instead_of_implicitly_waiting" time="0.002" /><testcase classname="tests.test_stream_dag_execution" name="test_exception_cleanup_preserves_original_exception_and_first_cause" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_stopping_finalizer_joins_control_without_new_fail" time="0.002" /><testcase classname="tests.test_stream_dag_execution" name="test_cancellation_cannot_be_swallowed_by_flow_finalization" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_unknown_seal_ack_is_recovered_before_preview_cleanup" time="0.002" /><testcase classname="tests.test_stream_dag_execution" name="test_handle_identity_refuses_other_graph_before_transport" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_missing_registry_refuses_public_start" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_recovered_start_obtains_own_activation_receipt[ACTIVE]" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_recovered_start_obtains_own_activation_receipt[STOPPING]" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_recovered_start_obtains_own_activation_receipt[TERMINAL]" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_flow_retry_boundary[None-1-False]" time="0.000" /><testcase classname="tests.test_stream_dag_execution" name="test_flow_retry_boundary[0-1-False]" time="0.000" /><testcase classname="tests.test_stream_dag_execution" name="test_flow_retry_boundary[2-1-True]" time="0.000" /><testcase classname="tests.test_stream_dag_execution" name="test_flow_retry_boundary[2-2-True]" time="0.000" /><testcase classname="tests.test_stream_dag_execution" name="test_flow_retry_boundary[2-3-False]" time="0.000" /><testcase classname="tests.test_stream_dag_execution" name="test_pending_seal_changed_material_refuses_without_transport" time="0.001" /><testcase classname="tests.test_stream_dag_execution" name="test_missing_pending_seal_cleanup_is_named_and_not_silently_ignored" time="0.002" /><testcase classname="tests.test_stream_dag_execution" name="test_flow_scope_close_refuses_late_actions_and_new_seals" time="0.002" /><testcase classname="tests.test_stream_dag_execution" name="test_real_flow_engine_adopts_verified_server_terminal_without_state_proposal[False-False]" time="0.001"><failure message="prefect.streams.StreamProtocolError: Native Flow capabilities require a config and explicit version">asynchronous = False, cancelled = False
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("cancelled", [False, True])
+    async def test_real_flow_engine_adopts_verified_server_terminal_without_state_proposal(
+        asynchronous: bool, cancelled: bool
+    ):
+        from prefect import flow
+        from prefect.client.schemas.objects import FlowRun
+        from prefect.flow_engine import AsyncFlowRunEngine, FlowRunEngine
+        from prefect.states import Cancelled, Failed, Running
+        from prefect.streams import NativeStreamFlowConfig
+    
+&gt;       @flow(
+            streaming=NativeStreamFlowConfig(
+                profile="partitioned-dag-v1", partition_count=None
+            )
+        )
+
+tests/test_stream_dag_execution.py:395: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/flows.py:2346: in __call__
+    return Flow(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect.flows.Flow object at 0x7f7fea5e8380&gt;
+fn = &lt;function test_real_flow_engine_adopts_verified_server_terminal_without_state_proposal.&lt;locals&gt;.definition at 0x7f7fea5c76a0&gt;
+name = None, version = None, flow_run_name = None, retries = None
+retry_delay_seconds = None, task_runner = None, description = None
+timeout_seconds = None, validate_parameters = True, persist_result = None
+result_storage = None, result_serializer = None, cache_result_in_memory = True
+log_prints = None, on_completion = None, on_failure = None
+on_cancellation = None, on_crashed = None, on_running = None
+streaming = NativeStreamFlowConfig(protocol_version=1, profile='partitioned-dag-v1', resource_profile='bounded-default-v1', partition_count=None)
+
+    def __init__(
+        self,
+        fn: Callable[P, R] | "classmethod[Any, P, R]" | "staticmethod[P, R]",
+        name: Optional[str] = None,
+        version: Optional[str] = None,
+        flow_run_name: Optional[Union[Callable[[], str], str]] = None,
+        retries: Optional[int] = None,
+        retry_delay_seconds: Optional[Union[int, float]] = None,
+        task_runner: Union[
+            Type[TaskRunner[PrefectFuture[Any]]], TaskRunner[PrefectFuture[Any]], None
+        ] = None,
+        description: Optional[str] = None,
+        timeout_seconds: Union[int, float, None] = None,
+        validate_parameters: bool = True,
+        persist_result: Optional[bool] = None,
+        result_storage: Optional[Union[ResultStorage, str]] = None,
+        result_serializer: Optional[ResultSerializer] = None,
+        cache_result_in_memory: bool = True,
+        log_prints: Optional[bool] = None,
+        on_completion: Optional[list[FlowStateHook[P, R]]] = None,
+        on_failure: Optional[list[FlowStateHook[P, R]]] = None,
+        on_cancellation: Optional[list[FlowStateHook[P, R]]] = None,
+        on_crashed: Optional[list[FlowStateHook[P, R]]] = None,
+        on_running: Optional[list[FlowStateHook[P, R]]] = None,
+        streaming: NativeStreamFlowConfig | None = None,
+    ):
+        if streaming is not None and (
+            not isinstance(streaming, NativeStreamFlowConfig) or not version
+        ):
+&gt;           raise StreamProtocolError(
+                "Native Flow capabilities require a config and explicit version"
+            )
+E           prefect.streams.StreamProtocolError: Native Flow capabilities require a config and explicit version
+
+src/prefect/flows.py:240: StreamProtocolError</failure></testcase><testcase classname="tests.test_stream_dag_execution" name="test_real_flow_engine_adopts_verified_server_terminal_without_state_proposal[False-True]" time="0.001"><failure message="prefect.streams.StreamProtocolError: Native Flow capabilities require a config and explicit version">asynchronous = True, cancelled = False
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("cancelled", [False, True])
+    async def test_real_flow_engine_adopts_verified_server_terminal_without_state_proposal(
+        asynchronous: bool, cancelled: bool
+    ):
+        from prefect import flow
+        from prefect.client.schemas.objects import FlowRun
+        from prefect.flow_engine import AsyncFlowRunEngine, FlowRunEngine
+        from prefect.states import Cancelled, Failed, Running
+        from prefect.streams import NativeStreamFlowConfig
+    
+&gt;       @flow(
+            streaming=NativeStreamFlowConfig(
+                profile="partitioned-dag-v1", partition_count=None
+            )
+        )
+
+tests/test_stream_dag_execution.py:395: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/flows.py:2346: in __call__
+    return Flow(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect.flows.Flow object at 0x7f7fea5e9190&gt;
+fn = &lt;function test_real_flow_engine_adopts_verified_server_terminal_without_state_proposal.&lt;locals&gt;.definition at 0x7f7fea5f3240&gt;
+name = None, version = None, flow_run_name = None, retries = None
+retry_delay_seconds = None, task_runner = None, description = None
+timeout_seconds = None, validate_parameters = True, persist_result = None
+result_storage = None, result_serializer = None, cache_result_in_memory = True
+log_prints = None, on_completion = None, on_failure = None
+on_cancellation = None, on_crashed = None, on_running = None
+streaming = NativeStreamFlowConfig(protocol_version=1, profile='partitioned-dag-v1', resource_profile='bounded-default-v1', partition_count=None)
+
+    def __init__(
+        self,
+        fn: Callable[P, R] | "classmethod[Any, P, R]" | "staticmethod[P, R]",
+        name: Optional[str] = None,
+        version: Optional[str] = None,
+        flow_run_name: Optional[Union[Callable[[], str], str]] = None,
+        retries: Optional[int] = None,
+        retry_delay_seconds: Optional[Union[int, float]] = None,
+        task_runner: Union[
+            Type[TaskRunner[PrefectFuture[Any]]], TaskRunner[PrefectFuture[Any]], None
+        ] = None,
+        description: Optional[str] = None,
+        timeout_seconds: Union[int, float, None] = None,
+        validate_parameters: bool = True,
+        persist_result: Optional[bool] = None,
+        result_storage: Optional[Union[ResultStorage, str]] = None,
+        result_serializer: Optional[ResultSerializer] = None,
+        cache_result_in_memory: bool = True,
+        log_prints: Optional[bool] = None,
+        on_completion: Optional[list[FlowStateHook[P, R]]] = None,
+        on_failure: Optional[list[FlowStateHook[P, R]]] = None,
+        on_cancellation: Optional[list[FlowStateHook[P, R]]] = None,
+        on_crashed: Optional[list[FlowStateHook[P, R]]] = None,
+        on_running: Optional[list[FlowStateHook[P, R]]] = None,
+        streaming: NativeStreamFlowConfig | None = None,
+    ):
+        if streaming is not None and (
+            not isinstance(streaming, NativeStreamFlowConfig) or not version
+        ):
+&gt;           raise StreamProtocolError(
+                "Native Flow capabilities require a config and explicit version"
+            )
+E           prefect.streams.StreamProtocolError: Native Flow capabilities require a config and explicit version
+
+src/prefect/flows.py:240: StreamProtocolError</failure></testcase><testcase classname="tests.test_stream_dag_execution" name="test_real_flow_engine_adopts_verified_server_terminal_without_state_proposal[True-False]" time="0.001"><failure message="prefect.streams.StreamProtocolError: Native Flow capabilities require a config and explicit version">asynchronous = False, cancelled = True
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("cancelled", [False, True])
+    async def test_real_flow_engine_adopts_verified_server_terminal_without_state_proposal(
+        asynchronous: bool, cancelled: bool
+    ):
+        from prefect import flow
+        from prefect.client.schemas.objects import FlowRun
+        from prefect.flow_engine import AsyncFlowRunEngine, FlowRunEngine
+        from prefect.states import Cancelled, Failed, Running
+        from prefect.streams import NativeStreamFlowConfig
+    
+&gt;       @flow(
+            streaming=NativeStreamFlowConfig(
+                profile="partitioned-dag-v1", partition_count=None
+            )
+        )
+
+tests/test_stream_dag_execution.py:395: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/flows.py:2346: in __call__
+    return Flow(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect.flows.Flow object at 0x7f7fea5eb290&gt;
+fn = &lt;function test_real_flow_engine_adopts_verified_server_terminal_without_state_proposal.&lt;locals&gt;.definition at 0x7f7fea5f2980&gt;
+name = None, version = None, flow_run_name = None, retries = None
+retry_delay_seconds = None, task_runner = None, description = None
+timeout_seconds = None, validate_parameters = True, persist_result = None
+result_storage = None, result_serializer = None, cache_result_in_memory = True
+log_prints = None, on_completion = None, on_failure = None
+on_cancellation = None, on_crashed = None, on_running = None
+streaming = NativeStreamFlowConfig(protocol_version=1, profile='partitioned-dag-v1', resource_profile='bounded-default-v1', partition_count=None)
+
+    def __init__(
+        self,
+        fn: Callable[P, R] | "classmethod[Any, P, R]" | "staticmethod[P, R]",
+        name: Optional[str] = None,
+        version: Optional[str] = None,
+        flow_run_name: Optional[Union[Callable[[], str], str]] = None,
+        retries: Optional[int] = None,
+        retry_delay_seconds: Optional[Union[int, float]] = None,
+        task_runner: Union[
+            Type[TaskRunner[PrefectFuture[Any]]], TaskRunner[PrefectFuture[Any]], None
+        ] = None,
+        description: Optional[str] = None,
+        timeout_seconds: Union[int, float, None] = None,
+        validate_parameters: bool = True,
+        persist_result: Optional[bool] = None,
+        result_storage: Optional[Union[ResultStorage, str]] = None,
+        result_serializer: Optional[ResultSerializer] = None,
+        cache_result_in_memory: bool = True,
+        log_prints: Optional[bool] = None,
+        on_completion: Optional[list[FlowStateHook[P, R]]] = None,
+        on_failure: Optional[list[FlowStateHook[P, R]]] = None,
+        on_cancellation: Optional[list[FlowStateHook[P, R]]] = None,
+        on_crashed: Optional[list[FlowStateHook[P, R]]] = None,
+        on_running: Optional[list[FlowStateHook[P, R]]] = None,
+        streaming: NativeStreamFlowConfig | None = None,
+    ):
+        if streaming is not None and (
+            not isinstance(streaming, NativeStreamFlowConfig) or not version
+        ):
+&gt;           raise StreamProtocolError(
+                "Native Flow capabilities require a config and explicit version"
+            )
+E           prefect.streams.StreamProtocolError: Native Flow capabilities require a config and explicit version
+
+src/prefect/flows.py:240: StreamProtocolError</failure></testcase><testcase classname="tests.test_stream_dag_execution" name="test_real_flow_engine_adopts_verified_server_terminal_without_state_proposal[True-True]" time="0.001"><failure message="prefect.streams.StreamProtocolError: Native Flow capabilities require a config and explicit version">asynchronous = True, cancelled = True
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("cancelled", [False, True])
+    async def test_real_flow_engine_adopts_verified_server_terminal_without_state_proposal(
+        asynchronous: bool, cancelled: bool
+    ):
+        from prefect import flow
+        from prefect.client.schemas.objects import FlowRun
+        from prefect.flow_engine import AsyncFlowRunEngine, FlowRunEngine
+        from prefect.states import Cancelled, Failed, Running
+        from prefect.streams import NativeStreamFlowConfig
+    
+&gt;       @flow(
+            streaming=NativeStreamFlowConfig(
+                profile="partitioned-dag-v1", partition_count=None
+            )
+        )
+
+tests/test_stream_dag_execution.py:395: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/flows.py:2346: in __call__
+    return Flow(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect.flows.Flow object at 0x7f7fea5ebbc0&gt;
+fn = &lt;function test_real_flow_engine_adopts_verified_server_terminal_without_state_proposal.&lt;locals&gt;.definition at 0x7f7fea5c7880&gt;
+name = None, version = None, flow_run_name = None, retries = None
+retry_delay_seconds = None, task_runner = None, description = None
+timeout_seconds = None, validate_parameters = True, persist_result = None
+result_storage = None, result_serializer = None, cache_result_in_memory = True
+log_prints = None, on_completion = None, on_failure = None
+on_cancellation = None, on_crashed = None, on_running = None
+streaming = NativeStreamFlowConfig(protocol_version=1, profile='partitioned-dag-v1', resource_profile='bounded-default-v1', partition_count=None)
+
+    def __init__(
+        self,
+        fn: Callable[P, R] | "classmethod[Any, P, R]" | "staticmethod[P, R]",
+        name: Optional[str] = None,
+        version: Optional[str] = None,
+        flow_run_name: Optional[Union[Callable[[], str], str]] = None,
+        retries: Optional[int] = None,
+        retry_delay_seconds: Optional[Union[int, float]] = None,
+        task_runner: Union[
+            Type[TaskRunner[PrefectFuture[Any]]], TaskRunner[PrefectFuture[Any]], None
+        ] = None,
+        description: Optional[str] = None,
+        timeout_seconds: Union[int, float, None] = None,
+        validate_parameters: bool = True,
+        persist_result: Optional[bool] = None,
+        result_storage: Optional[Union[ResultStorage, str]] = None,
+        result_serializer: Optional[ResultSerializer] = None,
+        cache_result_in_memory: bool = True,
+        log_prints: Optional[bool] = None,
+        on_completion: Optional[list[FlowStateHook[P, R]]] = None,
+        on_failure: Optional[list[FlowStateHook[P, R]]] = None,
+        on_cancellation: Optional[list[FlowStateHook[P, R]]] = None,
+        on_crashed: Optional[list[FlowStateHook[P, R]]] = None,
+        on_running: Optional[list[FlowStateHook[P, R]]] = None,
+        streaming: NativeStreamFlowConfig | None = None,
+    ):
+        if streaming is not None and (
+            not isinstance(streaming, NativeStreamFlowConfig) or not version
+        ):
+&gt;           raise StreamProtocolError(
+                "Native Flow capabilities require a config and explicit version"
+            )
+E           prefect.streams.StreamProtocolError: Native Flow capabilities require a config and explicit version
+
+src/prefect/flows.py:240: StreamProtocolError</failure></testcase><testcase classname="tests.test_stream_dag_execution" name="test_real_flow_engine_does_not_adopt_another_attempt[False]" time="0.002"><failure message="prefect.streams.StreamProtocolError: Native Flow capabilities require a config and explicit version">asynchronous = False
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_real_flow_engine_does_not_adopt_another_attempt(asynchronous: bool):
+        from prefect import flow
+        from prefect.client.schemas.objects import FlowRun
+        from prefect.flow_engine import AsyncFlowRunEngine, FlowRunEngine
+        from prefect.states import Failed, Running
+        from prefect.streams import NativeStreamFlowConfig
+    
+&gt;       @flow(
+            streaming=NativeStreamFlowConfig(
+                profile="partitioned-dag-v1", partition_count=None
+            )
+        )
+
+tests/test_stream_dag_execution.py:458: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/flows.py:2346: in __call__
+    return Flow(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect.flows.Flow object at 0x7f7fea65c5f0&gt;
+fn = &lt;function test_real_flow_engine_does_not_adopt_another_attempt.&lt;locals&gt;.definition at 0x7f7fea5f3ba0&gt;
+name = None, version = None, flow_run_name = None, retries = None
+retry_delay_seconds = None, task_runner = None, description = None
+timeout_seconds = None, validate_parameters = True, persist_result = None
+result_storage = None, result_serializer = None, cache_result_in_memory = True
+log_prints = None, on_completion = None, on_failure = None
+on_cancellation = None, on_crashed = None, on_running = None
+streaming = NativeStreamFlowConfig(protocol_version=1, profile='partitioned-dag-v1', resource_profile='bounded-default-v1', partition_count=None)
+
+    def __init__(
+        self,
+        fn: Callable[P, R] | "classmethod[Any, P, R]" | "staticmethod[P, R]",
+        name: Optional[str] = None,
+        version: Optional[str] = None,
+        flow_run_name: Optional[Union[Callable[[], str], str]] = None,
+        retries: Optional[int] = None,
+        retry_delay_seconds: Optional[Union[int, float]] = None,
+        task_runner: Union[
+            Type[TaskRunner[PrefectFuture[Any]]], TaskRunner[PrefectFuture[Any]], None
+        ] = None,
+        description: Optional[str] = None,
+        timeout_seconds: Union[int, float, None] = None,
+        validate_parameters: bool = True,
+        persist_result: Optional[bool] = None,
+        result_storage: Optional[Union[ResultStorage, str]] = None,
+        result_serializer: Optional[ResultSerializer] = None,
+        cache_result_in_memory: bool = True,
+        log_prints: Optional[bool] = None,
+        on_completion: Optional[list[FlowStateHook[P, R]]] = None,
+        on_failure: Optional[list[FlowStateHook[P, R]]] = None,
+        on_cancellation: Optional[list[FlowStateHook[P, R]]] = None,
+        on_crashed: Optional[list[FlowStateHook[P, R]]] = None,
+        on_running: Optional[list[FlowStateHook[P, R]]] = None,
+        streaming: NativeStreamFlowConfig | None = None,
+    ):
+        if streaming is not None and (
+            not isinstance(streaming, NativeStreamFlowConfig) or not version
+        ):
+&gt;           raise StreamProtocolError(
+                "Native Flow capabilities require a config and explicit version"
+            )
+E           prefect.streams.StreamProtocolError: Native Flow capabilities require a config and explicit version
+
+src/prefect/flows.py:240: StreamProtocolError</failure></testcase><testcase classname="tests.test_stream_dag_execution" name="test_real_flow_engine_does_not_adopt_another_attempt[True]" time="0.001"><failure message="prefect.streams.StreamProtocolError: Native Flow capabilities require a config and explicit version">asynchronous = True
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_real_flow_engine_does_not_adopt_another_attempt(asynchronous: bool):
+        from prefect import flow
+        from prefect.client.schemas.objects import FlowRun
+        from prefect.flow_engine import AsyncFlowRunEngine, FlowRunEngine
+        from prefect.states import Failed, Running
+        from prefect.streams import NativeStreamFlowConfig
+    
+&gt;       @flow(
+            streaming=NativeStreamFlowConfig(
+                profile="partitioned-dag-v1", partition_count=None
+            )
+        )
+
+tests/test_stream_dag_execution.py:458: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/flows.py:2346: in __call__
+    return Flow(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect.flows.Flow object at 0x7f7fea65d0d0&gt;
+fn = &lt;function test_real_flow_engine_does_not_adopt_another_attempt.&lt;locals&gt;.definition at 0x7f7fea5f3740&gt;
+name = None, version = None, flow_run_name = None, retries = None
+retry_delay_seconds = None, task_runner = None, description = None
+timeout_seconds = None, validate_parameters = True, persist_result = None
+result_storage = None, result_serializer = None, cache_result_in_memory = True
+log_prints = None, on_completion = None, on_failure = None
+on_cancellation = None, on_crashed = None, on_running = None
+streaming = NativeStreamFlowConfig(protocol_version=1, profile='partitioned-dag-v1', resource_profile='bounded-default-v1', partition_count=None)
+
+    def __init__(
+        self,
+        fn: Callable[P, R] | "classmethod[Any, P, R]" | "staticmethod[P, R]",
+        name: Optional[str] = None,
+        version: Optional[str] = None,
+        flow_run_name: Optional[Union[Callable[[], str], str]] = None,
+        retries: Optional[int] = None,
+        retry_delay_seconds: Optional[Union[int, float]] = None,
+        task_runner: Union[
+            Type[TaskRunner[PrefectFuture[Any]]], TaskRunner[PrefectFuture[Any]], None
+        ] = None,
+        description: Optional[str] = None,
+        timeout_seconds: Union[int, float, None] = None,
+        validate_parameters: bool = True,
+        persist_result: Optional[bool] = None,
+        result_storage: Optional[Union[ResultStorage, str]] = None,
+        result_serializer: Optional[ResultSerializer] = None,
+        cache_result_in_memory: bool = True,
+        log_prints: Optional[bool] = None,
+        on_completion: Optional[list[FlowStateHook[P, R]]] = None,
+        on_failure: Optional[list[FlowStateHook[P, R]]] = None,
+        on_cancellation: Optional[list[FlowStateHook[P, R]]] = None,
+        on_crashed: Optional[list[FlowStateHook[P, R]]] = None,
+        on_running: Optional[list[FlowStateHook[P, R]]] = None,
+        streaming: NativeStreamFlowConfig | None = None,
+    ):
+        if streaming is not None and (
+            not isinstance(streaming, NativeStreamFlowConfig) or not version
+        ):
+&gt;           raise StreamProtocolError(
+                "Native Flow capabilities require a config and explicit version"
+            )
+E           prefect.streams.StreamProtocolError: Native Flow capabilities require a config and explicit version
+
+src/prefect/flows.py:240: StreamProtocolError</failure></testcase><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_inheritance_matrix_classifies_every_base_coroutine" time="0.000" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_from_bootstrap_is_detached_metadata_and_requires_exact_current_scope" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[graph_revision_id]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[grant_id]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[holder_id]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[task_run_id]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[subtask_id]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[input_stream_id]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[output_stream_id]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[physical_epoch]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[manifest_digest]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[api_url]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[child_process_id]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[process_start_ticks]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[create_stream-args0]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[reserve_output-args1]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[register_task_run-args2]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[reject_output-args3]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[fail_task_output-args4]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[finish-args5]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[read_prefix-args6]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[_request-args7]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[_dispatch-args8]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_event_unknown_ack_reuses_exact_event_without_task_get[False-False]" time="0.055" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_event_unknown_ack_reuses_exact_event_without_task_get[False-True]" time="0.054" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_event_unknown_ack_reuses_exact_event_without_task_get[True-False]" time="0.054" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_event_unknown_ack_reuses_exact_event_without_task_get[True-True]" time="0.054" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_real_task_engine_selects_dag_event_transport_and_fences_refusal[False-False]" time="0.013" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_real_task_engine_selects_dag_event_transport_and_fences_refusal[False-True]" time="0.005" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_real_task_engine_selects_dag_event_transport_and_fences_refusal[True-False]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_real_task_engine_selects_dag_event_transport_and_fences_refusal[True-True]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_failed_task_finalizer_never_calls_legacy_failure_or_finish[False]" time="0.004" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_failed_task_finalizer_never_calls_legacy_failure_or_finish[True]" time="0.002" /></testsuite></testsuites>

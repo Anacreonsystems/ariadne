@@ -23,7 +23,7 @@ class NativeStreamDeclaration(BaseModel):
     flow_version: str = Field(min_length=1, max_length=255)
     flow_code_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     resource_profile: Literal["bounded-default-v1"]
-    flow_retries: int = Field(ge=1, le=63, strict=True)
+    flow_retries: int = Field(ge=0, le=63, strict=True)
     flow_retry_delay_seconds: float | None = Field(
         default=None, ge=0, allow_inf_nan=False
     )
@@ -34,6 +34,12 @@ class NativeStreamDeclaration(BaseModel):
         if type(value) is not int:
             raise ValueError("native declaration versions must be integers")
         return value
+
+    @model_validator(mode="after")
+    def zero_retry_is_dag_only(self) -> "NativeStreamDeclaration":
+        if self.flow_retries == 0 and self.profile != "partitioned-dag-v1":
+            raise ValueError("Zero Flow retries are supported only by streaming DAGs")
+        return self
 
 
 class NativeStreamWorkerEnrollRequest(_NativeDeploymentRequest):

@@ -1,0 +1,316 @@
+"""Same-child DAG preflight, signed readiness and private activation gates."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import sys
+import time
+from dataclasses import dataclass, field
+from typing import Any
+from uuid import UUID
+
+import httpx
+
+from prefect._internal.stream_code import native_task_code_identity
+from prefect._internal.stream_dag_subtask_protocol import (
+    DAG_BOOTSTRAP_MAX_BYTES,
+    DAG_BOOTSTRAP_READY,
+    DAG_CODE_READY,
+    DAG_GO,
+    DAG_PREFLIGHT_MAX_BYTES,
+    DAG_RECORD_ALLOWED,
+    DAG_STARTUP_ERROR,
+    DAG_STARTUP_TIMEOUT_SECONDS,
+    dag_bootstrap_ready_operation_id,
+    read_dag_private_bytes,
+    read_dag_private_gate,
+)
+from prefect._internal.stream_event_auth import (
+    canonical_dag_bootstrap_ready_witness,
+    sign_dag_bootstrap_ready,
+)
+from prefect._internal.stream_execution import (
+    DAGSubtaskExecutionContext,
+    get_stream_execution,
+    get_stream_subtask_execution,
+    stream_subtask_execution_context,
+)
+from prefect._internal.stream_partitioned import (
+    bind_partition_parameters,
+    validate_partitioned_task,
+)
+from prefect._internal.stream_route_plan import canonical_route_json
+from prefect._internal.stream_subtask_entrypoint import PhysicalStreamExecutionStopped
+from prefect.client.orchestration import get_client
+from prefect.client.orchestration._streams.client import StreamRequestError
+from prefect.client.schemas.objects import TaskRunPolicy
+from prefect.client.schemas.stream_dag_executions import StreamDAGSubtaskBootstrap
+from prefect.client.schemas.stream_subtasks import StreamWorkerTaskConfiguration
+from prefect.runner._starter_native import linux_process_identity
+from prefect.streams import (
+    StreamPartitionCall,
+    StreamProtocolError,
+    StreamSourceConfig,
+    StreamTaskConfig,
+)
+from prefect.tasks import Task
+from prefect.utilities.importtools import import_object
+
+
+@dataclass(frozen=True)
+class DAGCodePreflight:
+    task: Any
+    role: str
+    configuration: bytes = field(repr=False)
+
+
+@dataclass(frozen=True)
+class DAGPrivateBootstrap:
+    execution: DAGSubtaskExecutionContext = field(repr=False)
+    launch_attempt_id: UUID
+    worker_generation_digest: str
+
+
+def _assert_no_authority() -> None:
+    if get_stream_execution() is not None or get_stream_subtask_execution() is not None:
+        raise StreamProtocolError("DAG code preflight cannot inherit platform authority")
+
+
+def read_dag_preflight(descriptor: int) -> DAGCodePreflight:
+    """Import once after the recorded-PID gate, before any grant is delivered."""
+    _assert_no_authority()
+    payload = json.loads(read_dag_private_bytes(descriptor, DAG_PREFLIGHT_MAX_BYTES))
+    canonical_route_json(payload)
+    if type(payload) is not dict or set(payload) != {"configuration", "role"}:
+        raise StreamProtocolError("DAG preflight requires exactly one own task")
+    configuration = StreamWorkerTaskConfiguration.model_validate(payload["configuration"])
+    if configuration.role != payload["role"]:
+        raise StreamProtocolError("DAG preflight role differs from its assignment")
+    task = import_object(configuration.entrypoint)
+    if not isinstance(task, Task) or task.stream is None:
+        raise StreamProtocolError("DAG preflight must resolve a declared Task")
+    validate_partitioned_task(task)
+    identity = native_task_code_identity(task.fn)
+    source = isinstance(task.stream, StreamSourceConfig)
+    parameters = bind_partition_parameters(task, configuration.parameters)
+    policy = TaskRunPolicy(
+        retries=task.retries,
+        retry_delay=task.retry_delay_seconds,
+        retry_jitter_factor=task.retry_jitter_factor,
+    )
+    if (
+        not task.version
+        or identity.task_key != configuration.task_key
+        or identity.artifact_digest != configuration.artifact_digest
+        or task.version != configuration.task_version
+        or task.timeout_seconds != configuration.timeout_seconds
+        or task.stream.context != configuration.context_key
+        or policy != configuration.task_policy
+        or not set(task.tags).issubset(configuration.effective_tags)
+        or source != (configuration.role == "SOURCE")
+        or not source
+        and (not isinstance(task.stream, StreamTaskConfig) or task.stream.input != configuration.input_key)
+        or StreamPartitionCall(parameters=parameters) != StreamPartitionCall(parameters=configuration.parameters)
+    ):
+        raise StreamProtocolError("DAG code or options differ from the sealed task")
+    _assert_no_authority()
+    return DAGCodePreflight(task, configuration.role, canonical_route_json(configuration.model_dump(mode="json")))
+
+
+def read_dag_bootstrap(descriptor: int) -> DAGPrivateBootstrap:
+    """Check FD delivery against the actual child before entering a grant."""
+    _assert_no_authority()
+    value = json.loads(read_dag_private_bytes(descriptor, DAG_BOOTSTRAP_MAX_BYTES))
+    canonical_route_json(value)
+    if type(value) is not dict or set(value) != {
+        "flow_run_id", "graph_revision_id", "assignment_epoch", "subtask_id",
+        "grant_id", "physical_epoch", "holder_id", "scope_digest", "manifest_digest",
+        "task_run_id", "input_stream_id", "output_stream_id", "child_process_id",
+        "process_start_ticks", "api_url", "capability", "event_private_key",
+        "launch_attempt_id", "worker_generation_digest",
+    }:
+        raise StreamProtocolError("DAG private bootstrap has another shape")
+    _, _, ticks = linux_process_identity(os.getpid())
+    if type(value["child_process_id"]) is not int or type(value["process_start_ticks"]) is not int or (value["child_process_id"], value["process_start_ticks"]) != (os.getpid(), ticks):
+        raise StreamProtocolError("DAG private bootstrap was delivered to another process")
+    for name in ("flow_run_id", "graph_revision_id", "subtask_id", "grant_id", "holder_id", "task_run_id", "output_stream_id", "launch_attempt_id"):
+        if type(value[name]) is not str:
+            raise StreamProtocolError("DAG private identity is not canonical")
+        parsed = UUID(value[name])
+        if str(parsed) != value[name]:
+            raise StreamProtocolError("DAG private identity is not canonical")
+        value[name] = parsed
+    if value["input_stream_id"] is not None:
+        raw_input = value["input_stream_id"]
+        if type(raw_input) is not str or str(UUID(raw_input)) != raw_input:
+            raise StreamProtocolError("DAG private input identity is not canonical")
+        value["input_stream_id"] = UUID(raw_input)
+    generation = value.pop("worker_generation_digest")
+    if type(generation) is not str or len(generation) != 64 or any(c not in "0123456789abcdef" for c in generation):
+        raise StreamProtocolError("DAG worker generation digest is not canonical")
+    attempt = value.pop("launch_attempt_id")
+    raw_key = value["event_private_key"]
+    if type(raw_key) is not str or len(raw_key) != 64 or any(c not in "0123456789abcdef" for c in raw_key):
+        raise StreamProtocolError("DAG event key must have its canonical private encoding")
+    value["event_private_key"] = bytes.fromhex(raw_key)
+    execution = DAGSubtaskExecutionContext(**value)
+    return DAGPrivateBootstrap(execution, attempt, generation)
+
+
+def validate_dag_bootstrap(
+    private: DAGPrivateBootstrap,
+    preflight: DAGCodePreflight,
+    bootstrap: StreamDAGSubtaskBootstrap,
+) -> None:
+    execution = private.execution
+    assignment, grant = bootstrap.assignment, bootstrap.grant
+    configuration = StreamWorkerTaskConfiguration(
+        entrypoint=bootstrap.entrypoint,
+        task_key=bootstrap.task_key,
+        role=assignment.manifest.role,
+        task_version=bootstrap.task_version,
+        artifact_digest=bootstrap.artifact_digest,
+        context_key=bootstrap.context_key,
+        timeout_seconds=bootstrap.timeout_seconds,
+        task_policy=bootstrap.task_policy,
+        effective_tags=bootstrap.effective_tags,
+        input_key=bootstrap.input_key,
+        parameters=bootstrap.parameters,
+    )
+    if (
+        preflight.configuration != canonical_route_json(configuration.model_dump(mode="json"))
+        or preflight.role != assignment.manifest.role
+        or private.launch_attempt_id != bootstrap.launch_attempt_id
+        or private.worker_generation_digest != bootstrap.worker_generation_digest
+        or execution.flow_run_id != bootstrap.flow_run_id
+        or execution.graph_revision_id != assignment.graph_revision_id
+        or execution.assignment_epoch != assignment.assignment_epoch
+        or execution.subtask_id != assignment.id
+        or execution.task_run_id != bootstrap.task_run.id
+        or execution.input_stream_id != assignment.input_stream_id
+        or execution.output_stream_id != bootstrap.output.stream_id
+        or execution.manifest_digest != assignment.manifest.manifest_digest
+        or execution.grant_id != grant.id
+        or execution.physical_epoch != grant.physical_epoch
+        or execution.holder_id != grant.holder_id
+        or execution.scope_digest != grant.scope_digest
+        or execution.event_key_id != grant.event_key_id
+        or execution.event_public_key.hex() != bootstrap.event_public_key
+        or (execution.child_process_id, execution.process_start_ticks) != (grant.child_process_id, grant.process_start_ticks)
+    ):
+        raise StreamProtocolError("DAG bootstrap differs from its retained task or exact private grant")
+
+
+def mark_dag_bootstrap_ready(client: Any, private: DAGPrivateBootstrap, bootstrap: StreamDAGSubtaskBootstrap, *, timeout: float = DAG_STARTUP_TIMEOUT_SECONDS) -> None:
+    execution = private.execution
+    operation = dag_bootstrap_ready_operation_id(execution.grant_id)
+    witness = canonical_dag_bootstrap_ready_witness(
+        operation_id=operation,
+        flow_run_id=execution.flow_run_id,
+        flow_run_run_count=bootstrap.flow_run_run_count,
+        flow_generation=bootstrap.flow_generation,
+        flow_holder_id=bootstrap.flow_holder_id,
+        graph_revision_id=execution.graph_revision_id,
+        graph_digest=bootstrap.context.graph_digest,
+        routing_digest=bootstrap.context.routing_digest,
+        assignment_epoch=execution.assignment_epoch,
+        subtask_id=execution.subtask_id,
+        task_run_id=execution.task_run_id,
+        physical_epoch=execution.physical_epoch,
+        grant_id=execution.grant_id,
+        holder_id=execution.holder_id,
+        scope_digest=execution.scope_digest,
+        event_key_id=execution.event_key_id,
+        child_process_id=execution.child_process_id,
+        process_start_ticks=execution.process_start_ticks,
+        bootstrap_digest=bootstrap.bootstrap_digest,
+    )
+    signature = sign_dag_bootstrap_ready(execution.event_private_key, witness)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            result = client.mark_stream_dag_subtask_bootstrap_ready(subtask_id=execution.subtask_id, operation_id=operation, bootstrap_digest=bootstrap.bootstrap_digest, signature=signature)
+            if (result.operation_id, result.graph_revision_id, result.subtask_id, result.grant_id, result.physical_epoch, result.bootstrap_digest) != (operation, execution.graph_revision_id, execution.subtask_id, execution.grant_id, execution.physical_epoch, bootstrap.bootstrap_digest):
+                raise PhysicalStreamExecutionStopped("DAG readiness receipt has another identity")
+            return
+        except httpx.TransportError as error:
+            if time.monotonic() >= deadline:
+                raise PhysicalStreamExecutionStopped("DAG readiness acknowledgement remains unknown") from error
+            time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+        except StreamRequestError as error:
+            raise PhysicalStreamExecutionStopped("DAG readiness was refused") from error
+
+
+def execute_dag_bootstrap(private: DAGPrivateBootstrap, preflight: DAGCodePreflight, bootstrap: StreamDAGSubtaskBootstrap, storage: Any) -> None:
+    from prefect._internal.stream_engine import _StreamRun, reject_stream_submission
+    from prefect.streams import Stream, _PartitionMetadata
+    from prefect.task_engine import run_task_async, run_task_sync
+    from prefect.utilities.asyncutils import run_coro_as_sync
+
+    execution = private.execution
+    task = preflight.task
+    source = preflight.role == "SOURCE"
+    output = Stream(storage, str(execution.output_stream_id), producer_task_run_id=execution.task_run_id)
+    run = _StreamRun(output, bootstrap.task_run, source=source)
+    run.registration_verified = True
+    run.partition = _PartitionMetadata(bootstrap.assignment.subtask_index, bootstrap.operator_parallelism, bootstrap.assignment.operator_uid, execution.assignment_epoch)
+    try:
+        parameters: dict[str, Any] = dict(bootstrap.parameters)
+        parameters[task.stream.context] = None
+        parameters["__prefect_stream_run__"] = run
+        if not source:
+            assert bootstrap.input_key is not None and bootstrap.input is not None
+            parameters[bootstrap.input_key] = Stream(storage, str(bootstrap.input.input_stream_id))
+    except PhysicalStreamExecutionStopped:
+        raise
+    except BaseException as error:
+        run_coro_as_sync(reject_stream_submission(run, type(error).__name__))
+        raise
+    if task.isasync:
+        asyncio.run(run_task_async(task, task_run=bootstrap.task_run, parameters=parameters))
+    else:
+        run_task_sync(task, task_run=bootstrap.task_run, parameters=parameters)
+
+
+def main() -> None:
+    if len(sys.argv) != 6:
+        raise StreamProtocolError("DAG child requires its five private descriptors")
+    record_fd, preflight_fd, ready_fd, bootstrap_fd, go_fd = (int(value) for value in sys.argv[1:])
+    # No user entrypoint is imported before the server's exact PID record ACK.
+    read_dag_private_gate(record_fd, DAG_RECORD_ALLOWED)
+    with os.fdopen(ready_fd, "wb", buffering=0) as ready:
+        try:
+            preflight = read_dag_preflight(preflight_fd)
+            ready.write(DAG_CODE_READY)
+            private = read_dag_bootstrap(bootstrap_fd)
+            with stream_subtask_execution_context(private.execution):
+                with get_client(sync_client=True) as client:
+                    bootstrap = client.read_stream_dag_subtask_bootstrap(subtask_id=private.execution.subtask_id)
+                    validate_dag_bootstrap(private, preflight, bootstrap)
+                    from prefect._internal.stream_routed_storage import PrefectRoutedStreamStorage
+
+                    storage = PrefectRoutedStreamStorage.from_bootstrap(bootstrap, api_url=private.execution.api_url)
+                    mark_dag_bootstrap_ready(client, private, bootstrap)
+                    ready.write(DAG_BOOTSTRAP_READY)
+                    read_dag_private_gate(go_fd, DAG_GO)
+                    activation = client.read_stream_dag_subtask_activation(subtask_id=private.execution.subtask_id)
+                    if activation.phase != "ACTIVE":
+                        raise PhysicalStreamExecutionStopped("DAG activation was fenced before user code")
+                execute_dag_bootstrap(private, preflight, bootstrap, storage)
+        except BaseException:
+            try:
+                ready.write(DAG_STARTUP_ERROR)
+            except BrokenPipeError:
+                pass
+            raise
+
+
+if __name__ == "__main__":
+    canonical = sys.modules.get("prefect._internal.stream_dag_subtask_entrypoint")
+    if canonical is None:
+        sys.modules["prefect._internal.stream_dag_subtask_entrypoint"] = sys.modules[__name__]
+        main()
+    else:
+        canonical.main()

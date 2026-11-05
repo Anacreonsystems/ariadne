@@ -11,7 +11,7 @@ from collections.abc import Generator, MutableMapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, SupportsIndex
+from typing import Any, ClassVar, Literal, SupportsIndex
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -179,6 +179,17 @@ class SubtaskExecutionContext:
         raise TypeError("Physical credentials cannot enter serialized task context")
 
 
+@dataclass(frozen=True)
+class DAGSubtaskExecutionContext(SubtaskExecutionContext):
+    """One DAG child grant with a separate, closed HTTP capability surface.
+
+    The server independently derives the persisted profile. This local marker
+    prevents a DAG process from attempting the legacy data or lease protocol.
+    """
+
+    profile: ClassVar[Literal["partitioned-dag-v1"]] = "partitioned-dag-v1"
+
+
 _CURRENT_SUBTASK: ContextVar[SubtaskExecutionContext | None] = ContextVar(
     "native_stream_subtask_execution", default=None
 )
@@ -294,38 +305,63 @@ def stream_subtask_headers(
     ):
         raise ValueError("Physical credentials cannot leave their launching API")
     child = f"{api.path}/streams/v2/subtasks/{subtask.subtask_id}"
-    allowed_get = {child + "/bootstrap", child + "/task-run"}
-    for stream_id in (subtask.input_stream_id, subtask.output_stream_id):
-        if stream_id is not None:
-            allowed_get.update(
-                {
-                    f"{api.path}/streams/v1/{stream_id}",
-                    f"{api.path}/streams/v1/{stream_id}/prefix",
-                }
-            )
-    allowed_post = {
-        child + "/events",
-        child + "/lease/renew",
-        child + "/lease/release",
-        *(
-            f"{api.path}/streams/v1/{route}"
-            for route in (
-                "sources/claim",
-                "sources/open",
-                "sources/append",
-                "sources/finish",
-                "sources/close",
-                "sources/fail",
-                "sources/reject",
-                "consumers/open",
-                "consumers/read",
-                "consumers/complete",
-                "consumers/finish",
-                "outputs/fail",
-                "outputs/reject",
-            )
-        ),
-    }
+    if isinstance(subtask, DAGSubtaskExecutionContext):
+        if target.query:
+            raise ValueError("DAG child routing does not accept query parameters")
+        dag_child = f"{api.path}/streams/v2/dags/subtasks/{subtask.subtask_id}"
+        allowed_get = {
+            dag_child + "/bootstrap",
+            dag_child + "/activation",
+            dag_child + "/output/status",
+        }
+        role = "sources" if subtask.input_stream_id is None else "consumers"
+        if subtask.input_stream_id is not None:
+            allowed_get.add(dag_child + "/input/status")
+        allowed_post = {
+            dag_child + "/bootstrap-ready",
+            child + "/events",
+            *(
+                f"{api.path}/streams/v2/dags/{role}/{operation}"
+                for operation in (
+                    ("open", "append", "finish")
+                    if role == "sources"
+                    else ("open", "read", "complete", "finish")
+                )
+            ),
+        }
+    else:
+        allowed_get = {child + "/bootstrap", child + "/task-run"}
+        for stream_id in (subtask.input_stream_id, subtask.output_stream_id):
+            if stream_id is not None:
+                allowed_get.update(
+                    {
+                        f"{api.path}/streams/v1/{stream_id}",
+                        f"{api.path}/streams/v1/{stream_id}/prefix",
+                    }
+                )
+        allowed_post = {
+            child + "/events",
+            child + "/lease/renew",
+            child + "/lease/release",
+            *(
+                f"{api.path}/streams/v1/{route}"
+                for route in (
+                    "sources/claim",
+                    "sources/open",
+                    "sources/append",
+                    "sources/finish",
+                    "sources/close",
+                    "sources/fail",
+                    "sources/reject",
+                    "consumers/open",
+                    "consumers/read",
+                    "consumers/complete",
+                    "consumers/finish",
+                    "outputs/fail",
+                    "outputs/reject",
+                )
+            ),
+        }
     if not (
         (method == "GET" and target.path in allowed_get)
         or (method == "POST" and target.path in allowed_post)

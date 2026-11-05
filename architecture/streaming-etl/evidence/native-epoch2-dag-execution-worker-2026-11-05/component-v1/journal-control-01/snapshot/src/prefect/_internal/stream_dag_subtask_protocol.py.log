@@ -1,0 +1,60 @@
+"""Private DAG child gates and stable worker operation identities."""
+
+from __future__ import annotations
+
+from uuid import UUID, uuid5
+
+DAG_RECORD_ALLOWED = b"P"
+DAG_CODE_READY = b"R"
+DAG_BOOTSTRAP_READY = b"B"
+DAG_GO = b"G"
+DAG_STARTUP_ERROR = b"E"
+DAG_PREFLIGHT_MAX_BYTES = 256 * 1024
+DAG_BOOTSTRAP_MAX_BYTES = 16 * 1024
+DAG_STARTUP_TIMEOUT_SECONDS = 30.0
+DAG_MAX_LAUNCH_ATTEMPTS = 64
+
+
+def _identity(value: UUID) -> UUID:
+    if type(value) is not UUID:
+        raise ValueError("A DAG operation requires an exact UUID")
+    return value
+
+
+def dag_launch_prepare_operation_id(
+    subtask_id: UUID,
+    start_operation_id: UUID,
+    replacement_operation_id: UUID | None = None,
+) -> UUID:
+    _identity(start_operation_id)
+    authorization = (
+        _identity(replacement_operation_id)
+        if replacement_operation_id is not None
+        else start_operation_id
+    )
+    return uuid5(
+        _identity(subtask_id), "prefect-stream-dag-launch-v1/" + str(authorization)
+    )
+
+
+def dag_launch_record_operation_id(launch_attempt_id: UUID) -> UUID:
+    return uuid5(_identity(launch_attempt_id), "prefect-stream-dag-record-v1")
+
+
+def dag_launch_close_operation_id(launch_attempt_id: UUID) -> UUID:
+    return uuid5(_identity(launch_attempt_id), "prefect-stream-dag-close-v1")
+
+
+def dag_subtask_stop_operation_id(control_operation_id: UUID, subtask_id: UUID) -> UUID:
+    return uuid5(
+        _identity(control_operation_id),
+        "prefect-stream-dag-stop-v1/" + str(_identity(subtask_id)),
+    )
+
+
+def dag_bootstrap_ready_operation_id(grant_id: UUID) -> UUID:
+    return uuid5(_identity(grant_id), "prefect-stream-dag-bootstrap-ready-v1")
+
+
+def dag_startup_abort_operation_id(graph_revision_id: UUID) -> UUID:
+    return uuid5(_identity(graph_revision_id), "prefect-stream-dag-startup-abort-v1")

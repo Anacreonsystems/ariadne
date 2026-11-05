@@ -23,14 +23,23 @@ from prefect.server.database import (
     db_injector,
     provide_database_interface,
 )
-from prefect.server.events.schemas.events import ReceivedEvent
+from prefect.server.events.schemas.events import Event, ReceivedEvent
+from prefect.server.models import stream_dag_executions as dag_lifecycle
+from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.models._stream_receipts import (
     canonical_json_digest,
     finite_receipt_outcome_digest,
 )
-from prefect.server.models.stream_subtask_authority import release_terminal_allocation
+from prefect.server.models.stream_subtask_authority import (
+    release_terminal_allocation,
+    require_subtask,
+)
 from prefect.server.schemas.core import TaskRun, TaskRunPolicy
 from prefect.server.schemas.states import TERMINAL_STATES, State
+from prefect.server.schemas.stream_subtasks import (
+    StreamSubtaskCredentials,
+    StreamSubtaskEventResult,
+)
 from prefect.server.services.base import RunInEphemeralServers, Service
 from prefect.server.utilities.database import get_max_query_parameters
 from prefect.server.utilities.messaging import (
@@ -69,6 +78,65 @@ _NATIVE_RESERVED_TASK_PAYLOAD_KEYS = frozenset(
     }
 )
 _NATIVE_RESERVED_STATE_PAYLOAD_KEYS = frozenset({"id", "timestamp"})
+
+
+async def dispatch_stream_subtask_event(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    event: Event,
+    credentials: StreamSubtaskCredentials,
+) -> StreamSubtaskEventResult:
+    """Dispatch before locks: DAG takes Graph UPDATE, fixed-P2 keeps its prefix."""
+    profile = await session.scalar(
+        sa.select(db.StreamGraphRevision.profile)
+        .join(
+            db.StreamPhysicalSubtask,
+            db.StreamPhysicalSubtask.graph_revision_id == db.StreamGraphRevision.id,
+        )
+        .where(db.StreamPhysicalSubtask.id == subtask_id)
+    )
+    if profile == "partitioned-dag-v1":
+        child = await dag_lifecycle.lock_dag_child(
+            session,
+            db,
+            credentials,
+            subtask_id=subtask_id,
+            graph_update=True,
+            observe=True,
+            ready=True,
+            active=True,
+        )
+        if child.grant.state != "REGISTERED" or child.launch.state != "PID_RECORDED":
+            raise NativeStreamError(
+                "SUBTASK_FENCED", "A retired DAG child cannot submit events"
+            )
+        subtask = child.subtask
+    else:
+        subtask, _ = await require_subtask(
+            session, db, credentials, subtask_id=subtask_id
+        )
+    if event.resource.prefect_object_id("prefect.task-run") != subtask.task_run_id:
+        raise NativeStreamError(
+            "SUBTASK_SCOPE_DENIED", "Event TaskRun is outside the grant"
+        )
+    authorized, native_ids = await _authorized_stream_events(
+        session, db, [event.receive()]
+    )
+    if authorized:
+        await record_bulk_task_run_events_in_session(
+            authorized, db, session, native_ids, commit=False
+        )
+    task = await session.get(db.TaskRun, subtask.task_run_id, populate_existing=True)
+    if task is None or task.state_type is None:
+        raise NativeStreamError("IDENTITY_CONFLICT", "Physical TaskRun disappeared")
+    return StreamSubtaskEventResult(
+        event_id=event.id,
+        accepted=bool(authorized),
+        task_run_id=task.id,
+        run_count=task.run_count,
+        state_type=task.state_type,
+    )
 
 
 async def _authorized_stream_events(
@@ -129,39 +197,69 @@ async def _authorized_stream_events(
     if not flow_ids:
         return events, set()
 
-    await session.execute(
-        sa.select(db.FlowRun.id)
-        .where(db.FlowRun.id.in_(flow_ids))
-        .order_by(db.FlowRun.id)
-        .with_for_update(read=True)
-    )
-    authorities = {
-        row.flow_run_id: row
-        for row in (
-            await session.scalars(
-                sa.select(db.StreamExecutionAuthority)
-                .where(db.StreamExecutionAuthority.flow_run_id.in_(flow_ids))
-                .order_by(db.StreamExecutionAuthority.flow_run_id)
-                .with_for_update(read=True)
-                .execution_options(populate_existing=True)
+    graph_locators = (
+        await session.execute(
+            sa.select(
+                db.StreamGraphRevision.id,
+                db.StreamGraphRevision.flow_run_id,
+                db.StreamGraphRevision.profile,
             )
-        ).all()
+            .where(db.StreamGraphRevision.flow_run_id.in_(flow_ids))
+            .order_by(db.StreamGraphRevision.id)
+        )
+    ).all()
+    dag_flow_ids = {
+        row.flow_run_id for row in graph_locators if row.profile == "partitioned-dag-v1"
     }
+    locked_flows = {}
+    authorities = {}
+    for flow_id in sorted(flow_ids):
+        flow = await session.scalar(
+            sa.select(db.FlowRun)
+            .where(db.FlowRun.id == flow_id)
+            .with_for_update(read=flow_id not in dag_flow_ids)
+            .execution_options(populate_existing=True)
+        )
+        if flow is not None:
+            locked_flows[flow_id] = flow
+    for flow_id in sorted(flow_ids):
+        authority = await session.scalar(
+            sa.select(db.StreamExecutionAuthority)
+            .where(db.StreamExecutionAuthority.flow_run_id == flow_id)
+            .with_for_update(read=flow_id not in dag_flow_ids)
+            .execution_options(populate_existing=True)
+        )
+        if authority is not None:
+            authorities[flow_id] = authority
     # Locator reads acquire no ownership. Lock and refresh the complete prefix
     # before using a cached graph/subtask/grant for an event decision.
-    physical_graphs = {
-        row.id: row
-        for row in (
-            await session.scalars(
-                sa.select(db.StreamGraphRevision)
-                .where(db.StreamGraphRevision.flow_run_id.in_(flow_ids))
-                .order_by(db.StreamGraphRevision.id)
-                .with_for_update(read=True)
-                .execution_options(populate_existing=True)
-            )
-        ).all()
-    }
+    physical_graphs = {}
+    for locator in graph_locators:
+        graph = await session.scalar(
+            sa.select(db.StreamGraphRevision)
+            .where(db.StreamGraphRevision.id == locator.id)
+            .with_for_update(read=locator.profile != "partitioned-dag-v1")
+            .execution_options(populate_existing=True)
+        )
+        if graph is not None:
+            physical_graphs[graph.id] = graph
     graphs_by_flow = {row.flow_run_id: row for row in physical_graphs.values()}
+    dag_graph_ids = [
+        row.id
+        for row in physical_graphs.values()
+        if row.profile == "partitioned-dag-v1"
+    ]
+    if dag_graph_ids:
+        assigned_workers = sa.select(db.StreamPhysicalSubtask.assigned_worker_id).where(
+            db.StreamPhysicalSubtask.graph_revision_id.in_(dag_graph_ids),
+            db.StreamPhysicalSubtask.assigned_worker_id.is_not(None),
+        )
+        await session.execute(
+            sa.select(db.Worker.id)
+            .where(db.Worker.id.in_(assigned_workers))
+            .order_by(db.Worker.id)
+            .with_for_update(read=True)
+        )
     physical_subtasks = {
         row.task_run_id: row
         for row in (
@@ -194,6 +292,40 @@ async def _authorized_stream_events(
             )
         ).all()
     }
+    dag_launches = (
+        list(
+            (
+                await session.scalars(
+                    sa.select(db.StreamDAGLaunchAttempt)
+                    .where(
+                        db.StreamDAGLaunchAttempt.registered_grant_id.in_(
+                            physical_grants
+                        )
+                    )
+                    .order_by(db.StreamDAGLaunchAttempt.id)
+                    .with_for_update(read=True)
+                )
+            ).all()
+        )
+        if dag_graph_ids
+        else []
+    )
+    dag_slots = (
+        {
+            row.subtask_id: row
+            for row in (
+                await session.scalars(
+                    sa.select(db.StreamPhysicalSlotAllocation).where(
+                        db.StreamPhysicalSlotAllocation.graph_revision_id.in_(
+                            dag_graph_ids
+                        )
+                    )
+                )
+            ).all()
+        }
+        if dag_graph_ids
+        else {}
+    )
     for manifest in [*manifests.values(), *finite_manifests.values()]:
         await session.refresh(manifest)
     locked_tasks = {
@@ -252,14 +384,66 @@ async def _authorized_stream_events(
             else task_flow_ids.get(task_id, flow_id)
         )
         graph = graphs_by_flow.get(authoritative_flow_id)
-        if graph is not None and graph.profile == "partitioned-dag-v1":
-            decisions[id(event)] = False
-            continue
+        is_dag = graph is not None and graph.profile == "partitioned-dag-v1"
+        if is_dag:
+            physical = physical_subtasks.get(task_id)
+            grant = (
+                physical_grants.get(physical.current_grant_id)
+                if physical is not None
+                else None
+            )
+            authority = authorities.get(authoritative_flow_id)
+            flow = locked_flows.get(authoritative_flow_id)
+            linked = [
+                row
+                for row in dag_launches
+                if grant is not None and row.registered_grant_id == grant.id
+            ]
+            slot = dag_slots.get(physical.id) if physical is not None else None
+            if (
+                physical is None
+                or grant is None
+                or authority is None
+                or flow is None
+                or graph is None
+                or slot is None
+                or slot.released
+                or physical.physical_slot_released
+                or slot.worker_id != physical.assigned_worker_id
+                or len(linked) != 1
+                or linked[0].state != "PID_RECORDED"
+                or linked[0].grant_id != grant.id
+                or linked[0].subtask_id != physical.id
+                or (linked[0].child_process_id, linked[0].process_start_ticks)
+                != (grant.child_process_id, grant.process_start_ticks)
+            ):
+                decisions[id(event)] = False
+                continue
+            try:
+                dag_lifecycle.validate_current_bootstrap_ready(
+                    dag_lifecycle.DAGChildScope(
+                        dag_lifecycle.DAGGraphScope(
+                            session,
+                            session.get_transaction(),
+                            flow,
+                            authority,
+                            graph,
+                            True,
+                        ),
+                        physical,
+                        grant,
+                        linked[0],
+                    )
+                )
+            except (NativeStreamError, ValueError):
+                decisions[id(event)] = False
+                continue
         authority = authorities.get(authoritative_flow_id)
         if authority is None:
             decisions[id(event)] = True
             continue
-        native_task_ids.add(task_id)
+        if not is_dag:
+            native_task_ids.add(task_id)
         try:
             if flow_id != authoritative_flow_id:
                 raise ValueError("task event FlowRun identity drift")
@@ -322,6 +506,13 @@ async def _authorized_stream_events(
             if _NATIVE_RESERVED_STATE_PAYLOAD_KEYS.intersection(validated_state):
                 raise ValueError("native event carries reserved State fields")
             state_type = validated_state.get("type")
+            if (
+                is_dag
+                and graph is not None
+                and graph.current_control_operation_id is not None
+                and state_type not in {"FAILED", "CRASHED", "CANCELLED", "COMPLETED"}
+            ):
+                raise ValueError("DAG control fences new nonterminal Task events")
             payload_run_count = task_run_payload.get("run_count")
             details = validated_state.get("state_details")
             non_retriable = (
@@ -531,9 +722,14 @@ async def _authorized_stream_events(
                     task_id,
                 )
 
-    return [
-        event for event in events if decisions.get(id(event), False)
-    ], native_task_ids
+    accepted = [event for event in events if decisions.get(id(event), False)]
+    for event in accepted:
+        task_id = event.resource.prefect_object_id("prefect.task-run")
+        if task_id in physical_subtasks:
+            graph = physical_graphs.get(physical_subtasks[task_id].graph_revision_id)
+            if graph is not None and graph.profile == "partitioned-dag-v1":
+                native_task_ids.add(task_id)
+    return accepted, native_task_ids
 
 
 def _task_run_upsert_key(task_run: TaskRun) -> TaskRunUpsertKey:
@@ -1151,6 +1347,20 @@ async def _record_bulk_task_run_events_in_session(
         )
     ).all()
     for subtask in terminal_physical:
+        graph = await session.get(db.StreamGraphRevision, subtask.graph_revision_id)
+        if graph is not None and graph.profile == "partitioned-dag-v1":
+            task = await session.get(
+                db.TaskRun, subtask.task_run_id, populate_existing=True
+            )
+            if (
+                task is not None
+                and task.state_type is not None
+                and task.state_type.value in {"FAILED", "CRASHED"}
+                and task.state_id is not None
+            ):
+                await dag_lifecycle.record_dag_failed_task_event(
+                    session, db, graph, subtask, task.state_id
+                )
         await release_terminal_allocation(session, db, subtask)
     if commit:
         await session.commit()

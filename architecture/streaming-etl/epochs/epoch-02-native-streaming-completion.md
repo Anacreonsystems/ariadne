@@ -1,6 +1,6 @@
 # Native integration epoch 2: complete the streaming execution model
 
-- Status: `progress` — architecture discussion and one standalone experiment
+- Status: `progress` — native DAG lifecycle/runtime integration and source-bound acceptance gates in progress; 15% earned
 - Date: 2026-11-04
 - Owners: ETL Architect / HighLoad Principal, native runtime maintainers
 - Governing decision: [ADR-0042](../adr/ADR-0042-flink-informed-native-streaming-architecture.md)
@@ -347,3 +347,37 @@ for the next strict database cleanup. The
 records the `finally` restoration and complete 90/90 PostgreSQL/SQLite
 migration successors. No product or DDL byte changed, and the epoch remains at
 15%.
+
+## NI2-012 native DAG integration progress — 2026-11-05
+
+NI2-012 is now `progress`, rather than planned. The current implementation has
+paired SDK/server lifecycle wire, durable worker launch journals, verified
+bootstrap/activation, dedicated routed storage methods and public
+start/wait/cancel behavior. The source-bound [sync and async normal-eight
+gate](../evidence/native-epoch2-dag-execution-runtime-2026-11-05/actual-normal8-v1/receipt.json)
+ran four ordinary Task processes across two workers and released every physical
+and tag allocation. The [preview, application-failure and cancellation
+gate](../evidence/native-epoch2-dag-execution-runtime-2026-11-05/actual-lifecycle-v1/receipt.json)
+also reached verified terminal cleanup without treating a timeout as process
+death.
+
+The same integration cut passed [sync 500](../evidence/native-epoch2-dag-execution-runtime-2026-11-05/actual-sync500-v1/receipt.json)
+and [async 500](../evidence/native-epoch2-dag-execution-runtime-2026-11-05/actual-async500-v1/receipt.json)
+with four stable TaskRuns, seven stable channels, exact cursors/EOFs and zero
+remaining slots or tags. Both input-200 coordinates passed in sync mode:
+[accepted 200 resumes at 201](../evidence/native-epoch2-dag-execution-runtime-2026-11-05/actual-sync-accepted200-v1/receipt.json)
+and [incomplete 200 resumes at 200](../evidence/native-epoch2-dag-execution-runtime-2026-11-05/actual-sync-incomplete200-v1/receipt.json).
+The [async accepted-200 successor](../evidence/native-epoch2-dag-execution-runtime-2026-11-05/actual-async-accepted200-v1/receipt.json)
+passed the same healthy-sibling and exact-replacement checks.
+
+The [async incomplete-200 run](../evidence/native-epoch2-dag-execution-runtime-2026-11-05/actual-async-incomplete200-red-v1/receipt.json)
+preserved correct business cursors and final cleanup but exposed a real
+terminal-PREPARE race: a stale worker observation created an ungranted candidate
+process after a healthy sibling had already committed Task and EOF completion.
+The strict no-extra-process oracle remains unchanged while the server adds a
+fresh pre-spawn terminal check and the worker converts that typed refusal into
+verified retirement. Rebalance/keyed real-process controls, sync/async 5000,
+the final frozen union and independent Principal acceptance also remain open.
+Therefore NI2-013 and NI2-014 stay planned, N2.2 stays `progress`, and earned
+native readiness remains 15%; no approved ADR body or acceptance criterion is
+changed by this status update.

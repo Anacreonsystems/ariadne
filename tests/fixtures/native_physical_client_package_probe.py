@@ -15,10 +15,11 @@ import os
 import sys
 import threading
 from collections.abc import Sequence
+from dataclasses import fields
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import cloudpickle
 
@@ -47,7 +48,9 @@ class _NoServerImports(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, _NoServerImports())
 
 import prefect
+from prefect._internal.stream_event_auth import dag_worker_generation_digest
 from prefect._internal.stream_execution import (
+    DAGSubtaskExecutionContext,
     SubtaskExecutionContext,
     stream_subtask_execution_context,
 )
@@ -59,6 +62,12 @@ from prefect._internal.stream_routed_storage import PrefectRoutedStreamStorage
 from prefect.client.orchestration import PrefectClient, SyncPrefectClient
 from prefect.client.schemas.native_deployments import NativeStreamDeclaration
 from prefect.client.schemas.objects import TaskRun
+from prefect.client.schemas.stream_dag_executions import (
+    StreamDAGExecution,
+    StreamDAGLaunchPrepareRequest,
+    StreamDAGStartRequest,
+    StreamDAGSubtaskBootstrap,
+)
 from prefect.client.schemas.stream_dags import (
     StreamDAGPlan,
     StreamDAGSealRequest,
@@ -78,6 +87,7 @@ from prefect.states import Running
 from prefect.streams import (
     KeyedStreamOutput,
     NativeStreamFlowConfig,
+    RunningStreamGraph,
     SealedStreamGraph,
     StreamExchange,
     StreamGraph,
@@ -134,8 +144,17 @@ assert KeyedStreamOutput({"ref": "object://document"}, None).key is None
 with StreamGraph():
     pass
 sealed_metadata = SealedStreamGraph(graph_revision_id=uuid4(), graph_digest="a" * 64)
-assert not hasattr(sealed_metadata, "start")
+assert hasattr(sealed_metadata, "start")
+assert hasattr(sealed_metadata, "abort_preview")
 assert not hasattr(sealed_metadata, "wait")
+running_metadata = RunningStreamGraph(
+    graph_revision_id=sealed_metadata.graph_revision_id,
+    graph_digest=sealed_metadata.graph_digest,
+    routing_digest="b" * 64,
+)
+assert hasattr(running_metadata, "wait")
+assert hasattr(running_metadata, "cancel")
+assert not hasattr(running_metadata, "start")
 assert (
     StreamPortSpec(uid="documents").schema_digest == declared_output.port.schema_digest
 )
@@ -155,8 +174,49 @@ for client_type in (PrefectClient, SyncPrefectClient):
     assert hasattr(client_type, "append_stream_dag_source")
     assert hasattr(client_type, "complete_stream_dag_consumer")
     assert not hasattr(client_type, "admit_stream_dag_region")
+    for method in (
+        "start_stream_dag",
+        "read_stream_dag_execution",
+        "abort_stream_dag_preview",
+        "cancel_stream_dag",
+        "activate_stream_dag",
+        "fail_stream_dag",
+        "read_stream_dag_subtask_bootstrap",
+        "mark_stream_dag_subtask_bootstrap_ready",
+        "read_stream_dag_subtask_activation",
+        "open_stream_dag_source",
+        "open_stream_dag_consumer",
+        "read_stream_dag_consumer",
+        "finish_stream_dag_source",
+        "finish_stream_dag_consumer",
+        "poll_worker_stream_dag_subtasks",
+        "prepare_worker_stream_dag_launch",
+        "record_worker_stream_dag_launch",
+        "close_worker_stream_dag_launch",
+        "stop_worker_stream_dag_subtask",
+        "abort_worker_stream_dag_startup",
+        "read_stream_dag_input_status",
+        "read_stream_dag_output_status",
+    ):
+        assert callable(getattr(client_type, method))
+assert DAGSubtaskExecutionContext.profile == "partitioned-dag-v1"
+assert "grant_ids" not in StreamDAGStartRequest.model_fields
+assert "expected_grant_id" not in StreamDAGLaunchPrepareRequest.model_fields
+assert "bootstrap_digest" in StreamDAGSubtaskBootstrap.model_fields
+assert "terminal_outcome_digest" in StreamDAGExecution.model_fields
+assert (
+    dag_worker_generation_digest(
+        worker_id=UUID(int=1),
+        work_pool_id=UUID(int=2),
+        host_id=UUID(int=3),
+        boot_id=UUID(int=4),
+        launcher_process_id=11,
+        launcher_start_ticks=13,
+    )
+    == "ee3993ac0e59c06f554f8b7467248360385c78703b180f586f39b576041484c8"
+)
 
-# These are cold-import/validation controls only; public route execution is fenced.
+# These are cold-import/validation controls, not DAG execution.
 route_context = StreamDAGRouteContext(
     graph_revision_id=uuid4(),
     graph_digest="a" * 64,
@@ -265,6 +325,7 @@ requests = []
 transport_errors = []
 context = None
 bootstrap = None
+DAG_CAPABILITY = "e" * 64
 
 
 class _ProtocolPeer(BaseHTTPRequestHandler):
@@ -273,8 +334,11 @@ class _ProtocolPeer(BaseHTTPRequestHandler):
 
     def _respond(self) -> None:
         try:
+            expected_capability = (
+                DAG_CAPABILITY if "/dags/" in self.path else context.capability
+            )
             assert (
-                self.headers["Authorization"] == "PrefectSubtask " + context.capability
+                self.headers["Authorization"] == "PrefectSubtask " + expected_capability
             )
             assert self.headers["X-Prefect-Subtask-Grant"] == str(grant)
             assert self.headers.get("Cookie") is None
@@ -285,8 +349,19 @@ class _ProtocolPeer(BaseHTTPRequestHandler):
             assert self.headers.get("Prefect-Csrf-Token") is None
             requests.append((self.command, self.path))
             if self.command == "GET":
-                assert self.path == f"/api/streams/v2/subtasks/{subtask}/bootstrap"
-                encoded = json.dumps(bootstrap).encode()
+                if self.path == f"/api/streams/v2/dags/subtasks/{subtask}/activation":
+                    response = dict(
+                        graph_revision_id=str(graph),
+                        subtask_id=str(subtask),
+                        grant_id=str(grant),
+                        physical_epoch=1,
+                        phase="WAITING",
+                        activation_operation_id=None,
+                    )
+                else:
+                    assert self.path == f"/api/streams/v2/subtasks/{subtask}/bootstrap"
+                    response = bootstrap
+                encoded = json.dumps(response).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(encoded)))
@@ -412,11 +487,58 @@ with ThreadingHTTPServer(("127.0.0.1", 0), _ProtocolPeer) as server:
                     await client.renew_stream_subtask_lease(subtask_id=subtask)
 
         asyncio.run(asynchronous())
+
+        dag_context = DAGSubtaskExecutionContext(
+            **{
+                **{
+                    field.name: getattr(context, field.name)
+                    for field in fields(context)
+                },
+                "capability": DAG_CAPABILITY,
+            }
+        )
+        with stream_subtask_execution_context(dag_context):
+            with SyncPrefectClient(endpoint, auth_string="forbidden:basic") as client:
+                observed = client.read_stream_dag_subtask_activation(subtask_id=subtask)
+                assert observed.phase == "WAITING"
+                assert observed.grant_id == grant
+                for offscope in (
+                    f"/task_runs/{task_id}",
+                    f"/streams/v2/subtasks/{subtask}/task-run",
+                    f"/streams/v1/{incoming}",
+                ):
+                    try:
+                        client._client.get(offscope)
+                    except ValueError:
+                        pass
+                    else:
+                        raise AssertionError(
+                            "DAG transport admitted a legacy/general read"
+                        )
+                try:
+                    client.renew_stream_subtask_lease(subtask_id=subtask)
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError("DAG transport admitted a legacy lease")
+
+        async def asynchronous_dag() -> None:
+            with stream_subtask_execution_context(dag_context):
+                async with PrefectClient(
+                    endpoint, api_key="forbidden-api-key"
+                ) as client:
+                    observed = await client.read_stream_dag_subtask_activation(
+                        subtask_id=subtask
+                    )
+                    assert observed.phase == "WAITING"
+                    assert observed.grant_id == grant
+
+        asyncio.run(asynchronous_dag())
     finally:
         server.shutdown()
         thread.join(timeout=5)
 assert not transport_errors
-assert len(requests) == 4
+assert len(requests) == 6
 print(
     json.dumps(
         {
@@ -427,6 +549,9 @@ print(
             "business_calls": 0,
             "routed_key_variants_validated": 5,
             "routed_adapter_constructed": True,
+            "dag_lifecycle_dtos_validated": True,
+            "dag_scoped_activation_requests": 2,
+            "worker_generation_vector_validated": True,
             "routed_execution": False,
             "native_acceptance": False,
         }

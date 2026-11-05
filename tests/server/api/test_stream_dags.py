@@ -68,6 +68,8 @@ async def deployed_dag_request(
     pool = await session.get(db.WorkPool, principal.work_pool_id)
     assert pool is not None
     declaration = _declaration().model_copy(update={"profile": profile})
+    if profile == "partitioned-dag-v1":
+        declaration = declaration.model_copy(update={"flow_retries": 0})
     deployment.version = "dag-deployment-v1"
     deployment.work_queue_id = pool.default_queue_id
     deployment.job_variables = {
@@ -206,18 +208,52 @@ async def test_dag_surface_contains_only_metadata_and_fenced_terminal_routes(
     response = await dag_api.get("/openapi.json")
     assert response.status_code == 200, response.text
     paths = response.json()["paths"]
-    assert {path for path in paths if path.startswith("/streams/v2/dags")} == {
-        "/streams/v2/dags/seal",
-        "/streams/v2/dags/{graph_id}",
-        "/streams/v2/dags/sources/append",
-        "/streams/v2/dags/consumers/complete",
-    }
-    for path, method in (
-        ("/streams/v2/dags/seal", "post"),
-        ("/streams/v2/dags/{graph_id}", "get"),
-        ("/streams/v2/dags/sources/append", "post"),
-        ("/streams/v2/dags/consumers/complete", "post"),
-    ):
+    expected = dict(
+        (
+            ("/streams/v2/dags/seal", "post"),
+            ("/streams/v2/dags/{graph_id}", "get"),
+            ("/streams/v2/dags/{graph_id}/start", "post"),
+            ("/streams/v2/dags/{graph_id}/execution", "get"),
+            ("/streams/v2/dags/{graph_id}/abort-preview", "post"),
+            ("/streams/v2/dags/{graph_id}/cancel", "post"),
+            ("/streams/v2/dags/{graph_id}/activate", "post"),
+            ("/streams/v2/dags/{graph_id}/fail", "post"),
+            ("/streams/v2/dags/subtasks/{subtask_id}/bootstrap", "get"),
+            ("/streams/v2/dags/subtasks/{subtask_id}/bootstrap-ready", "post"),
+            ("/streams/v2/dags/subtasks/{subtask_id}/activation", "get"),
+            ("/streams/v2/dags/sources/open", "post"),
+            ("/streams/v2/dags/consumers/open", "post"),
+            ("/streams/v2/dags/consumers/read", "post"),
+            ("/streams/v2/dags/subtasks/{subtask_id}/input/status", "get"),
+            ("/streams/v2/dags/subtasks/{subtask_id}/output/status", "get"),
+            ("/streams/v2/dags/sources/append", "post"),
+            ("/streams/v2/dags/consumers/complete", "post"),
+            ("/streams/v2/dags/sources/finish", "post"),
+            ("/streams/v2/dags/consumers/finish", "post"),
+            ("/streams/v2/dags/workers/{worker_id}/poll", "post"),
+            (
+                "/streams/v2/dags/workers/{worker_id}/graphs/{graph_id}/startup-abort",
+                "post",
+            ),
+            (
+                "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/prepare",
+                "post",
+            ),
+            (
+                "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/{launch_attempt_id}/record",
+                "post",
+            ),
+            (
+                "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/{launch_attempt_id}/close",
+                "post",
+            ),
+            ("/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/stop", "post"),
+        )
+    )
+    assert {path for path in paths if path.startswith("/streams/v2/dags")} == set(
+        expected
+    )
+    for path, method in expected.items():
         assert set(paths[path]) == {method}
     for path in ("/streams/v2/dags/seal", "/streams/v2/dags/{graph_id}"):
         for operation in paths[path].values():
@@ -225,7 +261,15 @@ async def test_dag_surface_contains_only_metadata_and_fenced_terminal_routes(
                 value["name"] != "metadata_only"
                 for value in operation.get("parameters", [])
             )
-    for suffix in ("admit", "start", "wait", "activate", "claim"):
+    for suffix in (
+        "admit",
+        "wait",
+        "claim",
+        "begin",
+        "run",
+        "start-extra",
+        "activate-extra",
+    ):
         refused = await dag_api.post(f"/streams/v2/dags/{uuid4()}/{suffix}", json={})
         assert refused.status_code == 404, refused.text
 

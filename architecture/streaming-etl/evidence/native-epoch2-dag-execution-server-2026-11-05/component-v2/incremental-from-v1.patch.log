@@ -1,0 +1,275 @@
+--- a/src/prefect/server/models/stream_dag_executions.py
++++ b/src/prefect/server/models/stream_dag_executions.py
+@@ -1055,6 +1055,17 @@
+     scope = await lock_dag_graph(
+         session, db, graph_id, None, update=graph_update, worker=True
+     )
++    if graph_update:
++        assigned = sa.select(db.StreamPhysicalSubtask.assigned_worker_id).where(
++            db.StreamPhysicalSubtask.graph_revision_id == graph_id,
++            db.StreamPhysicalSubtask.assigned_worker_id.is_not(None),
++        )
++        await session.execute(
++            sa.select(db.Worker.id)
++            .where(db.Worker.id.in_(assigned))
++            .order_by(db.Worker.id)
++            .with_for_update(read=True)
++        )
+     if locator.worker_id is None:
+         raise NativeStreamError(
+             "SUBTASK_FENCED", "DAG grants require an assigned worker"
+--- a/tests/server/models/test_stream_dag_executions.py
++++ b/tests/server/models/test_stream_dag_executions.py
+@@ -1,5 +1,6 @@
+ """Lifecycle transactions use real deployed authority and ordinary Task policy."""
+ 
++import asyncio
+ import secrets
+ from dataclasses import dataclass, field
+ from uuid import UUID, uuid4, uuid5
+@@ -44,6 +45,7 @@
+     parent_body,
+     sealed_execution_graph,
+ )
++from tests.server.models.test_stream_dags import dag_request
+ 
+ pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
+ 
+@@ -463,6 +465,7 @@
+     children: list[ReadyChild],
+     *,
+     documents: int = 2,
++    finish_operators: set[str] | None = None,
+ ) -> None:
+     """Run durable DATA/EOF through current child authority, without state SQL."""
+     async with db.session_context(begin_transaction=True) as transaction:
+@@ -530,6 +533,11 @@
+         )
+         for child in children:
+             if child is source:
++                continue
++            if (
++                finish_operators is not None
++                and child.bootstrap.context.operator_uid not in finish_operators
++            ):
+                 continue
+             binding = await m.open_stream_dag_consumer(
+                 transaction,
+@@ -1083,6 +1091,217 @@
+         assert flow is not None and flow.state_type.value == "CANCELLED"
+ 
+ 
++async def test_failed_event_and_other_graph_admission_lock_workers_in_one_order_postgres(
++    db: PrefectDBInterface,
++    session: AsyncSession,
++    execution_api: httpx.AsyncClient,
++    deployment: orm_models.Deployment,
++    flow_run: orm_models.FlowRun,
++):
++    plan, credentials, children = await ready_deployed_region(
++        db, session, execution_api, deployment
++    )
++    await produce_and_finish_region(db, children, documents=1, finish_operators={"B"})
++    for retired in [
++        row for row in children if row.bootstrap.context.operator_uid in {"A", "B"}
++    ]:
++        async with db.session_context(begin_transaction=True) as transaction:
++            assert (
++                await dispatch_stream_subtask_event(
++                    transaction,
++                    db,
++                    retired.bootstrap.assignment.id,
++                    signed_child_event(retired, "COMPLETED"),
++                    retired.credentials,
++                )
++            ).accepted
++        await retire_ready_child(db, retired)
++    worker_ids = sorted({child.worker_id for child in children})
++    assert len(worker_ids) == 2
++    early, late = worker_ids
++    child = next(
++        row
++        for row in children
++        if row.worker_id == late and row.bootstrap.context.operator_uid == "C"
++    )
++    async with db.session_context(begin_transaction=True) as transaction:
++        current = await m.read_stream_dag_execution(
++            transaction, db, plan.id, credentials
++        )
++        assert (
++            current.phase == "ACTIVE" and current.counts.physical_slots_remaining == 2
++        )
++        own_task = await transaction.get(db.TaskRun, child.bootstrap.task_run.id)
++        own_output = await transaction.get(
++            db.StreamPartition, child.bootstrap.output.stream_id
++        )
++        own_grant = await transaction.get(
++            db.StreamSubtaskGrant, child.credentials.grant_id
++        )
++        assert own_task is not None and own_task.state_type == states.StateType.RUNNING
++        assert own_output is not None and own_output.state == "OPEN"
++        assert own_grant is not None and own_grant.state == "REGISTERED"
++        request = dag_request(flow_run.id)
++        request.operators = [
++            row for row in request.operators if row.operator_uid in {"A", "B"}
++        ]
++        request.edges = [edge for edge in request.edges if edge.edge_uid == "A-B"]
++        contender = await stream_dags.seal_dag_metadata(transaction, db, request)
++    admission_started: asyncio.Future[int] = asyncio.get_running_loop().create_future()
++    event_started: asyncio.Future[int] = asyncio.get_running_loop().create_future()
++
++    async def admit_other_graph() -> str:
++        async with db.session_context(begin_transaction=True) as transaction:
++            pid = await transaction.scalar(sa.text("SELECT pg_backend_pid()"))
++            assert isinstance(pid, int)
++            admission_started.set_result(pid)
++            try:
++                await stream_dags.admit_dag_metadata(
++                    transaction,
++                    db,
++                    contender.id,
++                    topology.StreamDAGAdmissionRequest(
++                        operation_id=uuid4(), graph_digest=contender.graph_digest
++                    ),
++                    work_pool_id=child.principal.work_pool_id,
++                )
++            except NativeStreamError as error:
++                return error.code
++            return "ADMITTED"
++
++    async def fail_current_child() -> physical.StreamSubtaskEventResult:
++        async with db.session_context(begin_transaction=True) as transaction:
++            pid = await transaction.scalar(sa.text("SELECT pg_backend_pid()"))
++            assert isinstance(pid, int)
++            event_started.set_result(pid)
++            return await dispatch_stream_subtask_event(
++                transaction,
++                db,
++                child.bootstrap.assignment.id,
++                signed_child_event(child, "FAILED", retriable=False),
++                child.credentials,
++            )
++
++    admission_task: asyncio.Task[str] | None = None
++    event_task: asyncio.Task[physical.StreamSubtaskEventResult] | None = None
++    try:
++        async with db.session_context(begin_transaction=True) as holder:
++            holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
++            assert isinstance(holder_pid, int)
++            await holder.execute(
++                sa.select(db.Worker.id).where(db.Worker.id == early).with_for_update()
++            )
++            # Queue the real sorted admission first on the earlier Worker row.
++            admission_task = asyncio.create_task(admit_other_graph())
++            admission_pid = await asyncio.wait_for(
++                asyncio.shield(admission_started), timeout=5
++            )
++            event_task = asyncio.create_task(fail_current_child())
++            event_pid = await asyncio.wait_for(asyncio.shield(event_started), timeout=5)
++            async with db.session_context() as observer:
++                async with asyncio.timeout(5):
++                    while True:
++                        await observer.execute(
++                            sa.text("SELECT pg_stat_clear_snapshot()")
++                        )
++                        observations = {
++                            row[0]: (row[1], row[2])
++                            for row in (
++                                await observer.execute(
++                                    sa.text(
++                                        "SELECT pid, pg_blocking_pids(pid), query FROM pg_stat_activity WHERE pid IN (:admission, :event) AND datname = current_database()"
++                                    ),
++                                    {"admission": admission_pid, "event": event_pid},
++                                )
++                            ).all()
++                        }
++                        admission_wait = observations.get(admission_pid)
++                        event_wait = observations.get(event_pid)
++                        if (
++                            admission_wait is not None
++                            and event_wait is not None
++                            and holder_pid in admission_wait[0]
++                            and {holder_pid, admission_pid}.intersection(event_wait[0])
++                        ):
++                            assert admission_wait[1].startswith("SELECT worker.")
++                            assert event_wait[1].startswith("SELECT worker.")
++                            break
++                        await asyncio.sleep(0.01)
++            # The later-worker event must not hold its own Worker before the
++            # earlier one. This NOWAIT probe is a direct lock observation;
++            # neither it nor the artificial holder changes worker metadata.
++            async with db.session_context(begin_transaction=True) as probe:
++                await probe.execute(
++                    sa.select(db.Worker.id)
++                    .where(db.Worker.id == late)
++                    .with_for_update(nowait=True)
++                )
++            assert not admission_task.done() and not event_task.done()
++        assert (
++            await asyncio.wait_for(asyncio.shield(admission_task), timeout=10)
++            == "ADMITTED"
++        )
++        failed = await asyncio.wait_for(asyncio.shield(event_task), timeout=10)
++        assert failed.accepted and failed.state_type == states.StateType.FAILED
++    finally:
++        pending = [
++            task
++            for task in (admission_task, event_task)
++            if task is not None and not task.done()
++        ]
++        for task in pending:
++            task.cancel()
++        if pending:
++            await asyncio.gather(*pending, return_exceptions=True)
++    async with db.session_context(begin_transaction=True) as transaction:
++        graph = await transaction.get(db.StreamGraphRevision, plan.id)
++        loser = await transaction.get(db.StreamGraphRevision, contender.id)
++        assert graph is not None and graph.current_control_operation_id is not None
++        assert (
++            loser is not None
++            and loser.state == "ADMITTED"
++            and loser.admission_operation_id is not None
++        )
++        assert (
++            await transaction.scalar(
++                sa.select(sa.func.count())
++                .select_from(db.StreamDAGControlTarget)
++                .where(
++                    db.StreamDAGControlTarget.control_operation_id
++                    == graph.current_control_operation_id
++                )
++            )
++            == 4
++        )
++        assert (
++            await transaction.scalar(
++                sa.select(sa.func.count())
++                .select_from(db.StreamPhysicalSlotAllocation)
++                .where(
++                    db.StreamPhysicalSlotAllocation.graph_revision_id == contender.id
++                )
++            )
++            == 2
++        )
++        assert (
++            await transaction.scalar(
++                sa.select(sa.func.count())
++                .select_from(db.StreamPhysicalSubtask)
++                .where(
++                    db.StreamPhysicalSubtask.graph_revision_id == contender.id,
++                    db.StreamPhysicalSubtask.assigned_worker_id.is_not(None),
++                )
++            )
++            == 2
++        )
++        current = await m.read_stream_dag_execution(
++            transaction, db, plan.id, credentials
++        )
++        assert (
++            current.phase == "STOPPING" and current.counts.physical_slots_remaining == 2
++        )
++
++
+ async def test_lifecycle_sqlite_refuses_before_locator_or_write(
+     db: PrefectDBInterface,
+ ):

@@ -17,6 +17,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from prefect import flow
+from prefect._internal.stream_dag_execution import (
+    DAGFlowBinding,
+    DAGFlowRegistry,
+    dag_registry_context,
+)
 from prefect._internal.stream_execution import (
     StreamExecutionContext,
     stream_execution_context,
@@ -143,7 +148,17 @@ def parent_context(
                     persist_result=False,
                 ),
             ):
-                yield client, run
+                registry = DAGFlowRegistry(
+                    DAGFlowBinding(
+                        run.id,
+                        run.run_count,
+                        execution.generation,
+                        execution.holder_id,
+                        execution.api_url,
+                    )
+                )
+                with dag_registry_context(registry):
+                    yield client, run
 
 
 async def enrolled_parent(

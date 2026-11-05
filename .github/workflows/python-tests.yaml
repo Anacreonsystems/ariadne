@@ -4,6 +4,25 @@ env:
   # enable colored output
   # https://github.com/pytest-dev/pytest/issues/7443
   PY_COLORS: 1
+  # These modules run in the dedicated native DAG job below, with PG17 and
+  # SQLite capability controls. Broad PG14/Docker collections must not run them.
+  NATIVE_DAG_TEST_EXCLUSIONS: >-
+    --ignore=tests/client/test_stream_dag_executions.py
+    --ignore=tests/client/test_stream_dag_launches.py
+    --ignore=tests/test_stream_graph_execution_contracts.py
+    --ignore=tests/test_native_dag_execution_client_http.py
+    --ignore=tests/server/schemas/test_stream_dag_executions.py
+    --ignore=tests/server/models/test_stream_dag_executions.py
+    --ignore=tests/server/models/test_stream_dag_launches.py
+    --ignore=tests/server/database/test_stream_dag_execution_migrations.py
+    --ignore=tests/server/api/test_stream_dag_executions.py
+    --ignore=tests/server/api/test_stream_dag_launches.py
+    --ignore=tests/test_stream_dag_execution.py
+    --ignore=tests/test_stream_dag_bootstrap.py
+    --ignore=tests/test_native_stream_dag_execution_http.py
+    --ignore=tests/workers/test_stream_dag_subtasks.py
+    --ignore=tests/workers/test_stream_dag_launches.py
+    --ignore=tests/workers/test_stream_dag_bootstrap.py
 
 on:
   # repository_dispatch executes the workflow definition from the default branch.
@@ -21,6 +40,7 @@ on:
       - scripts/entrypoint.sh
       - scripts/verify_test_selection.py
       - pyrightconfig-native-physical.json
+      - pyrightconfig-native-dag.json
   push:
     branches:
       - main
@@ -34,6 +54,7 @@ on:
       - scripts/entrypoint.sh
       - scripts/verify_test_selection.py
       - pyrightconfig-native-physical.json
+      - pyrightconfig-native-dag.json
 permissions:
   contents: read
   actions: write
@@ -330,7 +351,7 @@ jobs:
 
       - name: Run tests
         run: |
-          uv run pytest ${{ matrix.test-type.modules }} \
+          uv run pytest ${{ matrix.test-type.modules }} ${NATIVE_DAG_TEST_EXCLUSIONS} \
           -m "not windows" \
           --numprocesses auto \
           --maxprocesses 6 \
@@ -469,6 +490,8 @@ jobs:
     name: Native physical streams - python:3.12, ${{ matrix.database }}
     # Includes both sync/async cardinality and real process-fault controls.
     timeout-minutes: 75
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
     strategy:
       fail-fast: false
       matrix:
@@ -489,17 +512,17 @@ jobs:
           --health-retries 5
     steps:
       - *python-test-checkout
-      - name: Set up uv and Python 3.12
+      - name: Set up uv and managed Python 3.12.14
         uses: astral-sh/setup-uv@v10.0.1
         with:
-          python-version: "3.12"
+          python-version: "3.12.14"
           enable-cache: true
       - name: Set up Node for the type checker
         uses: actions/setup-node@v7
         with:
           node-version-file: ui-v2/.nvmrc
       - name: Install packages
-        run: uv sync --locked
+        run: uv sync --locked --python 3.12.14
       - name: Set native test database connection URL
         if: ${{ startsWith(matrix.database, 'postgres') }}
         env:
@@ -596,7 +619,7 @@ jobs:
         if: matrix.database == 'postgres:17'
         run: >-
           uv run pytest tests/test_native_partitioned_stream_http.py
-          -vv --durations=13 --junitxml=native-physical-runtime.xml
+          -k 'not 5000' -vv --durations=11 --junitxml=native-physical-runtime.xml
       - name: Require successful cases without conditional skips
         run: |
           uv run python - <<'PY'
@@ -633,6 +656,8 @@ jobs:
                   if not any(name == module or name.startswith(module + ".") for name in classnames)
               }
               assert not missing_modules, f"Physical modules were silently deselected: {path}: {missing_modules}"
+              if path.name == "native-physical-runtime.xml":
+                  assert len(cases) == 11, "The eleven bounded physical cases must execute; both 5000 cases have separate jobs"
               if path.name == "native-physical-sqlite.xml":
                   names = {case.get("name", "").split("[", 1)[0] for case in cases}
                   assert "test_sqlite_metadata_admission_refuses_without_mutation" in names, "SQLite admission refusal did not execute"
@@ -654,6 +679,351 @@ jobs:
             native-physical-*.xml
             native-physical-types.json
             native-physical-types.stderr.log
+          if-no-files-found: error
+
+  run-stream-dag-execution-tests:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    runs-on: anacreon-runners
+    name: Native DAG execution - python:3.12, ${{ matrix.database }}
+    timeout-minutes: 75
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+    strategy:
+      fail-fast: false
+      matrix:
+        database: [sqlite, "postgres:17"]
+    services:
+      postgres:
+        image: postgres:17
+        ports:
+          - "5432/tcp"
+        env:
+          POSTGRES_USER: prefect
+          POSTGRES_PASSWORD: prefect
+          POSTGRES_DB: prefect
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - *python-test-checkout
+      - name: Set up uv and managed Python 3.12.14
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12.14"
+          enable-cache: true
+      - name: Set up Node for the type checker
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ui-v2/.nvmrc
+      - name: Install packages
+        run: uv sync --locked --python 3.12.14
+      - name: Set native DAG test database connection URL
+        if: matrix.database == 'postgres:17'
+        env:
+          NATIVE_DAG_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://prefect:prefect@localhost:${NATIVE_DAG_POSTGRES_PORT}/prefect" >> "$GITHUB_ENV"
+      - name: Check all native DAG modules without inherited exclusions
+        if: matrix.database == 'postgres:17'
+        run: |
+          uv run pyright -p pyrightconfig-native-dag.json --level error --outputjson > native-dag-types.json 2> native-dag-types.stderr.log && type_status=0 || type_status=$?
+          uv run python scripts/check_pyright_report.py native-dag-types.json --pyright-status "$type_status"
+          uv run python - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path("pyrightconfig-native-dag.json").read_text())
+          included = config["include"]
+          assert config["ignore"] == []
+          assert len(included) == len(set(included)) == 28
+          assert all(Path(path).is_file() for path in included)
+          report = json.loads(Path("native-dag-types.json").read_text())
+          assert report["summary"]["filesAnalyzed"] == len(included), report["summary"]
+          assert report["summary"]["errorCount"] == 0
+          PY
+      - name: Run paired DAG client and bootstrap contracts
+        run: >-
+          uv run pytest tests/client/test_stream_dag_executions.py
+          tests/client/test_stream_dag_launches.py
+          tests/server/schemas/test_stream_dag_executions.py
+          tests/test_stream_graph_execution_contracts.py
+          tests/test_stream_dag_execution.py
+          tests/test_stream_dag_bootstrap.py
+          tests/workers/test_stream_dag_subtasks.py
+          tests/workers/test_stream_dag_launches.py
+          tests/workers/test_stream_dag_bootstrap.py
+          -q --junitxml=native-dag-contract.xml
+      - name: Run real PostgreSQL DAG lifecycle and launch controls
+        if: matrix.database == 'postgres:17'
+        run: >-
+          uv run pytest tests/server/models/test_stream_dag_executions.py
+          tests/server/models/test_stream_dag_launches.py
+          tests/server/api/test_stream_dag_executions.py
+          tests/server/api/test_stream_dag_launches.py
+          tests/server/database/test_stream_dag_execution_migrations.py
+          tests/test_native_dag_execution_client_http.py
+          -k 'not sqlite'
+          -q --junitxml=native-dag-server.xml
+      - name: Require SQLite DAG capability and migration controls
+        if: matrix.database == 'sqlite'
+        run: >-
+          uv run pytest tests/server/models/test_stream_dag_executions.py
+          tests/server/models/test_stream_dag_launches.py
+          tests/server/api/test_stream_dag_executions.py
+          tests/server/api/test_stream_dag_launches.py
+          tests/server/database/test_stream_dag_execution_migrations.py
+          tests/test_native_dag_execution_client_http.py
+          tests/test_native_stream_dag_execution_http.py
+          -k 'not postgres'
+          -q --junitxml=native-dag-sqlite.xml
+      - name: Require every declared DAG module to pass without skips
+        env:
+          NATIVE_DAG_DATABASE: ${{ matrix.database }}
+        run: |
+          uv run python - <<'PY'
+          import os
+          import shlex
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          import yaml
+
+          workflow = yaml.safe_load(Path(".github/workflows/python-tests.yaml").read_text())
+          declared = {}
+          for step in workflow["jobs"]["run-stream-dag-execution-tests"]["steps"]:
+              command = step.get("run", "").strip()
+              if not command.startswith("uv run pytest "):
+                  continue
+              arguments = shlex.split(command)
+              report = next(arg.split("=", 1)[1] for arg in arguments if arg.startswith("--junitxml="))
+              declared[report] = {
+                  arg.split("::", 1)[0][:-3].replace("/", ".")
+                  for arg in arguments
+                  if arg.startswith("tests/") and arg.split("::", 1)[0].endswith(".py")
+              }
+          reports = ["native-dag-contract.xml"]
+          if os.environ["NATIVE_DAG_DATABASE"] == "postgres:17":
+              reports.append("native-dag-server.xml")
+          else:
+              reports.append("native-dag-sqlite.xml")
+          for report in reports:
+              cases = ET.parse(report).findall(".//testcase")
+              assert cases, f"DAG cases were not collected: {report}"
+              classnames = {case.get("classname", "") for case in cases}
+              missing = {
+                  module for module in declared[report]
+                  if not any(name == module or name.startswith(module + ".") for name in classnames)
+              }
+              assert not missing, f"DAG modules were silently deselected: {report}: {missing}"
+              identities = {(case.get("classname"), case.get("name")) for case in cases}
+              assert len(identities) == len(cases), f"DAG cases were duplicated: {report}"
+              assert not any(case.find(tag) is not None for case in cases for tag in ("skipped", "failure", "error")), f"DAG cases did not all pass: {report}"
+              print(f"{report}: {len(cases)} cases passed without skips")
+          PY
+      - name: Preserve native DAG execution results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-dag-execution-${{ strategy.job-index }}
+          path: |
+            native-dag-*.xml
+            native-dag-types.json
+            native-dag-types.stderr.log
+          if-no-files-found: error
+
+  plan-native-runtime-cases:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    runs-on: anacreon-runners
+    name: Plan every native runtime case
+    timeout-minutes: 10
+    outputs:
+      cases: ${{ steps.matrix.outputs.cases }}
+    steps:
+      - *python-test-checkout
+      - name: Set up uv and managed Python 3.12.14
+        uses: astral-sh/setup-uv@v10.0.1
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
+        with:
+          python-version: "3.12.14"
+          enable-cache: true
+      - name: Install packages
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
+        run: uv sync --locked --python 3.12.14
+      - name: Collect all native runtime cases
+        run: >-
+          uv run pytest tests/test_native_stream_dag_execution_http.py
+          tests/test_native_partitioned_stream_http.py
+          --collect-only -q -k 'not sqlite' > native-runtime-collection.log
+      - name: Require complete coverage and create one job per large case
+        id: matrix
+        run: |
+          uv run python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          dag = "tests/test_native_stream_dag_execution_http.py::"
+          p2 = "tests/test_native_partitioned_stream_http.py::"
+          required = {
+              dag + "test_public_dag_lifecycle_two_real_workers_postgres[" + case + "]"
+              for case in ("False-normal", "True-normal", "False-preview", "False-failure", "False-cancel")
+          }
+          required.update(
+              dag + "test_public_dag_bounded_volume_postgres[" + case + "]"
+              for case in ("False-500", "True-500", "False-5000", "True-5000")
+          )
+          required.update(
+              dag + "test_public_dag_branch_recovery_postgres[" + case + "]"
+              for case in ("False-accepted200", "False-incomplete200", "True-accepted200", "True-incomplete200")
+          )
+          required.update(
+              dag + "test_public_dag_exchange_modes_postgres[" + case + "]"
+              for case in ("rebalance", "keyed")
+          )
+          required.update(
+              p2 + "test_actual_process_worker_runs_four_partition_tasks[" + case + "]"
+              for case in ("5000-none-False", "5000-none-True")
+          )
+          collected = [
+              line.strip()
+              for line in Path("native-runtime-collection.log").read_text().splitlines()
+              if line.startswith((dag, p2))
+          ]
+          assert collected, "Native runtime collection was empty"
+          assert len(collected) == len(set(collected)), "Native runtime nodes were duplicated"
+          nodes = [node for node in collected if node.startswith(dag) or "[5000-" in node]
+          assert not required.difference(nodes), f"Required native runtime cases missing: {required.difference(nodes)}"
+          assert not any("sqlite" in node for node in nodes)
+          assert len(nodes) <= 64, "Review runner capacity before expanding the native runtime matrix"
+          matrix = {
+              "include": [
+                  {"node": node, "id": hashlib.sha256(node.encode()).hexdigest()[:12]}
+                  for node in nodes
+              ]
+          }
+          Path("native-runtime-matrix.json").write_text(json.dumps(matrix, indent=2) + "\n")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write("cases=" + json.dumps(matrix, separators=(",", ":")) + "\n")
+          print(f"All {len(nodes)} required native runtime cases have their own job")
+          PY
+      - name: Preserve collection and exact case matrix
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-runtime-plan
+          path: |
+            native-runtime-collection.log
+            native-runtime-matrix.json
+          if-no-files-found: error
+
+  run-native-runtime-case:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    needs: plan-native-runtime-cases
+    runs-on: anacreon-runners
+    name: Native runtime - ${{ matrix.node }}
+    # The longest test watchdog is 70 minutes; preserve setup and exact
+    # cleanup/artifact time before the enclosing job can cancel the test.
+    timeout-minutes: 85
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan-native-runtime-cases.outputs.cases) }}
+    services:
+      postgres:
+        image: postgres:17
+        ports:
+          - "5432/tcp"
+        env:
+          POSTGRES_USER: prefect
+          POSTGRES_PASSWORD: prefect
+          POSTGRES_DB: prefect
+        options: >-
+          --health-cmd "pg_isready -U prefect -d prefect"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - *python-test-checkout
+      - name: Set up uv and managed Python 3.12.14
+        uses: astral-sh/setup-uv@v10.0.1
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
+        with:
+          python-version: "3.12.14"
+          enable-cache: true
+      - name: Install packages
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
+        run: uv sync --locked --python 3.12.14
+      - name: Configure the isolated PostgreSQL database
+        env:
+          NATIVE_RUNTIME_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://prefect:prefect@127.0.0.1:${NATIVE_RUNTIME_POSTGRES_PORT}/prefect" >> "$GITHUB_ENV"
+      - name: Record the declared runner and Python profile
+        run: |
+          uv run python - <<'PY'
+          import json
+          import os
+          import platform
+          import sysconfig
+          from importlib.metadata import version
+          from pathlib import Path
+
+          assert platform.python_version() == "3.12.14"
+          limits = {}
+          for name in ("cpu.max", "cpu.stat", "memory.max", "memory.events"):
+              path = Path("/sys/fs/cgroup") / name
+              if path.is_file():
+                  limits[name] = path.read_text()
+          result = {
+              "python": platform.python_version(),
+              "platform": platform.platform(),
+              "python_build": sysconfig.get_config_var("CONFIG_ARGS"),
+              "cpu_affinity": sorted(os.sched_getaffinity(0)),
+              "cgroup": limits,
+              "dependencies": {name: version(name) for name in ("sqlalchemy", "pydantic", "asyncpg", "uvicorn", "fastapi")},
+              "acceptance_scope": "Functional native execution; no throughput SLO acceptance",
+          }
+          Path("native-runtime-profile.json").write_text(json.dumps(result, indent=2) + "\n")
+          PY
+      - name: Run the exact native runtime case
+        env:
+          NATIVE_RUNTIME_NODE: ${{ matrix.node }}
+        run: >-
+          uv run pytest "$NATIVE_RUNTIME_NODE" -vv --durations=1
+          --junitxml=native-runtime-case.xml
+      - name: Require that exact case to pass without skips
+        env:
+          NATIVE_RUNTIME_NODE: ${{ matrix.node }}
+        run: |
+          uv run python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          node = os.environ["NATIVE_RUNTIME_NODE"]
+          module, expected_name = node.split("::", 1)
+          expected_class = module[:-3].replace("/", ".")
+          cases = ET.parse("native-runtime-case.xml").findall(".//testcase")
+          assert len(cases) == 1, "A native runtime shard must execute exactly its requested case"
+          case = cases[0]
+          assert case.get("classname") == expected_class, case.attrib
+          assert case.get("name") == expected_name, case.attrib
+          assert all(case.find(tag) is None for tag in ("skipped", "failure", "error")), "Native runtime case did not pass"
+          print(f"{node}: one actual passing case, no skips")
+          PY
+      - name: Preserve native runtime case results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-runtime-${{ matrix.id }}
+          path: |
+            native-runtime-case.xml
+            native-runtime-profile.json
           if-no-files-found: error
 
   run-stream-routing-tests:
@@ -797,7 +1167,7 @@ jobs:
           jq '."__pytest_split_incomplete__" = -1' \
             test-durations.json > "$duration_path"
           set +e
-          uv run pytest tests --ignore=tests/typesafety \
+          uv run pytest tests --ignore=tests/typesafety ${NATIVE_DAG_TEST_EXCLUSIONS} \
           -m "not windows" \
           --numprocesses logical \
           --maxprocesses 6 \
@@ -988,7 +1358,7 @@ jobs:
           fi
 
           # These tests assert that Prefect's outermost run span has no parent.
-          uv run --no-sync pytest ${{ matrix.test-type.modules }} \
+          uv run --no-sync pytest ${{ matrix.test-type.modules }} ${NATIVE_DAG_TEST_EXCLUSIONS} \
           --ignore=tests/telemetry/test_run_telemetry.py \
           -m "not windows" \
           --numprocesses auto \
@@ -1193,7 +1563,7 @@ jobs:
 
       - name: Run tests
         run: |
-          uv run pytest tests --ignore=tests/typesafety \
+          uv run pytest tests --ignore=tests/typesafety ${NATIVE_DAG_TEST_EXCLUSIONS} \
           -m "not windows" \
           --numprocesses auto \
           --maxprocesses 6 \

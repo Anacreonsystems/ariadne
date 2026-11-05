@@ -1,0 +1,12 @@
+import importlib.abc,sys,json
+from pathlib import Path
+root=Path('/tmp/native-ni2-012-worker-v1/journal-control-02')
+class Guard(importlib.abc.MetaPathFinder):
+ def find_spec(self,fullname,path=None,target=None):
+  if fullname=='pydantic' or fullname.startswith(('pydantic.','prefect.server')):raise AssertionError('Journal control imported forbidden dependency')
+  return None
+sys.meta_path.insert(0,Guard())
+import pytest
+code=pytest.main(['-c','/dev/null','--noconftest','-p','no:cacheprovider','-q','tests/workers/test_stream_dag_launches.py','--junitxml='+str(root/'result.xml')])
+(root/'import-audit.json').write_text(json.dumps({'prefect_imports':[m for m in sorted(sys.modules) if m=='prefect' or m.startswith('prefect.')],'forbidden_imports':[m for m in sys.modules if m=='pydantic' or m.startswith(('pydantic.','prefect.server'))]},indent=2)+'\n')
+(root/'result.exit').write_text(str(code)+'\n');sys.exit(code)

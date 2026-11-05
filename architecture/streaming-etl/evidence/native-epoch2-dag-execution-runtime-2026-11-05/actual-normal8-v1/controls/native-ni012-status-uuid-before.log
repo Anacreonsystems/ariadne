@@ -1,0 +1,664 @@
+FFFF....                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_own_status_preserves_uuid_through_json_freeze_and_sdk_ack[False-input-False] _
+
+asynchronous = False, stream_role = 'input', forged_response = False
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f82839f2ba0>
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("stream_role", ["input", "output"])
+    @pytest.mark.parametrize("forged_response", [False, True])
+    async def test_own_status_preserves_uuid_through_json_freeze_and_sdk_ack(
+        asynchronous: bool,
+        stream_role: str,
+        forged_response: bool,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        storage, bootstrap, execution, _, consumer = owned_storage()
+        stream_id = (
+            consumer.input_stream_id
+            if stream_role == "input"
+            else consumer.output_stream_id
+        )
+        requests = []
+    
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            result = StreamInfo(
+                id=uuid4() if forged_response else stream_id,
+                flow_run_id=bootstrap.flow_run_id,
+                protocol_version=1,
+                state="COMPLETED",
+                error=None,
+                last_sequence=8,
+                tail_sequence=8,
+                producer_position=8,
+                record_count=8,
+                byte_count=128,
+                limits=StreamLimits(),
+                released=False,
+            )
+            return httpx.Response(200, json=result.model_dump(mode="json"))
+    
+        with stream_subtask_execution_context(execution):
+            async with wire_client(monkeypatch, handler, asynchronous):
+                if forged_response:
+                    with pytest.raises(StreamRequestError) as refused:
+                        await storage.status(str(stream_id))
+                    assert refused.value.code == "IDENTITY_CONFLICT"
+                else:
+>                   result = await storage.status(str(stream_id))
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_stream_route_terminals.py:761: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_routed_storage.py:314: in status
+    await self._dag_request(method, subtask_id=scope["subtask_id"])
+src/prefect/_internal/stream_routed_storage.py:224: in _dag_request
+    return await self._dispatch(method, **json.loads(frozen))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/_internal/stream_routed_storage.py:214: in _dispatch
+    return await super()._dispatch(method, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/stream_storage.py:82: in _dispatch
+    return await run_sync(call)
+           ^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/anyio/to_thread.py:65: in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:2641: in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:1033: in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/orchestration/_streams/client.py:632: in read_stream_dag_input_status
+    _dag_child_ack(result, subtask_id=subtask_id, stream_role="input")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = StreamInfo(id=UUID('9d038d42-6460-4776-aec8-f4f1577cf91c'), flow_run_id=UUID('636f31a0-2b7f-4c4d-8c68-49e78865375f'), ...tes=16384, max_state_bytes=16384, max_consumers=64, max_prefix_records=1000, max_prefix_bytes=1048576), released=False)
+subtask_id = '8f632055-d6e2-4c67-805b-4d9ef60906f8', intent = None
+stream_role = 'input'
+
+    def _dag_child_ack(
+        result: object,
+        *,
+        subtask_id: UUID | None = None,
+        intent: object = None,
+        stream_role: Literal["input", "output"] | None = None,
+    ) -> None:
+        """Bind scoped responses to the current grant; Task attempts are not epochs."""
+        execution = get_stream_subtask_execution()
+        if not isinstance(execution, DAGSubtaskExecutionContext):
+            return
+        expected: dict[str, object] = {}
+        if isinstance(result, dag_execution_schemas.StreamDAGSubtaskBootstrap):
+            expected = {
+                "flow_run_id": execution.flow_run_id,
+                "assignment.id": execution.subtask_id,
+                "assignment.graph_revision_id": execution.graph_revision_id,
+                "assignment.current_grant_id": execution.grant_id,
+                "assignment.physical_epoch": execution.physical_epoch,
+                "assignment.assignment_epoch": execution.assignment_epoch,
+                "assignment.input_stream_id": execution.input_stream_id,
+                "assignment.manifest.stream_id": execution.output_stream_id,
+                "assignment.manifest.manifest_digest": execution.manifest_digest,
+                "grant.id": execution.grant_id,
+                "grant.holder_id": execution.holder_id,
+                "grant.scope_digest": execution.scope_digest,
+                "grant.event_key_id": execution.event_key_id,
+                "grant.child_process_id": execution.child_process_id,
+                "grant.process_start_ticks": execution.process_start_ticks,
+                "task_run.id": execution.task_run_id,
+            }
+        elif isinstance(
+            result,
+            (
+                dag_execution_schemas.StreamDAGBootstrapReadyResult,
+                dag_execution_schemas.StreamDAGActivationObservation,
+            ),
+        ):
+            expected = {
+                "graph_revision_id": execution.graph_revision_id,
+                "subtask_id": execution.subtask_id,
+                "grant_id": execution.grant_id,
+                "physical_epoch": execution.physical_epoch,
+            }
+        elif isinstance(result, schemas.SourceAdmission):
+            expected = {
+                "binding.flow_run_id": execution.flow_run_id,
+                "binding.stream_id": execution.output_stream_id,
+                "binding.task_run_id": execution.task_run_id,
+                "binding.owner_id": execution.holder_id,
+            }
+        elif isinstance(result, schemas.ConsumerBinding):
+            expected = {
+                "flow_run_id": execution.flow_run_id,
+                "input_stream_id": execution.input_stream_id,
+                "output_stream_id": execution.output_stream_id,
+                "owner_id": execution.holder_id,
+            }
+        elif isinstance(result, schemas.StreamInfo):
+            expected = {"flow_run_id": execution.flow_run_id}
+            if stream_role is not None:
+                expected["id"] = (
+                    execution.input_stream_id
+                    if stream_role == "input"
+                    else execution.output_stream_id
+                )
+            if result.id not in {execution.input_stream_id, execution.output_stream_id}:
+                raise StreamRequestError(
+                    "IDENTITY_CONFLICT", "DAG stream is outside its assignment"
+                )
+        elif isinstance(result, schemas.StreamDelivery) and isinstance(
+            intent, dag_execution_schemas.StreamDAGConsumerReadRequest
+        ):
+            expected = {
+                "token.flow_run_id": intent.binding.flow_run_id,
+                "token.input_stream_id": intent.binding.input_stream_id,
+                "token.output_stream_id": intent.binding.output_stream_id,
+                "token.consumer_id": intent.binding.consumer_id,
+                "token.owner_id": intent.binding.owner_id,
+                "token.owner_epoch": intent.binding.owner_epoch,
+                "token.attempt": intent.binding.attempt,
+            }
+        if subtask_id is not None and subtask_id != execution.subtask_id:
+>           raise StreamRequestError(
+                "IDENTITY_CONFLICT", "DAG response targets another subtask"
+            )
+E           prefect.client.orchestration._streams.client.StreamRequestError: DAG response targets another subtask
+
+src/prefect/client/orchestration/_streams/client.py:316: StreamRequestError
+_ test_own_status_preserves_uuid_through_json_freeze_and_sdk_ack[False-input-True] _
+
+asynchronous = True, stream_role = 'input', forged_response = False
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f8283a367b0>
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("stream_role", ["input", "output"])
+    @pytest.mark.parametrize("forged_response", [False, True])
+    async def test_own_status_preserves_uuid_through_json_freeze_and_sdk_ack(
+        asynchronous: bool,
+        stream_role: str,
+        forged_response: bool,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        storage, bootstrap, execution, _, consumer = owned_storage()
+        stream_id = (
+            consumer.input_stream_id
+            if stream_role == "input"
+            else consumer.output_stream_id
+        )
+        requests = []
+    
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            result = StreamInfo(
+                id=uuid4() if forged_response else stream_id,
+                flow_run_id=bootstrap.flow_run_id,
+                protocol_version=1,
+                state="COMPLETED",
+                error=None,
+                last_sequence=8,
+                tail_sequence=8,
+                producer_position=8,
+                record_count=8,
+                byte_count=128,
+                limits=StreamLimits(),
+                released=False,
+            )
+            return httpx.Response(200, json=result.model_dump(mode="json"))
+    
+        with stream_subtask_execution_context(execution):
+            async with wire_client(monkeypatch, handler, asynchronous):
+                if forged_response:
+                    with pytest.raises(StreamRequestError) as refused:
+                        await storage.status(str(stream_id))
+                    assert refused.value.code == "IDENTITY_CONFLICT"
+                else:
+>                   result = await storage.status(str(stream_id))
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_stream_route_terminals.py:761: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_routed_storage.py:314: in status
+    await self._dag_request(method, subtask_id=scope["subtask_id"])
+src/prefect/_internal/stream_routed_storage.py:224: in _dag_request
+    return await self._dispatch(method, **json.loads(frozen))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/_internal/stream_routed_storage.py:214: in _dispatch
+    return await super()._dispatch(method, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/stream_storage.py:78: in _dispatch
+    return await getattr(asynchronous.client, method)(**kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/orchestration/_streams/client.py:3170: in read_stream_dag_input_status
+    _dag_child_ack(result, subtask_id=subtask_id, stream_role="input")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = StreamInfo(id=UUID('360b57a4-0164-4b80-b764-985ba02de349'), flow_run_id=UUID('45a7ccfb-1e60-47d2-a8c4-d94fa494a5e6'), ...tes=16384, max_state_bytes=16384, max_consumers=64, max_prefix_records=1000, max_prefix_bytes=1048576), released=False)
+subtask_id = 'f6771c2f-a574-4fc9-89be-e3682c0c140c', intent = None
+stream_role = 'input'
+
+    def _dag_child_ack(
+        result: object,
+        *,
+        subtask_id: UUID | None = None,
+        intent: object = None,
+        stream_role: Literal["input", "output"] | None = None,
+    ) -> None:
+        """Bind scoped responses to the current grant; Task attempts are not epochs."""
+        execution = get_stream_subtask_execution()
+        if not isinstance(execution, DAGSubtaskExecutionContext):
+            return
+        expected: dict[str, object] = {}
+        if isinstance(result, dag_execution_schemas.StreamDAGSubtaskBootstrap):
+            expected = {
+                "flow_run_id": execution.flow_run_id,
+                "assignment.id": execution.subtask_id,
+                "assignment.graph_revision_id": execution.graph_revision_id,
+                "assignment.current_grant_id": execution.grant_id,
+                "assignment.physical_epoch": execution.physical_epoch,
+                "assignment.assignment_epoch": execution.assignment_epoch,
+                "assignment.input_stream_id": execution.input_stream_id,
+                "assignment.manifest.stream_id": execution.output_stream_id,
+                "assignment.manifest.manifest_digest": execution.manifest_digest,
+                "grant.id": execution.grant_id,
+                "grant.holder_id": execution.holder_id,
+                "grant.scope_digest": execution.scope_digest,
+                "grant.event_key_id": execution.event_key_id,
+                "grant.child_process_id": execution.child_process_id,
+                "grant.process_start_ticks": execution.process_start_ticks,
+                "task_run.id": execution.task_run_id,
+            }
+        elif isinstance(
+            result,
+            (
+                dag_execution_schemas.StreamDAGBootstrapReadyResult,
+                dag_execution_schemas.StreamDAGActivationObservation,
+            ),
+        ):
+            expected = {
+                "graph_revision_id": execution.graph_revision_id,
+                "subtask_id": execution.subtask_id,
+                "grant_id": execution.grant_id,
+                "physical_epoch": execution.physical_epoch,
+            }
+        elif isinstance(result, schemas.SourceAdmission):
+            expected = {
+                "binding.flow_run_id": execution.flow_run_id,
+                "binding.stream_id": execution.output_stream_id,
+                "binding.task_run_id": execution.task_run_id,
+                "binding.owner_id": execution.holder_id,
+            }
+        elif isinstance(result, schemas.ConsumerBinding):
+            expected = {
+                "flow_run_id": execution.flow_run_id,
+                "input_stream_id": execution.input_stream_id,
+                "output_stream_id": execution.output_stream_id,
+                "owner_id": execution.holder_id,
+            }
+        elif isinstance(result, schemas.StreamInfo):
+            expected = {"flow_run_id": execution.flow_run_id}
+            if stream_role is not None:
+                expected["id"] = (
+                    execution.input_stream_id
+                    if stream_role == "input"
+                    else execution.output_stream_id
+                )
+            if result.id not in {execution.input_stream_id, execution.output_stream_id}:
+                raise StreamRequestError(
+                    "IDENTITY_CONFLICT", "DAG stream is outside its assignment"
+                )
+        elif isinstance(result, schemas.StreamDelivery) and isinstance(
+            intent, dag_execution_schemas.StreamDAGConsumerReadRequest
+        ):
+            expected = {
+                "token.flow_run_id": intent.binding.flow_run_id,
+                "token.input_stream_id": intent.binding.input_stream_id,
+                "token.output_stream_id": intent.binding.output_stream_id,
+                "token.consumer_id": intent.binding.consumer_id,
+                "token.owner_id": intent.binding.owner_id,
+                "token.owner_epoch": intent.binding.owner_epoch,
+                "token.attempt": intent.binding.attempt,
+            }
+        if subtask_id is not None and subtask_id != execution.subtask_id:
+>           raise StreamRequestError(
+                "IDENTITY_CONFLICT", "DAG response targets another subtask"
+            )
+E           prefect.client.orchestration._streams.client.StreamRequestError: DAG response targets another subtask
+
+src/prefect/client/orchestration/_streams/client.py:316: StreamRequestError
+_ test_own_status_preserves_uuid_through_json_freeze_and_sdk_ack[False-output-False] _
+
+asynchronous = False, stream_role = 'output', forged_response = False
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f8282ee2f90>
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("stream_role", ["input", "output"])
+    @pytest.mark.parametrize("forged_response", [False, True])
+    async def test_own_status_preserves_uuid_through_json_freeze_and_sdk_ack(
+        asynchronous: bool,
+        stream_role: str,
+        forged_response: bool,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        storage, bootstrap, execution, _, consumer = owned_storage()
+        stream_id = (
+            consumer.input_stream_id
+            if stream_role == "input"
+            else consumer.output_stream_id
+        )
+        requests = []
+    
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            result = StreamInfo(
+                id=uuid4() if forged_response else stream_id,
+                flow_run_id=bootstrap.flow_run_id,
+                protocol_version=1,
+                state="COMPLETED",
+                error=None,
+                last_sequence=8,
+                tail_sequence=8,
+                producer_position=8,
+                record_count=8,
+                byte_count=128,
+                limits=StreamLimits(),
+                released=False,
+            )
+            return httpx.Response(200, json=result.model_dump(mode="json"))
+    
+        with stream_subtask_execution_context(execution):
+            async with wire_client(monkeypatch, handler, asynchronous):
+                if forged_response:
+                    with pytest.raises(StreamRequestError) as refused:
+                        await storage.status(str(stream_id))
+                    assert refused.value.code == "IDENTITY_CONFLICT"
+                else:
+>                   result = await storage.status(str(stream_id))
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_stream_route_terminals.py:761: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_routed_storage.py:314: in status
+    await self._dag_request(method, subtask_id=scope["subtask_id"])
+src/prefect/_internal/stream_routed_storage.py:224: in _dag_request
+    return await self._dispatch(method, **json.loads(frozen))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/_internal/stream_routed_storage.py:214: in _dispatch
+    return await super()._dispatch(method, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/stream_storage.py:82: in _dispatch
+    return await run_sync(call)
+           ^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/anyio/to_thread.py:65: in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:2641: in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:1033: in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/orchestration/_streams/client.py:647: in read_stream_dag_output_status
+    _dag_child_ack(result, subtask_id=subtask_id, stream_role="output")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = StreamInfo(id=UUID('2b66633d-43c7-4394-9e5b-2adecd95e815'), flow_run_id=UUID('bd640f6d-738d-4e0d-ac61-f968cf3b6d41'), ...tes=16384, max_state_bytes=16384, max_consumers=64, max_prefix_records=1000, max_prefix_bytes=1048576), released=False)
+subtask_id = '126d0920-d551-4abf-90e0-35cabca23fd6', intent = None
+stream_role = 'output'
+
+    def _dag_child_ack(
+        result: object,
+        *,
+        subtask_id: UUID | None = None,
+        intent: object = None,
+        stream_role: Literal["input", "output"] | None = None,
+    ) -> None:
+        """Bind scoped responses to the current grant; Task attempts are not epochs."""
+        execution = get_stream_subtask_execution()
+        if not isinstance(execution, DAGSubtaskExecutionContext):
+            return
+        expected: dict[str, object] = {}
+        if isinstance(result, dag_execution_schemas.StreamDAGSubtaskBootstrap):
+            expected = {
+                "flow_run_id": execution.flow_run_id,
+                "assignment.id": execution.subtask_id,
+                "assignment.graph_revision_id": execution.graph_revision_id,
+                "assignment.current_grant_id": execution.grant_id,
+                "assignment.physical_epoch": execution.physical_epoch,
+                "assignment.assignment_epoch": execution.assignment_epoch,
+                "assignment.input_stream_id": execution.input_stream_id,
+                "assignment.manifest.stream_id": execution.output_stream_id,
+                "assignment.manifest.manifest_digest": execution.manifest_digest,
+                "grant.id": execution.grant_id,
+                "grant.holder_id": execution.holder_id,
+                "grant.scope_digest": execution.scope_digest,
+                "grant.event_key_id": execution.event_key_id,
+                "grant.child_process_id": execution.child_process_id,
+                "grant.process_start_ticks": execution.process_start_ticks,
+                "task_run.id": execution.task_run_id,
+            }
+        elif isinstance(
+            result,
+            (
+                dag_execution_schemas.StreamDAGBootstrapReadyResult,
+                dag_execution_schemas.StreamDAGActivationObservation,
+            ),
+        ):
+            expected = {
+                "graph_revision_id": execution.graph_revision_id,
+                "subtask_id": execution.subtask_id,
+                "grant_id": execution.grant_id,
+                "physical_epoch": execution.physical_epoch,
+            }
+        elif isinstance(result, schemas.SourceAdmission):
+            expected = {
+                "binding.flow_run_id": execution.flow_run_id,
+                "binding.stream_id": execution.output_stream_id,
+                "binding.task_run_id": execution.task_run_id,
+                "binding.owner_id": execution.holder_id,
+            }
+        elif isinstance(result, schemas.ConsumerBinding):
+            expected = {
+                "flow_run_id": execution.flow_run_id,
+                "input_stream_id": execution.input_stream_id,
+                "output_stream_id": execution.output_stream_id,
+                "owner_id": execution.holder_id,
+            }
+        elif isinstance(result, schemas.StreamInfo):
+            expected = {"flow_run_id": execution.flow_run_id}
+            if stream_role is not None:
+                expected["id"] = (
+                    execution.input_stream_id
+                    if stream_role == "input"
+                    else execution.output_stream_id
+                )
+            if result.id not in {execution.input_stream_id, execution.output_stream_id}:
+                raise StreamRequestError(
+                    "IDENTITY_CONFLICT", "DAG stream is outside its assignment"
+                )
+        elif isinstance(result, schemas.StreamDelivery) and isinstance(
+            intent, dag_execution_schemas.StreamDAGConsumerReadRequest
+        ):
+            expected = {
+                "token.flow_run_id": intent.binding.flow_run_id,
+                "token.input_stream_id": intent.binding.input_stream_id,
+                "token.output_stream_id": intent.binding.output_stream_id,
+                "token.consumer_id": intent.binding.consumer_id,
+                "token.owner_id": intent.binding.owner_id,
+                "token.owner_epoch": intent.binding.owner_epoch,
+                "token.attempt": intent.binding.attempt,
+            }
+        if subtask_id is not None and subtask_id != execution.subtask_id:
+>           raise StreamRequestError(
+                "IDENTITY_CONFLICT", "DAG response targets another subtask"
+            )
+E           prefect.client.orchestration._streams.client.StreamRequestError: DAG response targets another subtask
+
+src/prefect/client/orchestration/_streams/client.py:316: StreamRequestError
+_ test_own_status_preserves_uuid_through_json_freeze_and_sdk_ack[False-output-True] _
+
+asynchronous = True, stream_role = 'output', forged_response = False
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f8283a35f40>
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("stream_role", ["input", "output"])
+    @pytest.mark.parametrize("forged_response", [False, True])
+    async def test_own_status_preserves_uuid_through_json_freeze_and_sdk_ack(
+        asynchronous: bool,
+        stream_role: str,
+        forged_response: bool,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        storage, bootstrap, execution, _, consumer = owned_storage()
+        stream_id = (
+            consumer.input_stream_id
+            if stream_role == "input"
+            else consumer.output_stream_id
+        )
+        requests = []
+    
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            result = StreamInfo(
+                id=uuid4() if forged_response else stream_id,
+                flow_run_id=bootstrap.flow_run_id,
+                protocol_version=1,
+                state="COMPLETED",
+                error=None,
+                last_sequence=8,
+                tail_sequence=8,
+                producer_position=8,
+                record_count=8,
+                byte_count=128,
+                limits=StreamLimits(),
+                released=False,
+            )
+            return httpx.Response(200, json=result.model_dump(mode="json"))
+    
+        with stream_subtask_execution_context(execution):
+            async with wire_client(monkeypatch, handler, asynchronous):
+                if forged_response:
+                    with pytest.raises(StreamRequestError) as refused:
+                        await storage.status(str(stream_id))
+                    assert refused.value.code == "IDENTITY_CONFLICT"
+                else:
+>                   result = await storage.status(str(stream_id))
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_stream_route_terminals.py:761: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_routed_storage.py:314: in status
+    await self._dag_request(method, subtask_id=scope["subtask_id"])
+src/prefect/_internal/stream_routed_storage.py:224: in _dag_request
+    return await self._dispatch(method, **json.loads(frozen))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/_internal/stream_routed_storage.py:214: in _dispatch
+    return await super()._dispatch(method, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/stream_storage.py:78: in _dispatch
+    return await getattr(asynchronous.client, method)(**kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/client/orchestration/_streams/client.py:3185: in read_stream_dag_output_status
+    _dag_child_ack(result, subtask_id=subtask_id, stream_role="output")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = StreamInfo(id=UUID('1215a009-50c5-47bf-81b8-121252fd5b11'), flow_run_id=UUID('47492d40-21e5-4e85-9277-0765836ff79d'), ...tes=16384, max_state_bytes=16384, max_consumers=64, max_prefix_records=1000, max_prefix_bytes=1048576), released=False)
+subtask_id = 'b625f9ef-d6ac-4cac-b088-4b66eec020cb', intent = None
+stream_role = 'output'
+
+    def _dag_child_ack(
+        result: object,
+        *,
+        subtask_id: UUID | None = None,
+        intent: object = None,
+        stream_role: Literal["input", "output"] | None = None,
+    ) -> None:
+        """Bind scoped responses to the current grant; Task attempts are not epochs."""
+        execution = get_stream_subtask_execution()
+        if not isinstance(execution, DAGSubtaskExecutionContext):
+            return
+        expected: dict[str, object] = {}
+        if isinstance(result, dag_execution_schemas.StreamDAGSubtaskBootstrap):
+            expected = {
+                "flow_run_id": execution.flow_run_id,
+                "assignment.id": execution.subtask_id,
+                "assignment.graph_revision_id": execution.graph_revision_id,
+                "assignment.current_grant_id": execution.grant_id,
+                "assignment.physical_epoch": execution.physical_epoch,
+                "assignment.assignment_epoch": execution.assignment_epoch,
+                "assignment.input_stream_id": execution.input_stream_id,
+                "assignment.manifest.stream_id": execution.output_stream_id,
+                "assignment.manifest.manifest_digest": execution.manifest_digest,
+                "grant.id": execution.grant_id,
+                "grant.holder_id": execution.holder_id,
+                "grant.scope_digest": execution.scope_digest,
+                "grant.event_key_id": execution.event_key_id,
+                "grant.child_process_id": execution.child_process_id,
+                "grant.process_start_ticks": execution.process_start_ticks,
+                "task_run.id": execution.task_run_id,
+            }
+        elif isinstance(
+            result,
+            (
+                dag_execution_schemas.StreamDAGBootstrapReadyResult,
+                dag_execution_schemas.StreamDAGActivationObservation,
+            ),
+        ):
+            expected = {
+                "graph_revision_id": execution.graph_revision_id,
+                "subtask_id": execution.subtask_id,
+                "grant_id": execution.grant_id,
+                "physical_epoch": execution.physical_epoch,
+            }
+        elif isinstance(result, schemas.SourceAdmission):
+            expected = {
+                "binding.flow_run_id": execution.flow_run_id,
+                "binding.stream_id": execution.output_stream_id,
+                "binding.task_run_id": execution.task_run_id,
+                "binding.owner_id": execution.holder_id,
+            }
+        elif isinstance(result, schemas.ConsumerBinding):
+            expected = {
+                "flow_run_id": execution.flow_run_id,
+                "input_stream_id": execution.input_stream_id,
+                "output_stream_id": execution.output_stream_id,
+                "owner_id": execution.holder_id,
+            }
+        elif isinstance(result, schemas.StreamInfo):
+            expected = {"flow_run_id": execution.flow_run_id}
+            if stream_role is not None:
+                expected["id"] = (
+                    execution.input_stream_id
+                    if stream_role == "input"
+                    else execution.output_stream_id
+                )
+            if result.id not in {execution.input_stream_id, execution.output_stream_id}:
+                raise StreamRequestError(
+                    "IDENTITY_CONFLICT", "DAG stream is outside its assignment"
+                )
+        elif isinstance(result, schemas.StreamDelivery) and isinstance(
+            intent, dag_execution_schemas.StreamDAGConsumerReadRequest
+        ):
+            expected = {
+                "token.flow_run_id": intent.binding.flow_run_id,
+                "token.input_stream_id": intent.binding.input_stream_id,
+                "token.output_stream_id": intent.binding.output_stream_id,
+                "token.consumer_id": intent.binding.consumer_id,
+                "token.owner_id": intent.binding.owner_id,
+                "token.owner_epoch": intent.binding.owner_epoch,
+                "token.attempt": intent.binding.attempt,
+            }
+        if subtask_id is not None and subtask_id != execution.subtask_id:
+>           raise StreamRequestError(
+                "IDENTITY_CONFLICT", "DAG response targets another subtask"
+            )
+E           prefect.client.orchestration._streams.client.StreamRequestError: DAG response targets another subtask
+
+src/prefect/client/orchestration/_streams/client.py:316: StreamRequestError
+=========================== short test summary info ============================
+FAILED tests/test_stream_route_terminals.py::test_own_status_preserves_uuid_through_json_freeze_and_sdk_ack[False-input-False]
+FAILED tests/test_stream_route_terminals.py::test_own_status_preserves_uuid_through_json_freeze_and_sdk_ack[False-input-True]
+FAILED tests/test_stream_route_terminals.py::test_own_status_preserves_uuid_through_json_freeze_and_sdk_ack[False-output-False]
+FAILED tests/test_stream_route_terminals.py::test_own_status_preserves_uuid_through_json_freeze_and_sdk_ack[False-output-True]
+4 failed, 4 passed, 63 deselected in 1.33s
