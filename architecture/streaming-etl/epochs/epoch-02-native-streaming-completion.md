@@ -339,3 +339,11 @@ drift. NI2-011 moves to `accepted`, but earns 0% until the N2.2a hosted
 publication gate completes. The cumulative epoch value remains 15%. Public
 DAG start, Task execution, finish, failure, cancellation and cleanup remain
 fenced for NI2-012 through NI2-014.
+
+The initial full main-branch matrix found one test-only historical schema leak:
+an expected DAG downgrade refusal left the newer routed migration rolled back
+for the next strict database cleanup. The
+[independent schema-context acceptance](../evidence/native-epoch2-full-ci-schema-context-2026-11-05/principal-v1/acceptance.json)
+records the `finally` restoration and complete 90/90 PostgreSQL/SQLite
+migration successors. No product or DDL byte changed, and the epoch remains at
+15%.

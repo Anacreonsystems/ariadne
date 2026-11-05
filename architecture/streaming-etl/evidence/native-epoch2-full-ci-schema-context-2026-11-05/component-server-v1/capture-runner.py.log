@@ -1,0 +1,15 @@
+import hashlib,json,os,subprocess,sys,time
+from pathlib import Path
+root=Path('/workspace/ariadne');base=Path(sys.argv[1]);base.mkdir(exist_ok=False)
+rels=['tests/fixtures/database.py','tests/server/database/test_stream_dag_migrations.py','tests/server/database/test_stream_subtask_migrations.py','tests/server/database/test_stream_storage_migrations.py','tests/server/database/test_stream_route_migrations.py','tests/server/database/test_migrations.py','src/prefect/server/database/orm_models.py']
+rels += [str(p.relative_to(root)) for p in (root/'src/prefect/server/database/_migrations/versions').glob('*/2026_11_05_000001_*add_stream_routed_records.py')]
+sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+source={r:sha(root/r) for r in rels};(base/'before.json').write_text(json.dumps(source,indent=2)+'\n')
+for r in rels:
+ p=base/'source'/(r+'.log');p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes((root/r).read_bytes())
+cmd=['uv','run','--no-sync','pytest',*sys.argv[3:],'-q','--tb=short','--junitxml='+str(base/'result.xml')]
+env=os.environ.copy();env['PREFECT_SERVER_DATABASE_CONNECTION_URL']=sys.argv[2]
+start=time.monotonic()
+with (base/'result.log').open('w') as f:r=subprocess.run(cmd,cwd=root,env=env,stdout=f,stderr=subprocess.STDOUT)
+(base/'result.exit').write_text(str(r.returncode)+'\n');(base/'command.json').write_text(json.dumps({'command':cmd,'exit_code':r.returncode,'elapsed_seconds':time.monotonic()-start},indent=2)+'\n');(base/'after.json').write_text(json.dumps({r:sha(root/r) for r in rels},indent=2)+'\n')
+print((base/'command.json').read_text());print((base/'result.log').read_text()[-8000:])

@@ -358,3 +358,11 @@ closes the finite routed-storage task after independent PostgreSQL, SQLite,
 migration, planner and prefix-security gates. The DAG execution profile stays
 fenced, this ADR remains in `progress`, and A43-03 and A43-09 remain partial
 until native fan-out execution and recovery pass.
+
+The first full main-branch matrix after publication exposed a test-only schema
+context leak: an expected historical DAG downgrade refusal did not restore the
+newer routed migration before the next strict cleanup. The
+[Principal schema-context acceptance](../evidence/native-epoch2-full-ci-schema-context-2026-11-05/principal-v1/acceptance.json)
+binds the narrow `finally` restoration and independent 90/90 PostgreSQL/SQLite
+migration gates. Production schema, cleanup strictness, ADR status and earned
+readiness are unchanged.
