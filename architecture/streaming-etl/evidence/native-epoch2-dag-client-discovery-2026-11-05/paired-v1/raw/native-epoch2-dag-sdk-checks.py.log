@@ -1,0 +1,35 @@
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import time
+
+ROOT=Path('/workspace/ariadne')
+OUT=Path('/tmp/native-epoch2-dag-sdk-successor-v1')
+OUT.mkdir(exist_ok=True)
+OWNED=['src/prefect/streams.py','src/prefect/client/schemas/stream_dags.py','src/prefect/client/schemas/native_deployments.py','src/prefect/client/orchestration/_streams/client.py','src/prefect/client/orchestration/routes.py','tests/client/test_stream_dags.py','tests/client/test_native_deployment_schemas.py','tests/test_stream_graph_contracts.py','tests/fixtures/native_physical_client_package_probe.py']
+def snapshot(label):
+ files={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted((ROOT/'src/prefect').rglob('*.py')) if '__pycache__' not in p.parts}
+ for name in OWNED+['pyproject.toml','pyrightconfig-ci.json','client/pyproject.toml','tests/test_native_physical_client_package.py']:
+  files[name]=hashlib.sha256((ROOT/name).read_bytes()).hexdigest()
+ result={'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'files':files,'owned':{p:files[p] for p in OWNED},'file_map_sha256':hashlib.sha256(json.dumps(files,sort_keys=True,separators=(',',':')).encode()).hexdigest()}
+ (OUT/f'{label}.json').write_text(json.dumps(result,indent=2)+'\n')
+ return result
+
+def run(label,args):
+ before=snapshot(label+'-before')
+ environment=os.environ.copy()
+ environment['PREFECT_SERVER_DATABASE_CONNECTION_URL']='postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_sdk_dag'
+ start=time.monotonic()
+ with (OUT/f'{label}.log').open('wb') as output:
+  process=subprocess.run(args,cwd=ROOT,env=environment,stdout=output,stderr=subprocess.STDOUT)
+ after=snapshot(label+'-after')
+ changes=sorted(k for k in before['files'].keys()|after['files'].keys() if before['files'].get(k)!=after['files'].get(k))
+ result={'command':args,'exit_code':process.returncode,'seconds':round(time.monotonic()-start,6),'source_before':before['file_map_sha256'],'source_after':after['file_map_sha256'],'changed_paths':changes,'owned_stable':before['owned']==after['owned']}
+ (OUT/f'{label}-execution.json').write_text(json.dumps(result,indent=2)+'\n')
+ print(json.dumps({'check':label,**result}),flush=True)
+
+run('contracts',['uv','run','--no-sync','pytest','-n0','-q','tests/client/test_stream_subtasks.py','tests/client/test_stream_worker_subtasks.py','tests/client/test_stream_storage_native.py','tests/client/test_native_deployment_schemas.py','tests/client/test_stream_dags.py','tests/test_stream_graph_contracts.py','--tb=short','--junitxml',str(OUT/'contracts.xml')])
+run('package',['uv','run','--no-sync','pytest','-n0','-q','tests/test_native_physical_client_package.py','--tb=short','--basetemp',str(OUT/'package-tmp'),'--junitxml',str(OUT/'package.xml')])

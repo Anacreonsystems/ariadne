@@ -1,0 +1,97 @@
+................F
+=================================== FAILURES ===================================
+_ test_postgres_metadata_abort_releases_exactly_once_through_task_policy[False] _
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f3413c2e1b0>
+flow_run = FlowRun(id=4a1e2650-2920-4804-8e0f-1ed537865e00), admitted = False
+
+    @pytest.mark.parametrize("admitted", [False, True])
+    async def test_postgres_metadata_abort_releases_exactly_once_through_task_policy(
+        db: PrefectDBInterface, flow_run: orm_models.FlowRun, admitted: bool
+    ):
+        from prefect.server.models.stream_subtask_authority import (
+            metadata_task_control_active,
+        )
+    
+        request = dag_request(flow_run.id, source_p=2, branch_p=2)
+        for operator in request.operators:
+            operator.tags = ["abort"]
+        async with db.session_context(begin_transaction=True) as session:
+            pool, rows = await metadata_workers(session, db, 3)
+            limit = db.ConcurrencyLimitV2(
+                name="tag:abort",
+                limit=6,
+                active=True,
+                active_slots=0,
+                slot_decay_per_second=0,
+            )
+            session.add(limit)
+            plan = await m.seal_dag_metadata(session, db, request)
+            if admitted:
+                plan = await m.admit_dag_metadata(
+                    session,
+                    db,
+                    plan.id,
+                    s.StreamDAGAdmissionRequest(
+                        operation_id=uuid4(), graph_digest=plan.graph_digest
+                    ),
+                    work_pool_id=pool.id,
+                )
+                assert limit.active_slots == 6
+            abort = physical.StreamGraphAbortRequest(
+                operation_id=uuid4(),
+                graph_digest=plan.graph_digest,
+                error="Metadata region intentionally aborted before execution",
+            )
+            result = await m.abort_dag_metadata(session, db, plan.id, abort)
+            assert result.state == "RELEASED"
+            assert all(row.physical_slot_released == admitted for row in result.subtasks)
+            assert not metadata_task_control_active(session)
+            assert limit.active_slots == 0
+            tasks = (
+                await session.scalars(
+                    sa.select(db.TaskRun).where(db.TaskRun.flow_run_id == flow_run.id)
+                )
+            ).all()
+            assert len(tasks) == 6 and all(
+                task.state_type == states.StateType.FAILED
+                and task.run_count == 0
+                and task.state.state_details.retriable is False
+                for task in tasks
+            )
+            state_count = await session.scalar(
+                sa.select(sa.func.count()).select_from(db.TaskRunState)
+            )
+            assert state_count == 12
+            assert (
+                await m.abort_dag_metadata(session, db, plan.id, abort)
+            ).model_dump() == result.model_dump()
+            assert (
+                await session.scalar(
+                    sa.select(sa.func.count()).select_from(db.TaskRunState)
+                )
+                == state_count
+            )
+>           assert await physical_worker_occupancy(
+                session, db, [row[0] for row in rows]
+            ) == {row[0]: 0 for row in rows}
+E           AssertionError: assert {} == {UUID('c54cfe...c3b9b9d0'): 0}
+E             
+E             Right contains 3 more items:
+E             {UUID('c54cfec9-b8c8-40a7-9a38-a302cc914dc5'): 0,
+E              UUID('c66bc4e2-93be-46e1-b5b5-568b43f372a0'): 0,
+E              UUID('f2bd108a-420c-4781-a365-d8cbc3b9b9d0'): 0}
+E             Use -v to get more diff
+
+tests/server/models/test_stream_dags.py:689: AssertionError
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+02:58:12.413 | INFO    | uvicorn.error - Shutting down
+02:58:12.514 | INFO    | uvicorn.error - Waiting for application shutdown.
+02:58:12.516 | INFO    | uvicorn.error - Application shutdown complete.
+02:58:12.516 | INFO    | uvicorn.error - Finished server process [192948]
+=========================== short test summary info ============================
+FAILED tests/server/models/test_stream_dags.py::test_postgres_metadata_abort_releases_exactly_once_through_task_policy[False]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 16 passed, 1 deselected in 14.25s

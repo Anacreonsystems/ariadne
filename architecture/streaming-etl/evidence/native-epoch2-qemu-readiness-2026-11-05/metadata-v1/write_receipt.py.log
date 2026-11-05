@@ -1,0 +1,84 @@
+from pathlib import Path
+import datetime,hashlib,json
+root=Path('/tmp/ariadne-qemu-metadata-2026-11-05-v1')
+repo=Path('/workspace/ariadne')
+def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def load(n):return json.loads((root/n).read_text())
+ledger=[json.loads(l) for l in (root/'downloads.jsonl').read_text().splitlines()]
+closure=load('uefi-missing-package-closure.json')
+resources=load('resource-snapshot.json')
+GiB=1024**3;MiB=1024**2
+budget={'rootless_deb_bodies_plus_extraction':176*MiB,'read_only_cloud_image':256*MiB,'guest0_overlay_allocated_file_limit':128*MiB,'guest1_overlay_allocated_file_limit':128*MiB,'two_private_uefi_variable_stores':16*MiB,'all_probe_logs':16*MiB,'explicit_transfer_fixture_data':32*MiB,'metadata_and_controller':16*MiB}
+assert sum(budget.values())==768*MiB
+receipt={
+ 'schema':'native-epoch2-qemu-metadata-readiness-v1',
+ 'recorded_at_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+ 'status':'PROPOSED_NOT_RUN','native_readiness_earned_percent':0,
+ 'profile':'local-qemu-tcg-v1',
+ 'scope':'Metadata-only trust/dependency/resource readiness for a proposed local two-guest Linux-kernel probe; no NI2-053 or ADR47 acceptance.',
+ 'reference_graph':{
+  'prior_readiness':{'path':'../readiness.json','sha256':'f5b56f272684db199eabcb03c4b536b96ee5e85037f17530512e548af37c03df'},
+  'prior_budget':{'path':'../budget-addendum.json','sha256':'b167d1d6da9c5a79352b5a1404bd26ec4f55884e419b1122592f82497ab949f3'},
+  'proposal_index':{'path':'../index.json','sha256':'a9ebbd3df288c1c1f9bb96a5903f3badcd9ff77ffa33f13a691031085fab9323'},
+  'adr':{'path':'../../../adr/ADR-0047-selective-recovery-and-cross-host-authority.md','sha256_at_observation':sha(repo/'architecture/streaming-etl/adr/ADR-0047-selective-recovery-and-cross-host-authority.md')}
+ },
+ 'authorized_actions':{'new_metadata_body_budget_bytes':10*MiB,'downloaded_metadata_body_bytes':sum(d['received_bytes'] for d in ledger),'remaining_metadata_body_budget_bytes':10*MiB-sum(d['received_bytes'] for d in ledger),'binary_package_body_bytes':0,'cloud_image_body_bytes':0,'host_installs':0,'binary_extractions':0,'vm_starts':0,'docker_changes':0,'service_changes':0,'system_apt_state_changes':0,'source_or_adr_edits':0,'network':'Inherited HTTP proxy and default CA validation retained; no insecure TLS, direct-network bypass, or VPN.'},
+ 'package_trust':{
+  'result':'VERIFIED_METADATA_CHAIN',
+  'release_url':'https://deb.debian.org/debian/dists/trixie/InRelease',
+  'release_signing_fingerprints':(root/'debian-signature.stdout.log').read_text().splitlines(),
+  'anchor':'Existing host /usr/share/keyrings/debian-archive-keyring.gpg (installed Debian archive keyring2025.1).',
+  'anchor_sha256':sha(Path('/usr/share/keyrings/debian-archive-keyring.gpg')),
+  'release_authenticated_by':'/usr/bin/sqv --keyring /usr/share/keyrings/debian-archive-keyring.gpg --cleartext --output Release.authenticated InRelease',
+  'packages_path':'main/binary-amd64/Packages.xz','packages_bytes':(root/'Packages.xz').stat().st_size,'packages_sha256':sha(root/'Packages.xz'),
+  'link_check':'Packages.xz byte length and SHA256 match the authenticated Release SHA256 section.',
+  'release_fields':{'codename':'trixie','suite':'stable','version':'13.7','date':'Sat, 12 Sep 2026 07:55:41 UTC','valid_until':'not present in authenticated release'},
+  'closure_file':'uefi-missing-package-closure.json','requested_packages':['qemu-system-x86','qemu-utils','ovmf'],'solver':'/usr/bin/apt-get -s --no-install-recommends install qemu-system-x86 qemu-utils ovmf, with owned temp Dir::Etc/State/Cache and compressed authenticated index; no network solver action.',
+  'missing_package_count':closure['package_count'],'download_bytes':closure['download_bytes'],'advertised_installed_bytes':closure['advertised_installed_bytes'],'compressed_plus_advertised_unpacked_bytes':closure['download_bytes']+closure['advertised_installed_bytes'],
+  'host_status_sha256':closure['installed_host_status_sha256'],
+  'qualification':'Exact missing-package closure relative to this installed host, not a standalone statically linked QEMU bundle. Existing host dependencies are borrowed and must be revalidated after environment changes. Installed-Size is an advertised estimate, not measured extraction allocation.',
+  'preserved_solver_warning':'Unable to read /etc/apt/-/: disabled extra config directory resolves to absent path. Solver still exited0; no protected host apt config was changed.'
+ },
+ 'cloud_image_trust':{
+  'debian_original_candidate':{'result':'SIGNATURE_NOT_ESTABLISHED','checksum_file':'SHA512SUMS','format':'Plain text SHA512 checksum list, not clear-signed. Inspected latest and dated indexes advertise SHA512SUMS only; SHA512SUMS.sign HEAD was404 in initial readiness. No conclusion about all Debian image publication channels.','dated_build':'20261103-2651','image_head_bytes':341180416,'decision':'Do not represent this inspected candidate as OpenPGP-verified.'},
+  'recommended_alternate':{
+   'result':'VERIFIED_SIGNED_METADATA_IMAGE_BODY_NOT_FETCHED','distribution':'Ubuntu Minimal24.04LTS amd64','release':'20261103','image_format_from_official_index':'QCow2 UEFI/GPT bootable disk image',
+   'image_url':'https://cloud-images.ubuntu.com/minimal/releases/noble/release-20261103/ubuntu-24.04-minimal-cloudimg-amd64.img',
+   'image_head_bytes':260112384,'expected_image_sha256':'bc9237bfdfa42b5f9a4404b6c6cab595d3e57599c6498f6664ad00e6192f9595',
+   'checksum_url':'https://cloud-images.ubuntu.com/minimal/releases/noble/release-20261103/SHA256SUMS','signature_url':'https://cloud-images.ubuntu.com/minimal/releases/noble/release-20261103/SHA256SUMS.gpg',
+   'signature_format':'Detached OpenPGP binary signature (RSA4096/SHA512) over plaintext SHA256SUMS.',
+   'signing_fingerprint':'D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81',
+   'key_authority':'Official https://ubuntu.com/docs/public-images/public-images-how-to/verify-image-checksum/ publishes this full fingerprint as Ubuntu image signing key; retrieved over inherited TLS/CA. No separate out-of-band Web-of-Trust is claimed.',
+   'public_key_url':'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xD2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81',
+   'verification':'/usr/bin/sqv --keyring ubuntu-cloud-pubkey.asc ubuntu-dated-SHA256SUMS.gpg ubuntu-dated-SHA256SUMS exited0 and returned the expected full fingerprint.',
+   'manifest':'ubuntu-amd64.manifest','manifest_verified_against_signed_checksums':True,
+   'manifest_observations':{'cloud-init':'26.2-0ubuntu1~24.04.2','python3.12':'3.12.3-1ubuntu0.17','linux-image':'6.8.0-147-generic','openssh-server':'1:9.6p1-3ubuntu13.20'},
+   'qualification':'Only signed expected image hash, official metadata, and HEAD length are verified. Image body digest, bootability under TCG, guest identity generation, application dependency transfer, and runtime execution remain untested. Alternate distro/image choice needs architectural confirmation before implementation.'
+  }
+ },
+ 'proposed_boot_only_resource_envelope':{
+  'status':'PROPOSED_NOT_ALLOCATED','new_tmp_allocated_byte_cap':sum(budget.values()),'components_bytes':budget,
+  'relation_to_previous_cap':'768MiB boot-only proposal is below the original <=2GiB allowance; the original allowance was a ceiling, not reserved memory or disk.',
+  'overlay_virtual_size_bytes':8*GiB,'overlay_allocated_file_cap_bytes_each':128*MiB,
+  'overlay_enforcement_proposal':'Per-QEMU RLIMIT_FSIZE plus directory allocated-byte observation and controller stop. Sparse virtual capacity is not allocated capacity; directory observation is an abort guard, not a reserved quota or zero-overshoot guarantee.',
+  'guest_count_max':2,'configured_guest_ram_bytes_each':GiB,'vcpus_each':1,'qemu_and_controller_headroom_bytes':512*MiB,
+  'cgroup_stop_ceiling_bytes':14*GiB,'cgroup_limit_bytes':int(resources['cgroup']['memory.max']),'cgroup_current_at_snapshot_bytes':int(resources['cgroup']['memory.current']),
+  'conservative_pair_admission_baseline_max_bytes':14*GiB-2*GiB-512*MiB-sum(budget.values()),
+  'pair_admitted_at_snapshot':int(resources['cgroup']['memory.current'])+2*GiB+512*MiB+sum(budget.values())<=14*GiB,
+  'memory_qualification':'/tmp is tmpfs and counts toward memory. Current ~11.14GiB already exceeds the conservative10.75GiB baseline for reserving the full two-guest/768MiB envelope under14GiB. Much file cache may reclaim, but no reclaim or two-guest capacity is promised. Probe one guest first only after fresh admission; permit a pair only with a fresh complete-envelope resource check. Never overlap heavy native/performance gates.',
+  'time_limit_seconds':1800,'resource_snapshot':'resource-snapshot.json'
+ },
+ 'future_implementation_order_not_executed':[
+  'Architect confirms signed alternate image and resource envelope; root authorizes binary-only next step separately.',
+  'Download exact20 official Debian debs, verify every signed-index SHA256, extract into private owned root without host dpkg installation; measure allocation and prove loader/library/firmware resolution.',
+  'Fetch dated Ubuntu image only after revalidating signed metadata; verify expected SHA256 before any QEMU open; keep base read-only.',
+  'Resource-admit one TCG guest at1vCPU/1GiB, own overlay/private UEFI vars, headless serial, no9p/virtiofs/shared writable guest filesystem, no KVM/TUN; cloud-init via explicit bounded HTTP or independently prepared local seed.',
+  'Prove exact QEMU PID/startticks+pidfd ownership and stop/wait; prove guest kernel/boot/machine IDs and allowed HTTP transfer. Start a second guest only after fresh pair admission, then prove distinct guest identities and private state.',
+  'Stop by exact controller-owned kernel proof on budget/deadline. Do not treat timeout, SSH loss, lease expiry, or guest metadata as whole-VM death.'
+ ],
+ 'not_claimed':['QEMU binary execution or boot success','two-guest memory reservation at current snapshot','distinct physical machines or zones','hardware or zone HA','native application cross-host delivery','whole-worker recovery','NI2-053 or ADR47 acceptance','throughput or performance']
+}
+(root/'metadata-readiness-v1.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2,sort_keys=True)+'\n')
+print('RECEIPT',sha(root/'metadata-readiness-v1.json'))
+print('METADATA_BYTES',receipt['authorized_actions']['downloaded_metadata_body_bytes'])
+print('PAIR_ADMITTED',receipt['proposed_boot_only_resource_envelope']['pair_admitted_at_snapshot'])

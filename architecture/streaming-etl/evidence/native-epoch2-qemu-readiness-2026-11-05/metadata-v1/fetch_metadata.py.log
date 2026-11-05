@@ -1,0 +1,41 @@
+import hashlib,json,sys,urllib.request
+from datetime import UTC,datetime
+from pathlib import Path
+ROOT=Path(__file__).resolve().parent
+LIMIT=10*1024*1024
+def downloaded():
+    ledger=ROOT/'downloads.jsonl'
+    return sum(json.loads(line)['received_bytes'] for line in ledger.read_text().splitlines()) if ledger.exists() else 0
+def fetch(name,url,max_bytes):
+    used=downloaded()
+    remaining=LIMIT-used
+    if max_bytes>remaining:raise RuntimeError('Declared metadata maximum exceeds remaining download budget')
+    target=ROOT/name
+    count=0
+    record={'name':name,'url':url,'started_at_utc':datetime.now(UTC).isoformat()}
+    try:
+        req=urllib.request.Request(url,headers={'User-Agent':'ariadne-readonly-metadata-probe/1'})
+        with urllib.request.urlopen(req,timeout=30) as response, target.open('xb') as out:
+            length=response.headers.get('Content-Length')
+            if length is not None and int(length)>max_bytes:raise RuntimeError('Advertised metadata length exceeds file budget')
+            record.update({'status':response.status,'final_url':response.url,'content_type':response.headers.get('Content-Type'),'content_length':length})
+            while True:
+                allowed=min(65536,max_bytes-count,LIMIT-used-count)
+                if allowed<=0:
+                    if length is not None and count==int(length):break
+                    raise RuntimeError('Metadata download reached its byte limit before verified EOF')
+                chunk=response.read(allowed)
+                if not chunk:break
+                out.write(chunk);count+=len(chunk)
+            if length is not None and count!=int(length):raise RuntimeError('Metadata length differs from Content-Length')
+        record['result']='DOWNLOADED_METADATA_ONLY'
+    except BaseException as error:
+        record.update({'result':'FAILED','error_type':type(error).__name__,'error':str(error)})
+        raise
+    finally:
+        record.update({'received_bytes':count,'completed_at_utc':datetime.now(UTC).isoformat()})
+        if target.exists():record['sha256']=hashlib.sha256(target.read_bytes()).hexdigest()
+        with (ROOT/'downloads.jsonl').open('a') as ledger:ledger.write(json.dumps(record,sort_keys=True)+'\n')
+        print(json.dumps(record,sort_keys=True))
+    return target
+if __name__=='__main__':fetch(sys.argv[1],sys.argv[2],int(sys.argv[3]))
