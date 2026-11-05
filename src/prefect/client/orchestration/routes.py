@@ -11,6 +11,8 @@ ServerRoutes = Literal[
     "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/replacements/confirm",
     "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/replacements/retire",
     "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/startup-stop",
+    "/streams/v2/dags/seal",
+    "/streams/v2/dags/{graph_id}",
     "/streams/v2/graphs/seal",
     "/streams/v2/graphs/{graph_id}",
     "/streams/v2/graphs/{graph_id}/admit",

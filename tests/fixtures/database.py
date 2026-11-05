@@ -111,6 +111,16 @@ async def clear_db(db, request):
                     # Physical assignments deliberately retain their Worker FK.
                     # Remove the test graph hierarchy before the special early
                     # pool deletion; submissions also retain the graph FK.
+                    # Explicit isolated-test purge keeps restrictive slot and
+                    # edge bindings out of the early Worker/partition cleanup.
+                    await session.execute(
+                        orm_models.StreamPhysicalSlotAllocation.__table__.delete()
+                    )
+                    await session.execute(
+                        orm_models.StreamGraphEdgePartition.__table__.delete()
+                    )
+                    await session.execute(orm_models.StreamGraphEdge.__table__.delete())
+                    await session.execute(orm_models.StreamGraphPort.__table__.delete())
                     await session.execute(
                         orm_models.StreamPhysicalSubtask.__table__.delete()
                     )

@@ -139,6 +139,11 @@ def _direct_task_witness(task: Any) -> bytes:
     ).encode("utf-8")
 
 
+def stream_task_definition_witness(task: Any) -> bytes:
+    """Share the immutable direct Task contract with other native compilers."""
+    return _direct_task_witness(task)
+
+
 def bind_partition_calls(
     task: Any,
     partitions: tuple[StreamPartitionCall, StreamPartitionCall],

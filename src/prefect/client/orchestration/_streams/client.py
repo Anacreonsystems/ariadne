@@ -14,6 +14,7 @@ from prefect._internal.stream_execution import get_stream_subtask_execution
 from prefect.client.orchestration.base import HTTP_METHODS, BaseAsyncClient, BaseClient
 from prefect.client.orchestration.routes import ServerRoutes
 from prefect.client.schemas import native_deployments as native_schemas
+from prefect.client.schemas import stream_dags as dag_schemas
 from prefect.client.schemas import stream_subtasks as subtask_schemas
 from prefect.client.schemas import streams as schemas
 from prefect.client.schemas.objects import TaskRun
@@ -435,6 +436,47 @@ class StreamClient(BaseClient):
         return subtask_schemas.StreamGraphStartupStopResult.model_validate(
             response.json()
         )
+
+    def seal_stream_dag(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        flow_version: str,
+        operators: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+        deployment_id: UUID | None = None,
+        deployment_version: str | None = None,
+        working_directory: str | None = None,
+        profile: Literal["partitioned-dag-v1"] = "partitioned-dag-v1",
+        assignment_epoch: Literal[1] = 1,
+    ) -> dag_schemas.StreamDAGPlan:
+        """Seal one complete DAG metadata declaration without starting tasks."""
+        payload = dag_schemas.StreamDAGSealRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "flow_version": flow_version,
+                "operators": operators,
+                "edges": edges,
+                "deployment_id": deployment_id,
+                "deployment_version": deployment_version,
+                "working_directory": working_directory,
+                "profile": profile,
+                "assignment_epoch": assignment_epoch,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request("POST", "/streams/v2/dags/seal", json=payload)
+        return dag_schemas.StreamDAGPlan.model_validate(response.json())
+
+    def read_stream_dag(self, *, graph_revision_id: UUID) -> dag_schemas.StreamDAGPlan:
+        """Read sealed DAG metadata through its parent Flow execution authority."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v2/dags/{graph_id}",
+            path_params={"graph_id": graph_revision_id},
+        )
+        return dag_schemas.StreamDAGPlan.model_validate(response.json())
 
     def seal_stream_graph(
         self,
@@ -2131,6 +2173,51 @@ class StreamAsyncClient(BaseAsyncClient):
         return subtask_schemas.StreamGraphStartupStopResult.model_validate(
             response.json()
         )
+
+    async def seal_stream_dag(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        flow_version: str,
+        operators: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+        deployment_id: UUID | None = None,
+        deployment_version: str | None = None,
+        working_directory: str | None = None,
+        profile: Literal["partitioned-dag-v1"] = "partitioned-dag-v1",
+        assignment_epoch: Literal[1] = 1,
+    ) -> dag_schemas.StreamDAGPlan:
+        """Seal one complete DAG metadata declaration without starting tasks."""
+        payload = dag_schemas.StreamDAGSealRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "flow_version": flow_version,
+                "operators": operators,
+                "edges": edges,
+                "deployment_id": deployment_id,
+                "deployment_version": deployment_version,
+                "working_directory": working_directory,
+                "profile": profile,
+                "assignment_epoch": assignment_epoch,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v2/dags/seal", json=payload
+        )
+        return dag_schemas.StreamDAGPlan.model_validate(response.json())
+
+    async def read_stream_dag(
+        self, *, graph_revision_id: UUID
+    ) -> dag_schemas.StreamDAGPlan:
+        """Read sealed DAG metadata through its parent Flow execution authority."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v2/dags/{graph_id}",
+            path_params={"graph_id": graph_revision_id},
+        )
+        return dag_schemas.StreamDAGPlan.model_validate(response.json())
 
     async def seal_stream_graph(
         self,

@@ -3,6 +3,8 @@
 import hashlib
 import hmac
 from collections import Counter
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -17,6 +19,62 @@ from prefect.server.schemas.stream_subtasks import (
     StreamWorkerPrincipal,
 )
 from prefect.settings import PREFECT_SERVER_API_AUTH_STRING
+
+_METADATA_TASK_CONTROL_KEY = object()
+
+
+@dataclass(frozen=True)
+class _MetadataTaskControl:
+    session: AsyncSession
+    transaction: object
+    graph_id: UUID
+    operation_id: UUID
+
+
+@contextmanager
+def metadata_task_control(
+    session: AsyncSession, graph: orm_models.StreamGraphRevision, operation_id: UUID
+) -> Generator[None]:
+    """Private session-local abort authority; no wire value can construct it."""
+    if (
+        graph.profile != "partitioned-dag-v1"
+        or graph.state != "ABORTING"
+        or graph.abort_operation_id != operation_id
+    ):
+        raise NativeStreamError("IDENTITY_CONFLICT", "Invalid metadata abort scope")
+    previous = session.info.get(_METADATA_TASK_CONTROL_KEY)
+    session.info[_METADATA_TASK_CONTROL_KEY] = _MetadataTaskControl(
+        session, session.get_transaction(), graph.id, operation_id
+    )
+    try:
+        yield
+    finally:
+        if previous is None:
+            session.info.pop(_METADATA_TASK_CONTROL_KEY, None)
+        else:
+            session.info[_METADATA_TASK_CONTROL_KEY] = previous
+
+
+def metadata_task_control_active(session: AsyncSession) -> bool:
+    proof = session.info.get(_METADATA_TASK_CONTROL_KEY)
+    return (
+        isinstance(proof, _MetadataTaskControl)
+        and proof.session is session
+        and proof.transaction is session.get_transaction()
+    )
+
+
+def metadata_task_control_matches(
+    session: AsyncSession, graph: orm_models.StreamGraphRevision
+) -> bool:
+    proof = session.info.get(_METADATA_TASK_CONTROL_KEY)
+    return (
+        metadata_task_control_active(session)
+        and isinstance(proof, _MetadataTaskControl)
+        and proof.graph_id == graph.id
+        and proof.operation_id == graph.abort_operation_id
+        and graph.state == "ABORTING"
+    )
 
 
 @dataclass(frozen=True)
@@ -139,6 +197,15 @@ async def require_physical_backend(
         )
 
 
+def require_fixed_physical_execution(graph: orm_models.StreamGraphRevision) -> None:
+    """Topology-only DAG metadata cannot enter any accepted fixed-P2 executor."""
+    if graph.profile == "partitioned-dag-v1":
+        raise NativeStreamError(
+            "EXECUTION_PROFILE_NOT_READY",
+            "DAG execution is fenced until its native routing and runtime are implemented",
+        )
+
+
 def capability_digest(capability: str) -> str:
     return hashlib.sha256(
         b"prefect-subtask-v1\0" + capability.encode("ascii")
@@ -175,6 +242,7 @@ async def require_subtask(
     graph = await session.get(db.StreamGraphRevision, subtask.graph_revision_id)
     if graph is None:
         raise NativeStreamError("SUBTASK_FENCED", "Graph no longer exists")
+    require_fixed_physical_execution(graph)
     await session.execute(
         sa.select(db.FlowRun.id)
         .where(db.FlowRun.id == graph.flow_run_id)
@@ -426,7 +494,7 @@ async def require_bounded_flow_recovery(
             db.StreamGraphRevision.flow_run_id == flow_run_id
         )
     )
-    if profile == "partitioned-fixed-v1" or graph is not None:
+    if profile in ("partitioned-fixed-v1", "partitioned-dag-v1") or graph is not None:
         raise NativeStreamError(
             "UNSUPPORTED_PROFILE",
             "Partitioned physical children cannot use bounded whole-Flow recovery",

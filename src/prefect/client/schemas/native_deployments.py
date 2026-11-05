@@ -19,7 +19,7 @@ class NativeStreamDeclaration(BaseModel):
 
     schema_version: Literal[1] = 1
     protocol_version: Literal[1] = 1
-    profile: Literal["bounded-linear-v1", "partitioned-fixed-v1"]
+    profile: Literal["bounded-linear-v1", "partitioned-fixed-v1", "partitioned-dag-v1"]
     flow_version: str = Field(min_length=1, max_length=255)
     flow_code_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     resource_profile: Literal["bounded-default-v1"]

@@ -143,6 +143,7 @@ from prefect.utilities.engine import (
     collect_task_run_inputs_sync,
     emit_task_run_state_change_event,
     link_state_to_task_run_result,
+    refuse_stream_graph_dependencies,
     resolve_to_final_result,
 )
 from prefect.utilities.math import clamped_poisson_interval
@@ -398,6 +399,8 @@ class BaseTaskRunEngine(Generic[P, R]):
             return None
         if getattr(self, "_parameters_resolved", False):
             return None
+
+        refuse_stream_graph_dependencies(self.parameters)
 
         resolved_parameters = {}
         for parameter, value in self.parameters.items():

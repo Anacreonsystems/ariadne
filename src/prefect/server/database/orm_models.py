@@ -939,8 +939,11 @@ class StreamGraphRevision(Base):
     placement_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
 
     __table_args__: Any = (
+        sa.UniqueConstraint("id", "profile"),
+        sa.UniqueConstraint("id", "flow_run_id"),
+        sa.UniqueConstraint("id", "admission_operation_id", "profile"),
         sa.CheckConstraint(
-            "profile = 'partitioned-fixed-v1' AND assignment_epoch = 1",
+            "profile IN ('partitioned-fixed-v1', 'partitioned-dag-v1') AND assignment_epoch = 1",
             name="profile_valid",
         ),
         sa.CheckConstraint(
@@ -977,8 +980,9 @@ class StreamGraphRevision(Base):
 class StreamOperatorRun(Base):
     """Logical operator grouping, independent from physical TaskRun invocations."""
 
-    graph_revision_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("stream_graph_revision.id", ondelete="CASCADE")
+    graph_revision_id: Mapped[uuid.UUID]
+    profile: Mapped[str] = mapped_column(
+        default="partitioned-fixed-v1", server_default="partitioned-fixed-v1"
     )
     operator_uid: Mapped[str] = mapped_column(sa.String(64))
     role: Mapped[str]
@@ -986,9 +990,15 @@ class StreamOperatorRun(Base):
     specification: Mapped[dict[str, Any]] = mapped_column(JSON)
 
     __table_args__: Any = (
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "profile"],
+            ["stream_graph_revision.id", "stream_graph_revision.profile"],
+            ondelete="CASCADE",
+        ),
+        sa.UniqueConstraint("id", "graph_revision_id", "profile"),
         sa.UniqueConstraint("graph_revision_id", "operator_uid"),
         sa.CheckConstraint(
-            "role IN ('SOURCE', 'OPERATOR') AND parallelism = 2",
+            "role IN ('SOURCE', 'OPERATOR') AND ((profile = 'partitioned-fixed-v1' AND parallelism = 2) OR (profile = 'partitioned-dag-v1' AND parallelism BETWEEN 1 AND 16))",
             name="fixed_shape_valid",
         ),
     )
@@ -997,12 +1007,11 @@ class StreamOperatorRun(Base):
 class StreamPhysicalSubtask(Base):
     """Stable physical invocation; replacement never creates another TaskRun."""
 
-    graph_revision_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("stream_graph_revision.id", ondelete="CASCADE"), index=True
+    graph_revision_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    profile: Mapped[str] = mapped_column(
+        default="partitioned-fixed-v1", server_default="partitioned-fixed-v1"
     )
-    operator_run_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("stream_operator_run.id", ondelete="CASCADE")
-    )
+    operator_run_id: Mapped[uuid.UUID]
     subtask_index: Mapped[int]
     assignment_epoch: Mapped[int]
     task_run_id: Mapped[uuid.UUID] = mapped_column(
@@ -1033,9 +1042,25 @@ class StreamPhysicalSubtask(Base):
     )
 
     __table_args__: Any = (
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "profile"],
+            ["stream_graph_revision.id", "stream_graph_revision.profile"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["operator_run_id", "graph_revision_id", "profile"],
+            [
+                "stream_operator_run.id",
+                "stream_operator_run.graph_revision_id",
+                "stream_operator_run.profile",
+            ],
+            ondelete="CASCADE",
+        ),
+        sa.UniqueConstraint("id", "graph_revision_id", "profile", "subtask_index"),
+        sa.UniqueConstraint("id", "graph_revision_id", "assigned_worker_id"),
         sa.UniqueConstraint("operator_run_id", "subtask_index"),
         sa.CheckConstraint(
-            "subtask_index BETWEEN 0 AND 1 AND assignment_epoch = 1",
+            "assignment_epoch = 1 AND ((profile = 'partitioned-fixed-v1' AND subtask_index BETWEEN 0 AND 1) OR (profile = 'partitioned-dag-v1' AND subtask_index BETWEEN 0 AND 15))",
             name="assignment_valid",
         ),
         sa.CheckConstraint(
@@ -1159,7 +1184,7 @@ class StreamWorkerCapability(Base):
     """Bounded live protocol advertisement, never a process-death witness."""
 
     worker_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("worker.id", ondelete="CASCADE"), unique=True
+        sa.ForeignKey("worker.id", ondelete="CASCADE")
     )
     work_pool_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("work_pool.id", ondelete="CASCADE")
@@ -1173,8 +1198,9 @@ class StreamWorkerCapability(Base):
     last_renewed_at: Mapped[DateTime]
 
     __table_args__: Any = (
+        sa.UniqueConstraint("worker_id", "protocol", "protocol_version"),
         sa.CheckConstraint(
-            "protocol = 'partitioned-fixed-v1' AND protocol_version = 1",
+            "protocol IN ('partitioned-fixed-v1', 'partitioned-dag-v1') AND protocol_version = 1",
             name="protocol_valid",
         ),
         sa.CheckConstraint(
@@ -1196,6 +1222,210 @@ class StreamSubtaskAllocation(Base):
     released: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
 
     __table_args__: Any = (sa.UniqueConstraint("subtask_id", "concurrency_limit_id"),)
+
+
+class StreamGraphPort(Base):
+    """Immutable qualified operator port; no records or execution authority."""
+
+    graph_revision_id: Mapped[uuid.UUID]
+    operator_run_id: Mapped[uuid.UUID]
+    profile: Mapped[str] = mapped_column(
+        default="partitioned-dag-v1", server_default="partitioned-dag-v1"
+    )
+    port_uid: Mapped[str] = mapped_column(sa.String(64))
+    direction: Mapped[str]
+    schema_id: Mapped[str]
+    schema_version: Mapped[int]
+    schema_digest: Mapped[str] = mapped_column(sa.String(64))
+
+    __table_args__: Any = (
+        sa.ForeignKeyConstraint(
+            ["operator_run_id", "graph_revision_id", "profile"],
+            [
+                "stream_operator_run.id",
+                "stream_operator_run.graph_revision_id",
+                "stream_operator_run.profile",
+            ],
+            ondelete="CASCADE",
+        ),
+        sa.UniqueConstraint("operator_run_id", "direction"),
+        sa.UniqueConstraint("operator_run_id", "port_uid"),
+        sa.UniqueConstraint("id", "graph_revision_id", "direction"),
+        sa.CheckConstraint(
+            "profile = 'partitioned-dag-v1' AND direction IN ('INPUT', 'OUTPUT') AND length(port_uid) BETWEEN 1 AND 64",
+            name="port_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "schema_id = 'json-value-v1' AND schema_version = 1 AND schema_digest = 'd93f54187397ae62d4e1b98c56edab2a67a9d10422b028dfdea87ba6616a849c'",
+            name="schema_identity_valid",
+        ),
+    )
+
+
+class StreamGraphEdge(Base):
+    """Immutable logical subscriber/exchange metadata, never a second log."""
+
+    graph_revision_id: Mapped[uuid.UUID]
+    profile: Mapped[str] = mapped_column(
+        default="partitioned-dag-v1", server_default="partitioned-dag-v1"
+    )
+    edge_uid: Mapped[str] = mapped_column(sa.String(64))
+    subscriber_uid: Mapped[str] = mapped_column(sa.String(64))
+    producer_port_id: Mapped[uuid.UUID]
+    producer_direction: Mapped[str] = mapped_column(
+        default="OUTPUT", server_default="OUTPUT"
+    )
+    consumer_port_id: Mapped[uuid.UUID]
+    consumer_direction: Mapped[str] = mapped_column(
+        default="INPUT", server_default="INPUT"
+    )
+    producer_parallelism: Mapped[int]
+    target_parallelism: Mapped[int]
+    exchange: Mapped[str]
+    routing_version: Mapped[int]
+    key_codec: Mapped[Optional[str]]
+    hash_algorithm: Mapped[Optional[str]]
+    key_group_count: Mapped[Optional[int]]
+    specification: Mapped[dict[str, Any]] = mapped_column(JSON)
+
+    __table_args__: Any = (
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "profile"],
+            ["stream_graph_revision.id", "stream_graph_revision.profile"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["producer_port_id", "graph_revision_id", "producer_direction"],
+            [
+                "stream_graph_port.id",
+                "stream_graph_port.graph_revision_id",
+                "stream_graph_port.direction",
+            ],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["consumer_port_id", "graph_revision_id", "consumer_direction"],
+            [
+                "stream_graph_port.id",
+                "stream_graph_port.graph_revision_id",
+                "stream_graph_port.direction",
+            ],
+            ondelete="CASCADE",
+        ),
+        sa.UniqueConstraint("graph_revision_id", "edge_uid"),
+        sa.UniqueConstraint("graph_revision_id", "subscriber_uid"),
+        sa.UniqueConstraint("consumer_port_id"),
+        sa.UniqueConstraint("id", "graph_revision_id"),
+        sa.CheckConstraint(
+            "profile = 'partitioned-dag-v1' AND producer_direction = 'OUTPUT' AND consumer_direction = 'INPUT' AND producer_port_id != consumer_port_id",
+            name="edge_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "length(edge_uid) BETWEEN 1 AND 64 AND length(subscriber_uid) BETWEEN 1 AND 64",
+            name="identifiers_valid",
+        ),
+        sa.CheckConstraint(
+            "producer_parallelism BETWEEN 1 AND 16 AND target_parallelism BETWEEN 1 AND 16 AND exchange IN ('forward', 'rebalance', 'broadcast', 'keyed') AND routing_version = 1",
+            name="exchange_valid",
+        ),
+        sa.CheckConstraint(
+            "exchange != 'forward' OR producer_parallelism = target_parallelism",
+            name="forward_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(exchange = 'keyed' AND key_codec = 'tagged-key-v1' AND hash_algorithm = 'sha256' AND key_group_count IS NOT NULL AND key_group_count BETWEEN target_parallelism AND 2147483647) OR (exchange != 'keyed' AND key_codec IS NULL AND hash_algorithm IS NULL AND key_group_count IS NULL)",
+            name="key_shape_valid",
+        ),
+    )
+
+
+class StreamGraphEdgePartition(Base):
+    """Stable subscriber partition binding to the existing stream data plane."""
+
+    graph_revision_id: Mapped[uuid.UUID]
+    flow_run_id: Mapped[uuid.UUID]
+    profile: Mapped[str] = mapped_column(
+        default="partitioned-dag-v1", server_default="partitioned-dag-v1"
+    )
+    edge_id: Mapped[uuid.UUID]
+    partition_index: Mapped[int]
+    stream_id: Mapped[uuid.UUID]
+    subscriber_id: Mapped[uuid.UUID]
+    target_subtask_id: Mapped[uuid.UUID]
+
+    __table_args__: Any = (
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "flow_run_id"],
+            ["stream_graph_revision.id", "stream_graph_revision.flow_run_id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["edge_id", "graph_revision_id"],
+            ["stream_graph_edge.id", "stream_graph_edge.graph_revision_id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["stream_id", "flow_run_id"],
+            ["stream_partition.id", "stream_partition.flow_run_id"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["target_subtask_id", "graph_revision_id", "profile", "partition_index"],
+            [
+                "stream_physical_subtask.id",
+                "stream_physical_subtask.graph_revision_id",
+                "stream_physical_subtask.profile",
+                "stream_physical_subtask.subtask_index",
+            ],
+        ),
+        sa.UniqueConstraint("edge_id", "partition_index"),
+        sa.UniqueConstraint("stream_id"),
+        sa.UniqueConstraint("subscriber_id"),
+        sa.UniqueConstraint("target_subtask_id"),
+        sa.CheckConstraint(
+            "profile = 'partitioned-dag-v1' AND partition_index BETWEEN 0 AND 15",
+            name="partition_shape_valid",
+        ),
+    )
+
+
+class StreamPhysicalSlotAllocation(Base):
+    """Durable physical reservation; tag allocations may legitimately be empty."""
+
+    graph_revision_id: Mapped[uuid.UUID]
+    subtask_id: Mapped[uuid.UUID]
+    worker_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("worker.id"), index=True)
+    profile: Mapped[str] = mapped_column(
+        default="partitioned-dag-v1", server_default="partitioned-dag-v1"
+    )
+    admission_operation_id: Mapped[uuid.UUID]
+    released: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+    release_operation_id: Mapped[Optional[uuid.UUID]]
+    released_at: Mapped[Optional[DateTime]]
+
+    __table_args__: Any = (
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "admission_operation_id", "profile"],
+            [
+                "stream_graph_revision.id",
+                "stream_graph_revision.admission_operation_id",
+                "stream_graph_revision.profile",
+            ],
+        ),
+        sa.ForeignKeyConstraint(
+            ["subtask_id", "graph_revision_id", "worker_id"],
+            [
+                "stream_physical_subtask.id",
+                "stream_physical_subtask.graph_revision_id",
+                "stream_physical_subtask.assigned_worker_id",
+            ],
+        ),
+        sa.UniqueConstraint("subtask_id"),
+        sa.CheckConstraint("profile = 'partitioned-dag-v1'", name="profile_valid"),
+        sa.CheckConstraint(
+            "(released = false AND release_operation_id IS NULL AND released_at IS NULL) OR (released = true AND release_operation_id IS NOT NULL AND released_at IS NOT NULL)",
+            name="release_shape_valid",
+        ),
+    )
 
 
 class StreamFiniteSubmission(Base):
@@ -1478,7 +1708,7 @@ class NativeStreamDeploymentSnapshot(Base):
         sa.UniqueConstraint("flow_run_id"),
         sa.CheckConstraint("protocol_version = 1", name="protocol_version_valid"),
         sa.CheckConstraint(
-            "profile IN ('bounded-linear-v1', 'partitioned-fixed-v1')",
+            "profile IN ('bounded-linear-v1', 'partitioned-fixed-v1', 'partitioned-dag-v1')",
             name="profile_valid",
         ),
         sa.CheckConstraint(

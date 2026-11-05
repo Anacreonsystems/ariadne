@@ -245,6 +245,24 @@ class PrefectDBInterface(metaclass=DBSingleton):
         return orm_models.StreamSubtaskAllocation
 
     @property
+    def StreamGraphPort(self) -> type[orm_models.StreamGraphPort]:
+        return orm_models.StreamGraphPort
+
+    @property
+    def StreamGraphEdge(self) -> type[orm_models.StreamGraphEdge]:
+        return orm_models.StreamGraphEdge
+
+    @property
+    def StreamGraphEdgePartition(self) -> type[orm_models.StreamGraphEdgePartition]:
+        return orm_models.StreamGraphEdgePartition
+
+    @property
+    def StreamPhysicalSlotAllocation(
+        self,
+    ) -> type[orm_models.StreamPhysicalSlotAllocation]:
+        return orm_models.StreamPhysicalSlotAllocation
+
+    @property
     def StreamFiniteSubmission(self) -> type[orm_models.StreamFiniteSubmission]:
         """An immutable finite Task submission manifest orm model"""
         return orm_models.StreamFiniteSubmission

@@ -20,11 +20,13 @@ from prefect.server.models.stream_subtask_authority import (
     capability_digest,
     release_allocations,
     release_terminal_allocation,
+    require_fixed_physical_execution,
     require_subtask,
 )
 from prefect.server.models.stream_subtask_authority import (
     require_physical_backend as _backend,
 )
+from prefect.server.models.stream_worker_capacity import physical_worker_occupancy
 from prefect.server.models.streams import (
     NativeStreamStore,
     canonical_stream_payload,
@@ -131,7 +133,11 @@ async def placement_workers(
         for cap in (
             await session.scalars(
                 sa.select(db.StreamWorkerCapability)
-                .where(db.StreamWorkerCapability.worker_id.in_(selected))
+                .where(
+                    db.StreamWorkerCapability.worker_id.in_(selected),
+                    db.StreamWorkerCapability.protocol == "partitioned-fixed-v1",
+                    db.StreamWorkerCapability.protocol_version == 1,
+                )
                 .order_by(db.StreamWorkerCapability.worker_id)
                 .with_for_update(read=not update)
                 .execution_options(populate_existing=True)
@@ -167,21 +173,7 @@ async def placement_workers(
             "Flow launch and worker capability identify different supervisors",
         )
     if update:
-        occupied_rows = (
-            await session.execute(
-                sa.select(db.StreamPhysicalSubtask.assigned_worker_id, sa.func.count())
-                .where(
-                    db.StreamPhysicalSubtask.assigned_worker_id.in_(selected),
-                    db.StreamPhysicalSubtask.physical_slot_released.is_(False),
-                )
-                .group_by(db.StreamPhysicalSubtask.assigned_worker_id)
-            )
-        ).all()
-        occupied: dict[UUID, int] = {
-            worker_id: count
-            for worker_id, count in occupied_rows
-            if worker_id is not None
-        }
+        occupied = await physical_worker_occupancy(session, db, selected)
         if any(occupied.get(worker_id, 0) + 2 > 2 for worker_id in selected):
             raise NativeStreamError(
                 "REGION_CAPACITY",
@@ -222,6 +214,7 @@ async def _graph(
     await _backend(session, db)
     if isinstance(execution, WorkerStreamAuthorization):
         execution.validate(session, graph_revision_id=graph_id)
+        require_fixed_physical_execution(execution.graph)
         if update and not execution.graph_update:
             raise NativeStreamError(
                 "PROTOCOL_ERROR",
@@ -246,6 +239,7 @@ async def _graph(
     graph = await session.get(db.StreamGraphRevision, graph_id)
     if graph is None:
         raise NativeStreamError("NOT_FOUND", "Unknown graph revision")
+    require_fixed_physical_execution(graph)
     if (
         isinstance(execution, WorkerStreamAuthorization)
         and graph.id != execution.graph_revision_id
@@ -371,6 +365,7 @@ async def _projection(
 async def graph_plan(
     session: AsyncSession, db: PrefectDBInterface, graph: orm_models.StreamGraphRevision
 ) -> s.StreamGraphPlan:
+    require_fixed_physical_execution(graph)
     subtasks = (
         await session.scalars(
             sa.select(db.StreamPhysicalSubtask)
@@ -773,7 +768,11 @@ async def activate_graph(
             for row in (
                 await session.scalars(
                     sa.select(db.StreamWorkerCapability)
-                    .where(db.StreamWorkerCapability.worker_id.in_(assigned_ids))
+                    .where(
+                        db.StreamWorkerCapability.worker_id.in_(assigned_ids),
+                        db.StreamWorkerCapability.protocol == "partitioned-fixed-v1",
+                        db.StreamWorkerCapability.protocol_version == 1,
+                    )
                     .order_by(db.StreamWorkerCapability.worker_id)
                     .with_for_update(read=True)
                     .execution_options(populate_existing=True)
@@ -1060,6 +1059,7 @@ async def abort_graph(
         )
         assert graph is not None
         await _lock_abort_workers(session, db, graph)
+    require_fixed_physical_execution(graph)
     if graph.declaration.get("deployment_id") is not None and (
         request.operation_id != startup_abort_operation_id(graph.id)
         or request.error != STARTUP_ABORT_REASON
@@ -1311,7 +1311,9 @@ async def _new_grant(
     elif request.launcher_binding_kind == "ASSIGNED_WORKER":
         capability = await session.scalar(
             sa.select(db.StreamWorkerCapability).where(
-                db.StreamWorkerCapability.worker_id == request.worker_id
+                db.StreamWorkerCapability.worker_id == request.worker_id,
+                db.StreamWorkerCapability.protocol == "partitioned-fixed-v1",
+                db.StreamWorkerCapability.protocol_version == 1,
             )
         )
         snapshot = await session.scalar(

@@ -201,13 +201,23 @@ def _begin(flow_run: Any) -> Any:
         return None
     if flow_run is None or execution.flow_run_id != flow_run.id:
         raise StreamProtocolError("A native execution cannot enter another FlowRun")
-    previous = reconstruction()
-    if previous is not None and previous.flow_attempt == flow_run.run_count:
-        return previous
     from prefect.context import FlowRunContext
 
     context = FlowRunContext.get()
     flow = context.flow if context is not None else None
+    previous = reconstruction()
+    if (
+        flow is not None
+        and flow.streaming is not None
+        and flow.streaming.profile == "partitioned-dag-v1"
+    ):
+        if previous is not None:
+            raise StreamProtocolError(
+                "DAG authoring cannot reuse a legacy stream reconstruction"
+            )
+        return None
+    if previous is not None and previous.flow_attempt == flow_run.run_count:
+        return previous
     if (
         flow is not None
         and flow.streaming is not None
@@ -293,8 +303,17 @@ def submit_reconstructed_stream(
     from prefect.task_runners import ThreadPoolTaskRunner
     from prefect.utilities.collections import visit_collection
 
-    graph = reconstruction()
     context = FlowRunContext.get()
+    if (
+        context is not None
+        and context.flow is not None
+        and context.flow.streaming is not None
+        and context.flow.streaming.profile == "partitioned-dag-v1"
+    ):
+        raise StreamProtocolError(
+            "DAG declarations require StreamGraph; submit_stream is unsupported"
+        )
+    graph = reconstruction()
     if (
         graph is None
         or context is None
