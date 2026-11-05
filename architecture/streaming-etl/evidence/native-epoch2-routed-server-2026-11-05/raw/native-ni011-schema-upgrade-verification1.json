@@ -1,0 +1,1686 @@
+{
+  "postgresql": {
+    "head": "f1c5b98d4e12",
+    "tables": {
+      "stream_completion": {
+        "checks": [
+          {
+            "comment": null,
+            "name": "ck_stream_completion__input_sequence_positive",
+            "sqltext": "input_sequence > 0"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_completion__intent_digest_length_valid",
+            "sqltext": "length(intent_digest::text) = 64"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_completion__kind_valid",
+            "sqltext": "kind::text = ANY (ARRAY['YIELD'::character varying, 'RETURN'::character varying]::text[])"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_completion__output_shape_valid",
+            "sqltext": "kind::text = 'YIELD'::text AND output_sequence IS NOT NULL AND output_sequence > 0 OR kind::text = 'RETURN'::text AND output_sequence IS NULL"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_completion__owner_epoch_positive",
+            "sqltext": "owner_epoch >= 1"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_completion__route_receipt_shape_valid",
+            "sqltext": "consumer_kind::text = 'LEGACY'::text AND route_receipt_id IS NULL OR consumer_kind::text = 'DAG'::text AND route_receipt_id IS NOT NULL"
+          }
+        ],
+        "columns": [
+          "consumer_id",
+          "input_sequence",
+          "delivery_id",
+          "owner_epoch",
+          "kind",
+          "intent_digest",
+          "output_sequence",
+          "id",
+          "created",
+          "updated",
+          "consumer_kind",
+          "route_receipt_id"
+        ],
+        "foreign_keys": [
+          {
+            "comment": null,
+            "constrained_columns": [
+              "consumer_id"
+            ],
+            "name": "fk_stream_completion__consumer_id__stream_consumer",
+            "options": {
+              "ondelete": "CASCADE"
+            },
+            "referred_columns": [
+              "id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_consumer"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "consumer_id",
+              "consumer_kind"
+            ],
+            "name": "fk_stream_completion__consumer_kind",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "consumer_kind"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_consumer"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "route_receipt_id",
+              "consumer_id",
+              "input_sequence",
+              "kind",
+              "intent_digest"
+            ],
+            "name": "fk_stream_completion__route_receipt",
+            "options": {
+              "ondelete": "RESTRICT"
+            },
+            "referred_columns": [
+              "id",
+              "consumer_id",
+              "input_sequence",
+              "kind",
+              "semantic_digest"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_route_receipt"
+          }
+        ],
+        "unique_constraints": [
+          {
+            "column_names": [
+              "consumer_id",
+              "delivery_id"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_completion__consumer_id_delivery_id"
+          },
+          {
+            "column_names": [
+              "consumer_id",
+              "input_sequence"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_completion__consumer_id_input_sequence"
+          },
+          {
+            "column_names": [
+              "consumer_id",
+              "output_sequence"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_completion__consumer_id_output_sequence"
+          },
+          {
+            "column_names": [
+              "route_receipt_id"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_completion__route_receipt_id"
+          }
+        ]
+      },
+      "stream_consumer": {
+        "checks": [
+          {
+            "comment": null,
+            "name": "ck_stream_consumer__attempt_positive",
+            "sqltext": "attempt >= 1"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_consumer__completed_through_nonnegative",
+            "sqltext": "completed_through >= 0"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_consumer__dag_subscriber_shape_valid",
+            "sqltext": "consumer_kind::text = 'LEGACY'::text AND graph_revision_id IS NULL AND edge_partition_id IS NULL AND edge_id IS NULL AND input_port_id IS NULL AND subtask_id IS NULL AND task_run_id IS NULL AND subscriber_uid IS NULL AND input_port_uid IS NULL OR consumer_kind::text = 'DAG'::text AND graph_revision_id IS NOT NULL AND edge_partition_id IS NOT NULL AND edge_id IS NOT NULL AND input_port_id IS NOT NULL AND subtask_id IS NOT NULL AND task_run_id IS NOT NULL AND subscriber_uid IS NOT NULL AND length(subscriber_uid::text) >= 1 AND length(subscriber_uid::text) <= 64 AND input_port_uid IS NOT NULL AND length(input_port_uid::text) >= 1 AND length(input_port_uid::text) <= 64"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_consumer__delivery_shape_valid",
+            "sqltext": "inflight_sequence IS NULL AND delivery_id IS NULL OR inflight_sequence IS NOT NULL AND inflight_sequence = (completed_through + 1) AND delivery_id IS NOT NULL"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_consumer__distinct_streams",
+            "sqltext": "input_stream_id <> output_stream_id"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_consumer__owner_epoch_positive",
+            "sqltext": "owner_epoch >= 1"
+          }
+        ],
+        "columns": [
+          "flow_run_id",
+          "input_stream_id",
+          "output_stream_id",
+          "owner_id",
+          "attempt",
+          "owner_epoch",
+          "completed_through",
+          "managed_state",
+          "inflight_sequence",
+          "delivery_id",
+          "id",
+          "created",
+          "updated",
+          "consumer_kind",
+          "graph_revision_id",
+          "edge_partition_id",
+          "edge_id",
+          "input_port_id",
+          "subtask_id",
+          "task_run_id",
+          "subscriber_uid",
+          "input_port_uid"
+        ],
+        "foreign_keys": [
+          {
+            "comment": null,
+            "constrained_columns": [
+              "subtask_id",
+              "graph_revision_id",
+              "task_run_id",
+              "output_stream_id"
+            ],
+            "name": "fk_stream_consumer__current_dag_task",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "task_run_id",
+              "output_stream_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_physical_subtask"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "edge_id",
+              "graph_revision_id",
+              "subscriber_uid",
+              "input_port_id"
+            ],
+            "name": "fk_stream_consumer__edge_subscriber_port",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "subscriber_uid",
+              "consumer_port_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_edge"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "flow_run_id"
+            ],
+            "name": "fk_stream_consumer__flow_run_id__flow_run",
+            "options": {
+              "ondelete": "CASCADE"
+            },
+            "referred_columns": [
+              "id"
+            ],
+            "referred_schema": null,
+            "referred_table": "flow_run"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "graph_revision_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_consumer__graph_flow",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_revision"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "input_port_id",
+              "graph_revision_id",
+              "input_port_uid"
+            ],
+            "name": "fk_stream_consumer__input_port_uid",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "port_uid"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_port"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "input_stream_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_consumer__input_stream_id_flow_run_id__stream_9f34",
+            "options": {
+              "ondelete": "CASCADE"
+            },
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_partition"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "output_stream_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_consumer__output_stream_id_flow_run_id__strea_b51e",
+            "options": {
+              "ondelete": "CASCADE"
+            },
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_partition"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "edge_partition_id",
+              "graph_revision_id",
+              "edge_id",
+              "subtask_id",
+              "input_stream_id",
+              "id"
+            ],
+            "name": "fk_stream_consumer__stable_subscriber",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "edge_id",
+              "target_subtask_id",
+              "stream_id",
+              "subscriber_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_edge_partition"
+          }
+        ],
+        "unique_constraints": [
+          {
+            "column_names": [
+              "id",
+              "graph_revision_id",
+              "subtask_id",
+              "task_run_id",
+              "input_stream_id",
+              "output_stream_id"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_consumer__dag_owner"
+          },
+          {
+            "column_names": [
+              "delivery_id"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_consumer__delivery_id"
+          },
+          {
+            "column_names": [
+              "edge_partition_id"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_consumer__edge_partition_id"
+          },
+          {
+            "column_names": [
+              "id",
+              "consumer_kind"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_consumer__id_consumer_kind"
+          },
+          {
+            "column_names": [
+              "output_stream_id"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_consumer__output_stream_id"
+          }
+        ]
+      },
+      "stream_record": {
+        "checks": [
+          {
+            "comment": null,
+            "name": "ck_stream_record__digest_length_valid",
+            "sqltext": "length(value_digest::text) = 64"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_record__graph_flow_shape_valid",
+            "sqltext": "graph_revision_id IS NULL AND flow_run_id IS NULL OR graph_revision_id IS NOT NULL AND flow_run_id IS NOT NULL"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_record__producer_position_positive",
+            "sqltext": "producer_position > 0"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_record__record_reference_shape_valid",
+            "sqltext": "record_kind::text = 'PAYLOAD'::text AND payload_record_id IS NULL AND payload_record_kind IS NULL AND payload_value_digest IS NULL AND route_receipt_id IS NULL AND edge_partition_id IS NULL OR record_kind::text = 'REFERENCE'::text AND graph_revision_id IS NOT NULL AND payload_record_id IS NOT NULL AND payload_record_kind::text = 'PAYLOAD'::text AND payload_value_digest IS NOT NULL AND length(payload_value_digest::text) = 64 AND route_receipt_id IS NOT NULL AND edge_partition_id IS NOT NULL"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_record__sequence_positive",
+            "sqltext": "sequence > 0"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_record__size_positive",
+            "sqltext": "size_bytes > 0"
+          }
+        ],
+        "columns": [
+          "stream_id",
+          "sequence",
+          "producer_position",
+          "value",
+          "value_digest",
+          "size_bytes",
+          "id",
+          "created",
+          "updated",
+          "record_kind",
+          "graph_revision_id",
+          "flow_run_id",
+          "payload_record_id",
+          "payload_record_kind",
+          "payload_value_digest",
+          "route_receipt_id",
+          "edge_partition_id"
+        ],
+        "foreign_keys": [
+          {
+            "comment": null,
+            "constrained_columns": [
+              "payload_record_id",
+              "graph_revision_id",
+              "payload_record_kind",
+              "payload_value_digest"
+            ],
+            "name": "fk_stream_record__direct_payload",
+            "options": {
+              "ondelete": "RESTRICT"
+            },
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "record_kind",
+              "value_digest"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_record"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "edge_partition_id",
+              "stream_id",
+              "graph_revision_id"
+            ],
+            "name": "fk_stream_record__edge_partition",
+            "options": {
+              "ondelete": "RESTRICT"
+            },
+            "referred_columns": [
+              "id",
+              "stream_id",
+              "graph_revision_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_edge_partition"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "graph_revision_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_record__graph_flow",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_revision"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "stream_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_record__partition_flow",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_partition"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "route_receipt_id",
+              "graph_revision_id",
+              "payload_record_id"
+            ],
+            "name": "fk_stream_record__route_receipt_payload",
+            "options": {
+              "ondelete": "RESTRICT"
+            },
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "payload_record_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_route_receipt"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "stream_id"
+            ],
+            "name": "fk_stream_record__stream_id__stream_partition",
+            "options": {
+              "ondelete": "CASCADE"
+            },
+            "referred_columns": [
+              "id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_partition"
+          }
+        ],
+        "unique_constraints": [
+          {
+            "column_names": [
+              "id",
+              "graph_revision_id",
+              "record_kind",
+              "payload_record_id"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_record__id_graph_kind_payload"
+          },
+          {
+            "column_names": [
+              "id",
+              "graph_revision_id",
+              "record_kind",
+              "value_digest"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_record__id_graph_kind_value"
+          },
+          {
+            "column_names": [
+              "stream_id",
+              "producer_position"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_record__stream_id_producer_position"
+          },
+          {
+            "column_names": [
+              "stream_id",
+              "sequence"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_record__stream_id_sequence"
+          }
+        ]
+      },
+      "stream_route_receipt": {
+        "checks": [
+          {
+            "comment": null,
+            "name": "ck_stream_route_receipt__digests_valid",
+            "sqltext": "length(routing_digest::text) = 64 AND length(semantic_digest::text) = 64 AND length(outcome_digest::text) = 64 AND length(value_digest::text) = 64 AND (managed_state_digest IS NULL OR length(managed_state_digest::text) = 64)"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_route_receipt__input_shape_valid",
+            "sqltext": "producer_role::text = 'SOURCE'::text AND kind::text = 'YIELD'::text AND input_stream_id IS NULL AND input_reference_record_id IS NULL AND input_reference_record_kind IS NULL AND input_payload_record_id IS NULL AND input_payload_record_kind IS NULL AND input_payload_value_digest IS NULL AND input_sequence IS NULL AND consumer_id IS NULL AND managed_state_digest IS NULL OR producer_role::text = 'OPERATOR'::text AND input_stream_id IS NOT NULL AND input_reference_record_id IS NOT NULL AND input_reference_record_kind::text = 'REFERENCE'::text AND input_payload_record_id IS NOT NULL AND input_payload_record_kind::text = 'PAYLOAD'::text AND input_payload_value_digest IS NOT NULL AND length(input_payload_value_digest::text) = 64 AND input_sequence = producer_position AND consumer_id IS NOT NULL AND managed_state_digest IS NOT NULL"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_route_receipt__key_shape_valid",
+            "sqltext": "key_present = false AND output_key_digest IS NULL OR key_present = true AND output_key_digest IS NOT NULL AND length(output_key_digest::text) = 64"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_route_receipt__outcome_size_valid",
+            "sqltext": "outcome_size >= 1 AND outcome_size <= 65536"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_route_receipt__position_valid",
+            "sqltext": "producer_position > 0 AND (producer_sequence IS NULL OR producer_sequence > 0)"
+          },
+          {
+            "comment": null,
+            "name": "ck_stream_route_receipt__terminal_shape_valid",
+            "sqltext": "kind::text = 'YIELD'::text AND producer_sequence IS NOT NULL AND output_ordinal = 0 AND payload_record_id IS NOT NULL AND payload_record_kind::text = 'PAYLOAD'::text OR kind::text = 'RETURN'::text AND producer_sequence IS NULL AND output_ordinal IS NULL AND payload_record_id IS NULL AND payload_record_kind IS NULL AND key_present = false"
+          }
+        ],
+        "columns": [
+          "graph_revision_id",
+          "flow_run_id",
+          "producer_subtask_id",
+          "producer_task_run_id",
+          "producer_stream_id",
+          "producer_position",
+          "producer_sequence",
+          "producer_role",
+          "kind",
+          "routing_digest",
+          "semantic_digest",
+          "outcome_digest",
+          "value_digest",
+          "managed_state_digest",
+          "key_present",
+          "output_key_digest",
+          "output_ordinal",
+          "payload_record_id",
+          "payload_record_kind",
+          "input_stream_id",
+          "input_reference_record_id",
+          "input_reference_record_kind",
+          "input_payload_record_id",
+          "input_payload_record_kind",
+          "input_payload_value_digest",
+          "input_sequence",
+          "consumer_id",
+          "outcome",
+          "outcome_size",
+          "id",
+          "created",
+          "updated"
+        ],
+        "foreign_keys": [
+          {
+            "comment": null,
+            "constrained_columns": [
+              "graph_revision_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_route_receipt__graph_flow",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_revision"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "input_stream_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_route_receipt__input_flow",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_partition"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "input_payload_record_id",
+              "graph_revision_id",
+              "input_payload_record_kind",
+              "input_payload_value_digest"
+            ],
+            "name": "fk_stream_route_receipt__input_payload",
+            "options": {
+              "ondelete": "RESTRICT"
+            },
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "record_kind",
+              "value_digest"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_record"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "input_reference_record_id",
+              "graph_revision_id",
+              "input_reference_record_kind",
+              "input_payload_record_id"
+            ],
+            "name": "fk_stream_route_receipt__input_reference",
+            "options": {
+              "deferrable": true,
+              "initially": "DEFERRED"
+            },
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "record_kind",
+              "payload_record_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_record"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "payload_record_id",
+              "graph_revision_id",
+              "payload_record_kind",
+              "value_digest"
+            ],
+            "name": "fk_stream_route_receipt__output_payload",
+            "options": {
+              "ondelete": "RESTRICT"
+            },
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "record_kind",
+              "value_digest"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_record"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "producer_subtask_id",
+              "graph_revision_id",
+              "producer_task_run_id",
+              "producer_stream_id"
+            ],
+            "name": "fk_stream_route_receipt__producer",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "task_run_id",
+              "output_stream_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_physical_subtask"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "producer_stream_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_route_receipt__producer_flow",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_partition"
+          },
+          {
+            "comment": null,
+            "constrained_columns": [
+              "consumer_id",
+              "graph_revision_id",
+              "producer_subtask_id",
+              "producer_task_run_id",
+              "input_stream_id",
+              "producer_stream_id"
+            ],
+            "name": "fk_stream_route_receipt__stable_consumer",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "subtask_id",
+              "task_run_id",
+              "input_stream_id",
+              "output_stream_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_consumer"
+          }
+        ],
+        "unique_constraints": [
+          {
+            "column_names": [
+              "id",
+              "consumer_id",
+              "input_sequence",
+              "kind",
+              "semantic_digest"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_route_receipt__completion_witness"
+          },
+          {
+            "column_names": [
+              "payload_record_id"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_route_receipt__payload_record_id"
+          },
+          {
+            "column_names": [
+              "producer_stream_id",
+              "producer_position"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_route_receipt__producer_stream_id_producer_position"
+          },
+          {
+            "column_names": [
+              "id",
+              "graph_revision_id",
+              "payload_record_id"
+            ],
+            "comment": null,
+            "dialect_options": {
+              "postgresql_include": [],
+              "postgresql_nulls_not_distinct": false
+            },
+            "name": "uq_stream_route_receipt__reference_payload"
+          }
+        ]
+      }
+    }
+  },
+  "sqlite": {
+    "head": "02d6ca9e5f23",
+    "tables": {
+      "stream_completion": {
+        "checks": [
+          {
+            "name": "ck_stream_completion__input_sequence_positive",
+            "sqltext": "input_sequence > 0"
+          },
+          {
+            "name": "ck_stream_completion__intent_digest_length_valid",
+            "sqltext": "length(intent_digest) = 64"
+          },
+          {
+            "name": "ck_stream_completion__kind_valid",
+            "sqltext": "kind IN ('YIELD', 'RETURN')"
+          },
+          {
+            "name": "ck_stream_completion__output_shape_valid",
+            "sqltext": "(kind = 'YIELD' AND output_sequence IS NOT NULL AND output_sequence > 0) OR (kind = 'RETURN' AND output_sequence IS NULL)"
+          },
+          {
+            "name": "ck_stream_completion__owner_epoch_positive",
+            "sqltext": "owner_epoch >= 1"
+          },
+          {
+            "name": "ck_stream_completion__route_receipt_shape_valid",
+            "sqltext": "(consumer_kind = 'LEGACY' AND route_receipt_id IS NULL) OR (consumer_kind = 'DAG' AND route_receipt_id IS NOT NULL)"
+          }
+        ],
+        "columns": [
+          "consumer_id",
+          "input_sequence",
+          "delivery_id",
+          "owner_epoch",
+          "kind",
+          "intent_digest",
+          "output_sequence",
+          "id",
+          "created",
+          "updated",
+          "consumer_kind",
+          "route_receipt_id"
+        ],
+        "foreign_keys": [
+          {
+            "constrained_columns": [
+              "consumer_id"
+            ],
+            "name": "fk_stream_completion__consumer_id__stream_consumer",
+            "options": {
+              "ondelete": "CASCADE"
+            },
+            "referred_columns": [
+              "id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_consumer"
+          },
+          {
+            "constrained_columns": [
+              "consumer_id",
+              "consumer_kind"
+            ],
+            "name": "fk_stream_completion__consumer_kind",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "consumer_kind"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_consumer"
+          },
+          {
+            "constrained_columns": [
+              "route_receipt_id",
+              "consumer_id",
+              "input_sequence",
+              "kind",
+              "intent_digest"
+            ],
+            "name": "fk_stream_completion__route_receipt",
+            "options": {
+              "ondelete": "RESTRICT"
+            },
+            "referred_columns": [
+              "id",
+              "consumer_id",
+              "input_sequence",
+              "kind",
+              "semantic_digest"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_route_receipt"
+          }
+        ],
+        "unique_constraints": [
+          {
+            "column_names": [
+              "consumer_id",
+              "delivery_id"
+            ],
+            "name": "uq_stream_completion__consumer_id_delivery_id"
+          },
+          {
+            "column_names": [
+              "consumer_id",
+              "output_sequence"
+            ],
+            "name": "uq_stream_completion__consumer_id_output_sequence"
+          },
+          {
+            "column_names": [
+              "consumer_id",
+              "input_sequence"
+            ],
+            "name": "uq_stream_completion__consumer_id_input_sequence"
+          },
+          {
+            "column_names": [
+              "route_receipt_id"
+            ],
+            "name": "uq_stream_completion__route_receipt_id"
+          }
+        ]
+      },
+      "stream_consumer": {
+        "checks": [
+          {
+            "name": "ck_stream_consumer__attempt_positive",
+            "sqltext": "attempt >= 1"
+          },
+          {
+            "name": "ck_stream_consumer__completed_through_nonnegative",
+            "sqltext": "completed_through >= 0"
+          },
+          {
+            "name": "ck_stream_consumer__dag_subscriber_shape_valid",
+            "sqltext": "(consumer_kind = 'LEGACY' AND graph_revision_id IS NULL AND edge_partition_id IS NULL AND edge_id IS NULL AND input_port_id IS NULL AND subtask_id IS NULL AND task_run_id IS NULL AND subscriber_uid IS NULL AND input_port_uid IS NULL) OR (consumer_kind = 'DAG' AND graph_revision_id IS NOT NULL AND edge_partition_id IS NOT NULL AND edge_id IS NOT NULL AND input_port_id IS NOT NULL AND subtask_id IS NOT NULL AND task_run_id IS NOT NULL AND subscriber_uid IS NOT NULL AND length(subscriber_uid) BETWEEN 1 AND 64 AND input_port_uid IS NOT NULL AND length(input_port_uid) BETWEEN 1 AND 64)"
+          },
+          {
+            "name": "ck_stream_consumer__delivery_shape_valid",
+            "sqltext": "(inflight_sequence IS NULL AND delivery_id IS NULL) OR (inflight_sequence IS NOT NULL AND inflight_sequence = completed_through + 1 AND delivery_id IS NOT NULL)"
+          },
+          {
+            "name": "ck_stream_consumer__distinct_streams",
+            "sqltext": "input_stream_id != output_stream_id"
+          },
+          {
+            "name": "ck_stream_consumer__owner_epoch_positive",
+            "sqltext": "owner_epoch >= 1"
+          }
+        ],
+        "columns": [
+          "flow_run_id",
+          "input_stream_id",
+          "output_stream_id",
+          "owner_id",
+          "attempt",
+          "owner_epoch",
+          "completed_through",
+          "managed_state",
+          "inflight_sequence",
+          "delivery_id",
+          "id",
+          "created",
+          "updated",
+          "consumer_kind",
+          "graph_revision_id",
+          "edge_partition_id",
+          "edge_id",
+          "input_port_id",
+          "subtask_id",
+          "task_run_id",
+          "subscriber_uid",
+          "input_port_uid"
+        ],
+        "foreign_keys": [
+          {
+            "constrained_columns": [
+              "input_stream_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_consumer__input_stream_id_flow_run_id__stream_partition",
+            "options": {
+              "ondelete": "CASCADE"
+            },
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_partition"
+          },
+          {
+            "constrained_columns": [
+              "output_stream_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_consumer__output_stream_id_flow_run_id__stream_partition",
+            "options": {
+              "ondelete": "CASCADE"
+            },
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_partition"
+          },
+          {
+            "constrained_columns": [
+              "flow_run_id"
+            ],
+            "name": "fk_stream_consumer__flow_run_id__flow_run",
+            "options": {
+              "ondelete": "CASCADE"
+            },
+            "referred_columns": [
+              "id"
+            ],
+            "referred_schema": null,
+            "referred_table": "flow_run"
+          },
+          {
+            "constrained_columns": [
+              "graph_revision_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_consumer__graph_flow",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_revision"
+          },
+          {
+            "constrained_columns": [
+              "edge_partition_id",
+              "graph_revision_id",
+              "edge_id",
+              "subtask_id",
+              "input_stream_id",
+              "id"
+            ],
+            "name": "fk_stream_consumer__stable_subscriber",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "edge_id",
+              "target_subtask_id",
+              "stream_id",
+              "subscriber_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_edge_partition"
+          },
+          {
+            "constrained_columns": [
+              "subtask_id",
+              "graph_revision_id",
+              "task_run_id",
+              "output_stream_id"
+            ],
+            "name": "fk_stream_consumer__current_dag_task",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "task_run_id",
+              "output_stream_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_physical_subtask"
+          },
+          {
+            "constrained_columns": [
+              "edge_id",
+              "graph_revision_id",
+              "subscriber_uid",
+              "input_port_id"
+            ],
+            "name": "fk_stream_consumer__edge_subscriber_port",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "subscriber_uid",
+              "consumer_port_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_edge"
+          },
+          {
+            "constrained_columns": [
+              "input_port_id",
+              "graph_revision_id",
+              "input_port_uid"
+            ],
+            "name": "fk_stream_consumer__input_port_uid",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "port_uid"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_port"
+          }
+        ],
+        "unique_constraints": [
+          {
+            "column_names": [
+              "output_stream_id"
+            ],
+            "name": "uq_stream_consumer__output_stream_id"
+          },
+          {
+            "column_names": [
+              "delivery_id"
+            ],
+            "name": "uq_stream_consumer__delivery_id"
+          },
+          {
+            "column_names": [
+              "edge_partition_id"
+            ],
+            "name": "uq_stream_consumer__edge_partition_id"
+          },
+          {
+            "column_names": [
+              "id",
+              "consumer_kind"
+            ],
+            "name": "uq_stream_consumer__id_consumer_kind"
+          },
+          {
+            "column_names": [
+              "id",
+              "graph_revision_id",
+              "subtask_id",
+              "task_run_id",
+              "input_stream_id",
+              "output_stream_id"
+            ],
+            "name": "uq_stream_consumer__dag_owner"
+          }
+        ]
+      },
+      "stream_record": {
+        "checks": [
+          {
+            "name": "ck_stream_record__digest_length_valid",
+            "sqltext": "length(value_digest) = 64"
+          },
+          {
+            "name": "ck_stream_record__graph_flow_shape_valid",
+            "sqltext": "(graph_revision_id IS NULL AND flow_run_id IS NULL) OR (graph_revision_id IS NOT NULL AND flow_run_id IS NOT NULL)"
+          },
+          {
+            "name": "ck_stream_record__producer_position_positive",
+            "sqltext": "producer_position > 0"
+          },
+          {
+            "name": "ck_stream_record__record_reference_shape_valid",
+            "sqltext": "(record_kind = 'PAYLOAD' AND payload_record_id IS NULL AND payload_record_kind IS NULL AND payload_value_digest IS NULL AND route_receipt_id IS NULL AND edge_partition_id IS NULL) OR (record_kind = 'REFERENCE' AND graph_revision_id IS NOT NULL AND payload_record_id IS NOT NULL AND payload_record_kind = 'PAYLOAD' AND payload_value_digest IS NOT NULL AND length(payload_value_digest) = 64 AND route_receipt_id IS NOT NULL AND edge_partition_id IS NOT NULL)"
+          },
+          {
+            "name": "ck_stream_record__sequence_positive",
+            "sqltext": "sequence > 0"
+          },
+          {
+            "name": "ck_stream_record__size_positive",
+            "sqltext": "size_bytes > 0"
+          }
+        ],
+        "columns": [
+          "stream_id",
+          "sequence",
+          "producer_position",
+          "value",
+          "value_digest",
+          "size_bytes",
+          "id",
+          "created",
+          "updated",
+          "record_kind",
+          "graph_revision_id",
+          "flow_run_id",
+          "payload_record_id",
+          "payload_record_kind",
+          "payload_value_digest",
+          "route_receipt_id",
+          "edge_partition_id"
+        ],
+        "foreign_keys": [
+          {
+            "constrained_columns": [
+              "stream_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_record__partition_flow",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_partition"
+          },
+          {
+            "constrained_columns": [
+              "stream_id"
+            ],
+            "name": "fk_stream_record__stream_id__stream_partition",
+            "options": {
+              "ondelete": "CASCADE"
+            },
+            "referred_columns": [
+              "id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_partition"
+          },
+          {
+            "constrained_columns": [
+              "graph_revision_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_record__graph_flow",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_revision"
+          },
+          {
+            "constrained_columns": [
+              "edge_partition_id",
+              "stream_id",
+              "graph_revision_id"
+            ],
+            "name": "fk_stream_record__edge_partition",
+            "options": {
+              "ondelete": "RESTRICT"
+            },
+            "referred_columns": [
+              "id",
+              "stream_id",
+              "graph_revision_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_edge_partition"
+          },
+          {
+            "constrained_columns": [
+              "payload_record_id",
+              "graph_revision_id",
+              "payload_record_kind",
+              "payload_value_digest"
+            ],
+            "name": "fk_stream_record__direct_payload",
+            "options": {
+              "ondelete": "RESTRICT"
+            },
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "record_kind",
+              "value_digest"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_record"
+          },
+          {
+            "constrained_columns": [
+              "route_receipt_id",
+              "graph_revision_id",
+              "payload_record_id"
+            ],
+            "name": "fk_stream_record__route_receipt_payload",
+            "options": {
+              "ondelete": "RESTRICT"
+            },
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "payload_record_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_route_receipt"
+          }
+        ],
+        "unique_constraints": [
+          {
+            "column_names": [
+              "id",
+              "graph_revision_id",
+              "record_kind",
+              "value_digest"
+            ],
+            "name": "uq_stream_record__id_graph_kind_value"
+          },
+          {
+            "column_names": [
+              "stream_id",
+              "producer_position"
+            ],
+            "name": "uq_stream_record__stream_id_producer_position"
+          },
+          {
+            "column_names": [
+              "id",
+              "graph_revision_id",
+              "record_kind",
+              "payload_record_id"
+            ],
+            "name": "uq_stream_record__id_graph_kind_payload"
+          },
+          {
+            "column_names": [
+              "stream_id",
+              "sequence"
+            ],
+            "name": "uq_stream_record__stream_id_sequence"
+          }
+        ]
+      },
+      "stream_route_receipt": {
+        "checks": [
+          {
+            "name": "ck_stream_route_receipt__digests_valid",
+            "sqltext": "length(routing_digest) = 64 AND length(semantic_digest) = 64 AND length(outcome_digest) = 64 AND length(value_digest) = 64 AND (managed_state_digest IS NULL OR length(managed_state_digest) = 64)"
+          },
+          {
+            "name": "ck_stream_route_receipt__input_shape_valid",
+            "sqltext": "(producer_role = 'SOURCE' AND kind = 'YIELD' AND input_stream_id IS NULL AND input_reference_record_id IS NULL AND input_reference_record_kind IS NULL AND input_payload_record_id IS NULL AND input_payload_record_kind IS NULL AND input_payload_value_digest IS NULL AND input_sequence IS NULL AND consumer_id IS NULL AND managed_state_digest IS NULL) OR (producer_role = 'OPERATOR' AND input_stream_id IS NOT NULL AND input_reference_record_id IS NOT NULL AND input_reference_record_kind = 'REFERENCE' AND input_payload_record_id IS NOT NULL AND input_payload_record_kind = 'PAYLOAD' AND input_payload_value_digest IS NOT NULL AND length(input_payload_value_digest) = 64 AND input_sequence = producer_position AND consumer_id IS NOT NULL AND managed_state_digest IS NOT NULL)"
+          },
+          {
+            "name": "ck_stream_route_receipt__key_shape_valid",
+            "sqltext": "(key_present = false AND output_key_digest IS NULL) OR (key_present = true AND output_key_digest IS NOT NULL AND length(output_key_digest) = 64)"
+          },
+          {
+            "name": "ck_stream_route_receipt__outcome_size_valid",
+            "sqltext": "outcome_size BETWEEN 1 AND 65536"
+          },
+          {
+            "name": "ck_stream_route_receipt__position_valid",
+            "sqltext": "producer_position > 0 AND (producer_sequence IS NULL OR producer_sequence > 0)"
+          },
+          {
+            "name": "ck_stream_route_receipt__terminal_shape_valid",
+            "sqltext": "(kind = 'YIELD' AND producer_sequence IS NOT NULL AND output_ordinal = 0 AND payload_record_id IS NOT NULL AND payload_record_kind = 'PAYLOAD') OR (kind = 'RETURN' AND producer_sequence IS NULL AND output_ordinal IS NULL AND payload_record_id IS NULL AND payload_record_kind IS NULL AND key_present = false)"
+          }
+        ],
+        "columns": [
+          "graph_revision_id",
+          "flow_run_id",
+          "producer_subtask_id",
+          "producer_task_run_id",
+          "producer_stream_id",
+          "producer_position",
+          "producer_sequence",
+          "producer_role",
+          "kind",
+          "routing_digest",
+          "semantic_digest",
+          "outcome_digest",
+          "value_digest",
+          "managed_state_digest",
+          "key_present",
+          "output_key_digest",
+          "output_ordinal",
+          "payload_record_id",
+          "payload_record_kind",
+          "input_stream_id",
+          "input_reference_record_id",
+          "input_reference_record_kind",
+          "input_payload_record_id",
+          "input_payload_record_kind",
+          "input_payload_value_digest",
+          "input_sequence",
+          "consumer_id",
+          "outcome",
+          "outcome_size",
+          "id",
+          "created",
+          "updated"
+        ],
+        "foreign_keys": [
+          {
+            "constrained_columns": [
+              "consumer_id",
+              "graph_revision_id",
+              "producer_subtask_id",
+              "producer_task_run_id",
+              "input_stream_id",
+              "producer_stream_id"
+            ],
+            "name": "fk_stream_route_receipt__stable_consumer",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "subtask_id",
+              "task_run_id",
+              "input_stream_id",
+              "output_stream_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_consumer"
+          },
+          {
+            "constrained_columns": [
+              "graph_revision_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_route_receipt__graph_flow",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_graph_revision"
+          },
+          {
+            "constrained_columns": [
+              "producer_subtask_id",
+              "graph_revision_id",
+              "producer_task_run_id",
+              "producer_stream_id"
+            ],
+            "name": "fk_stream_route_receipt__producer",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "task_run_id",
+              "output_stream_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_physical_subtask"
+          },
+          {
+            "constrained_columns": [
+              "producer_stream_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_route_receipt__producer_flow",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_partition"
+          },
+          {
+            "constrained_columns": [
+              "input_stream_id",
+              "flow_run_id"
+            ],
+            "name": "fk_stream_route_receipt__input_flow",
+            "options": {},
+            "referred_columns": [
+              "id",
+              "flow_run_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_partition"
+          },
+          {
+            "constrained_columns": [
+              "payload_record_id",
+              "graph_revision_id",
+              "payload_record_kind",
+              "value_digest"
+            ],
+            "name": "fk_stream_route_receipt__output_payload",
+            "options": {
+              "ondelete": "RESTRICT"
+            },
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "record_kind",
+              "value_digest"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_record"
+          },
+          {
+            "constrained_columns": [
+              "input_reference_record_id",
+              "graph_revision_id",
+              "input_reference_record_kind",
+              "input_payload_record_id"
+            ],
+            "name": "fk_stream_route_receipt__input_reference",
+            "options": {
+              "deferrable": true,
+              "initially": "DEFERRED"
+            },
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "record_kind",
+              "payload_record_id"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_record"
+          },
+          {
+            "constrained_columns": [
+              "input_payload_record_id",
+              "graph_revision_id",
+              "input_payload_record_kind",
+              "input_payload_value_digest"
+            ],
+            "name": "fk_stream_route_receipt__input_payload",
+            "options": {
+              "ondelete": "RESTRICT"
+            },
+            "referred_columns": [
+              "id",
+              "graph_revision_id",
+              "record_kind",
+              "value_digest"
+            ],
+            "referred_schema": null,
+            "referred_table": "stream_record"
+          }
+        ],
+        "unique_constraints": [
+          {
+            "column_names": [
+              "producer_stream_id",
+              "producer_position"
+            ],
+            "name": "uq_stream_route_receipt__producer_stream_id_producer_position"
+          },
+          {
+            "column_names": [
+              "payload_record_id"
+            ],
+            "name": "uq_stream_route_receipt__payload_record_id"
+          },
+          {
+            "column_names": [
+              "id",
+              "consumer_id",
+              "input_sequence",
+              "kind",
+              "semantic_digest"
+            ],
+            "name": "uq_stream_route_receipt__completion_witness"
+          },
+          {
+            "column_names": [
+              "id",
+              "graph_revision_id",
+              "payload_record_id"
+            ],
+            "name": "uq_stream_route_receipt__reference_payload"
+          }
+        ]
+      }
+    }
+  }
+}

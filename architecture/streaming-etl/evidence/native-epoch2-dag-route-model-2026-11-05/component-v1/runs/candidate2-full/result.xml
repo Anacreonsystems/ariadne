@@ -1,0 +1,683 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="9" skipped="0" tests="34" time="43.392" timestamp="2026-11-05T07:33:24.674715+00:00" hostname="f8abb611283c"><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_region_fixture_uses_normal_lifecycle_and_no_data" time="6.118" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_source_payload_fanout_and_lost_ack_exact_replay" time="0.940" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_retained_source_receipt_replays_after_eof_but_new_data_refuses" time="0.998" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_current_retried_source_owner_gets_the_original_route_receipt" time="0.893" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_current_flow_authority_is_required_even_for_known_receipt[generation]" time="0.770" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_current_flow_authority_is_required_even_for_known_receipt[holder_id]" time="0.843" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_current_flow_authority_is_required_even_for_known_receipt[capability]" time="0.785" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_changed_source_semantics_conflict_without_mutation[value]" time="0.848" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_changed_source_semantics_conflict_without_mutation[key]" time="0.842" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_changed_source_semantics_conflict_without_mutation[routing]" time="1.002" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_failure_after_real_payload_insert_rolls_back_entire_turn[False]" time="0.866"><failure message="AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f5fbff19b80&gt;
+flow_run = FlowRun(id=b54bd701-efc4-4435-88d8-5c77e7d64698), source = False
+
+    @pytest.mark.parametrize("source", [False, True])
+    async def test_postgres_failure_after_real_payload_insert_rolls_back_entire_turn(
+        db: PrefectDBInterface, flow_run: orm_models.FlowRun, source: bool
+    ):
+        region = await routing_region(db, flow_run, shape="fanout" if source else "chain")
+        binding = await claim_source(db, region)
+        source_intent = source_request(region, binding, 1, {"value": 1})
+        request = None
+        if not source:
+            await append(db, region, source_intent)
+            consumer = await open_input(db, region)
+            delivery = await read_input(db, region, consumer)
+            assert delivery is not None
+            request = consumer_request(
+                region, consumer, delivery, value={"signed": True}, state={"count": 1}
+            )
+        before = await contents(db, region)
+        engine = await db.engine()
+        insert_seen: list[str] = []
+    
+        def fail_after_insert(
+            connection: Any,
+            cursor: Any,
+            statement: str,
+            parameters: Any,
+            context: Any,
+            executemany: bool,
+        ) -&gt; None:
+            if (
+                statement.lower().replace('"', "").startswith("insert into stream_record")
+                and not insert_seen
+            ):
+                insert_seen.append("stream_record inserted")
+                raise InjectedRouteFailure("Database accepted INSERT before injected loss")
+    
+        sa.event.listen(engine.sync_engine, "after_cursor_execute", fail_after_insert)
+        try:
+            with pytest.raises(InjectedRouteFailure):
+                if source:
+                    await append(db, region, source_intent)
+                else:
+                    assert request is not None
+&gt;                   await complete(db, region, request)
+
+tests/server/models/test_stream_routes.py:535: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/server/models/test_stream_routes.py:264: in complete
+    return await store.complete_consumer(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:834: in complete_consumer
+    return await _commit_route(self, request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:951: in _commit_route
+    next(
+src/prefect/server/models/stream_routes.py:952: in &lt;genexpr&gt;
+    row.manifest.limits
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = StreamSubmissionManifest(flow_run_id=UUID('b54bd701-efc4-4435-88d8-5c77e7d64698'), submission_key='dag/B/0', manifest_...TOR', protocol='yield-v2', state='ACTIVE', created_at=DateTime(2026, 11, 5, 7, 33, 39, 201635, tzinfo=Timezone('UTC')))
+item = 'limits'
+
+    def __getattr__(self, item: str) -&gt; Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+&gt;                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'
+
+.venv/lib/python3.12/site-packages/pydantic/main.py:1042: AttributeError</failure></testcase><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_failure_after_real_payload_insert_rolls_back_entire_turn[True]" time="0.837" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_one_full_branch_rolls_back_payload_every_reference_and_receipt" time="1.008" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_operator_target_capacity_rolls_back_cursor_state_and_entire_fanout" time="1.050"><failure message="AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f5fbff19b80&gt;
+flow_run = FlowRun(id=60445dcb-f982-4132-b85b-17d7cdbee9e0)
+
+    async def test_postgres_operator_target_capacity_rolls_back_cursor_state_and_entire_fanout(
+        db: PrefectDBInterface, flow_run: orm_models.FlowRun
+    ):
+        region = await routing_region(db, flow_run, shape="chain")
+        source = await claim_source(db, region)
+        for position in (1, 2):
+            await append(
+                db, region, source_request(region, source, position, {"value": position})
+            )
+        target = next(
+            edge for edge in region.plan.edges if edge.edge_uid == "B-C"
+        ).partitions[0]
+        async with db.session_context(begin_transaction=True) as session:
+            row = await session.get(db.StreamPartition, target.stream_id)
+            assert row is not None
+            row.limits = {**row.limits, "max_records": 1}
+        binding = await open_input(db, region)
+        first = await read_input(db, region, binding)
+        assert first is not None
+        first_request = consumer_request(
+            region, binding, first, value={"signed": 1}, state={"count": 1}
+        )
+&gt;       first_outcome = await complete(
+            db,
+            region,
+            first_request,
+        )
+
+tests/server/models/test_stream_routes.py:587: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/server/models/test_stream_routes.py:264: in complete
+    return await store.complete_consumer(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:834: in complete_consumer
+    return await _commit_route(self, request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:951: in _commit_route
+    next(
+src/prefect/server/models/stream_routes.py:952: in &lt;genexpr&gt;
+    row.manifest.limits
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = StreamSubmissionManifest(flow_run_id=UUID('60445dcb-f982-4132-b85b-17d7cdbee9e0'), submission_key='dag/B/0', manifest_...TOR', protocol='yield-v2', state='ACTIVE', created_at=DateTime(2026, 11, 5, 7, 33, 42, 114255, tzinfo=Timezone('UTC')))
+item = 'limits'
+
+    def __getattr__(self, item: str) -&gt; Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+&gt;                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'
+
+.venv/lib/python3.12/site-packages/pydantic/main.py:1042: AttributeError</failure></testcase><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_operator_replay_and_changed_semantics[value]" time="1.120"><failure message="AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f5fbff19b80&gt;
+flow_run = FlowRun(id=e9d3383a-62c2-46fa-96cb-913a796fa6a8), changed = 'value'
+
+    @pytest.mark.parametrize("changed", ["value", "state", "kind"])
+    async def test_postgres_operator_replay_and_changed_semantics(
+        db: PrefectDBInterface, flow_run: orm_models.FlowRun, changed: str
+    ):
+        region = await routing_region(db, flow_run)
+        source = await claim_source(db, region)
+        await append(db, region, source_request(region, source, 1, None))
+        binding = await open_input(db, region)
+        delivery = await read_input(db, region, binding)
+        assert delivery is not None
+        request = consumer_request(
+            region, binding, delivery, value=None, state={"count": 1}
+        )
+&gt;       first = await complete(db, region, request)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/server/models/test_stream_routes.py:623: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/server/models/test_stream_routes.py:264: in complete
+    return await store.complete_consumer(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:834: in complete_consumer
+    return await _commit_route(self, request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:951: in _commit_route
+    next(
+src/prefect/server/models/stream_routes.py:952: in &lt;genexpr&gt;
+    row.manifest.limits
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = StreamSubmissionManifest(flow_run_id=UUID('e9d3383a-62c2-46fa-96cb-913a796fa6a8'), submission_key='dag/B/0', manifest_...TOR', protocol='yield-v2', state='ACTIVE', created_at=DateTime(2026, 11, 5, 7, 33, 43, 233369, tzinfo=Timezone('UTC')))
+item = 'limits'
+
+    def __getattr__(self, item: str) -&gt; Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+&gt;                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'
+
+.venv/lib/python3.12/site-packages/pydantic/main.py:1042: AttributeError</failure></testcase><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_operator_replay_and_changed_semantics[state]" time="1.355"><failure message="AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f5fbff19b80&gt;
+flow_run = FlowRun(id=061f13ad-ef76-43cd-96c0-e8b14160116a), changed = 'state'
+
+    @pytest.mark.parametrize("changed", ["value", "state", "kind"])
+    async def test_postgres_operator_replay_and_changed_semantics(
+        db: PrefectDBInterface, flow_run: orm_models.FlowRun, changed: str
+    ):
+        region = await routing_region(db, flow_run)
+        source = await claim_source(db, region)
+        await append(db, region, source_request(region, source, 1, None))
+        binding = await open_input(db, region)
+        delivery = await read_input(db, region, binding)
+        assert delivery is not None
+        request = consumer_request(
+            region, binding, delivery, value=None, state={"count": 1}
+        )
+&gt;       first = await complete(db, region, request)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/server/models/test_stream_routes.py:623: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/server/models/test_stream_routes.py:264: in complete
+    return await store.complete_consumer(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:834: in complete_consumer
+    return await _commit_route(self, request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:951: in _commit_route
+    next(
+src/prefect/server/models/stream_routes.py:952: in &lt;genexpr&gt;
+    row.manifest.limits
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = StreamSubmissionManifest(flow_run_id=UUID('061f13ad-ef76-43cd-96c0-e8b14160116a'), submission_key='dag/B/0', manifest_...TOR', protocol='yield-v2', state='ACTIVE', created_at=DateTime(2026, 11, 5, 7, 33, 44, 673982, tzinfo=Timezone('UTC')))
+item = 'limits'
+
+    def __getattr__(self, item: str) -&gt; Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+&gt;                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'
+
+.venv/lib/python3.12/site-packages/pydantic/main.py:1042: AttributeError</failure></testcase><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_operator_replay_and_changed_semantics[kind]" time="1.177"><failure message="AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f5fbff19b80&gt;
+flow_run = FlowRun(id=95b09cf8-767a-4b06-a932-a2be8fb55c2c), changed = 'kind'
+
+    @pytest.mark.parametrize("changed", ["value", "state", "kind"])
+    async def test_postgres_operator_replay_and_changed_semantics(
+        db: PrefectDBInterface, flow_run: orm_models.FlowRun, changed: str
+    ):
+        region = await routing_region(db, flow_run)
+        source = await claim_source(db, region)
+        await append(db, region, source_request(region, source, 1, None))
+        binding = await open_input(db, region)
+        delivery = await read_input(db, region, binding)
+        assert delivery is not None
+        request = consumer_request(
+            region, binding, delivery, value=None, state={"count": 1}
+        )
+&gt;       first = await complete(db, region, request)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/server/models/test_stream_routes.py:623: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/server/models/test_stream_routes.py:264: in complete
+    return await store.complete_consumer(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:834: in complete_consumer
+    return await _commit_route(self, request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:951: in _commit_route
+    next(
+src/prefect/server/models/stream_routes.py:952: in &lt;genexpr&gt;
+    row.manifest.limits
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = StreamSubmissionManifest(flow_run_id=UUID('95b09cf8-767a-4b06-a932-a2be8fb55c2c'), submission_key='dag/B/0', manifest_...TOR', protocol='yield-v2', state='ACTIVE', created_at=DateTime(2026, 11, 5, 7, 33, 45, 991035, tzinfo=Timezone('UTC')))
+item = 'limits'
+
+    def __getattr__(self, item: str) -&gt; Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+&gt;                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'
+
+.venv/lib/python3.12/site-packages/pydantic/main.py:1042: AttributeError</failure></testcase><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_current_owner_is_checked_before_accepted_receipt_lookup[False]" time="1.278"><failure message="AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f5fbff19b80&gt;
+flow_run = FlowRun(id=b35e111b-922d-4ec1-a10f-97a5d2aeeab6), source = False
+
+    @pytest.mark.parametrize("source", [False, True])
+    async def test_postgres_current_owner_is_checked_before_accepted_receipt_lookup(
+        db: PrefectDBInterface, flow_run: orm_models.FlowRun, source: bool
+    ):
+        region = await routing_region(db, flow_run)
+        source_binding = await claim_source(db, region)
+        source_intent = source_request(region, source_binding, 1, None)
+        await append(db, region, source_intent)
+        if source:
+            changed = source_intent.model_copy(
+                update={"binding": source_binding.model_copy(update={"owner_id": uuid4()})}
+            )
+        else:
+            binding = await open_input(db, region)
+            delivery = await read_input(db, region, binding)
+            assert delivery is not None
+            request = consumer_request(region, binding, delivery, kind="RETURN")
+&gt;           await complete(db, region, request)
+
+tests/server/models/test_stream_routes.py:657: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/server/models/test_stream_routes.py:264: in complete
+    return await store.complete_consumer(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:834: in complete_consumer
+    return await _commit_route(self, request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:951: in _commit_route
+    next(
+src/prefect/server/models/stream_routes.py:952: in &lt;genexpr&gt;
+    row.manifest.limits
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = StreamSubmissionManifest(flow_run_id=UUID('b35e111b-922d-4ec1-a10f-97a5d2aeeab6'), submission_key='dag/B/0', manifest_...TOR', protocol='yield-v2', state='ACTIVE', created_at=DateTime(2026, 11, 5, 7, 33, 47, 248430, tzinfo=Timezone('UTC')))
+item = 'limits'
+
+    def __getattr__(self, item: str) -&gt; Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+&gt;                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'
+
+.venv/lib/python3.12/site-packages/pydantic/main.py:1042: AttributeError</failure></testcase><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_current_owner_is_checked_before_accepted_receipt_lookup[True]" time="1.071" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_return_and_yield_null_do_not_acknowledge_sibling_cursors" time="1.176"><failure message="AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f5fbff19b80&gt;
+flow_run = FlowRun(id=672789f0-b717-46b0-9071-27b04d9a5a36)
+
+    async def test_postgres_return_and_yield_null_do_not_acknowledge_sibling_cursors(
+        db: PrefectDBInterface, flow_run: orm_models.FlowRun
+    ):
+        region = await routing_region(db, flow_run)
+        source = await claim_source(db, region)
+        for position in (1, 2):
+            await append(
+                db, region, source_request(region, source, position, {"position": position})
+            )
+        branch_b = await open_input(db, region)
+        branch_c = await open_input(db, region, "C")
+        first = await read_input(db, region, branch_b)
+        assert first is not None
+&gt;       returned = await complete(
+            db,
+            region,
+            consumer_request(region, branch_b, first, kind="RETURN", state={"count": 1}),
+        )
+
+tests/server/models/test_stream_routes.py:688: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/server/models/test_stream_routes.py:264: in complete
+    return await store.complete_consumer(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:834: in complete_consumer
+    return await _commit_route(self, request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:951: in _commit_route
+    next(
+src/prefect/server/models/stream_routes.py:952: in &lt;genexpr&gt;
+    row.manifest.limits
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = StreamSubmissionManifest(flow_run_id=UUID('672789f0-b717-46b0-9071-27b04d9a5a36'), submission_key='dag/B/0', manifest_...TOR', protocol='yield-v2', state='ACTIVE', created_at=DateTime(2026, 11, 5, 7, 33, 49, 552141, tzinfo=Timezone('UTC')))
+item = 'limits'
+
+    def __getattr__(self, item: str) -&gt; Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+&gt;                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'
+
+.venv/lib/python3.12/site-packages/pydantic/main.py:1042: AttributeError</failure></testcase><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_edge_eof_waits_for_its_exact_contributors_and_empty_targets[forward]" time="0.988" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_edge_eof_waits_for_its_exact_contributors_and_empty_targets[rebalance]" time="0.993" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_edge_eof_waits_for_its_exact_contributors_and_empty_targets[broadcast]" time="1.020" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_edge_eof_waits_for_its_exact_contributors_and_empty_targets[keyed]" time="1.613" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_concurrent_producers_create_contiguous_independent_reference_logs" time="1.510" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_reference_resolution_rejects_corrupt_payload_and_sql_chains" time="1.387" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_business_identity_field_names_remain_opaque_payload_and_state" time="1.126"><failure message="AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f5fbff19b80&gt;
+flow_run = FlowRun(id=ae359951-6051-42ff-9bef-d8b7d15e1394)
+
+    async def test_postgres_business_identity_field_names_remain_opaque_payload_and_state(
+        db: PrefectDBInterface, flow_run: orm_models.FlowRun
+    ):
+        region = await routing_region(db, flow_run)
+        source = await claim_source(db, region)
+        business = {
+            "worker_id": "business-value",
+            "attempt": 7,
+            "owner_id": "customer-42",
+            "nested": {"grant_id": "business-grant"},
+        }
+        await append(db, region, source_request(region, source, 1, business))
+        binding = await open_input(db, region)
+        delivery = await read_input(db, region, binding)
+        assert delivery is not None and delivery.value == business
+&gt;       outcome = await complete(
+            db,
+            region,
+            consumer_request(region, binding, delivery, value=business, state=business),
+        )
+
+tests/server/models/test_stream_routes.py:907: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/server/models/test_stream_routes.py:264: in complete
+    return await store.complete_consumer(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:834: in complete_consumer
+    return await _commit_route(self, request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:951: in _commit_route
+    next(
+src/prefect/server/models/stream_routes.py:952: in &lt;genexpr&gt;
+    row.manifest.limits
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = StreamSubmissionManifest(flow_run_id=UUID('ae359951-6051-42ff-9bef-d8b7d15e1394'), submission_key='dag/B/0', manifest_...TOR', protocol='yield-v2', state='ACTIVE', created_at=DateTime(2026, 11, 5, 7, 33, 58, 477292, tzinfo=Timezone('UTC')))
+item = 'limits'
+
+    def __getattr__(self, item: str) -&gt; Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+&gt;                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'
+
+.venv/lib/python3.12/site-packages/pydantic/main.py:1042: AttributeError</failure></testcase><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_all_exchange_targets_match_frozen_vectors[forward]" time="1.320" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_all_exchange_targets_match_frozen_vectors[rebalance]" time="1.176" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_all_exchange_targets_match_frozen_vectors[broadcast]" time="1.188" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_all_exchange_targets_match_frozen_vectors[keyed]" time="1.141" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_failed_contributor_does_not_manufacture_completed_eof" time="1.125"><failure message="AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f5fbff19b80&gt;
+flow_run = FlowRun(id=753cc759-6e10-4d90-9965-c9d40d20c3d1)
+
+    async def test_postgres_failed_contributor_does_not_manufacture_completed_eof(
+        db: PrefectDBInterface, flow_run: orm_models.FlowRun
+    ):
+        region = await routing_region(
+            db, flow_run, shape="linear", source_p=2, target_p=3, exchange="broadcast"
+        )
+        first = await claim_source(db, region, 0)
+        await claim_source(db, region, 1)
+        await append(db, region, source_request(region, first, 1, {"kept": True}))
+        async with db.session_context(begin_transaction=True) as session:
+            result = await task_runs.set_task_run_state(
+                session,
+                region.subtask("A", 1).manifest.task_run_id,
+                states.Failed(
+                    message="Source failed",
+                    state_details=states.StateDetails(retriable=False),
+                ),
+                task_policy=CoreTaskPolicy,
+            )
+            assert result.state is not None and result.state.is_failed()
+        async with route_store(db, region, "A", 1) as (_, store, _):
+            await store.finish_producer(error="Source failed")
+        async with db.session_context() as session:
+            targets = (
+                await session.scalars(
+                    sa.select(db.StreamPartition).where(
+                        db.StreamPartition.id.in_(
+                            [p.stream_id for p in region.plan.edges[0].partitions]
+                        )
+                    )
+                )
+            ).all()
+            assert all(row.state == "OPEN" for row in targets)
+        async with route_store(db, region, "A") as (_, store, _):
+            await store.finish_producer()
+        async with db.session_context() as session:
+            targets = (
+                await session.scalars(
+                    sa.select(db.StreamPartition).where(
+                        db.StreamPartition.id.in_(
+                            [p.stream_id for p in region.plan.edges[0].partitions]
+                        )
+                    )
+                )
+            ).all()
+            assert all(row.state == "FAILED" and row.tail_sequence == 1 for row in targets)
+        binding = await open_input(db, region)
+        delivery = await read_input(db, region, binding)
+        assert delivery is not None and delivery.value == {"kept": True}
+&gt;       await complete(
+            db, region, consumer_request(region, binding, delivery, kind="RETURN")
+        )
+
+tests/server/models/test_stream_routes.py:1010: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/server/models/test_stream_routes.py:264: in complete
+    return await store.complete_consumer(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:834: in complete_consumer
+    return await _commit_route(self, request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/models/stream_routes.py:951: in _commit_route
+    next(
+src/prefect/server/models/stream_routes.py:952: in &lt;genexpr&gt;
+    row.manifest.limits
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = StreamSubmissionManifest(flow_run_id=UUID('753cc759-6e10-4d90-9965-c9d40d20c3d1'), submission_key='dag/B/0', manifest_...ATOR', protocol='yield-v2', state='ACTIVE', created_at=DateTime(2026, 11, 5, 7, 34, 4, 342005, tzinfo=Timezone('UTC')))
+item = 'limits'
+
+    def __getattr__(self, item: str) -&gt; Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+    
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+    
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+&gt;                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'StreamSubmissionManifest' object has no attribute 'limits'
+
+.venv/lib/python3.12/site-packages/pydantic/main.py:1042: AttributeError</failure></testcase><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_discovery_authorization_cannot_cross_session_or_transaction[False]" time="0.718" /><testcase classname="tests.server.models.test_stream_routes" name="test_postgres_discovery_authorization_cannot_cross_session_or_transaction[True]" time="2.197" /></testsuite></testsuites>

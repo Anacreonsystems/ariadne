@@ -1,0 +1,376 @@
+diff --git a/tests/server/api/test_stream_route_prefix_fences.py b/tests/server/api/test_stream_route_prefix_fences.py
+new file mode 100644
+index 0000000..99a54fc
+--- /dev/null
++++ b/tests/server/api/test_stream_route_prefix_fences.py
+@@ -0,0 +1,370 @@
++"""Legacy HTTP prefix reads cannot expose DAG payload or reference channels."""
++
++import asyncio
++import secrets
++from collections.abc import AsyncGenerator
++from uuid import UUID, uuid4
++
++import httpx
++import pytest
++import sqlalchemy as sa
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from prefect.server.api.server import create_api_app
++from prefect.server.database import PrefectDBInterface, orm_models
++from prefect.server.schemas import stream_routes as routed
++from prefect.server.schemas import stream_subtasks as physical
++from prefect.settings import PREFECT_SERVER_API_AUTH_STRING, temporary_settings
++from tests.server.api.test_stream_dag_execution_fences import deployed_fixed_graph
++from tests.server.api.test_stream_dags import assert_error
++from tests.server.api.test_stream_dags import (
++    supported_dag_backend as supported_dag_backend,
++)
++from tests.server.api.test_stream_routes import route_snapshot
++from tests.server.models.test_stream_executions import _claim
++from tests.server.models.test_stream_routes import (
++    RoutingRegion,
++    append,
++    claim_source,
++    routing_region,
++    source_request,
++)
++
++pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
++PRIVATE_VALUE = "must-stay-inside-the-dag-reference-resolver"
++
++
++@pytest.fixture
++async def prefix_api() -> AsyncGenerator[httpx.AsyncClient, None]:
++    with temporary_settings({PREFECT_SERVER_API_AUTH_STRING: "native-dag:test"}):
++        async with httpx.AsyncClient(
++            transport=httpx.ASGITransport(app=create_api_app(ignore_cache=True)),
++            base_url="http://native-api",
++            auth=("native-dag", "test"),
++        ) as client:
++            yield client
++
++
++async def populated_region(
++    db: PrefectDBInterface, flow_run: orm_models.FlowRun
++) -> tuple[RoutingRegion, routed.StreamDAGRouteOutcome]:
++    """Real internal routed DATA; no public DAG execution is claimed."""
++    region = await routing_region(db, flow_run)
++    binding = await claim_source(db, region)
++    outcome = await append(
++        db, region, source_request(region, binding, 1, {"private": PRIVATE_VALUE})
++    )
++    assert len(outcome.references) == 3
++    return region, outcome
++
++
++def flow_headers(region: RoutingRegion) -> dict[str, str]:
++    return {
++        "X-Prefect-Stream-Execution-Generation": str(region.execution.generation),
++        "X-Prefect-Stream-Execution-Holder": str(region.execution.holder_id),
++        "X-Prefect-Stream-Execution-Capability": region.execution.capability,
++    }
++
++
++async def test_postgres_dag_output_and_every_edge_prefix_authenticate_then_refuse(
++    db: PrefectDBInterface,
++    flow_run: orm_models.FlowRun,
++    prefix_api: httpx.AsyncClient,
++):
++    region, outcome = await populated_region(db, flow_run)
++    headers = flow_headers(region)
++    foreign = await prefix_api.post(
++        "/flow_runs/",
++        json={
++            "flow_id": str(flow_run.flow_id),
++            "flow_version": "flow-v1",
++            "empirical_policy": {"retries": 2},
++            "state": {"type": "PENDING", "name": "Pending"},
++        },
++    )
++    assert foreign.status_code == 201, foreign.text
++    foreign_claim = _claim(UUID(foreign.json()["id"]))
++    claimed = await prefix_api.post(
++        "/streams/v1/executions/claim", json=foreign_claim.model_dump(mode="json")
++    )
++    assert claimed.status_code == 200, claimed.text
++    foreign_headers = {
++        "X-Prefect-Stream-Execution-Generation": "1",
++        "X-Prefect-Stream-Execution-Holder": str(foreign_claim.holder_id),
++        "X-Prefect-Stream-Execution-Capability": foreign_claim.holder_capability,
++    }
++    targets = [
++        outcome.producer_stream_id,
++        *[row.stream_id for row in outcome.references],
++    ]
++    baseline = await route_snapshot(db)
++    for stream_id in targets:
++        path = f"/streams/v1/{stream_id}/prefix"
++        anonymous = await prefix_api.get(path, params={"limit": 10}, auth=None)
++        assert anonymous.status_code == 401, anonymous.text
++        for current, code in (
++            ({}, "EXECUTION_BINDING_REQUIRED"),
++            (
++                headers | {"X-Prefect-Stream-Execution-Capability": "00" * 32},
++                "STALE_EXECUTION",
++            ),
++            (
++                headers | {"X-Prefect-Stream-Execution-Generation": "2"},
++                "STALE_EXECUTION",
++            ),
++            (foreign_headers, "STALE_EXECUTION"),
++            (headers, "EXECUTION_PROFILE_NOT_READY"),
++        ):
++            response = await prefix_api.get(path, params={"limit": 10}, headers=current)
++            assert_error(response, 409, code)
++            assert PRIVATE_VALUE not in response.text
++            assert "payload_record_id" not in response.text
++            assert await route_snapshot(db) == baseline
++        fake = await prefix_api.get(
++            path,
++            params={"limit": 10},
++            auth=None,
++            headers={
++                "Authorization": "PrefectSubtask " + "00" * 32,
++                "X-Prefect-Subtask-Grant": str(uuid4()),
++            },
++        )
++        assert_error(fake, 401, "SUBTASK_AUTH_INVALID")
++        assert await route_snapshot(db) == baseline
++
++
++@pytest.mark.parametrize("target", ["payload", "reference"])
++async def test_postgres_dag_prefix_refuses_before_waiting_for_partition_row_lock(
++    db: PrefectDBInterface,
++    flow_run: orm_models.FlowRun,
++    prefix_api: httpx.AsyncClient,
++    target: str,
++):
++    region, outcome = await populated_region(db, flow_run)
++    stream_id = (
++        outcome.producer_stream_id
++        if target == "payload"
++        else outcome.references[0].stream_id
++    )
++    baseline = await route_snapshot(db)
++    async with db.session_context(begin_transaction=True) as blocker:
++        await blocker.execute(
++            sa.select(db.StreamPartition.id)
++            .where(db.StreamPartition.id == stream_id)
++            .with_for_update()
++        )
++        # Only the target partition is locked. Correct Flow/auth/topology reads
++        # can finish, while the old prefix _streams FOR UPDATE would block.
++        response = await asyncio.wait_for(
++            prefix_api.get(
++                f"/streams/v1/{stream_id}/prefix",
++                params={"limit": 10},
++                headers=flow_headers(region),
++            ),
++            timeout=5,
++        )
++        assert_error(response, 409, "EXECUTION_PROFILE_NOT_READY")
++        assert PRIVATE_VALUE not in response.text
++    assert await route_snapshot(db) == baseline
++
++
++async def active_fixed_child(
++    db: PrefectDBInterface,
++    session: AsyncSession,
++    api: httpx.AsyncClient,
++    deployment: orm_models.Deployment,
++) -> tuple[dict[str, str], UUID]:
++    plan, workers, headers = await deployed_fixed_graph(db, session, api, deployment)
++    admitted = await api.post(
++        f"/streams/v2/graphs/{plan.id}/admit",
++        json={"operation_id": str(uuid4()), "graph_digest": plan.graph_digest},
++        headers=headers,
++    )
++    assert admitted.status_code == 200, admitted.text
++    current = physical.StreamGraphPlan.model_validate(admitted.json())
++    principals = dict(workers)
++    grants: dict[UUID, UUID] = {}
++    subject: dict[str, str] = {}
++    own_stream_id = current.subtasks[0].manifest.stream_id
++    for index, subtask in enumerate(current.subtasks):
++        worker_id = subtask.assigned_worker_id
++        assert worker_id is not None
++        principal = principals[worker_id]
++        capability = secrets.token_hex(32)
++        claim = physical.StreamSubtaskClaimRequest(
++            operation_id=uuid4(),
++            graph_digest=plan.graph_digest,
++            holder_id=uuid4(),
++            capability=capability,
++            event_public_key="aa" * 32,
++            launcher_binding_kind="ASSIGNED_WORKER",
++            worker_id=worker_id,
++            **principal.model_dump(),
++        )
++        claimed = await api.post(
++            f"/streams/v2/workers/{worker_id}/subtasks/{subtask.id}/claim",
++            json=claim.model_dump(mode="json"),
++        )
++        assert claimed.status_code == 200, claimed.text
++        grant = physical.StreamSubtaskGrant.model_validate(claimed.json())
++        registration = physical.StreamWorkerRegistrationRequest(
++            principal=principal,
++            registration=physical.StreamSubtaskRegistrationRequest(
++                operation_id=uuid4(),
++                grant_id=grant.id,
++                child_process_id=10000 + index,
++                process_start_ticks=20000 + index,
++            ),
++        )
++        registered = await api.post(
++            f"/streams/v2/workers/{worker_id}/subtasks/{subtask.id}/register",
++            json=registration.model_dump(mode="json"),
++        )
++        assert registered.status_code == 200, registered.text
++        grants[subtask.id] = grant.id
++        subject = {
++            "Authorization": f"PrefectSubtask {capability}",
++            "X-Prefect-Subtask-Grant": str(grant.id),
++        }
++        own_stream_id = subtask.manifest.stream_id
++    activated = await api.post(
++        f"/streams/v2/graphs/{plan.id}/activate",
++        json=physical.StreamGraphActivateRequest(
++            operation_id=uuid4(),
++            graph_digest=plan.graph_digest,
++            grant_ids=[grants[row.id] for row in current.subtasks],
++        ).model_dump(mode="json"),
++        headers=headers,
++    )
++    assert activated.status_code == 200, activated.text
++    return subject, own_stream_id
++
++
++async def test_postgres_current_fixed_subject_cannot_read_sibling_dag_prefix(
++    db: PrefectDBInterface,
++    session: AsyncSession,
++    flow_run: orm_models.FlowRun,
++    deployment: orm_models.Deployment,
++    prefix_api: httpx.AsyncClient,
++):
++    _, outcome = await populated_region(db, flow_run)
++    subject, own_stream_id = await active_fixed_child(
++        db, session, prefix_api, deployment
++    )
++    own = await prefix_api.get(
++        f"/streams/v1/{own_stream_id}/prefix",
++        params={"limit": 10},
++        headers=subject,
++        auth=None,
++    )
++    assert own.status_code == 200 and own.json() == [], own.text
++    baseline = await route_snapshot(db)
++    for stream_id in (outcome.producer_stream_id, outcome.references[0].stream_id):
++        refused = await prefix_api.get(
++            f"/streams/v1/{stream_id}/prefix",
++            params={"limit": 10},
++            headers=subject,
++            auth=None,
++        )
++        assert_error(refused, 403, "SUBTASK_SCOPE_DENIED")
++        assert PRIVATE_VALUE not in refused.text
++        assert await route_snapshot(db) == baseline
++
++
++async def test_postgres_real_legacy_prefix_bytes_bounds_and_locking_are_unchanged(
++    db: PrefectDBInterface,
++    flow_run: orm_models.FlowRun,
++    task_run: orm_models.TaskRun,
++    prefix_api: httpx.AsyncClient,
++):
++    running = {"state": {"type": "RUNNING", "name": "Running"}}
++    for path in (
++        f"/flow_runs/{flow_run.id}/set_state",
++        f"/task_runs/{task_run.id}/set_state",
++    ):
++        started = await prefix_api.post(path, json=running)
++        assert started.status_code == 201, started.text
++    stream_id = uuid4()
++    created = await prefix_api.post(
++        "/streams/v1/create",
++        json={"flow_run_id": str(flow_run.id), "stream_id": str(stream_id)},
++    )
++    assert created.status_code == 200, created.text
++    claimed = await prefix_api.post(
++        "/streams/v1/sources/claim",
++        json={
++            "stream_id": str(stream_id),
++            "task_run_id": str(task_run.id),
++            "owner_id": str(uuid4()),
++            "attempt": 1,
++        },
++    )
++    assert claimed.status_code == 200, claimed.text
++    accepted = []
++    for position, value in enumerate(
++        (None, {"kind": "N", "reference": "business-value"}), start=1
++    ):
++        appended = await prefix_api.post(
++            "/streams/v1/sources/append",
++            json={"binding": claimed.json(), "position": position, "value": value},
++        )
++        assert appended.status_code == 200, appended.text
++        accepted.append(appended.json())
++    baseline = await route_snapshot(db)
++    prefix = await prefix_api.get(
++        f"/streams/v1/{stream_id}/prefix", params={"limit": 10}
++    )
++    assert prefix.status_code == 200 and prefix.json() == accepted, prefix.text
++    limited = await prefix_api.get(
++        f"/streams/v1/{stream_id}/prefix", params={"limit": 1}
++    )
++    assert limited.status_code == 200 and limited.json() == accepted[:1], limited.text
++    pending: asyncio.Task[httpx.Response] | None = None
++    try:
++        async with db.session_context(begin_transaction=True) as blocker:
++            await blocker.execute(
++                sa.select(db.StreamPartition.id)
++                .where(db.StreamPartition.id == stream_id)
++                .with_for_update()
++            )
++            pending = asyncio.create_task(
++                prefix_api.get(f"/streams/v1/{stream_id}/prefix", params={"limit": 10})
++            )
++            async with db.session_context() as observer:
++                async with asyncio.timeout(5):
++                    while True:
++                        await observer.execute(
++                            sa.text("SELECT pg_stat_clear_snapshot()")
++                        )
++                        if await observer.scalar(
++                            sa.text(
++                                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock' AND query LIKE '%FROM stream_partition%' AND query LIKE '%FOR UPDATE%')"
++                            )
++                        ):
++                            break
++                        assert not pending.done(), (
++                            "Legacy prefix must retain its existing partition lock"
++                        )
++                        await asyncio.sleep(0.01)
++            assert not pending.done()
++        finished = await asyncio.wait_for(pending, 5)
++        assert finished.status_code == 200 and finished.json() == accepted, (
++            finished.text
++        )
++    finally:
++        if pending is not None and not pending.done():
++            pending.cancel()
++            await asyncio.gather(pending, return_exceptions=True)
++    assert await route_snapshot(db) == baseline
++
++
++async def test_sqlite_prefix_backend_refusal_precedes_lookup_and_mutation(
++    db: PrefectDBInterface, prefix_api: httpx.AsyncClient
++):
++    assert db.dialect.name == "sqlite"
++    baseline = await route_snapshot(db)
++    response = await prefix_api.get(
++        f"/streams/v1/{uuid4()}/prefix", params={"limit": 10}
++    )
++    assert_error(response, 422, "UNSUPPORTED_BACKEND")
++    assert await route_snapshot(db) == baseline

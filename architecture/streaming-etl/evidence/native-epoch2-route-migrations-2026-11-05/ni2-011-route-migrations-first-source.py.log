@@ -1,0 +1,512 @@
+"""Actual paired routed-record migrations and relational retention guarantees.
+
+All routed rows below are explicit DDL fixtures. Metadata seal is supported on
+both dialects; no routed mutation service or execution bypass is used.
+"""
+
+import hashlib
+import json
+from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any
+from uuid import UUID, uuid4
+
+import pytest
+import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from tests.server.database.test_migrations import _isolated_postgres_schema_changes
+from tests.server.models.test_stream_dags import dag_request
+
+from prefect._internal.stream_route_plan import (
+    canonical_route_json,
+    graph_routing_digest,
+    route_outcome_digest,
+    route_semantic_digest,
+)
+from prefect.server.database import PrefectDBInterface, orm_models
+from prefect.server.database.alembic_commands import alembic_downgrade, alembic_upgrade
+from prefect.server.models import stream_dags
+from prefect.server.schemas import stream_dags as topology
+from prefect.server.schemas.stream_routes import StreamDAGRouteOutcome
+from prefect.utilities.asyncutils import run_sync_in_worker_thread
+
+pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
+PREVIOUS = {"postgresql": "d8a3f76b2c90", "sqlite": "e9b4a87c3d01"}
+ROUTED_HEAD = {"postgresql": "f1c5b98d4e12", "sqlite": "02d6ca9e5f23"}
+
+
+@dataclass(frozen=True)
+class Chain:
+    plan: topology.StreamDAGPlan
+    payloads: dict[str, UUID]
+    payload_digests: dict[str, str]
+    references: dict[str, UUID]
+    receipts: dict[str, UUID]
+    consumers: dict[str, UUID]
+    completions: dict[str, UUID]
+
+
+async def ddl_chain(db: PrefectDBInterface, flow_run_id: UUID) -> Chain:
+    """Seed A→B→C→D with valid wire outcomes and real migrated FK parents."""
+    body = dag_request(flow_run_id, branch_p=1).model_dump(mode="json")
+    fourth = deepcopy(body["operators"][2])
+    fourth.update(operator_uid="D", task_name="branch-d", task_key="branch-d-key")
+    body["operators"].append(fourth)
+    body["edges"][1].update(
+        producer_operator_uid="B", edge_uid="B-C", exchange="forward"
+    )
+    body["edges"].append(
+        body["edges"][1]
+        | {
+            "producer_operator_uid": "C",
+            "consumer_operator_uid": "D",
+            "edge_uid": "C-D",
+            "subscriber_uid": "subscriber-D",
+        }
+    )
+    request = topology.StreamDAGSealRequest.model_validate(body)
+    payloads = {uid: uuid4() for uid in "ABCD"}
+    receipts = {uid: uuid4() for uid in "ABCD"}
+    references = {uid: uuid4() for uid in "BCD"}
+    completions = {uid: uuid4() for uid in "BCD"}
+    consumers: dict[str, UUID] = {}
+    digests: dict[str, str] = {}
+    async with db.session_context(begin_transaction=True) as session:
+        plan = await stream_dags.seal_dag_metadata(session, db, request)
+        tasks = {row.operator_uid: row for row in plan.subtasks}
+        operators = {row.operator_uid: row for row in plan.operators}
+        edges = {row.consumer_operator_uid: row for row in plan.edges}
+        owners = {uid: uuid4() for uid in "ABCD"}
+        for uid in "BCD":
+            subtask, operator, edge = tasks[uid], operators[uid], edges[uid]
+            part = edge.partitions[0]
+            assert operator.input_port is not None
+            consumers[uid] = part.subscriber_id
+            session.add(
+                db.StreamConsumer(
+                    id=part.subscriber_id,
+                    consumer_kind="DAG",
+                    graph_revision_id=plan.id,
+                    flow_run_id=flow_run_id,
+                    edge_partition_id=part.id,
+                    edge_id=edge.id,
+                    input_port_id=operator.input_port.id,
+                    subtask_id=subtask.id,
+                    task_run_id=subtask.manifest.task_run_id,
+                    subscriber_uid=edge.subscriber_uid,
+                    input_port_uid=operator.input_port.uid,
+                    input_stream_id=part.stream_id,
+                    output_stream_id=subtask.output_stream_id,
+                    owner_id=owners[uid],
+                    attempt=1,
+                    owner_epoch=1,
+                    completed_through=1,
+                    managed_state={"processed": 1},
+                )
+            )
+        await session.flush()
+        for index, uid in enumerate("ABCD"):
+            subtask = tasks[uid]
+            value = {"document": 200, "operator": uid}
+            encoded = canonical_route_json(value)
+            digests[uid] = hashlib.sha256(encoded).hexdigest()
+            session.add(
+                db.StreamRecord(
+                    id=payloads[uid],
+                    stream_id=subtask.output_stream_id,
+                    record_kind="PAYLOAD",
+                    graph_revision_id=plan.id,
+                    flow_run_id=flow_run_id,
+                    sequence=1,
+                    producer_position=1,
+                    value=value,
+                    value_digest=digests[uid],
+                    size_bytes=len(encoded),
+                )
+            )
+            await session.execute(
+                sa.update(db.StreamPartition)
+                .where(db.StreamPartition.id == subtask.output_stream_id)
+                .values(
+                    last_sequence=1,
+                    producer_position=1,
+                    record_count=1,
+                    byte_count=len(encoded),
+                    owner_id=owners[uid],
+                    attempt=1,
+                    owner_epoch=1,
+                )
+            )
+            await session.flush()
+            previous = "ABCD"[index - 1] if index else None
+            incoming = edges[uid].partitions[0] if previous else None
+            outgoing = edges["ABCD"[index + 1]] if index < 3 else None
+            state = {"processed": 1} if previous else None
+            semantic = route_semantic_digest(
+                {
+                    "graph_revision_id": str(plan.id),
+                    "operator_uid": uid,
+                    "producer_position": 1,
+                    "kind": "YIELD",
+                    "value": value,
+                    "state": state,
+                }
+            )
+            outcome = {
+                "receipt_id": receipts[uid],
+                "graph_revision_id": plan.id,
+                "routing_digest": graph_routing_digest(plan.graph_digest),
+                "semantic_digest": semantic,
+                "outcome_digest": "00" * 32,
+                "producer_stream_id": subtask.output_stream_id,
+                "producer_position": 1,
+                "producer_role": "OPERATOR" if previous else "SOURCE",
+                "kind": "YIELD",
+                "input_stream_id": incoming.stream_id if incoming else None,
+                "input_record_id": references[uid] if previous else None,
+                "input_payload_record_id": payloads[previous] if previous else None,
+                "input_payload_value_digest": digests[previous] if previous else None,
+                "input_sequence": 1 if previous else None,
+                "consumer_id": consumers[uid] if previous else None,
+                "producer_sequence": 1,
+                "output_ordinal": 0,
+                "payload_record_id": payloads[uid],
+                "payload_value_digest": digests[uid],
+                "payload_size_bytes": len(encoded),
+                "references": [
+                    {
+                        "edge_id": outgoing.id,
+                        "edge_partition_id": outgoing.partitions[0].id,
+                        "stream_id": outgoing.partitions[0].stream_id,
+                        "sequence": 1,
+                        "record_id": references["ABCD"[index + 1]],
+                        "payload_record_id": payloads[uid],
+                    }
+                ]
+                if outgoing
+                else [],
+            }
+            valid = StreamDAGRouteOutcome.model_validate(outcome).model_dump(
+                mode="json"
+            )
+            valid["outcome_digest"] = route_outcome_digest(valid)
+            StreamDAGRouteOutcome.model_validate(valid)
+            session.add(
+                db.StreamRouteReceipt(
+                    id=receipts[uid],
+                    graph_revision_id=plan.id,
+                    flow_run_id=flow_run_id,
+                    producer_subtask_id=subtask.id,
+                    producer_task_run_id=subtask.manifest.task_run_id,
+                    producer_stream_id=subtask.output_stream_id,
+                    producer_position=1,
+                    producer_sequence=1,
+                    producer_role=valid["producer_role"],
+                    kind="YIELD",
+                    routing_digest=valid["routing_digest"],
+                    semantic_digest=semantic,
+                    outcome_digest=valid["outcome_digest"],
+                    value_digest=digests[uid],
+                    managed_state_digest=hashlib.sha256(
+                        canonical_route_json(state)
+                    ).hexdigest()
+                    if previous
+                    else None,
+                    key_present=False,
+                    output_ordinal=0,
+                    payload_record_id=payloads[uid],
+                    payload_record_kind="PAYLOAD",
+                    input_stream_id=incoming.stream_id if incoming else None,
+                    input_reference_record_id=references[uid] if previous else None,
+                    input_reference_record_kind="REFERENCE" if previous else None,
+                    input_payload_record_id=payloads[previous] if previous else None,
+                    input_payload_record_kind="PAYLOAD" if previous else None,
+                    input_payload_value_digest=digests[previous] if previous else None,
+                    input_sequence=1 if previous else None,
+                    consumer_id=consumers[uid] if previous else None,
+                    outcome=valid,
+                    outcome_size=len(canonical_route_json(valid)),
+                )
+            )
+            await session.flush()
+            if previous:
+                session.add(
+                    db.StreamCompletion(
+                        id=completions[uid],
+                        consumer_id=consumers[uid],
+                        consumer_kind="DAG",
+                        route_receipt_id=receipts[uid],
+                        input_sequence=1,
+                        delivery_id=uuid4(),
+                        owner_epoch=1,
+                        kind="YIELD",
+                        intent_digest=semantic,
+                        output_sequence=1,
+                    )
+                )
+            if outgoing:
+                target = "ABCD"[index + 1]
+                part = outgoing.partitions[0]
+                session.add(
+                    db.StreamRecord(
+                        id=references[target],
+                        stream_id=part.stream_id,
+                        record_kind="REFERENCE",
+                        graph_revision_id=plan.id,
+                        flow_run_id=flow_run_id,
+                        payload_record_id=payloads[uid],
+                        payload_record_kind="PAYLOAD",
+                        payload_value_digest=digests[uid],
+                        route_receipt_id=receipts[uid],
+                        edge_partition_id=part.id,
+                        sequence=1,
+                        producer_position=1,
+                        value=None,
+                        value_digest=hashlib.sha256(b"null").hexdigest(),
+                        size_bytes=4,
+                    )
+                )
+                await session.execute(
+                    sa.update(db.StreamPartition)
+                    .where(db.StreamPartition.id == part.stream_id)
+                    .values(
+                        last_sequence=1,
+                        producer_position=1,
+                        record_count=1,
+                        byte_count=4,
+                    )
+                )
+            await session.flush()
+    return Chain(plan, payloads, digests, references, receipts, consumers, completions)
+
+
+async def data_snapshot(db: PrefectDBInterface) -> dict[str, list[dict[str, Any]]]:
+    async with db.session_context() as session:
+        result: dict[str, list[dict[str, Any]]] = {}
+        for model in (
+            db.StreamRecord,
+            db.StreamConsumer,
+            db.StreamCompletion,
+            db.StreamRouteReceipt,
+            db.StreamPartition,
+        ):
+            rows = await session.execute(sa.select(model.__table__).order_by(model.id))
+            result[model.__tablename__] = [dict(row) for row in rows.mappings()]
+        return result
+
+
+def assert_fk(error: IntegrityError, db: PrefectDBInterface, *names: str) -> None:
+    if db.dialect.name == "postgresql":
+        assert any(name in str(error.orig) for name in names), str(error.orig)
+    else:
+        assert "FOREIGN KEY constraint failed" in str(error.orig)
+
+
+async def test_three_hop_ddl_fixture_has_committed_direct_payloads_and_receipts(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+):
+    chain = await ddl_chain(db, flow_run.id)
+    snapshot = await data_snapshot(db)
+    assert len(snapshot["stream_record"]) == 7
+    assert len(snapshot["stream_route_receipt"]) == 4
+    assert len(snapshot["stream_consumer"]) == len(snapshot["stream_completion"]) == 3
+    assert {
+        row["payload_record_id"]
+        for row in snapshot["stream_record"]
+        if row["record_kind"] == "REFERENCE"
+    } == {chain.payloads[uid] for uid in "ABC"}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "payload-digest",
+        "receipt-payload",
+        "edge-partition",
+        "subscriber-port",
+        "input-port-uid",
+        "completion-intent",
+    ],
+)
+async def test_routed_composite_foreign_keys_reject_single_coordinate_corruption(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun, case: str
+):
+    chain = await ddl_chain(db, flow_run.id)
+    baseline = await data_snapshot(db)
+    choices = {
+        "payload-digest": (
+            db.StreamRecord,
+            chain.references["B"],
+            {"payload_value_digest": "ff" * 32},
+            "fk_stream_record__direct_payload",
+        ),
+        "receipt-payload": (
+            db.StreamRecord,
+            chain.references["B"],
+            {"route_receipt_id": chain.receipts["C"]},
+            "fk_stream_record__route_receipt_payload",
+        ),
+        "edge-partition": (
+            db.StreamRecord,
+            chain.references["B"],
+            {"edge_partition_id": chain.plan.edges[1].partitions[0].id},
+            "fk_stream_record__edge_partition",
+        ),
+        "subscriber-port": (
+            db.StreamConsumer,
+            chain.consumers["B"],
+            {"subscriber_uid": "other-subscriber"},
+            "fk_stream_consumer__edge_subscriber_port",
+        ),
+        "input-port-uid": (
+            db.StreamConsumer,
+            chain.consumers["B"],
+            {"input_port_uid": "other-port"},
+            "fk_stream_consumer__input_port_uid",
+        ),
+        "completion-intent": (
+            db.StreamCompletion,
+            chain.completions["B"],
+            {"intent_digest": "ff" * 32},
+            "fk_stream_completion__route_receipt",
+        ),
+    }
+    model, identity, change, constraint = choices[case]
+    with pytest.raises(IntegrityError) as rejected:
+        async with db.session_context(begin_transaction=True) as session:
+            await session.execute(
+                sa.update(model).where(model.id == identity).values(**change)
+            )
+    assert_fk(rejected.value, db, constraint)
+    assert await data_snapshot(db) == baseline
+
+
+@pytest.mark.parametrize("case", ["missing-reference", "changed-reference-payload"])
+async def test_deferred_input_reference_cannot_commit_partial_history(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun, case: str
+):
+    chain = await ddl_chain(db, flow_run.id)
+    baseline = await data_snapshot(db)
+    marker = uuid4()
+    flushed = False
+    with pytest.raises(IntegrityError) as rejected:
+        async with db.session_context(begin_transaction=True) as session:
+            session.add(
+                db.StreamPartition(id=marker, flow_run_id=flow_run.id, limits={})
+            )
+            if case == "missing-reference":
+                await session.execute(
+                    sa.delete(db.StreamRecord).where(
+                        db.StreamRecord.id == chain.references["C"]
+                    )
+                )
+            else:
+                await session.execute(
+                    sa.update(db.StreamRouteReceipt)
+                    .where(db.StreamRouteReceipt.id == chain.receipts["C"])
+                    .values(
+                        input_payload_record_id=chain.payloads["A"],
+                        input_payload_value_digest=chain.payload_digests["A"],
+                    )
+                )
+            await session.flush()
+            flushed = True
+    assert flushed, "The input REFERENCE FK must defer until transaction commit"
+    assert_fk(rejected.value, db, "fk_stream_route_receipt__input_reference")
+    assert await data_snapshot(db) == baseline
+
+
+@pytest.mark.parametrize("case", ["output-payload", "input-payload"])
+async def test_payload_pins_are_immediate_even_while_input_references_are_deferred(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun, case: str
+):
+    chain = await ddl_chain(db, flow_run.id)
+    baseline = await data_snapshot(db)
+    with pytest.raises(IntegrityError) as rejected:
+        async with db.session_context(begin_transaction=True) as session:
+            if case == "input-payload":
+                await session.execute(
+                    sa.delete(db.StreamRecord).where(
+                        db.StreamRecord.id == chain.references["B"]
+                    )
+                )
+                await session.execute(
+                    sa.delete(db.StreamRouteReceipt).where(
+                        db.StreamRouteReceipt.id == chain.receipts["A"]
+                    )
+                )
+            await session.execute(
+                sa.delete(db.StreamRecord).where(
+                    db.StreamRecord.id
+                    == chain.payloads["A" if case == "input-payload" else "D"]
+                )
+            )
+            pytest.fail("A payload pin must reject the DELETE before commit")
+    assert_fk(
+        rejected.value,
+        db,
+        "fk_stream_route_receipt__"
+        + ("input_payload" if case == "input-payload" else "output_payload"),
+    )
+    assert await data_snapshot(db) == baseline
+
+
+async def ordered_cleanup(session: AsyncSession, db: PrefectDBInterface) -> None:
+    await session.execute(
+        sa.delete(db.StreamRecord).where(db.StreamRecord.record_kind == "REFERENCE")
+    )
+    await session.execute(sa.delete(db.StreamCompletion))
+    await session.execute(sa.delete(db.StreamRouteReceipt))
+    await session.execute(sa.delete(db.StreamConsumer))
+    await session.execute(
+        sa.delete(db.StreamRecord).where(db.StreamRecord.record_kind == "PAYLOAD")
+    )
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+async def test_three_hop_cleanup_is_one_ordered_atomic_transaction(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun, rollback: bool
+):
+    await ddl_chain(db, flow_run.id)
+    baseline = await data_snapshot(db)
+
+    class InjectedCleanupRollback(Exception):
+        pass
+
+    try:
+        async with db.session_context(begin_transaction=True) as session:
+            # The production cleanup owns the whole Flow before descendants.
+            await session.execute(
+                sa.select(db.FlowRun.id)
+                .where(db.FlowRun.id == flow_run.id)
+                .with_for_update()
+            )
+            await ordered_cleanup(session, db)
+            for model in (
+                db.StreamRecord,
+                db.StreamCompletion,
+                db.StreamRouteReceipt,
+                db.StreamConsumer,
+            ):
+                assert (
+                    await session.scalar(sa.select(sa.func.count()).select_from(model))
+                    == 0
+                )
+            if rollback:
+                raise InjectedCleanupRollback
+    except InjectedCleanupRollback:
+        assert rollback
+    if rollback:
+        assert await data_snapshot(db) == baseline
+    else:
+        remaining = await data_snapshot(db)
+        assert all(
+            not remaining[name]
+            for name in (
+                "stream_record",
+                "stream_completion",
+                "stream_route_receipt",
+                "stream_consumer",
+            )
+        )

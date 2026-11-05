@@ -1,0 +1,11 @@
+import json,sys
+from pathlib import Path
+import pytest
+base=Path('/tmp/native-ni2-011-runtime-adapter-v1')
+snap=base/'snapshot'
+result=pytest.main(['--noconftest','-q','tests/test_stream_route_terminals.py','--junitxml',str(base/'result.xml'),'--basetemp',str(base/'pytest-temp'))])
+paths={name:str(Path(m.__file__).resolve()) for name,m in sys.modules.items() if (name=='prefect' or name.startswith('prefect.') or name=='tests' or name.startswith('tests.')) and getattr(m,'__file__',None)}
+foreign={name:path for name,path in paths.items() if not Path(path).is_relative_to(snap)}
+(base/'import-audit.json').write_text(json.dumps({'status':'PASS' if not foreign else 'FAIL','module_count':len(paths),'foreign_imports':foreign,'modules':paths},indent=2)+'\n')
+print('Import audit:',len(paths),'modules;',len(foreign),'foreign')
+sys.exit(int(result) if not foreign else 97)

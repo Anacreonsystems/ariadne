@@ -348,3 +348,13 @@ A43-03 and A43-09 remain open because NI2-010 writes no routed DATA. The
 [NI2-011 handoff](../evidence/flink-architecture-2026-11-04/ni2-011-implementation-handoff-2026-11-05.json)
 freezes direct PAYLOAD/REFERENCE rows in the existing store, independent edge
 cursors, four versioned exchanges and exact lost-ACK replay as the next work.
+
+On 2026-11-05 the user directed: «Все вливайте, для полных
+тестов». This authorizes publishing and merging the current NI2-011
+implementation so the repository's complete checks can run. It is a testing
+and publication direction, not an acceptance result by itself. The subsequent
+[NI2-011 Principal acceptance](../evidence/native-epoch2-routed-server-2026-11-05/principal-v1/acceptance.json)
+closes the finite routed-storage task after independent PostgreSQL, SQLite,
+migration, planner and prefix-security gates. The DAG execution profile stays
+fenced, this ADR remains in `progress`, and A43-03 and A43-09 remain partial
+until native fan-out execution and recovery pass.

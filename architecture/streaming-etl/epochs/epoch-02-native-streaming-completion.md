@@ -315,3 +315,27 @@ NI2-011 adds atomic routed records and NI2-012 adds verified start, wait,
 failure and cleanup. The [NI2-011 handoff](../evidence/flink-architecture-2026-11-04/ni2-011-implementation-handoff-2026-11-05.json)
 defines direct references in the existing data plane, exact replay receipts
 and the lock order for that next slice.
+
+The 2026-11-05 user direction «Все вливайте, для полных
+тестов» releases the publication hold for the current NI2-011 work and
+authorizes merging it for the complete repository test matrix. The direction
+does not award readiness or close an acceptance criterion. Public DAG
+execution remains fenced until the later lifecycle work and its independent
+evidence pass.
+
+## NI2-011 finite routed-storage acceptance — 2026-11-05
+
+The [source-bound Principal acceptance](../evidence/native-epoch2-routed-server-2026-11-05/principal-v1/acceptance.json)
+closes NI2-011's finite storage component. The final source materializes one
+PAYLOAD with bounded direct REFERENCE rows in the terminal transaction,
+persists exact replay outcomes, keeps subscriber cursors independent and pins
+referenced data across the paired PostgreSQL and SQLite migrations. Legacy
+prefix reads now refuse DAG edge partitions before taking their data-row lock.
+
+The independent final cut passed 38 PostgreSQL and one SQLite model controls,
+five PostgreSQL and one SQLite prefix controls, the earlier 23/23 migration
+gate and strict analysis of all 17 selected modules, with no skips or source
+drift. NI2-011 moves to `accepted`, but earns 0% until the N2.2a hosted
+publication gate completes. The cumulative epoch value remains 15%. Public
+DAG start, Task execution, finish, failure, cancellation and cleanup remain
+fenced for NI2-012 through NI2-014.

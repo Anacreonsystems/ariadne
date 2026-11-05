@@ -1,0 +1,13 @@
+import importlib.abc,json,sys
+from pathlib import Path
+root=Path('/tmp/native-ni2-011-route-plan-v3')
+class RejectServerImports(importlib.abc.MetaPathFinder):
+ def find_spec(self,fullname,path=None,target=None):
+  if fullname=='prefect.server' or fullname.startswith('prefect.server.') or fullname=='pydantic' or fullname.startswith('pydantic.'):
+   raise AssertionError('Pure route planner cannot import server/Pydantic')
+  return None
+sys.meta_path.insert(0,RejectServerImports())
+import pytest
+code=pytest.main(['-c','/dev/null','--noconftest','-p','no:cacheprovider','-q','tests/test_stream_route_plan.py','-k','parallelism_is_validated_before or canonical_json_refuses or digest_entry_points or ephemeral_identity or sealed_shapes or leaf_index_still','--junitxml='+str(root/'red-component.xml')])
+(root/'red-import-audit.json').write_text(json.dumps({'prefect_imports':sorted(m for m in sys.modules if m=='prefect' or m.startswith('prefect.')),'forbidden_imports':[m for m in sys.modules if m=='pydantic' or m.startswith(('pydantic.','prefect.server'))],'server_conftest_loaded':any(getattr(m,'__file__','') and str(getattr(m,'__file__','')).endswith('tests/conftest.py') for m in sys.modules.values())},indent=2)+'\n')
+(root/'red-component.exit').write_text(str(code)+'\n');sys.exit(code)

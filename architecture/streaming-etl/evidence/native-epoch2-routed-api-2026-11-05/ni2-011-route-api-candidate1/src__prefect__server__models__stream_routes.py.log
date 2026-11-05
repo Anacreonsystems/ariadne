@@ -1,0 +1,110 @@
+"""DAG routed storage seams; public execution remains explicitly unavailable."""
+
+from typing import NoReturn
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from prefect._internal.stream_route_plan import graph_routing_digest
+from prefect.server.database import PrefectDBInterface
+from prefect.server.models import stream_dags
+from prefect.server.models._stream_errors import NativeStreamError
+from prefect.server.models.stream_subtask_authority import require_subtask
+from prefect.server.schemas import stream_dags as topology
+from prefect.server.schemas import stream_routes as s
+from prefect.server.schemas.stream_subtasks import StreamSubtaskCredentials
+from prefect.server.schemas.streams import StreamExecutionCredentials
+
+RouteRequest = s.StreamDAGSourceAppendRequest | s.StreamDAGConsumerCompleteRequest
+RouteCredentials = StreamExecutionCredentials | StreamSubtaskCredentials | None
+
+
+def validate_route_context(
+    plan: topology.StreamDAGPlan, request: RouteRequest
+) -> topology.StreamDAGSubtaskProjection:
+    """Match every caller witness to server-owned immutable topology."""
+    context = request.context
+    subtask = next(
+        (row for row in plan.subtasks if row.id == context.producer_subtask_id), None
+    )
+    if (
+        plan.id != context.graph_revision_id
+        or plan.flow_run_id != request.binding.flow_run_id
+        or plan.graph_digest != context.graph_digest
+        or graph_routing_digest(plan.graph_digest) != context.routing_digest
+        or subtask is None
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Route graph or producer identity differs"
+        )
+    operator = next(row for row in plan.operators if row.id == subtask.operator_run_id)
+    keyed = any(
+        edge.exchange == "keyed"
+        for edge in plan.edges
+        if edge.producer_operator_uid == operator.operator_uid
+    )
+    if (
+        operator.operator_uid != context.operator_uid
+        or operator.output_port.uid != context.output_port_uid
+        or subtask.subtask_index != context.subtask_index
+        or keyed != context.has_keyed_outgoing
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Route operator, port, index or key witness differs"
+        )
+    if isinstance(request, s.StreamDAGSourceAppendRequest):
+        if (
+            operator.role != "SOURCE"
+            or subtask.manifest.task_run_id != request.binding.task_run_id
+            or subtask.output_stream_id != request.binding.stream_id
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Source binding is outside its exact DAG subtask"
+            )
+    else:
+        edge_partition = next(
+            (
+                part
+                for edge in plan.edges
+                for part in edge.partitions
+                if part.target_subtask_id == subtask.id
+            ),
+            None,
+        )
+        if (
+            operator.role != "OPERATOR"
+            or edge_partition is None
+            or edge_partition.subscriber_id != request.binding.consumer_id
+            or subtask.input_stream_id != request.binding.input_stream_id
+            or subtask.output_stream_id != request.binding.output_stream_id
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Consumer binding is outside its stable DAG subscriber",
+            )
+    return subtask
+
+
+async def require_dag_route_execution(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: RouteRequest,
+    execution: RouteCredentials,
+) -> NoReturn:
+    """Authenticate current callers before the common NI2-012 execution fence."""
+    if isinstance(execution, StreamSubtaskCredentials):
+        await require_subtask(
+            session,
+            db,
+            execution,
+            subtask_id=request.context.producer_subtask_id,
+            flow_run_id=request.binding.flow_run_id,
+        )
+    else:
+        plan = await stream_dags.read_dag_plan(
+            session, db, request.context.graph_revision_id, execution
+        )
+        validate_route_context(plan, request)
+    raise NativeStreamError(
+        "EXECUTION_PROFILE_NOT_READY",
+        "DAG routed execution is unavailable until NI2-012",
+    )

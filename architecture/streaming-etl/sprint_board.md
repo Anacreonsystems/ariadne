@@ -570,3 +570,16 @@ N2.2a stays `progress` at the previously earned 15% cumulative value because
 its +6% exit also requires NI2-011 routed exchanges. The
 [NI2-011 implementation handoff](evidence/flink-architecture-2026-11-04/ni2-011-implementation-handoff-2026-11-05.json)
 starts that dependency without changing ADR-0043 from `progress`.
+
+## N2.2a finite route component acceptance — 2026-11-05
+
+The [NI2-011 Principal acceptance](evidence/native-epoch2-routed-server-2026-11-05/principal-v1/acceptance.json)
+accepts the bounded routed-storage component: deterministic route planning,
+atomic PAYLOAD/REFERENCE persistence, exact replay receipts, independent edge
+cursors, paired migration pins and a legacy-prefix fence. The final independent
+PostgreSQL/SQLite and strict-type gates passed without skips or source drift.
+
+NI2-011 therefore moves to `accepted`. N2.2a and ADR-0043 remain `progress`,
+and earned readiness remains 15% while the complete hosted publication matrix
+is pending. Public DAG execution and lifecycle stay fenced for NI2-012 through
+NI2-014.

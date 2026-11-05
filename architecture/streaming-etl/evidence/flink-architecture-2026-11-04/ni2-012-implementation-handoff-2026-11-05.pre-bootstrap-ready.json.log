@@ -1,0 +1,146 @@
+{
+  "acceptance_boundary": {
+    "adr": "ADR-0043 remains progress after NI2-012. Later approved NI2-013/014, host/recovery and DAG breadth gates still apply.",
+    "publication": "A preview-only draft must not merge as usable DAG support. Publication and merge descriptions must retain the exact remaining lifecycle and finite-tail boundaries.",
+    "sprint": "N2.2 execution credit remains zero until NI2-010, NI2-011 and NI2-012 together provide a usable routed DAG lifecycle. Metadata-only and hard-fenced API proofs do not earn runtime credit.",
+    "task": "NI2-012 may be accepted only when all mandatory gates pass on one coordinated frozen union and no public DAG lifecycle can strand a Flow or physical slot."
+  },
+  "admission_and_activation": {
+    "activation": "A single serialized graph activation verifies the exact current grant for every physical subtask and releases private GO only after the committed ACTIVE projection is observable.",
+    "capacity": "Admission atomically reserves all N physical slots and all required tag/global allocations or writes none. Worker capacity remains two live children per worker in this slice.",
+    "ordering": "Use the approved Flow/authority/graph, sorted-worker, subtask/grant/TaskRun/stream lock prefix. Revalidate capability, liveness and cross-profile occupancy after worker locks.",
+    "placement": "Choose online, native-registered workers advertising partitioned-dag-v1 in a versioned supported-profile set. Fixed-P2 and DAG capabilities coexist and share one physical-slot occupancy authority.",
+    "race_result": "Concurrent admission, stale capability or partial registration returns a typed refusal and leaves no partial grants, slot rows, tag allocations or activation journal.",
+    "ready_barrier": "Every child performs the cap-free same-child code/config preflight, registers exact PID/start ticks, consumes its private bootstrap and reports READY. No routed DATA, user body or signed task event is accepted before every sealed child is READY.",
+    "size": "N equals the sum of sealed operator parallelism and is bounded by the existing graph limit (currently 128). Never hard-code the first fixture count of four."
+  },
+  "authorization": {
+    "interpretation": "This is the next implementation slice inside approved ADR-0043. Routine wire, lock and failure-state details do not require another approval.",
+    "new_approval_required": false,
+    "source": "User approval of ADR-0042 through ADR-0048 at fae53c90aa3b44dbc45032833b4d193001e5c8bd."
+  },
+  "bootstrap_and_scope": {
+    "allowlist": "The child may call only its own bootstrap/activation observation, routed source append or consumer complete as applicable, own input open/read/status/finish, and signed own TaskRun event paths. Sibling, graph-wide control and legacy DATA endpoints remain denied.",
+    "credentials": "The child receives only its own scoped capability after registration. Parent Flow and Basic worker credentials never enter child argv, environment or bootstrap payload.",
+    "immutable_fields": [
+      "graph_revision_id and graph/routing digest",
+      "operator, input-port and output-port identities",
+      "physical subtask ID, stable subtask index and operator parallelism",
+      "stable subscriber, edge and edge-partition identities for the one scalar input",
+      "Task key, artifact/version/code witness, context key, policy, timeout, tags and supported options",
+      "assigned worker, grant epoch and scoped child public key"
+    ],
+    "import_boundary": "User module import and configuration validation occur without active child capability. The retained Task is rechecked against the immutable bootstrap before GO; import is not repeated after activation."
+  },
+  "completion_failure_cancel": {
+    "application_failure": "An exhausted physical Task failure marks the graph failed and initiates bounded drain/stop for the remaining branches. Already committed route receipts remain authoritative; no cross-sink rollback or exactly-once external side-effect claim is made.",
+    "authority_loss": "Stale Flow holders, stale workers, stale grants and old child capabilities can observe neither new activation nor terminal mutation. Recovery may resume only from persisted graph/control journals and verified current process identity.",
+    "cancel": "Active cancel first journals graph cancellation, fences new DATA and replacements, instructs each assigned worker to stop its exact current child, records each stop receipt, releases reservations once, and only then commits Flow/graph cancellation.",
+    "cleanup": "Whole-Flow cleanup holds the Flow/graph authority, deletes NI2-011 references, completions/consumers, receipts and payloads in the declared order, and relies on the single deferred input-reference FK only inside that transaction. A partial commit with dangling pins must fail.",
+    "normal": "All leaf cursors reach EOF, every physical TaskRun is terminal, every child is reaped/retired and every physical slot is released before the Flow becomes Completed. Logical tag allocation may release at terminal Task state; physical slots release only after exact process death proof."
+  },
+  "data_execution": {
+    "eof": "A target edge partition becomes EOF only after all sealed contributors are terminal and their accepted routes are committed. Empty targets receive EOF. A failed contributor cannot manufacture COMPLETED.",
+    "events": "Pending, Running and terminal TaskRun events are signed by the current scoped child and checked against exact graph, physical subtask, TaskRun, grant epoch and natural key before any coalescing.",
+    "operator": "Each operator reads one stable edge-partition cursor. The resolver verifies the REFERENCE envelope and direct same-graph PAYLOAD identity, then returns the original user payload. The worker never exposes the reference envelope to user code.",
+    "replay": "Current authorization is checked before receipt lookup. Lost acknowledgements return the stored route outcome; replacement never recomputes accepted targets. Semantic mismatches conflict without mutation.",
+    "source": "A source process emits SourceRecord(position, value). A KeyedStreamOutput may wrap value; position remains the outer source coordinate. The DAG storage adapter submits only the frozen NI2-011 routed source request.",
+    "terminal": "YIELD routes one PAYLOAD plus deterministic REFERENCE rows in the NI2-011 atomic transaction. RETURN is state-only and keyless. YIELD(None) is a payload. Input cursor/state advance atomically with routed output and receipt."
+  },
+  "dependencies": {
+    "NI2-006": "Accepted fixed-P2 physical process, worker placement, scoped capability and replacement primitive.",
+    "NI2-010": "Accepted metadata-only DAG seal/read preview. It deliberately exposes no usable execution lifecycle.",
+    "NI2-011": "Must be accepted on one frozen cut before NI2-012 dependent product implementation starts. It supplies direct PAYLOAD/REFERENCE rows, deterministic routing, receipt replay and reference resolution.",
+    "block": "This handoff authorizes planning now; implementation remains blocked while NI2-011 is progress."
+  },
+  "evidence_links": {
+    "adr": "../../adr/ADR-0043-physical-graph-and-partitioned-channels.md",
+    "ni2_010_principal_acceptance": "../native-epoch2-ni2-010-principal-acceptance-2026-11-05/index.json",
+    "ni2_011_handoff": "ni2-011-implementation-handoff-2026-11-05.json"
+  },
+  "finite_tail_boundary": {
+    "not_in_scope": "Multi-input joins, stateful operators, rescale, online GC, cross-sink transactions and whole-worker cross-host takeover remain later approved slices.",
+    "supported": "Plain Python Flow code may run after RunningStreamGraph.wait() returns and may inspect ordinary returned summaries.",
+    "unsupported": "An ordinary finite native Task tail over DAG handles or leaf collections remains typed unsupported in NI2-012 unless a separate witness binds graph revision, the complete leaf set and all physical retirements. Existing bounded-linear and fixed-P2 finite paths remain unchanged."
+  },
+  "first_real_fixture": {
+    "generic_boundary": "The implementation derives N and placement from the sealed topology. Metadata and admission controls must also cover a non-four shape such as A(P=2)->B(P=3) without running a second heavy end-to-end fixture.",
+    "requirements": [
+      "four distinct child PIDs whose parent PID is the assigned worker PID",
+      "one persisted scalar input edge partition per B/C physical subtask",
+      "independent B and C cursors and EOF",
+      "original payload stored once and resolved through branch-specific direct references",
+      "all four TaskRuns Pending -> Running -> terminal with signed events",
+      "zero grants, tags and physical reservations after completion"
+    ],
+    "topology": "A(P=1) fans out to B(P=1, forward) and C(P=2, broadcast), producing four physical TaskRuns on two real ProcessWorkers with two slots each."
+  },
+  "goal": "Make a sealed partitioned-dag-v1 graph explicitly startable and awaitable, execute routed DATA through assigned physical TaskRun processes, and prove normal, failed and cancelled cleanup without weakening fixed-P2 behavior.",
+  "mandatory_gates": {
+    "faults": [
+      "kill one branch child after accepted item 200; only that child is replaced, accepted 200 is not replayed and suffix begins at the persisted next coordinate",
+      "stale Flow, worker, grant, PID/start-ticks, sibling subtask and cross-region requests refuse without mutation",
+      "cross-profile fixed-P2 versus DAG admission contention cannot exceed shared worker capacity or partially admit either graph",
+      "Flow coordinator loss and worker-manager loss use only the explicitly supported recovery boundary; unsupported cuts fail closed without releasing live-child capacity"
+    ],
+    "lifecycle": [
+      "sync and async public seal -> start -> activation -> wait on the real two-worker/four-child fixture",
+      "sealed preview abort leaves no grants, DATA, slots or runnable TaskRuns",
+      "one child preflight failure aborts startup and exact workers prove all children stopped",
+      "post-activation application failure drains/reaps every child and releases Flow, tag and physical-slot authority",
+      "active cancellation proves exact stop receipts for all children before terminal Flow state"
+    ],
+    "routing": [
+      "forward and broadcast branch payloads resolve to original user values with independent cursors",
+      "keyed canonical N/B/I/S/Y vectors and absent-key/refusal behavior reach the actual routed terminal paths",
+      "RETURN, YIELD(None), empty target EOF and downstream permanent failure retain the NI2-011 semantics",
+      "lost source/operator acknowledgements replay identical receipts with no duplicate payload/reference/cursor advance"
+    ],
+    "scale_and_compatibility": [
+      "8-document and controlled 500-document routed DAG gates pass on the same frozen source cut",
+      "5000-document sync and async cases keep graph/TaskRun/subtask/partition metadata O(N topology), with record/reference growth allowed only per accepted item",
+      "fixed-P2 two-worker sync/async smoke, replacement and legacy client byte-golden suites remain green",
+      "PostgreSQL 17 executes; SQLite and unsupported PostgreSQL versions refuse public execution before mutation while paired metadata migrations remain valid",
+      "strict new-module typing, package isolation, migration roundtrip, source-before/after and actual process/import-path receipts are bound to the final union"
+    ]
+  },
+  "ownership": {
+    "api": "Protected lifecycle routes, redaction/auth/CSRF/backend tests and actual TCP client adjuncts.",
+    "architect": "Cross-component contract freeze, independent adversarial gates, evidence graph and scoped acceptance decision.",
+    "root_ci": "PostgreSQL 17/SQLite jobs, strict type inclusion, module/skip guards, frozen source checkout and hosted evidence.",
+    "runtime": "DAG coordinator, exact builder-to-wire witness, DAG storage adapter injection, wait/failure propagation and sync/async real fixtures.",
+    "sdk": "Paired lifecycle DTOs/methods, explicit SealedStreamGraph/RunningStreamGraph handles, frozen retry bodies and package/legacy contract proofs.",
+    "server": "Execution projection, start/admit/activate/control journals, authorization, lifecycle fences, route/store integration, ORM/migrations and lock-order tests.",
+    "worker": "Assigned-child supervisor, bootstrap/preflight/READY/GO, liveness, replacement and exact stop/reap receipts."
+  },
+  "process_and_replacement": {
+    "isolation": "Only the failed physical child is replaced during a retriable fault. Healthy branch children remain live, keep their PIDs and are neither replayed nor fenced.",
+    "preactivation_death": "A child that dies before the global barrier triggers serialized startup abort. Workers prove every local child stopped before reservations are released; first-slice startup does not replace before activation.",
+    "retry": "A dead active child is reconciled through the current grant output and retry policy. A replacement retains the same physical TaskRun and stable subscriber/edge identity, increments only the approved attempt/physical epoch, and starts from the persisted input cursor/route receipts.",
+    "setup_failure": "Replacement preflight/code mismatch is durably bounded and reconciled as typed non-retriable infrastructure failure. It cannot spin without consuming a journaled bound or fabricate a Task attempt.",
+    "worker": "The assigned ProcessWorker owns spawn, same-child preflight, registration, private GO, liveness, replacement, exact stop and wait. The Flow coordinator owns durable graph lifecycle and never impersonates a worker or child."
+  },
+  "public_lifecycle": {
+    "abort_preview": "A sealed but unadmitted preview has an explicit abort operation. It is valid only while there are no grants, DATA, route receipts or physical-slot reservations.",
+    "builder": "StreamGraph context exit remains local and side-effect-free. StreamGraph.seal() is the only metadata publication step and returns SealedStreamGraph.",
+    "failure_and_cancel": "Running failure and cancellation use distinct durable control operations. They do not reuse startup-abort material or declare Flow terminal before every current child has a verified stop/retire receipt.",
+    "proposed_routes": [
+      "POST /streams/v2/dags/{graph_id}/start",
+      "POST /streams/v2/dags/{graph_id}/activate",
+      "GET /streams/v2/dags/{graph_id}/execution",
+      "POST /streams/v2/dags/{graph_id}/abort-preview",
+      "POST /streams/v2/dags/{graph_id}/cancel"
+    ],
+    "start": "SealedStreamGraph.start() is explicit. It submits one stable frozen admission request, waits for all N assigned children to reach READY, crosses one graph-wide activation CAS, and returns RunningStreamGraph. Unknown acknowledgements replay the identical request and operation identity.",
+    "wait": "RunningStreamGraph.wait() observes graph, TaskRun, route/EOF and physical-slot authority until terminal cleanup. It never seals, admits, activates or cancels implicitly.",
+    "wire_rule": "Final route and DTO names freeze together across server and SDK. No endpoint may expose worker credentials, child capability, PID, cwd, sibling parameters or client-selected route targets."
+  },
+  "recorded_at": "2026-11-05",
+  "schema": "native-epoch2-ni2-012-implementation-handoff-v1",
+  "source_bindings": {
+    "adr_0043_sha256_at_handoff": "5ed6fc80993a72e6500a1d823c578b05a330429013c1d12f4c395f3f3f1faf6d",
+    "ni2_011_handoff_sha256": "5a3c19f8c21d5165001de2730b466c1aa5e404a3e4a40fb00a859d895aad69f4"
+  },
+  "status": "planning",
+  "title": "NI2-012: explicit routed-DAG start, execution, wait and verified cleanup"
+}
