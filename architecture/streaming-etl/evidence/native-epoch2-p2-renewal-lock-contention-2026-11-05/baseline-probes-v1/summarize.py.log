@@ -1,0 +1,72 @@
+import hashlib
+import json
+from pathlib import Path
+import re
+import xml.etree.ElementTree as ET
+
+ROOT=Path('/tmp/native-main-p2-lock-observer-2026-11-05-v1')
+SOURCE=Path('/tmp/ariadne-ci-checkpoint-5r7nt1hd')
+
+def write(path,value):
+    path.write_text(json.dumps(value,indent=2,default=str)+'\n')
+
+def listeners():
+    result=[]
+    for source in ('/proc/net/tcp','/proc/net/tcp6'):
+        for line in Path(source).read_text().splitlines()[1:]:
+            f=line.split()
+            if f[3]=='0A':
+                result.append({'port':int(f[1].split(':')[1],16),'source':source})
+    return result
+
+results=[]
+for count in (8,500):
+    directory=ROOT/f'case-{count}'
+    samples=[json.loads(line) for line in (directory/'postgres.jsonl').open()]
+    waits=[]
+    for sample in samples:
+        waiting=[a for a in sample['activities'] if a['blockers']]
+        if not waiting:
+            continue
+        ids={a['pid'] for a in waiting}|{p for a in waiting for p in a['blockers']}
+        waits.append({'elapsed':sample['elapsed'],
+                      'activities':[a for a in sample['activities'] if a['pid'] in ids],
+                      'nonrelation_locks':[l for l in sample['locks'] if l['pid'] in ids and l['locktype']!='relation']})
+    write(directory/'blocking-chains.json',waits)
+    process_history=[json.loads(line) for line in (directory/'processes.jsonl').open()]
+    text=(directory/'stdout.log').read_text()
+    ports=sorted({int(p) for p in re.findall(r'https?://127\.0\.0\.1:(\d+)',text)})
+    suite=ET.parse(directory/'result.xml').getroot().find('testsuite')
+    assert suite is not None
+    before=json.loads((directory/'command.json').read_text())['source_before']
+    receipt=json.loads((directory/'receipt.json').read_text())
+    observations=list((directory/'pytest-tmp').rglob('case-observation.json'))
+    roles=[]
+    for p in process_history:
+        command=p['command']
+        role=('api' if 'uvicorn' in command else 'worker' if 'worker start' in command else
+              'task-child' if 'stream_subtask_entrypoint' in command else
+              'flow' if 'flow_engine' in command else 'test-controller')
+        roles.append({**p,'role':role})
+    summary={'count':count,'xml_attributes':suite.attrib,'source_unchanged':before==receipt['source_after'],
+             'sample_count':len(samples),'blocked_samples':len(waits),
+             'max_blocked_query_age_seconds':max((a['query_age_seconds'] or 0 for w in waits for a in w['activities'] if a['blockers']),default=0),
+             'flow_update_wait_samples':sum(1 for w in waits for a in w['activities'] if a['blockers'] and 'FROM flow_run' in a['query'] and 'FOR UPDATE' in a['query']),
+             'owned_process_identities':roles,'observed_http_ports':ports,
+             'still_listening_observed_http_ports':[l for l in listeners() if l['port'] in ports],
+             'case_observations':[json.loads(p.read_text()) for p in observations],
+             'cleanup':{k:receipt[k] for k in ('cleanup_signals','reaped_adopted','lingering_owned','remaining_database_sessions')}}
+    write(directory/'summary.json',summary)
+    results.append({k:summary[k] for k in ('count','xml_attributes','source_unchanged','sample_count','blocked_samples','max_blocked_query_age_seconds','flow_update_wait_samples','observed_http_ports','still_listening_observed_http_ports','cleanup')})
+
+original=ROOT/'observe.py'
+original.rename(ROOT/'observe.py.log')
+extra=['src/prefect/server/models/native_deployments.py','src/prefect/server/api/native_deployments.py']
+write(ROOT/'static-source-hashes.json',{p:hashlib.sha256((SOURCE/p).read_bytes()).hexdigest() for p in extra})
+report={'status':'BASELINE_TWO_STANDALONE_CASES_PASS_CI_HANG_NOT_REPRODUCED',
+        'source_head':'292331a704a0d0dd97da39349e62f44a70e15a8f',
+        'product_or_timeout_changes':False,'database_version':json.loads((ROOT/'database-version.json').read_text()),
+        'results':results,
+        'attribution_limit':'Two transient Flow FOR UPDATE wait samples. First blocker idle in transaction/ClientRead with own physical-subtask FOR SHARE last query and 0.071608s transaction age. Static DATA credential validation takes Flow SHARE; current endpoint is not visible with baseline warning-only server access logs. No statement timeout or persistent chain reproduced; heartbeat ownership of the transient waiter is not asserted.'}
+write(ROOT/'final-receipt.json',report)
+print(json.dumps(report,indent=2))

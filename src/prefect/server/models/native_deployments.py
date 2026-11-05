@@ -699,7 +699,7 @@ async def renew_launch(
     flow = await session.scalar(
         sa.select(db.FlowRun)
         .where(db.FlowRun.id == request.flow_run_id)
-        .with_for_update()
+        .with_for_update(read=True)
     )
     if flow is None:
         raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
@@ -709,7 +709,7 @@ async def renew_launch(
         request.flow_run_id,
         execution,
         allowed_states=("ACTIVE",),
-        update=True,
+        update=False,
     )
     if authority is None or authority.generation != request.generation:
         raise NativeStreamError("STALE_EXECUTION", "Launch generation changed")
