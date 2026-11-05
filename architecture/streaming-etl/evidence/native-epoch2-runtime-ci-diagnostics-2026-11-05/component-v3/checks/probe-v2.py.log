@@ -1,0 +1,26 @@
+from datetime import datetime,timezone
+import hashlib,importlib.util,json,os,subprocess,time
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+BASE=Path('/tmp/native-ni013-runtime-diagnostics-temp-placement-v1/isolated-v2');BASE.mkdir(exist_ok=False);ROOT=Path('/workspace/ariadne')
+results=[]
+for mode in ['red-inside-checkout','green-runner-temp']:
+ trial=BASE/mode;project=trial/'project';project.mkdir(parents=True,exist_ok=False)
+ (project/'conftest.py').write_text('from tests.conftest import leaves_no_extraneous_files as leaves_no_extraneous_files\n')
+ test=project/'test_temp_placement.py';test.write_text('def test_temp_path_artifact(tmp_path):\n    (tmp_path / "worker-left.log").write_text("public diagnostic\\n")\n    assert tmp_path.is_dir()\n')
+ runner=trial/'runner-temp';runner.mkdir()
+ basetemp=(project if mode.startswith('red') else runner)/'native-runtime-work'
+ env=os.environ.copy();env['PYTHONPATH']=str(ROOT/'src')+':'+str(ROOT);env.pop('PREFECT_API_URL',None);env.pop('PREFECT_API_DATABASE_CONNECTION_URL',None);env['PREFECT_SERVER_DATABASE_CONNECTION_URL']='sqlite+aiosqlite:///:memory:';env['RUNNER_TEMP']=str(runner);env['PYTEST_DISABLE_PLUGIN_AUTOLOAD']='1'
+ cmd=['/workspace/ariadne/.venv/bin/python','-m','pytest','-p','no:cacheprovider','-o','addopts=','--confcutdir='+str(project),str(test),'-q','--basetemp='+str(basetemp),'--junitxml='+str(trial/'pytest.xml')]
+ start=time.monotonic();p=subprocess.run(cmd,cwd=project,env=env,capture_output=True,text=True,timeout=90);(trial/'stdout.log').write_text(p.stdout);(trial/'stderr.log').write_text(p.stderr);(trial/'exit').write_text(str(p.returncode)+'\n');(trial/'command.json').write_text(json.dumps({'command':cmd,'cwd':str(project),'scope':'Actual project cleanup fixture re-exported unchanged in isolated conftest; third-party plugin autoload disabled; built-in tmp_path only. No API/DB fixture registered.'},indent=2)+'\n')
+ cases=ET.parse(trial/'pytest.xml').findall('.//testcase');failures=sum(c.find('failure') is not None for c in cases);errors=sum(c.find('error') is not None for c in cases);record={'mode':mode,'returncode':p.returncode,'wall_seconds':time.monotonic()-start,'cases':len(cases),'failures':failures,'errors':errors,'used_actual_project_conftest':True}
+ if mode.startswith('red'):
+  assert p.returncode==1 and errors==1 and failures==0,p.stdout+p.stderr
+  assert 'left new files in the working directory' in p.stdout and 'native-runtime-work' in p.stdout
+ else:
+  assert p.returncode==0 and errors==0 and failures==0,p.stdout+p.stderr
+  spec=importlib.util.spec_from_file_location('diagnostics',ROOT/'scripts/native_runtime_diagnostics.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);manifest=m.collect(basetemp,project/'native-runtime-diagnostics');assert manifest['copy_count']==1;record['post_pytest_collector_files']=manifest['copy_count']
+ results.append(record)
+report={'schema':'ariadne-native-ci-basetemp-cleanup-regression-v1','created_at':datetime.now(timezone.utc).isoformat(),'status':'PASS','source_head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),'actual_conftest_sha256':hashlib.sha256((ROOT/'tests/conftest.py').read_bytes()).hexdigest(),'results':results,'scope':'Real pytest with unmodified tests.conftest module cleanup guard and built-in tmp_path. NoPrefectFlow/Task/ETLbody or DBfixture execution. Rederror retained; outside-RUNNER_TEMP path and post-command collector pass.'}
+(BASE/'probe-report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
