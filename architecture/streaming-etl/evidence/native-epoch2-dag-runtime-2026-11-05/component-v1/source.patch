@@ -1,0 +1,1709 @@
+diff --git a/src/prefect/_internal/stream_finite.py b/src/prefect/_internal/stream_finite.py
+index 12ad437..f4103bd 100644
+--- a/src/prefect/_internal/stream_finite.py
++++ b/src/prefect/_internal/stream_finite.py
+@@ -103,8 +103,21 @@ async def _read_receipt(
+ async def _reserve(
+     task: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+ ) -> _FiniteRun:
+-    graph = reconstruction()
++    # utilities.engine imports Task; defer until the finite call is requested.
++    from prefect.utilities.engine import refuse_stream_graph_dependencies
++
++    refuse_stream_graph_dependencies((args, kwargs))
+     context = FlowRunContext.get()
++    if (
++        context is not None
++        and context.flow is not None
++        and context.flow.streaming is not None
++        and context.flow.streaming.profile == "partitioned-dag-v1"
++    ):
++        raise StreamProtocolError(
++            "Finite Task prefix/tail execution is unsupported in the topology-only DAG profile"
++        )
++    graph = reconstruction()
+     if (
+         graph is None
+         or context is None
+diff --git a/src/prefect/_internal/stream_partitioned.py b/src/prefect/_internal/stream_partitioned.py
+index 35dbad8..f57ffa7 100644
+--- a/src/prefect/_internal/stream_partitioned.py
++++ b/src/prefect/_internal/stream_partitioned.py
+@@ -139,6 +139,11 @@ def _direct_task_witness(task: Any) -> bytes:
+     ).encode("utf-8")
+ 
+ 
++def stream_task_definition_witness(task: Any) -> bytes:
++    """Share the immutable direct Task contract with other native compilers."""
++    return _direct_task_witness(task)
++
++
+ def bind_partition_calls(
+     task: Any,
+     partitions: tuple[StreamPartitionCall, StreamPartitionCall],
+diff --git a/src/prefect/_internal/stream_reconstruction.py b/src/prefect/_internal/stream_reconstruction.py
+index 4e91cb5..19d8a02 100644
+--- a/src/prefect/_internal/stream_reconstruction.py
++++ b/src/prefect/_internal/stream_reconstruction.py
+@@ -201,13 +201,23 @@ def _begin(flow_run: Any) -> Any:
+         return None
+     if flow_run is None or execution.flow_run_id != flow_run.id:
+         raise StreamProtocolError("A native execution cannot enter another FlowRun")
+-    previous = reconstruction()
+-    if previous is not None and previous.flow_attempt == flow_run.run_count:
+-        return previous
+     from prefect.context import FlowRunContext
+ 
+     context = FlowRunContext.get()
+     flow = context.flow if context is not None else None
++    previous = reconstruction()
++    if (
++        flow is not None
++        and flow.streaming is not None
++        and flow.streaming.profile == "partitioned-dag-v1"
++    ):
++        if previous is not None:
++            raise StreamProtocolError(
++                "DAG authoring cannot reuse a legacy stream reconstruction"
++            )
++        return None
++    if previous is not None and previous.flow_attempt == flow_run.run_count:
++        return previous
+     if (
+         flow is not None
+         and flow.streaming is not None
+@@ -293,8 +303,17 @@ def submit_reconstructed_stream(
+     from prefect.task_runners import ThreadPoolTaskRunner
+     from prefect.utilities.collections import visit_collection
+ 
+-    graph = reconstruction()
+     context = FlowRunContext.get()
++    if (
++        context is not None
++        and context.flow is not None
++        and context.flow.streaming is not None
++        and context.flow.streaming.profile == "partitioned-dag-v1"
++    ):
++        raise StreamProtocolError(
++            "DAG declarations require StreamGraph; submit_stream is unsupported"
++        )
++    graph = reconstruction()
+     if (
+         graph is None
+         or context is None
+diff --git a/src/prefect/task_engine.py b/src/prefect/task_engine.py
+index 4e0f24c..341ca85 100644
+--- a/src/prefect/task_engine.py
++++ b/src/prefect/task_engine.py
+@@ -143,6 +143,7 @@ from prefect.utilities.engine import (
+     collect_task_run_inputs_sync,
+     emit_task_run_state_change_event,
+     link_state_to_task_run_result,
++    refuse_stream_graph_dependencies,
+     resolve_to_final_result,
+ )
+ from prefect.utilities.math import clamped_poisson_interval
+@@ -399,6 +400,8 @@ class BaseTaskRunEngine(Generic[P, R]):
+         if getattr(self, "_parameters_resolved", False):
+             return None
+ 
++        refuse_stream_graph_dependencies(self.parameters)
++
+         resolved_parameters = {}
+         for parameter, value in self.parameters.items():
+             try:
+diff --git a/src/prefect/utilities/engine/__init__.py b/src/prefect/utilities/engine/__init__.py
+index d6ed74f..4e72bbd 100644
+--- a/src/prefect/utilities/engine/__init__.py
++++ b/src/prefect/utilities/engine/__init__.py
+@@ -57,7 +57,15 @@ from prefect.logging.loggers import get_logger
+ from prefect.results import ResultRecord, should_persist_result
+ from prefect.settings import PREFECT_LOGGING_LOG_PRINTS
+ from prefect.states import State
+-from prefect.streams import Stream, StreamCollection, StreamProtocolError
++from prefect.streams import (
++    SealedStreamGraph,
++    Stream,
++    StreamCollection,
++    StreamGraph,
++    StreamOperatorHandle,
++    StreamOutput,
++    StreamProtocolError,
++)
+ from prefect.utilities.asyncutils import run_coro_as_sync
+ from prefect.tasks import Task
+ from prefect.utilities.annotations import allow_failure, opaque, quote
+@@ -72,6 +80,47 @@ UNTRACKABLE_TYPES: set[type[Any]] = {bool, type(None), type(...), type(NotImplem
+ _RUN_SCHEMA_TYPES: tuple[type[Any], ...] = (FlowRun, TaskRun)
+ engine_logger: Logger = get_logger("engine")
+ 
++_STREAM_GRAPH_METADATA_TYPES: tuple[type[Any], ...] = (
++    StreamGraph,
++    StreamOperatorHandle,
++    StreamOutput,
++    SealedStreamGraph,
++)
++
++
++def refuse_stream_graph_dependencies(value: Any) -> None:
++    """Reject declaration metadata without collecting or starting its graph.
++
++    Known containers are traversed explicitly, including annotation tuples.
++    Arbitrary object attributes are not inspected and container cycles are safe.
++    """
++    pending: list[Any] = [value]
++    visited: set[int] = set()
++    while pending:
++        item = pending.pop()
++        if isinstance(item, _STREAM_GRAPH_METADATA_TYPES):
++            raise StreamProtocolError(
++                "StreamGraph metadata is not an executable finite Task dependency"
++            )
++        if isinstance(item, (list, tuple, dict, set, frozenset)):
++            container = cast(
++                list[Any]
++                | tuple[Any, ...]
++                | dict[Any, Any]
++                | set[Any]
++                | frozenset[Any],
++                item,
++            )
++            identity = id(container)
++            if identity in visited:
++                continue
++            visited.add(identity)
++            if isinstance(container, dict):
++                pending.extend(container.keys())
++                pending.extend(container.values())
++            else:
++                pending.extend(container)
++
+ 
+ def _raise_on_run_schema_unless_opaque(obj: Any, context: dict[str, Any]) -> None:
+     """Raise a clear error when a Prefect run schema object is passed as a
+@@ -1035,6 +1084,9 @@ def resolve_to_final_result(expr: Any, context: dict[str, Any]) -> Any:
+     """
+     state: Optional[State[Any]] = None
+ 
++    if isinstance(expr, _STREAM_GRAPH_METADATA_TYPES):
++        refuse_stream_graph_dependencies(expr)
++
+     # Expressions inside quotes should not be modified
+     if isinstance(context.get("annotation"), quote):
+         raise StopVisiting()
+@@ -1095,6 +1147,8 @@ def resolve_to_final_result(expr: Any, context: dict[str, Any]) -> Any:
+ 
+     result: Any = state.result(raise_on_failure=False, _sync=True)  # pyright: ignore[reportCallIssue] _sync messes up type inference and can be removed once async_dispatch is removed
+ 
++    refuse_stream_graph_dependencies(result)
++
+     if isinstance(result, (Stream, StreamCollection)):
+         return resolve_to_final_result(result, context)
+ 
+diff --git a/src/prefect/_internal/stream_dag.py b/src/prefect/_internal/stream_dag.py
+new file mode 100644
+index 0000000..02ea4c4
+--- /dev/null
++++ b/src/prefect/_internal/stream_dag.py
+@@ -0,0 +1,496 @@
++"""Local authoring of an immutable finite single-input streaming DAG.
++
++No declaration or context-manager operation invokes a Task or transport. Only
++explicit seal submits the complete metadata declaration; execution stays fenced.
++"""
++
++from __future__ import annotations
++
++import json
++import re
++import threading
++from dataclasses import dataclass
++from pathlib import Path
++from types import TracebackType
++from typing import Any
++from uuid import NAMESPACE_URL, uuid5
++
++from pydantic import ValidationError
++
++from prefect._internal.stream_execution import get_stream_execution
++from prefect._internal.stream_partitioned import (
++    bind_partition_parameters,
++    stream_task_definition_witness,
++)
++from prefect.client.orchestration import get_client
++from prefect.client.schemas.stream_dags import (
++    StreamDAGOperatorSpec,
++    StreamDAGSealRequest,
++    StreamEdgeSpec,
++)
++from prefect.context import FlowRunContext, TagsContext, TaskRunContext
++from prefect.settings import PREFECT_API_URL
++from prefect.streams import (
++    SealedStreamGraph,
++    StreamInput,
++    StreamOperatorHandle,
++    StreamPartitionCall,
++    StreamPort,
++    StreamProtocolError,
++    StreamSourceConfig,
++    StreamTaskConfig,
++)
++
++
++def _canonical(value: Any) -> bytes:
++    return json.dumps(
++        value,
++        ensure_ascii=False,
++        allow_nan=False,
++        sort_keys=True,
++        separators=(",", ":"),
++    ).encode("utf-8")
++
++
++def _port(port: StreamPort) -> dict[str, str | int]:
++    if type(port) is not StreamPort:
++        raise StreamProtocolError("A DAG requires one declared StreamPort")
++    port.__post_init__()
++    return {
++        "uid": port.uid,
++        "schema_id": port.schema_id,
++        "schema_version": port.schema_version,
++        "schema_digest": port.schema_digest,
++    }
++
++
++@dataclass(frozen=True)
++class _OperatorDraft:
++    task: Any
++    task_witness: bytes
++    definition: bytes
++
++
++class StreamGraphAuthoring:
++    """Collect a bounded rooted DAG before any authoritative mutation."""
++
++    def __init__(self) -> None:
++        self.graph_token = object()
++        self._lock = threading.RLock()
++        self._entered = False
++        self._operators: dict[str, _OperatorDraft] = {}
++        self._edge_uids: set[str] = set()
++        self._subscriber_uids: set[str] = set()
++        self._seal_intent: bytes | None = None
++        self._sealed: SealedStreamGraph | None = None
++        self._seal_request: bytes | None = None
++        self._seal_api_url: str | None = None
++
++    def enter(self) -> None:
++        with self._lock:
++            if self._entered:
++                raise StreamProtocolError("A StreamGraph context cannot enter twice")
++            self._entered = True
++
++    def exit(
++        self,
++        exc_type: type[BaseException] | None,
++        exc: BaseException | None,
++        tb: TracebackType | None,
++    ) -> None:
++        # Explicit seal is the only metadata boundary, including on exceptions.
++        with self._lock:
++            self._entered = False
++
++    def add(
++        self,
++        task: Any,
++        *,
++        operator_uid: str,
++        partitions: tuple[StreamPartitionCall, ...],
++        input: StreamInput | None,
++        output: StreamPort,
++    ) -> StreamOperatorHandle[Any]:
++        # Task imports public StreamGraph descriptors during initialization.
++        from prefect.tasks import Task
++
++        if not isinstance(task, Task):
++            raise StreamProtocolError("DAG operators require ordinary declared Tasks")
++        if not isinstance(task.stream, (StreamSourceConfig, StreamTaskConfig)):
++            raise StreamProtocolError(
++                "DAG Tasks require a source or single-input stream contract"
++            )
++        if (
++            type(operator_uid) is not str
++            or re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", operator_uid) is None
++        ):
++            raise StreamProtocolError("A DAG operator requires an explicit stable UID")
++        if (
++            type(partitions) is not tuple
++            or not 1 <= len(partitions) <= 16
++            or any(type(call) is not StreamPartitionCall for call in partitions)
++        ):
++            raise StreamProtocolError(
++                "A DAG operator requires 1..16 explicit StreamPartitionCall values"
++            )
++        output_port = _port(output)
++        witness = stream_task_definition_witness(task)
++        source = isinstance(task.stream, StreamSourceConfig)
++        parameters = [
++            bind_partition_parameters(task, call.parameters) for call in partitions
++        ]
++        if (
++            source
++            and len(parameters) > 1
++            and (
++                not all(parameters)
++                or len({_canonical(item) for item in parameters}) != len(parameters)
++            )
++        ):
++            raise StreamProtocolError(
++                "A source requires distinct nonempty bound split snapshots"
++            )
++        with self._lock:
++            if self._seal_intent is not None:
++                raise StreamProtocolError("No declaration may follow the graph seal")
++            if operator_uid in self._operators:
++                raise StreamProtocolError("DAG operator UIDs must be unique")
++            if len(self._operators) >= 16:
++                raise StreamProtocolError("A DAG supports at most 16 operators")
++            existing = [
++                json.loads(item.definition) for item in self._operators.values()
++            ]
++            if sum(item["parallelism"] for item in existing) + len(parameters) > 128:
++                raise StreamProtocolError(
++                    "A DAG supports at most 128 physical subtasks"
++                )
++            edge: dict[str, Any] | None = None
++            input_port = None
++            if source:
++                if input is not None or any(
++                    item["role"] == "SOURCE" for item in existing
++                ):
++                    raise StreamProtocolError("A DAG requires exactly one source root")
++            else:
++                if type(input) is not StreamInput:
++                    raise StreamProtocolError(
++                        "An operator requires exactly one StreamInput"
++                    )
++                input.__post_init__()
++                input.exchange.__post_init__()
++                input_port = _port(input.port)
++                if input_port["uid"] == output_port["uid"]:
++                    raise StreamProtocolError("Input and output port UIDs must differ")
++                if input.upstream.graph_identity is not self.graph_token:
++                    raise StreamProtocolError(
++                        "An input endpoint belongs to another graph"
++                    )
++                producer = self._operators.get(input.upstream.operator_uid)
++                if producer is None:
++                    raise StreamProtocolError(
++                        "Declare the upstream operator before its edge"
++                    )
++                upstream = json.loads(producer.definition)
++                if _port(input.upstream.port) != upstream["output_port"]:
++                    raise StreamProtocolError(
++                        "The upstream output port differs from its declaration"
++                    )
++                if any(
++                    input_port[key] != upstream["output_port"][key]
++                    for key in ("schema_id", "schema_version", "schema_digest")
++                ):
++                    raise StreamProtocolError(
++                        "An edge requires matching portable schemas"
++                    )
++                if input.edge_uid in self._edge_uids:
++                    raise StreamProtocolError("DAG edge UIDs must be unique")
++                if input.subscriber_uid in self._subscriber_uids:
++                    raise StreamProtocolError("DAG subscriber UIDs must be unique")
++                if len(self._edge_uids) >= 32:
++                    raise StreamProtocolError("A DAG supports at most 32 edges")
++                if input.exchange.kind == "forward" and upstream["parallelism"] != len(
++                    parameters
++                ):
++                    raise StreamProtocolError("Forward edges require equal parallelism")
++                if input.exchange.kind == "keyed" and (
++                    input.exchange.key_group_count is None
++                    or not len(parameters)
++                    <= input.exchange.key_group_count
++                    <= 2**31 - 1
++                ):
++                    raise StreamProtocolError(
++                        "Key groups must cover every target within the DAG profile bound"
++                    )
++                edge = {
++                    "uid": input.edge_uid,
++                    "subscriber_uid": input.subscriber_uid,
++                    "producer_operator_uid": input.upstream.operator_uid,
++                    "producer_port_uid": input.upstream.port.uid,
++                    "subscriber_operator_uid": operator_uid,
++                    "subscriber_port_uid": input.port.uid,
++                    "exchange": {
++                        "kind": input.exchange.kind,
++                        "routing_version": input.exchange.routing_version,
++                        "key_group_count": input.exchange.key_group_count,
++                    },
++                }
++            task_definition = json.loads(witness)
++            effective_tags = sorted(set(task.tags) | TagsContext.get().current_tags)
++            if len(effective_tags) > 64 or any(
++                type(tag) is not str or not tag or len(tag.encode("utf-8")) > 255
++                for tag in effective_tags
++            ):
++                raise StreamProtocolError("DAG Task tags exceed the metadata profile")
++            definition = _canonical(
++                {
++                    "operator_uid": operator_uid,
++                    "role": "SOURCE" if source else "OPERATOR",
++                    "parallelism": len(parameters),
++                    "task": task_definition,
++                    "parameters": parameters,
++                    "effective_tags": effective_tags,
++                    "input_key": task.stream.input
++                    if isinstance(task.stream, StreamTaskConfig)
++                    else None,
++                    "input_port": input_port,
++                    "output_port": output_port,
++                    "edge": edge,
++                }
++            )
++            handle: StreamOperatorHandle[Any] = StreamOperatorHandle(
++                _graph_token=self.graph_token,
++                operator_uid=operator_uid,
++                output_port=output,
++            )
++            self._operators[operator_uid] = _OperatorDraft(task, witness, definition)
++            if edge is not None:
++                self._edge_uids.add(edge["uid"])
++                self._subscriber_uids.add(edge["subscriber_uid"])
++            return handle
++
++    def definition(self) -> dict[str, Any]:
++        """Return a detached local compiler input, never an executing wire plan."""
++        with self._lock:
++            operators = [
++                json.loads(draft.definition)
++                for _, draft in sorted(self._operators.items())
++            ]
++            if len(operators) < 3 or len(self._edge_uids) < 2:
++                raise StreamProtocolError(
++                    "A DAG requires at least three operators and two edges"
++                )
++            roots = [
++                item["operator_uid"] for item in operators if item["role"] == "SOURCE"
++            ]
++            if len(roots) != 1:
++                raise StreamProtocolError("A DAG requires exactly one source root")
++            children: dict[str, list[str]] = {
++                item["operator_uid"]: [] for item in operators
++            }
++            for operator in operators:
++                edge = operator["edge"]
++                if edge is not None:
++                    children[edge["producer_operator_uid"]].append(
++                        operator["operator_uid"]
++                    )
++            if not any(len(values) >= 2 for values in children.values()):
++                raise StreamProtocolError("The DAG profile requires a fan-out node")
++            reached: set[str] = set()
++            pending: list[str] = [roots[0]]
++            while pending:
++                uid = pending.pop()
++                if uid in reached:
++                    raise StreamProtocolError(
++                        "DAG topology contains a cycle or duplicate input"
++                    )
++                reached.add(uid)
++                pending.extend(children[uid])
++            if reached != set(children):
++                raise StreamProtocolError(
++                    "Every operator must be reachable from its source"
++                )
++            for draft in self._operators.values():
++                if stream_task_definition_witness(draft.task) != draft.task_witness:
++                    raise StreamProtocolError(
++                        "Task definition changed after DAG declaration"
++                    )
++            return {
++                "schema": "prefect-stream-dag-authoring-v1",
++                "profile": "partitioned-dag-v1",
++                "operators": operators,
++            }
++
++    def seal(self) -> SealedStreamGraph:
++        with self._lock:
++            if self._sealed is not None:
++                return self._sealed
++            snapshot = _canonical(self.definition())
++            if self._seal_intent is None:
++                self._seal_intent = snapshot
++            elif snapshot != self._seal_intent:
++                raise StreamProtocolError(
++                    "A graph seal cannot change its frozen definition"
++                )
++            self._sealed = self._seal_snapshot(snapshot)
++            return self._sealed
++
++    def _seal_snapshot(self, snapshot: bytes) -> SealedStreamGraph:
++        context = FlowRunContext.get()
++        execution = get_stream_execution()
++        if (
++            context is None
++            or context.flow is None
++            or context.flow_run is None
++            or execution is None
++            or TaskRunContext.get() is not None
++            or execution.flow_run_id != context.flow_run.id
++            or not context.flow.version
++            or context.flow.streaming is None
++            or context.flow.streaming.profile != "partitioned-dag-v1"
++            or context.flow_run.deployment_id is None
++            or context.flow_run.deployment_version is None
++            or (context.flow_run.labels or {}).get("prefect.native-streaming")
++            != "partitioned-dag-v1"
++        ):
++            raise StreamProtocolError(
++                "DAG seal requires its matching deployed native Flow authority"
++            )
++        configured = PREFECT_API_URL.value()
++        if not configured or configured.rstrip("/") != execution.api_url:
++            raise StreamProtocolError("DAG seal API differs from its Flow authority")
++        if self._seal_request is None:
++            operators, edges = self._wire_definition(snapshot)
++            try:
++                request = StreamDAGSealRequest(
++                    flow_run_id=context.flow_run.id,
++                    operation_id=uuid5(
++                        NAMESPACE_URL, f"partitioned-dag-v1/{context.flow_run.id}"
++                    ),
++                    flow_version=context.flow.version,
++                    deployment_id=context.flow_run.deployment_id,
++                    deployment_version=context.flow_run.deployment_version,
++                    working_directory=str(Path.cwd().resolve()),
++                    operators=[
++                        StreamDAGOperatorSpec.model_validate(item) for item in operators
++                    ],
++                    edges=[StreamEdgeSpec.model_validate(item) for item in edges],
++                )
++            except ValidationError as exc:
++                raise StreamProtocolError(
++                    "DAG declaration exceeds its wire contract"
++                ) from exc
++            self._seal_request = _canonical(request.model_dump(mode="json"))
++            self._seal_api_url = execution.api_url
++        frozen_request = StreamDAGSealRequest.model_validate_json(self._seal_request)
++        payload = frozen_request.model_dump(mode="json")
++        if (
++            payload["flow_run_id"] != str(context.flow_run.id)
++            or payload["flow_version"] != context.flow.version
++            or payload["deployment_id"] != str(context.flow_run.deployment_id)
++            or payload["deployment_version"] != context.flow_run.deployment_version
++            or self._seal_api_url != execution.api_url
++        ):
++            raise StreamProtocolError(
++                "A seal retry belongs to another Flow declaration"
++            )
++        client = get_client(sync_client=True)
++        if str(client.api_url).rstrip("/") != execution.api_url:
++            raise StreamProtocolError("DAG seal client differs from its Flow authority")
++        with client:
++            plan = client.seal_stream_dag(
++                flow_run_id=frozen_request.flow_run_id,
++                operation_id=frozen_request.operation_id,
++                flow_version=frozen_request.flow_version,
++                operators=[
++                    item.model_dump(mode="json") for item in frozen_request.operators
++                ],
++                edges=[item.model_dump(mode="json") for item in frozen_request.edges],
++                deployment_id=frozen_request.deployment_id,
++                deployment_version=frozen_request.deployment_version,
++                working_directory=frozen_request.working_directory,
++                profile=frozen_request.profile,
++                assignment_epoch=frozen_request.assignment_epoch,
++            )
++        expected = {item["operator_uid"]: item for item in payload["operators"]}
++        if (
++            plan.flow_run_id != context.flow_run.id
++            or str(plan.operation_id) != payload["operation_id"]
++            or plan.profile != "partitioned-dag-v1"
++            or plan.assignment_epoch != 1
++            or plan.execution_ready is not False
++            or {item.operator_uid for item in plan.operators} != set(expected)
++            or any(
++                item.role != expected[item.operator_uid]["role"]
++                or item.parallelism != expected[item.operator_uid]["parallelism"]
++                or item.output_port.model_dump(exclude={"id", "direction"})
++                != expected[item.operator_uid]["output_port"]
++                or (
++                    item.input_port.model_dump(exclude={"id", "direction"})
++                    if item.input_port is not None
++                    else None
++                )
++                != expected[item.operator_uid]["input_port"]
++                for item in plan.operators
++            )
++            or [
++                item.model_dump(mode="json", exclude={"id", "partitions"})
++                for item in plan.edges
++            ]
++            != payload["edges"]
++        ):
++            raise StreamProtocolError(
++                "Sealed metadata differs from the DAG declaration"
++            )
++        return SealedStreamGraph(
++            graph_revision_id=plan.id, graph_digest=plan.graph_digest
++        )
++
++    @staticmethod
++    def _wire_definition(
++        snapshot: bytes,
++    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
++        definition = json.loads(snapshot)
++        operators: list[dict[str, Any]] = []
++        edges: list[dict[str, Any]] = []
++        for operator in definition["operators"]:
++            task = operator["task"]
++            operators.append(
++                {
++                    "operator_uid": operator["operator_uid"],
++                    "role": operator["role"],
++                    "parallelism": operator["parallelism"],
++                    "task_name": task["task_name"],
++                    "task_key": task["task_key"],
++                    "task_version": task["task_version"],
++                    "artifact_digest": task["artifact_digest"],
++                    "entrypoint": task["entrypoint"],
++                    "context_key": task["stream"]["context"],
++                    "parameters": operator["parameters"],
++                    "input_key": operator["input_key"],
++                    "input_port": operator["input_port"],
++                    "output_port": operator["output_port"],
++                    "task_policy": task["task_policy"],
++                    "timeout_seconds": task["timeout_seconds"],
++                    "tags": operator["effective_tags"],
++                }
++            )
++            edge = operator["edge"]
++            if edge is not None:
++                exchange = edge["exchange"]
++                keyed = exchange["kind"] == "keyed"
++                edges.append(
++                    {
++                        "edge_uid": edge["uid"],
++                        "producer_operator_uid": edge["producer_operator_uid"],
++                        "output_port_uid": edge["producer_port_uid"],
++                        "subscriber_uid": edge["subscriber_uid"],
++                        "consumer_operator_uid": edge["subscriber_operator_uid"],
++                        "input_port_uid": edge["subscriber_port_uid"],
++                        "exchange": exchange["kind"],
++                        "routing_version": exchange["routing_version"],
++                        "key_group_count": exchange["key_group_count"],
++                        "key_codec": "tagged-key-v1" if keyed else None,
++                        "hash_algorithm": "sha256" if keyed else None,
++                    }
++                )
++        return operators, sorted(edges, key=lambda item: item["edge_uid"])
+diff --git a/tests/test_stream_dag_authoring.py b/tests/test_stream_dag_authoring.py
+new file mode 100644
+index 0000000..53d4bec
+--- /dev/null
++++ b/tests/test_stream_dag_authoring.py
+@@ -0,0 +1,575 @@
++"""Pure DAG authoring controls; no server or executing stream is substituted."""
++
++import asyncio
++import json
++import unittest
++from types import SimpleNamespace
++from typing import Any
++from unittest.mock import patch
++from uuid import NAMESPACE_URL, uuid4, uuid5
++
++import httpx
++
++from prefect import task
++from prefect._internal.stream_dag import StreamGraphAuthoring
++from prefect._internal.stream_execution import StreamExecutionContext
++from prefect._internal.stream_finite import _reserve
++from prefect._internal.stream_reconstruction import (
++    async_stream_flow_scope,
++    stream_flow_scope,
++    submit_reconstructed_stream,
++)
++from prefect.client.schemas.stream_dags import StreamDAGSealRequest
++from prefect.context import TagsContext
++from prefect.streams import (
++    SealedStreamGraph,
++    SourceContext,
++    SourceRecord,
++    StreamContext,
++    StreamExchange,
++    StreamGraph,
++    StreamInput,
++    StreamOperatorHandle,
++    StreamPartitionCall,
++    StreamPort,
++    StreamProtocolError,
++    StreamSourceConfig,
++    StreamTaskConfig,
++)
++
++
++@task(version="dag-authoring-v1", retries=2, stream=StreamSourceConfig())
++def dag_source(ctx: SourceContext, split: str):
++    raise AssertionError("Authoring executed the source body")
++    yield SourceRecord(1, {"split": split})
++
++
++@task(version="dag-authoring-v1", retries=2, stream=StreamSourceConfig())
++def dag_bare_source(ctx: SourceContext):
++    raise AssertionError("Authoring executed the parameterless source body")
++    yield SourceRecord(1, {})
++
++
++@task(version="dag-authoring-v1", retries=2, stream=StreamTaskConfig(input="document"))
++def dag_operator(ctx: StreamContext, document: Any):
++    raise AssertionError("Authoring executed an operator body")
++    yield document
++
++
++@task(version="dag-authoring-v1", retries=2)
++def ordinary_task():
++    raise AssertionError("Authoring executed an ordinary body")
++
++
++def source(
++    authoring: StreamGraphAuthoring, count: int = 1, uid: str = "A"
++) -> StreamOperatorHandle[Any]:
++    return authoring.add(
++        dag_source,
++        operator_uid=uid,
++        partitions=tuple(
++            StreamPartitionCall(parameters={"split": str(index)})
++            for index in range(count)
++        ),
++        input=None,
++        output=StreamPort("out"),
++    )
++
++
++def branch(
++    authoring: StreamGraphAuthoring,
++    upstream: StreamOperatorHandle[Any],
++    uid: str,
++    count: int = 1,
++    kind: str = "forward",
++    edge_uid: str | None = None,
++    subscriber_uid: str | None = None,
++    input_uid: str = "in",
++) -> StreamOperatorHandle[Any]:
++    return authoring.add(
++        dag_operator,
++        operator_uid=uid,
++        partitions=(StreamPartitionCall(parameters={}),) * count,
++        input=StreamInput(
++            port=StreamPort(input_uid),
++            upstream=upstream.output("out"),
++            edge_uid=edge_uid or f"A-{uid}",
++            subscriber_uid=subscriber_uid or f"subscriber-{uid}",
++            exchange=StreamExchange(kind=kind),
++        ),
++        output=StreamPort("out"),
++    )
++
++
++def fork(authoring: StreamGraphAuthoring) -> None:
++    upstream = source(authoring)
++    branch(authoring, upstream, "B")
++    branch(authoring, upstream, "C", 2, "broadcast")
++
++
++class RecordingMetadataBoundary(StreamGraphAuthoring):
++    """Observe compiler submissions; this is not an HTTP acceptance fixture."""
++
++    def __init__(self) -> None:
++        super().__init__()
++        self.snapshots: list[bytes] = []
++        self.reply = SealedStreamGraph(graph_revision_id=uuid4(), graph_digest="d" * 64)
++        self.fail_once = False
++
++    def _seal_snapshot(self, snapshot: bytes) -> SealedStreamGraph:
++        self.snapshots.append(snapshot)
++        if self.fail_once:
++            self.fail_once = False
++            raise httpx.ReadTimeout("Metadata acknowledgement unknown")
++        return self.reply
++
++
++class TestStreamDagAuthoring(unittest.TestCase):
++    def test_dag_profile_never_enters_legacy_reconstruction_on_scope_exit(self):
++        execution = StreamExecutionContext(
++            flow_run_id=uuid4(),
++            generation=1,
++            holder_id=uuid4(),
++            api_url="http://127.0.0.1:4200/api",
++            capability="a" * 64,
++            event_private_key=b"b" * 32,
++        )
++        run = SimpleNamespace(id=execution.flow_run_id, run_count=1)
++        context = SimpleNamespace(
++            flow=SimpleNamespace(
++                streaming=SimpleNamespace(profile="partitioned-dag-v1")
++            )
++        )
++        proposals = []
++
++        async def run_async_scope():
++            async with async_stream_flow_scope(run):
++                metadata = RecordingMetadataBoundary()
++                fork(metadata)
++                metadata.seal()
++            proposals.append("async terminal proposal reachable")
++
++        with (
++            patch("prefect.context.FlowRunContext.get", return_value=context),
++            patch(
++                "prefect._internal.stream_reconstruction.get_stream_execution",
++                return_value=execution,
++            ),
++            patch(
++                "prefect._internal.stream_reconstruction.StreamReconstruction"
++            ) as legacy,
++        ):
++            with stream_flow_scope(run):
++                metadata = RecordingMetadataBoundary()
++                fork(metadata)
++                metadata.seal()
++            proposals.append("sync terminal proposal reachable")
++            asyncio.run(run_async_scope())
++            legacy.assert_not_called()
++        self.assertEqual(len(proposals), 2)
++
++    def test_legacy_finite_and_stream_submissions_refuse_before_graph_lookup(self):
++        context = SimpleNamespace(
++            flow=SimpleNamespace(
++                streaming=SimpleNamespace(profile="partitioned-dag-v1")
++            )
++        )
++        with (
++            patch("prefect.context.FlowRunContext.get", return_value=context),
++            patch("prefect._internal.stream_finite.reconstruction") as finite_lookup,
++            patch(
++                "prefect._internal.stream_reconstruction.reconstruction"
++            ) as legacy_lookup,
++        ):
++            with self.assertRaisesRegex(
++                StreamProtocolError, "topology-only DAG profile"
++            ):
++                asyncio.run(_reserve(None, (), {}))
++            with self.assertRaisesRegex(StreamProtocolError, "StreamGraph"):
++                submit_reconstructed_stream(None, (), {}, None)
++            finite_lookup.assert_not_called()
++            legacy_lookup.assert_not_called()
++
++    def test_real_seal_requires_its_flow_authority_before_transport(self):
++        boundary = StreamGraphAuthoring()
++        fork(boundary)
++        with patch("prefect._internal.stream_dag.get_client") as transport:
++            with self.assertRaisesRegex(StreamProtocolError, "Flow authority"):
++                boundary.seal()
++            transport.assert_not_called()
++
++    def test_constructor_add_and_context_exit_are_local_only(self):
++        boundary = RecordingMetadataBoundary()
++        with patch(
++            "prefect._internal.stream_dag.StreamGraphAuthoring", return_value=boundary
++        ):
++            with StreamGraph() as graph:
++                a = graph.add(
++                    dag_source,
++                    operator_uid="A",
++                    partitions=(StreamPartitionCall(parameters={"split": "one"}),),
++                    output=StreamPort("out"),
++                )
++                self.assertIs(a.output("out").graph_identity, boundary.graph_token)
++            self.assertEqual(boundary.snapshots, [])
++        with self.assertRaisesRegex(StreamProtocolError, "three operators"):
++            boundary.seal()
++        self.assertEqual(boundary.snapshots, [])
++
++    def test_context_exception_never_seals(self):
++        boundary = RecordingMetadataBoundary()
++        with patch(
++            "prefect._internal.stream_dag.StreamGraphAuthoring", return_value=boundary
++        ):
++            with self.assertRaisesRegex(RuntimeError, "application failure"):
++                with StreamGraph():
++                    raise RuntimeError("application failure")
++        self.assertEqual(boundary.snapshots, [])
++
++    def test_complete_fork_freezes_four_physical_tasks_without_execution(self):
++        boundary = RecordingMetadataBoundary()
++        fork(boundary)
++        definition = boundary.definition()
++        self.assertEqual(
++            [
++                (item["operator_uid"], item["parallelism"])
++                for item in definition["operators"]
++            ],
++            [("A", 1), ("B", 1), ("C", 2)],
++        )
++        self.assertIs(boundary.seal(), boundary.reply)
++        self.assertIs(boundary.seal(), boundary.reply)
++        self.assertEqual(len(boundary.snapshots), 1)
++        self.assertFalse(hasattr(boundary.reply, "start"))
++        self.assertFalse(hasattr(boundary.reply, "wait"))
++        self.assertFalse(hasattr(boundary.reply, "admit"))
++
++    def test_generic_six_task_graph_is_not_hardcoded_to_four(self):
++        boundary = RecordingMetadataBoundary()
++        a = source(boundary, 2)
++        branch(boundary, a, "B", 2)
++        branch(boundary, a, "C", 2, "broadcast")
++        self.assertEqual(
++            sum(item["parallelism"] for item in boundary.definition()["operators"]), 6
++        )
++        boundary.seal()
++        self.assertEqual(len(boundary.snapshots), 1)
++
++    def test_branch_declaration_order_does_not_change_canonical_definition(self):
++        left = RecordingMetadataBoundary()
++        right = RecordingMetadataBoundary()
++        fork(left)
++        a = source(right)
++        branch(right, a, "C", 2, "broadcast")
++        branch(right, a, "B")
++        left.seal()
++        right.seal()
++        self.assertEqual(left.snapshots, right.snapshots)
++
++    def test_definition_and_parameter_snapshots_are_defensive(self):
++        boundary = RecordingMetadataBoundary()
++        parameters = {"split": "original"}
++        a = boundary.add(
++            dag_source,
++            operator_uid="A",
++            partitions=(StreamPartitionCall(parameters=parameters),),
++            input=None,
++            output=StreamPort("out"),
++        )
++        parameters["split"] = "changed"
++        branch(boundary, a, "B")
++        branch(boundary, a, "C")
++        first = boundary.definition()
++        first["operators"][0]["parameters"][0]["split"] = "changed-again"
++        self.assertEqual(
++            boundary.definition()["operators"][0]["parameters"], [{"split": "original"}]
++        )
++
++    def test_parameterless_source_is_valid_only_at_one_partition(self):
++        boundary = RecordingMetadataBoundary()
++        a = boundary.add(
++            dag_bare_source,
++            operator_uid="A",
++            partitions=(StreamPartitionCall(parameters={}),),
++            input=None,
++            output=StreamPort("out"),
++        )
++        branch(boundary, a, "B")
++        branch(boundary, a, "C")
++        boundary.seal()
++        other = RecordingMetadataBoundary()
++        with self.assertRaisesRegex(StreamProtocolError, "distinct nonempty"):
++            other.add(
++                dag_bare_source,
++                operator_uid="A",
++                partitions=(StreamPartitionCall(parameters={}),) * 2,
++                input=None,
++                output=StreamPort("out"),
++            )
++        self.assertEqual(other.snapshots, [])
++
++    def test_only_stream_task_contracts_are_accepted(self):
++        for value in (ordinary_task, object(), SimpleNamespace(stream=None)):
++            with self.subTest(task_type=type(value).__name__):
++                boundary = RecordingMetadataBoundary()
++                with self.assertRaises(StreamProtocolError):
++                    boundary.add(
++                        value,
++                        operator_uid="A",
++                        partitions=(StreamPartitionCall(parameters={}),),
++                        input=None,
++                        output=StreamPort("out"),
++                    )
++                self.assertEqual(boundary.snapshots, [])
++
++    def test_strict_partition_descriptors_and_parallelism_bounds(self):
++        for descriptors in (
++            [],
++            (),
++            (object(),),
++            (StreamPartitionCall(parameters={"split": "x"}),) * 17,
++        ):
++            with self.subTest(
++                descriptors=type(descriptors).__name__, count=len(descriptors)
++            ):
++                boundary = RecordingMetadataBoundary()
++                with self.assertRaises(StreamProtocolError):
++                    boundary.add(
++                        dag_source,
++                        operator_uid="A",
++                        partitions=descriptors,
++                        input=None,
++                        output=StreamPort("out"),
++                    )
++                self.assertEqual(boundary.snapshots, [])
++
++    def test_duplicate_source_splits_operator_edges_and_subscribers_are_refused(self):
++        for duplicate in ("source", "operator", "edge", "subscriber"):
++            with self.subTest(duplicate=duplicate):
++                boundary = RecordingMetadataBoundary()
++                a = source(boundary)
++                branch(boundary, a, "B")
++                with self.assertRaises(StreamProtocolError):
++                    if duplicate == "source":
++                        source(boundary, uid="second-root")
++                    elif duplicate == "operator":
++                        branch(boundary, a, "B")
++                    elif duplicate == "edge":
++                        branch(boundary, a, "C", edge_uid="A-B")
++                    else:
++                        branch(boundary, a, "C", subscriber_uid="subscriber-B")
++                branch(boundary, a, "C")
++                boundary.seal()
++                self.assertEqual(len(boundary.snapshots), 1)
++
++    def test_cross_graph_and_forged_unknown_upstream_are_refused(self):
++        left = RecordingMetadataBoundary()
++        foreign = source(left)
++        right = RecordingMetadataBoundary()
++        source(right)
++        with self.assertRaisesRegex(StreamProtocolError, "another graph"):
++            branch(right, foreign, "B")
++        forged = StreamOperatorHandle(
++            _graph_token=right.graph_token,
++            operator_uid="missing",
++            output_port=StreamPort("out"),
++        )
++        with self.assertRaisesRegex(StreamProtocolError, "upstream operator"):
++            branch(right, forged, "B")
++        self.assertEqual(right.snapshots, [])
++
++    def test_forward_requires_equal_parallelism(self):
++        boundary = RecordingMetadataBoundary()
++        a = source(boundary)
++        with self.assertRaisesRegex(StreamProtocolError, "equal parallelism"):
++            branch(boundary, a, "B", 2)
++        self.assertEqual(boundary.snapshots, [])
++
++    def test_port_identity_is_qualified_but_input_output_must_differ(self):
++        boundary = RecordingMetadataBoundary()
++        a = source(boundary)
++        with self.assertRaisesRegex(StreamProtocolError, "port UIDs must differ"):
++            branch(boundary, a, "B", input_uid="out")
++        branch(boundary, a, "B")
++        branch(boundary, a, "C")
++        boundary.seal()
++
++    def test_schema_digest_mismatch_is_refused_before_metadata(self):
++        boundary = RecordingMetadataBoundary()
++        a = source(boundary)
++        digest = StreamPort("out").schema_digest
++        with patch.object(
++            StreamPort,
++            "schema_digest",
++            property(lambda port: "0" * 64 if port.uid == "in" else digest),
++        ):
++            with self.assertRaisesRegex(
++                StreamProtocolError, "matching portable schemas"
++            ):
++                branch(boundary, a, "B")
++        self.assertEqual(boundary.snapshots, [])
++
++    def test_linear_only_and_incomplete_graphs_never_cross_metadata_boundary(self):
++        boundary = RecordingMetadataBoundary()
++        a = source(boundary)
++        with self.assertRaises(StreamProtocolError):
++            boundary.seal()
++        b = branch(boundary, a, "B")
++        branch(boundary, b, "C")
++        with self.assertRaisesRegex(StreamProtocolError, "fan-out"):
++            boundary.seal()
++        self.assertEqual(boundary.snapshots, [])
++
++    def test_full_128_subtask_bound_and_operator_bound(self):
++        boundary = RecordingMetadataBoundary()
++        a = source(boundary, 8)
++        for index in range(15):
++            branch(boundary, a, f"B{index:02}", 8)
++        self.assertEqual(
++            sum(item["parallelism"] for item in boundary.definition()["operators"]), 128
++        )
++        with self.assertRaisesRegex(StreamProtocolError, "16 operators"):
++            branch(boundary, a, "extra", 1, "broadcast")
++        boundary.seal()
++        larger = RecordingMetadataBoundary()
++        a = source(larger, 9)
++        for index in range(14):
++            branch(larger, a, f"B{index:02}", 8, "broadcast")
++        with self.assertRaisesRegex(StreamProtocolError, "128 physical"):
++            branch(larger, a, "overflow", 8, "broadcast")
++        self.assertEqual(larger.snapshots, [])
++
++    def test_changed_task_is_refused_before_seal(self):
++        for option, value in (
++            ("version", "changed"),
++            ("tags", {"changed"}),
++            ("retries", 3),
++            ("timeout_seconds", 1.0),
++            ("on_completion_hooks", [lambda *args: None]),
++        ):
++            with self.subTest(option=option):
++                boundary = RecordingMetadataBoundary()
++                fork(boundary)
++                with patch.object(dag_source, option, value):
++                    with self.assertRaises(StreamProtocolError):
++                        boundary.seal()
++                self.assertEqual(boundary.snapshots, [])
++
++    def test_contextual_tags_are_frozen_per_declaration(self):
++        boundary = RecordingMetadataBoundary()
++        with TagsContext(current_tags={"source-context"}):
++            a = source(boundary)
++        with TagsContext(current_tags={"branch-context"}):
++            branch(boundary, a, "B")
++            branch(boundary, a, "C")
++        boundary.seal()
++        nodes = json.loads(boundary.snapshots[0])["operators"]
++        self.assertEqual(nodes[0]["effective_tags"], ["source-context"])
++        self.assertEqual(nodes[1]["effective_tags"], ["branch-context"])
++
++    def test_uncertain_seal_retries_the_same_intent_and_refuses_new_declarations(self):
++        boundary = RecordingMetadataBoundary()
++        fork(boundary)
++        boundary.fail_once = True
++        with self.assertRaises(httpx.ReadTimeout):
++            boundary.seal()
++        with self.assertRaisesRegex(StreamProtocolError, "follow the graph seal"):
++            source(boundary, uid="late-source")
++        self.assertIs(boundary.seal(), boundary.reply)
++        self.assertEqual(boundary.snapshots[0], boundary.snapshots[1])
++
++    def test_compiler_output_satisfies_the_paired_wire_without_rpc(self):
++        boundary = StreamGraphAuthoring()
++        fork(boundary)
++        operators, edges = boundary._wire_definition(
++            json.dumps(boundary.definition()).encode()
++        )
++        request = StreamDAGSealRequest.model_validate(
++            {
++                "flow_run_id": str(uuid4()),
++                "operation_id": str(uuid4()),
++                "flow_version": "v1",
++                "operators": operators,
++                "edges": edges,
++            }
++        )
++        self.assertEqual(sum(item.parallelism for item in request.operators), 4)
++        self.assertEqual(
++            [item.exchange for item in request.edges], ["forward", "broadcast"]
++        )
++
++    def test_recovered_authoring_and_unknown_ack_use_same_flow_operation(self):
++        flow_id = uuid4()
++        api_url = "http://127.0.0.1:4200/api"
++        context = SimpleNamespace(
++            flow=SimpleNamespace(
++                version="v1", streaming=SimpleNamespace(profile="partitioned-dag-v1")
++            ),
++            flow_run=SimpleNamespace(
++                id=flow_id,
++                deployment_id=uuid4(),
++                deployment_version="deployed-v1",
++                labels={"prefect.native-streaming": "partitioned-dag-v1"},
++            ),
++        )
++        execution = StreamExecutionContext(
++            flow_run_id=flow_id,
++            generation=1,
++            holder_id=uuid4(),
++            api_url=api_url,
++            capability="a" * 64,
++            event_private_key=b"b" * 32,
++        )
++        calls = []
++
++        class LostMetadataAck:
++            def __init__(self) -> None:
++                self.api_url = api_url
++
++            def __enter__(self):
++                return self
++
++            def __exit__(self, *args: Any):
++                return False
++
++            def seal_stream_dag(self, **kwargs: Any):
++                calls.append(kwargs)
++                raise httpx.ReadTimeout("Metadata result is unknown")
++
++        with (
++            patch(
++                "prefect._internal.stream_dag.FlowRunContext.get", return_value=context
++            ),
++            patch(
++                "prefect._internal.stream_dag.get_stream_execution",
++                return_value=execution,
++            ),
++            patch(
++                "prefect._internal.stream_dag.PREFECT_API_URL",
++                SimpleNamespace(value=lambda: api_url),
++            ),
++            patch(
++                "prefect._internal.stream_dag.get_client",
++                return_value=LostMetadataAck(),
++            ),
++        ):
++            original = StreamGraphAuthoring()
++            fork(original)
++            for _ in range(2):
++                with self.assertRaises(httpx.ReadTimeout):
++                    original.seal()
++            recovered = StreamGraphAuthoring()
++            fork(recovered)
++            with self.assertRaises(httpx.ReadTimeout):
++                recovered.seal()
++        self.assertEqual(len(calls), 3)
++        self.assertEqual(calls[0], calls[1])
++        self.assertEqual(calls[0], calls[2])
++        self.assertEqual(
++            calls[0]["operation_id"],
++            uuid5(NAMESPACE_URL, f"partitioned-dag-v1/{flow_id}"),
++        )
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_stream_dag_dependencies.py b/tests/test_stream_dag_dependencies.py
+new file mode 100644
+index 0000000..97adf72
+--- /dev/null
++++ b/tests/test_stream_dag_dependencies.py
+@@ -0,0 +1,158 @@
++"""Real ordinary Task engines refuse unstarted DAG metadata dependencies."""
++
++from typing import Any
++from uuid import uuid4
++
++import pytest
++
++from prefect import flow, task
++from prefect._internal.stream_finite import _reserve
++from prefect.cache_policies import NO_CACHE
++from prefect.streams import (
++    PartitionedStream,
++    SealedStreamGraph,
++    Stream,
++    StreamGraph,
++    StreamOperatorHandle,
++    StreamPort,
++    StreamProtocolError,
++)
++from prefect.utilities.annotations import opaque, quote
++from prefect.utilities.engine import refuse_stream_graph_dependencies
++
++
++def graph_metadata() -> list[Any]:
++    operator = StreamOperatorHandle(
++        _graph_token=object(), operator_uid="A", output_port=StreamPort("out")
++    )
++    return [
++        StreamGraph(),
++        operator,
++        operator.output("out"),
++        SealedStreamGraph(graph_revision_id=uuid4(), graph_digest="a" * 64),
++    ]
++
++
++@pytest.mark.parametrize("asynchronous", [False, True])
++@pytest.mark.timeout(180)
++async def test_ordinary_task_body_is_not_entered_for_dag_metadata(asynchronous: bool):
++    entered = []
++
++    @task(cache_policy=NO_CACHE, persist_result=False)
++    def sync_body(value: Any):
++        entered.append(value)
++        raise AssertionError("A Task body received graph declaration metadata")
++
++    @task(cache_policy=NO_CACHE, persist_result=False)
++    async def async_body(value: Any):
++        entered.append(value)
++        raise AssertionError("An async Task body received graph declaration metadata")
++
++    for metadata in graph_metadata():
++        for value in (
++            metadata,
++            {"nested": [({"input": metadata},)]},
++            quote(metadata),
++            opaque(metadata),
++            {metadata},
++            frozenset({metadata}),
++            {"nested": [{"values": {metadata}}]},
++        ):
++            with pytest.raises(StreamProtocolError, match="metadata"):
++                if asynchronous:
++                    await async_body(value)
++                else:
++                    sync_body(value)
++    assert entered == []
++
++
++@pytest.mark.parametrize("asynchronous", [False, True])
++@pytest.mark.timeout(180)
++async def test_task_future_result_cannot_deliver_metadata_to_a_body(asynchronous: bool):
++    entered = []
++    metadata = graph_metadata()[2]
++
++    @task(cache_policy=NO_CACHE, persist_result=False)
++    def producer():
++        return {"nested": [(metadata,)]}
++
++    @task(cache_policy=NO_CACHE, persist_result=False)
++    def sync_consumer(value: Any):
++        entered.append(value)
++
++    @task(cache_policy=NO_CACHE, persist_result=False)
++    async def async_consumer(value: Any):
++        entered.append(value)
++
++    @flow(persist_result=False)
++    def sync_pipeline():
++        return sync_consumer(producer.submit())
++
++    @flow(persist_result=False)
++    async def async_pipeline():
++        return await async_consumer(producer.submit())
++
++    with pytest.raises(StreamProtocolError, match="metadata"):
++        if asynchronous:
++            await async_pipeline()
++        else:
++            sync_pipeline()
++    assert entered == []
++
++
++@pytest.mark.parametrize("asynchronous", [False, True])
++async def test_ordinary_task_parameters_still_enter_the_body(asynchronous: bool):
++    entered = []
++    value = {
++        "records": [1, {"reference": "object://document"}],
++        "flags": (None, True),
++        "sets": {1, 2, "ordinary"},
++        "frozen": frozenset({1, "ordinary"}),
++    }
++
++    @task(cache_policy=NO_CACHE, persist_result=False)
++    def sync_body(parameter: Any):
++        entered.append(parameter)
++        return parameter
++
++    @task(cache_policy=NO_CACHE, persist_result=False)
++    async def async_body(parameter: Any):
++        entered.append(parameter)
++        return parameter
++
++    result = await async_body(value) if asynchronous else sync_body(value)
++    assert result == value
++    assert entered == [value]
++
++
++@pytest.mark.parametrize("metadata_index", range(4))
++async def test_finite_reservation_refuses_metadata_before_flow_or_task_lookup(
++    metadata_index: int,
++):
++    # A missing Task/Flow would raise another error if reservation were reached.
++    # The shared dependency check must run before any manifest reservation.
++    metadata = graph_metadata()[metadata_index]
++    with pytest.raises(StreamProtocolError, match="metadata"):
++        await _reserve(None, (), {"nested": [({"input": metadata},)]})
++
++
++def test_dependency_guard_handles_container_cycles_and_ordinary_values():
++    cycle: list[Any] = []
++    cycle.append(cycle)
++    refuse_stream_graph_dependencies(
++        {"plain": [1, "data", (None, True)], "cycle": cycle}
++    )
++    cycle.append(graph_metadata()[2])
++    with pytest.raises(StreamProtocolError, match="metadata"):
++        refuse_stream_graph_dependencies(cycle)
++
++
++def test_guard_preserves_existing_physical_and_partitioned_stream_types():
++    stream = Stream(object(), str(uuid4()))
++    refuse_stream_graph_dependencies(
++        {
++            "physical": stream,
++            "bounded": stream.collect(limit=1),
++            "p2": PartitionedStream(),
++        }
++    )
+diff --git a/tests/test_native_stream_dag_http.py b/tests/test_native_stream_dag_http.py
+new file mode 100644
+index 0000000..958ca3a
+--- /dev/null
++++ b/tests/test_native_stream_dag_http.py
+@@ -0,0 +1,254 @@
++"""Public DAG authoring against protected TCP/PostgreSQL metadata APIs.
++
++Enrollment uses the metadata fixture's synthetic launcher registration. No
++ProcessWorker, subtask process, Flow body or stream Task body executes here.
++"""
++
++from collections.abc import Iterator
++from contextlib import contextmanager
++from typing import Any
++from unittest.mock import patch
++from uuid import UUID
++
++import httpx
++import pytest
++from cryptography.hazmat.primitives import serialization
++from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from prefect import flow
++from prefect._internal.stream_execution import (
++    StreamExecutionContext,
++    stream_execution_context,
++)
++from prefect._internal.stream_reconstruction import (
++    async_stream_flow_scope,
++    stream_flow_scope,
++)
++from prefect.client.orchestration import SyncPrefectClient
++from prefect.client.orchestration._streams.client import StreamRequestError
++from prefect.client.schemas.objects import FlowRun
++from prefect.context import FlowRunContext
++from prefect.results import ResultStore
++from prefect.server.database import PrefectDBInterface, orm_models
++from prefect.settings import (
++    PREFECT_API_AUTH_STRING,
++    PREFECT_API_URL,
++    PREFECT_CLIENT_CSRF_SUPPORT_ENABLED,
++    temporary_settings,
++)
++from prefect.states import Cancelling, Completed, Failed
++from prefect.streams import (
++    NativeStreamFlowConfig,
++    StreamExchange,
++    StreamGraph,
++    StreamInput,
++    StreamPartitionCall,
++    StreamPort,
++    StreamProtocolError,
++)
++from tests.server.api.test_stream_dags import deployed_dag_request, topology_counts
++from tests.test_native_dag_client_http import hosted_api_server as hosted_api_server
++from tests.test_stream_dag_authoring import dag_bare_source, dag_operator
++
++pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
++
++
++def declared_graph(source_port: str = "out") -> StreamGraph:
++    with StreamGraph() as graph:
++        source = graph.add(
++            dag_bare_source,
++            operator_uid="A",
++            partitions=(StreamPartitionCall(parameters={}),),
++            output=StreamPort(source_port),
++        )
++        for uid, count, exchange in (("B", 1, "forward"), ("C", 2, "broadcast")):
++            graph.add(
++                dag_operator,
++                operator_uid=uid,
++                partitions=(StreamPartitionCall(parameters={}),) * count,
++                input=StreamInput(
++                    port=StreamPort("in"),
++                    upstream=source.output(source_port),
++                    edge_uid=f"A-{uid}",
++                    subscriber_uid=f"subscriber-{uid}",
++                    exchange=StreamExchange(kind=exchange),
++                ),
++                output=StreamPort("out"),
++            )
++    return graph
++
++
++@contextmanager
++def parent_context(
++    server: str, request: Any, headers: dict[str, str], *, wrong_profile: bool = False
++) -> Iterator[tuple[SyncPrefectClient, FlowRun]]:
++    execution = StreamExecutionContext(
++        flow_run_id=request.flow_run_id,
++        generation=int(headers["X-Prefect-Stream-Execution-Generation"]),
++        holder_id=UUID(headers["X-Prefect-Stream-Execution-Holder"]),
++        capability=headers["X-Prefect-Stream-Execution-Capability"],
++        api_url=server,
++        event_private_key=b"s" * 32,
++    )
++
++    @flow(
++        version=request.flow_version,
++        streaming=NativeStreamFlowConfig()
++        if wrong_profile
++        else NativeStreamFlowConfig(profile="partitioned-dag-v1", partition_count=None),
++        persist_result=False,
++    )
++    def metadata_only_definition():
++        raise AssertionError("Metadata publication executed its Flow body")
++
++    with temporary_settings(
++        {
++            PREFECT_API_URL: server,
++            PREFECT_API_AUTH_STRING: "native-dag:test",
++            PREFECT_CLIENT_CSRF_SUPPORT_ENABLED: False,
++        }
++    ):
++        with SyncPrefectClient(server, auth_string="native-dag:test") as client:
++            run: FlowRun = client.read_flow_run(request.flow_run_id)
++            with (
++                stream_execution_context(execution),
++                FlowRunContext(
++                    flow=metadata_only_definition,
++                    flow_run=run,
++                    client=client,
++                    task_runner=metadata_only_definition.task_runner,
++                    result_store=ResultStore(),
++                    persist_result=False,
++                ),
++            ):
++                yield client, run
++
++
++async def enrolled_parent(
++    db: PrefectDBInterface,
++    session: AsyncSession,
++    deployment: orm_models.Deployment,
++    server: str,
++) -> tuple[Any, dict[str, str]]:
++    engine = await db.engine()
++    assert db.dialect.name == "postgresql"
++    assert engine.dialect.server_version_info[0] == 17
++    public = Ed25519PrivateKey.from_private_bytes(b"s" * 32).public_key()
++    async with httpx.AsyncClient(
++        base_url=server, auth=("native-dag", "test"), timeout=30
++    ) as api:
++        return await deployed_dag_request(
++            db,
++            session,
++            api,
++            deployment,
++            event_public_key=public.public_bytes(
++                serialization.Encoding.Raw, serialization.PublicFormat.Raw
++            ).hex(),
++        )
++
++
++@pytest.mark.parametrize("asynchronous_scope", [False, True])
++async def test_public_facade_seal_and_recovered_authoring_keep_exact_metadata(
++    db: PrefectDBInterface,
++    session: AsyncSession,
++    deployment: orm_models.Deployment,
++    hosted_api_server: str,
++    asynchronous_scope: bool,
++):
++    request, headers = await enrolled_parent(db, session, deployment, hosted_api_server)
++    assert not any((await topology_counts(db)).values())
++    with parent_context(hosted_api_server, request, headers) as (client, run):
++        graph = declared_graph()
++        assert not any((await topology_counts(db)).values())
++        if asynchronous_scope:
++            async with async_stream_flow_scope(run):
++                sealed = graph.seal()
++        else:
++            with stream_flow_scope(run):
++                sealed = graph.seal()
++        assert graph.seal() is sealed
++        recovered = declared_graph().seal()
++        assert recovered == sealed
++        plan = client.read_stream_dag(graph_revision_id=sealed.graph_revision_id)
++        for terminal in (Completed(), Failed(), Cancelling()):
++            with pytest.raises(httpx.HTTPStatusError) as refused:
++                client.set_flow_run_state(run.id, terminal)
++            assert refused.value.response.status_code == 409
++            assert refused.value.response.json()["detail"]["code"] == "DAG_NOT_STARTED"
++        assert client.read_flow_run(run.id).state.is_running()
++    assert plan.graph_digest == sealed.graph_digest
++    assert plan.execution_ready is False and plan.state == "SEALED"
++    assert [(op.operator_uid, op.parallelism) for op in plan.operators] == [
++        ("A", 1),
++        ("B", 1),
++        ("C", 2),
++    ]
++    assert len({item.manifest.task_run_id for item in plan.subtasks}) == 4
++    assert all(item.assigned_worker_id is None for item in plan.subtasks)
++    counts = await topology_counts(db)
++    assert counts["task_run"] == 4
++    assert counts["stream_graph_port"] == 5
++    assert counts["stream_graph_edge"] == 2
++    assert counts["stream_graph_edge_partition"] == 3
++    assert counts["stream_partition"] == 7
++    for table in (
++        "stream_record",
++        "stream_subtask_grant",
++        "stream_physical_slot_allocation",
++    ):
++        assert counts[table] == 0
++
++
++async def test_lost_client_return_after_http_commit_replays_and_conflicts_safely(
++    db: PrefectDBInterface,
++    session: AsyncSession,
++    deployment: orm_models.Deployment,
++    hosted_api_server: str,
++):
++    request, headers = await enrolled_parent(db, session, deployment, hosted_api_server)
++    accepted = []
++    original = SyncPrefectClient.seal_stream_dag
++
++    def lose_return(client: SyncPrefectClient, **kwargs: Any):
++        plan = original(client, **kwargs)
++        accepted.append(plan)
++        raise httpx.ReadTimeout("Injected lost return after actual HTTP acceptance")
++
++    with parent_context(hosted_api_server, request, headers) as (client, _):
++        first = declared_graph()
++        with patch.object(SyncPrefectClient, "seal_stream_dag", lose_return):
++            with pytest.raises(httpx.ReadTimeout):
++                first.seal()
++        assert len(accepted) == 1
++        recovered = declared_graph().seal()
++        retried = first.seal()
++        assert recovered == retried
++        assert recovered.graph_revision_id == accepted[0].id
++        before = await topology_counts(db)
++        with pytest.raises(StreamRequestError) as refused:
++            declared_graph(source_port="changed").seal()
++        assert refused.value.code == "IDENTITY_CONFLICT"
++        assert await topology_counts(db) == before
++        assert (
++            len(
++                client.read_stream_dag(
++                    graph_revision_id=recovered.graph_revision_id
++                ).subtasks
++            )
++            == 4
++        )
++
++
++async def test_dag_label_does_not_authorize_code_with_another_flow_profile(
++    db: PrefectDBInterface,
++    session: AsyncSession,
++    deployment: orm_models.Deployment,
++    hosted_api_server: str,
++):
++    request, headers = await enrolled_parent(db, session, deployment, hosted_api_server)
++    with parent_context(hosted_api_server, request, headers, wrong_profile=True):
++        with pytest.raises(StreamProtocolError, match="Flow authority"):
++            declared_graph().seal()
++    assert not any((await topology_counts(db)).values())

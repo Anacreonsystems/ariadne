@@ -281,3 +281,29 @@ multi-exchange routing stay open in N2.2, while the later ADRs retain their
 original planning gates.
 The [N2.1 documentation graph](../evidence/native-epoch2-n2-1-graph-2026-11-05.json)
 validates the resulting statuses and local evidence links.
+
+The [publication closure](../evidence/native-epoch2-n2-1-publication-closure-2026-11-05.json)
+records that PR 19 merged the accepted tree without a code-tree delta as
+`266609b178fd3361c4588f16a6033d08f40bd0ea`. Hosted run `41950170943`
+completed with 71 successful jobs, one declared conditional skip and no
+failure. The [hosted archive](../evidence/native-epoch2-n2-1-hosted-ci-2026-11-05/index.json)
+preserves the run/job metadata, native PostgreSQL logs and XML count guards.
+This publishes the 15% fixed-P2 slice; it does not change the open
+ADR-0043 or epoch-02 boundaries above.
+
+## NI2-010 topology-only DAG acceptance — 2026-11-05
+
+The [source-bound Principal acceptance](../evidence/native-epoch2-ni2-010-principal-acceptance-2026-11-05/acceptance.json)
+closes NI2-010 as an independently verified metadata component. It covers
+protected public seal/read, generic connected single-root topology, paired
+PostgreSQL/SQLite migrations, atomic internal region reservation and hostile
+fences against existing Task, event and DATA paths. A real two-session
+fixed-P2/DAG admission race admits exactly one complete region and leaves no
+partial loser allocation.
+
+This result earns 0% by itself. The cumulative epoch value remains 15% and
+N2.2 remains `progress`: the public DAG is deliberately unusable until
+NI2-011 adds atomic routed records and NI2-012 adds verified start, wait,
+failure and cleanup. The [NI2-011 handoff](../evidence/flink-architecture-2026-11-04/ni2-011-implementation-handoff-2026-11-05.json)
+defines direct references in the existing data plane, exact replay receipts
+and the lock order for that next slice.

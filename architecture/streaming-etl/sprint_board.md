@@ -555,3 +555,18 @@ most 128 ACTIVE native runs per work pool. Application code owns external
 effect idempotency. General DAG/partition support, cross-host recovery,
 production HA, performance SLOs and a new 72-hour native campaign are
 outside this accepted foundation.
+
+## N2.2a metadata component acceptance — 2026-11-05
+
+The [NI2-010 Principal acceptance](evidence/native-epoch2-ni2-010-principal-acceptance-2026-11-05/acceptance.json)
+accepts the topology-only DAG component. Protected PostgreSQL seal/read,
+generic fixed-parallelism topology, paired migrations, whole-region metadata
+admission and explicit execution fences passed on the frozen candidate. The
+public surface still exposes only seal/read; DAG start, wait, DATA routing and
+terminal cleanup remain unavailable.
+
+NI2-010 therefore moves to `accepted` with zero earned epoch percentage.
+N2.2a stays `progress` at the previously earned 15% cumulative value because
+its +6% exit also requires NI2-011 routed exchanges. The
+[NI2-011 implementation handoff](evidence/flink-architecture-2026-11-04/ni2-011-implementation-handoff-2026-11-05.json)
+starts that dependency without changing ADR-0043 from `progress`.
