@@ -187,6 +187,14 @@ steps, so cancellation after the queue observation provides no second-host
 evidence. No further infrastructure probes are planned without a product
 criterion that needs a new observation.
 
+The later [local QEMU boot discovery](../evidence/native-epoch2-qemu-readiness-2026-11-05/boot-discovery-v1/index.json)
+also remains unproven. Two real guests booted Linux and cloud-init, but the
+14 GiB resource guard fired before guest HTTP readiness, 30-second overlap and
+distinct salted guest identity witnesses were established. Exact owned-process
+cleanup passed without an OOM-kill increment. The result earns zero credit,
+does not satisfy NI2-053 or ADR-0047, and will not be retried from the same
+resource premise.
+
 The [first physical CI discovery](../evidence/native-epoch2-physical-ci-2026-11-04/discovery.json)
 is also retained without readiness credit. Its initial SQLite run exposed an
 invalid test event fixture and its successor passed the corrected selector,

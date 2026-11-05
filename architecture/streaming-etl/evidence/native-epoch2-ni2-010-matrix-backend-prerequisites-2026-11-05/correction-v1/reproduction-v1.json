@@ -1,0 +1,146 @@
+{
+  "common_environment": {
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "<unset; repository pytest plugins load normally>",
+    "PYTHONPATH": "/tmp/ariadne-ci-checkpoint-5r7nt1hd/src:/tmp/ariadne-ci-checkpoint-5r7nt1hd",
+    "UV_NO_SYNC": "1",
+    "UV_PROJECT_ENVIRONMENT": "/workspace/ariadne/.venv"
+  },
+  "historical_evidence": {
+    "base_commit": "d8f82b6938b572a2e415654f19531814337df34c",
+    "product_commit": "22dc093d32f747476bfdc17540eb520fd37bef6a",
+    "qualification": "PG14 was not run locally. The SQLite full collection intentionally reports the 38 PostgreSQL-17-only skips retained in its raw log.",
+    "receipt": "native-ni2010-compat-principal-receipt.json",
+    "source_map_sha256": "142b374f1c8eb7cd119e08e06c65adf75738b26dd3e49037e0b6436317768a06"
+  },
+  "import_audit": {
+    "command": [
+      "uv",
+      "run",
+      "--no-sync",
+      "python",
+      "-c",
+      "import importlib,json,pathlib; r=pathlib.Path('/tmp/ariadne-ci-checkpoint-5r7nt1hd').resolve(); m={n:str(pathlib.Path(importlib.import_module(n).__file__).resolve()) for n in ['prefect', 'prefect.client.orchestration._streams.client', 'prefect.server.api.stream_dags', 'prefect.server.models.stream_dags', 'tests.server.api.test_stream_dag_execution_fences', 'tests.server.api.test_stream_dags', 'tests.test_native_dag_client_http', 'tests.test_native_stream_dag_http']}; assert all(pathlib.Path(p).is_relative_to(r) for p in m.values()); print(json.dumps(m,sort_keys=True,indent=2))"
+    ],
+    "environment": {
+      "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "<unset; repository pytest plugins load normally>",
+      "PYTHONPATH": "/tmp/ariadne-ci-checkpoint-5r7nt1hd/src:/tmp/ariadne-ci-checkpoint-5r7nt1hd",
+      "UV_NO_SYNC": "1",
+      "UV_PROJECT_ENVIRONMENT": "/workspace/ariadne/.venv"
+    },
+    "expected": "All eight module paths are beneath the isolated checkpoint; no root-worktree editable finder or foreign test module is used.",
+    "modules": [
+      "prefect",
+      "prefect.client.orchestration._streams.client",
+      "prefect.server.api.stream_dags",
+      "prefect.server.models.stream_dags",
+      "tests.server.api.test_stream_dag_execution_fences",
+      "tests.server.api.test_stream_dags",
+      "tests.test_native_dag_client_http",
+      "tests.test_native_stream_dag_http"
+    ]
+  },
+  "postgresql17": {
+    "cleanup": "psql postgresql://native_recovery:native_recovery@127.0.0.1:55436/postgres -v ON_ERROR_STOP=1 -c \"DROP DATABASE IF EXISTS native_epoch2_ni2010_compat_replay\"",
+    "command": [
+      "uv",
+      "run",
+      "--no-sync",
+      "pytest",
+      "tests/server/api/test_stream_dags.py",
+      "tests/server/api/test_stream_dag_execution_fences.py",
+      "tests/test_native_dag_client_http.py",
+      "tests/test_native_stream_dag_http.py",
+      "-k",
+      "not sqlite",
+      "-q",
+      "--tb=short",
+      "--junitxml=/tmp/native-ni2010-compat-replay-pg17.xml"
+    ],
+    "database_setup": [
+      "psql postgresql://native_recovery:native_recovery@127.0.0.1:55436/postgres -v ON_ERROR_STOP=1 -c \"DROP DATABASE IF EXISTS native_epoch2_ni2010_compat_replay\"",
+      "psql postgresql://native_recovery:native_recovery@127.0.0.1:55436/postgres -v ON_ERROR_STOP=1 -c \"CREATE DATABASE native_epoch2_ni2010_compat_replay OWNER native_recovery\""
+    ],
+    "environment": {
+      "PREFECT_API_DATABASE_CONNECTION_URL": "postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_ni2010_compat_replay",
+      "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "<unset; repository pytest plugins load normally>",
+      "PYTHONPATH": "/tmp/ariadne-ci-checkpoint-5r7nt1hd/src:/tmp/ariadne-ci-checkpoint-5r7nt1hd",
+      "UV_NO_SYNC": "1",
+      "UV_PROJECT_ENVIRONMENT": "/workspace/ariadne/.venv"
+    },
+    "expected": {
+      "deselected": 4,
+      "errors": 0,
+      "failed": 0,
+      "passed": 46,
+      "skipped": 0
+    },
+    "local_test_database": "native_epoch2_ni2010_compat_replay"
+  },
+  "purpose": "Exact selectors, environment and import audit needed to replay the independently verified test-only backend-prerequisite successor.",
+  "recorded_at": "2026-11-05",
+  "schema": "native-epoch2-ni2-010-backend-compat-reproduction-v1",
+  "sqlite_focused": {
+    "cleanup": "rm -f /tmp/native-ni2010-compat-replay-focused.db",
+    "command": [
+      "uv",
+      "run",
+      "--no-sync",
+      "pytest",
+      "tests/server/api/test_stream_dags.py",
+      "tests/server/api/test_stream_dag_execution_fences.py",
+      "tests/test_native_dag_client_http.py",
+      "-k",
+      "not postgres",
+      "-q",
+      "--tb=short",
+      "--junitxml=/tmp/native-ni2010-compat-replay-sqlite-focused.xml"
+    ],
+    "database_path": "/tmp/native-ni2010-compat-replay-focused.db",
+    "environment": {
+      "PREFECT_API_DATABASE_CONNECTION_URL": "sqlite+aiosqlite:////tmp/native-ni2010-compat-replay-focused.db",
+      "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "<unset; repository pytest plugins load normally>",
+      "PYTHONPATH": "/tmp/ariadne-ci-checkpoint-5r7nt1hd/src:/tmp/ariadne-ci-checkpoint-5r7nt1hd",
+      "UV_NO_SYNC": "1",
+      "UV_PROJECT_ENVIRONMENT": "/workspace/ariadne/.venv"
+    },
+    "expected": {
+      "deselected": 30,
+      "errors": 0,
+      "failed": 0,
+      "passed": 12,
+      "skipped": 0
+    }
+  },
+  "sqlite_full_collection": {
+    "cleanup": "rm -f /tmp/native-ni2010-compat-replay-full.db",
+    "command": [
+      "uv",
+      "run",
+      "--no-sync",
+      "pytest",
+      "tests/server/api/test_stream_dags.py",
+      "tests/server/api/test_stream_dag_execution_fences.py",
+      "tests/test_native_dag_client_http.py",
+      "tests/test_native_stream_dag_http.py",
+      "-q",
+      "--tb=short",
+      "-rs",
+      "--junitxml=/tmp/native-ni2010-compat-replay-sqlite-full.xml"
+    ],
+    "database_path": "/tmp/native-ni2010-compat-replay-full.db",
+    "environment": {
+      "PREFECT_API_DATABASE_CONNECTION_URL": "sqlite+aiosqlite:////tmp/native-ni2010-compat-replay-full.db",
+      "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "<unset; repository pytest plugins load normally>",
+      "PYTHONPATH": "/tmp/ariadne-ci-checkpoint-5r7nt1hd/src:/tmp/ariadne-ci-checkpoint-5r7nt1hd",
+      "UV_NO_SYNC": "1",
+      "UV_PROJECT_ENVIRONMENT": "/workspace/ariadne/.venv"
+    },
+    "expected": {
+      "errors": 0,
+      "failed": 0,
+      "passed": 12,
+      "skipped": 38
+    }
+  },
+  "working_directory": "/tmp/ariadne-ci-checkpoint-5r7nt1hd"
+}

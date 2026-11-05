@@ -1,0 +1,302 @@
+import contextlib, hashlib, http.server, json, lzma, os, re, resource, select, shutil, signal, socket, subprocess, sys, threading, time, urllib.request
+from pathlib import Path
+ROOT=Path('/tmp/ariadne-qemu-boot-discovery-2026-11-05-v1')
+RUN=ROOT/'attempt02'
+META=Path('/workspace/ariadne/architecture/streaming-etl/evidence/native-epoch2-qemu-readiness-2026-11-05/metadata-v1')
+MiB=1024**2; GiB=1024**3; CAP=GiB; MEM_STOP=14*GiB
+INIT=json.loads((ROOT/'initial-cleanup.json').read_text()); DEADLINE=INIT['attempt_deadline_monotonic']
+STOP=threading.Event(); LOCK=threading.RLock(); CHILDREN=[]; VMS=[]; SERVERS=[]; THREADS=[]; EVENTS=[]
+START_EVENTS={k:int(v) for k,v in (line.split() for line in Path('/sys/fs/cgroup/memory.events').read_text().splitlines())}
+SALT=os.urandom(32).hex(); OBS={0:[],1:[]}; MAX_ALLOC=0; MAX_MEM=0; GUARD_FAILURE=None
+
+def record(kind,**data):
+ row={'kind':kind,'monotonic':time.monotonic(),'utc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),**data}
+ with LOCK:
+  EVENTS.append(row)
+  with (RUN/'events.jsonl').open('a') as f:f.write(json.dumps(row,sort_keys=True)+'\n')
+ return row
+
+def allocated():
+ seen=set();total=0
+ for directory,dirs,names in os.walk(ROOT):
+  for name in names:
+   try:s=os.lstat(Path(directory)/name)
+   except FileNotFoundError:continue
+   key=(s.st_dev,s.st_ino)
+   if key not in seen:seen.add(key);total+=s.st_blocks*512
+ return total
+
+def identity(pid):
+ try:
+  s=Path(f'/proc/{pid}/stat').read_text();fields=s[s.rfind(')')+2:].split()
+  return {'pid':pid,'start_ticks':int(fields[19]),'ppid':int(fields[1]),'state':fields[0]}
+ except (FileNotFoundError,ProcessLookupError):return None
+
+def vm_committed():
+ total=0
+ for c in VMS:
+  if c['process'].poll() is not None:continue
+  try:
+   line=next(l for l in Path(f"/proc/{c['pid']}/smaps_rollup").read_text().splitlines() if l.startswith('Private_Dirty:'))
+   total+=min(int(line.split()[1])*1024,512*MiB)
+  except (FileNotFoundError,StopIteration,PermissionError):pass
+ return total
+
+def snapshot():
+ mem=int(Path('/sys/fs/cgroup/memory.current').read_text());limit=int(Path('/sys/fs/cgroup/memory.max').read_text())
+ ev={k:int(v) for k,v in (l.split() for l in Path('/sys/fs/cgroup/memory.events').read_text().splitlines())}
+ alloc=allocated();free=os.statvfs(ROOT).f_bavail*os.statvfs(ROOT).f_frsize
+ return {'memory_current':mem,'memory_limit':limit,'reserve_bytes':limit-mem,'owned_allocated_bytes':alloc,'tmp_free_bytes':free,'oom':ev['oom'],'oom_kill':ev['oom_kill'],'monotonic_remaining':DEADLINE-time.monotonic(),'vm_private_committed_credit':vm_committed()}
+
+def signal_exact(c,sig):
+ current=identity(c['pid'])
+ if current is not None and current['start_ticks']==c['start_ticks']:
+  signal.pidfd_send_signal(c['pidfd'],sig)
+
+def guard():
+ global MAX_ALLOC,MAX_MEM,GUARD_FAILURE
+ count=0
+ while not STOP.wait(.2):
+  try:
+   s=snapshot();MAX_ALLOC=max(MAX_ALLOC,s['owned_allocated_bytes']);MAX_MEM=max(MAX_MEM,s['memory_current'])
+   reasons=[]
+   if s['memory_current']>=MEM_STOP:reasons.append('MEMORY_14GIB')
+   if s['reserve_bytes']<2*GiB:reasons.append('RESERVE_BELOW_2GIB')
+   if s['owned_allocated_bytes']>=CAP:reasons.append('OWNED_TMP_1GIB')
+   if s['oom']>START_EVENTS['oom'] or s['oom_kill']>START_EVENTS['oom_kill']:reasons.append('OOM_DELTA')
+   if s['monotonic_remaining']<=0:reasons.append('TOTAL_30MIN')
+   if reasons:
+    GUARD_FAILURE={'reasons':reasons,'snapshot':s};record('GUARD_BREACH',**GUARD_FAILURE);STOP.set()
+    for c in list(CHILDREN):
+     with contextlib.suppress(ProcessLookupError):signal_exact(c,signal.SIGKILL)
+    return
+   count+=1
+   if count%25==0:record('RESOURCE_SAMPLE',**s)
+  except Exception as e:
+   GUARD_FAILURE={'reasons':['WATCHER_ERROR'],'error':type(e).__name__};record('GUARD_BREACH',**GUARD_FAILURE);STOP.set();return
+
+def check():
+ if STOP.is_set():raise RuntimeError('RESOURCE_GUARD_STOPPED')
+ if time.monotonic()>=DEADLINE:raise RuntimeError('TOTAL_DEADLINE')
+
+def admission(stage):
+ check();s=snapshot()
+ worst=s['memory_current']+max(0,CAP-s['owned_allocated_bytes'])+GiB+512*MiB-s['vm_private_committed_credit']
+ ok=worst<MEM_STOP and s['tmp_free_bytes']>CAP-s['owned_allocated_bytes']+128*MiB
+ record('RESOURCE_ADMISSION',stage=stage,conservative_memory_envelope=worst,admitted=ok,**s)
+ if not ok:raise RuntimeError('RESOURCE_ADMISSION_REFUSED_'+stage)
+
+def spawn(name,args,env=None,vm=False):
+ check();record('COMMAND',name=name,argv=[str(a) for a in args],new_process_group=True)
+ p=subprocess.Popen([str(a) for a in args],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=env,start_new_session=True)
+ c={'name':name,'process':p,'pid':p.pid,'start_ticks':None,'pidfd':None,'vm':vm,'reaped':False}
+ CHILDREN.append(c)
+ try:
+  i=identity(p.pid);assert i is not None;c['start_ticks']=i['start_ticks'];c['pidfd']=os.pidfd_open(p.pid)
+  assert identity(p.pid)['start_ticks']==c['start_ticks']
+  record('PROCESS_OWNED',name=name,pid=p.pid,start_ticks=c['start_ticks'],pidfd_open=True)
+  if vm:VMS.append(c)
+  return c
+ except BaseException:
+  if c['pidfd'] is not None:signal_exact(c,signal.SIGKILL)
+  else:p.kill()
+  p.wait(timeout=5);c['reaped']=True;raise
+
+def run(name,args,env=None):
+ c=spawn(name,args,env);p=c['process'];output=b''
+ while True:
+  try:output,_=p.communicate(timeout=.2);break
+  except subprocess.TimeoutExpired:check()
+ c['reaped']=True;record('COMMAND_RESULT',name=name,pid=p.pid,returncode=p.returncode)
+ (RUN/(name+'.log')).write_bytes(output[:MiB])
+ if p.returncode:raise RuntimeError('COMMAND_FAILED_'+name)
+ return output
+
+def stop_child(c,reason):
+ p=c['process']
+ if c['reaped']:return
+ if p.poll() is None:
+  signal_exact(c,signal.SIGTERM)
+  try:p.wait(timeout=3)
+  except subprocess.TimeoutExpired:signal_exact(c,signal.SIGKILL);p.wait(timeout=5)
+ else:p.wait()
+ c['reaped']=True
+ current=identity(p.pid);gone=current is None or current['start_ticks']!=c['start_ticks']
+ record('EXACT_STOP_WAIT',name=c['name'],pid=p.pid,start_ticks=c['start_ticks'],returncode=p.returncode,identity_gone=gone,wait_reaped=True,reason=reason)
+ if not gone:raise RuntimeError('STOP_IDENTITY_NOT_GONE')
+
+def fetch(name,url,expected_size,expected_sha):
+ check();target=ROOT/name;h=hashlib.sha256();n=0
+ if target.exists():
+  with target.open('rb') as prior:
+   for chunk in iter(lambda:prior.read(1024*1024),b''):check();h.update(chunk);n+=len(chunk)
+  assert n==expected_size and h.hexdigest()==expected_sha
+  record('REUSED_BODY_HASH_VERIFIED',name=name,bytes=n,sha256=h.hexdigest());return target
+ record('DOWNLOAD_BEGIN',name=name,url=url,expected_size=expected_size,expected_sha256=expected_sha)
+ with urllib.request.urlopen(url,timeout=15) as response,target.open('xb') as out:
+  if response.headers.get('Content-Length'):assert int(response.headers['Content-Length'])==expected_size
+  while True:
+   check();chunk=response.read(256*1024)
+   if not chunk:break
+   n+=len(chunk);assert n<=expected_size;h.update(chunk);out.write(chunk)
+ assert n==expected_size and h.hexdigest()==expected_sha
+ record('DOWNLOAD_HASH_VERIFIED',name=name,bytes=n,sha256=h.hexdigest())
+ return target
+
+def serial_reader(c):
+ out=RUN/(c['name']+'.serial.log');written=0
+ with out.open('xb') as f:
+  while True:
+   data=c['process'].stdout.readline(8192)
+   if not data:break
+   text=data.decode('utf-8','replace')
+   text=re.sub(r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b','[redacted-uuid]',text)
+   text=re.sub(r'\b[0-9a-fA-F]{32}\b','[redacted-identity]',text)
+   data=text.encode();written+=len(data)
+   if written>16*MiB:STOP.set();record('LOG_CAP_BREACH',name=c['name']);return
+   f.write(data);f.flush()
+
+def free_port():
+ with socket.socket() as s:s.bind(('127.0.0.1',0));return s.getsockname()[1]
+
+GUEST_SCRIPT='''import hashlib,http.server,json,pathlib\nSALT=bytes.fromhex({salt!r})\nGUEST={guest}\ndef digest(label,path):\n return hashlib.sha256(b"local-qemu-tcg-v1\\0"+label.encode()+b"\\0"+SALT+b"\\0"+pathlib.Path(path).read_bytes().strip()).hexdigest()\nIDENT={{"guest":GUEST,"boot_id_hash":digest("boot-id","/proc/sys/kernel/random/boot_id"),"machine_id_hash":digest("machine-id","/etc/machine-id"),"hash_protocol":"local-qemu-tcg-v1-domain-separated-common-attempt-salt"}}\nclass H(http.server.BaseHTTPRequestHandler):\n def log_message(self,*a):pass\n def do_GET(self):\n  if self.path!="/identity":self.send_error(404);return\n  data=json.dumps(IDENT).encode();self.send_response(200);self.send_header("Content-Length",str(len(data)));self.end_headers();self.wfile.write(data)\n def do_POST(self):\n  n=int(self.headers.get("Content-Length","0"))\n  if self.path!="/roundtrip" or n>4096:self.send_error(400);return\n  data=self.rfile.read(n);out=json.dumps({{**IDENT,"artifact_sha256":hashlib.sha256(data).hexdigest(),"artifact_bytes":len(data)}}).encode();self.send_response(200);self.send_header("Content-Length",str(len(out)));self.end_headers();self.wfile.write(out)\nhttp.server.ThreadingHTTPServer(("0.0.0.0",8080),H).serve_forever()\n'''
+
+def seed_server(guest):
+ script=GUEST_SCRIPT.format(salt=SALT,guest=guest)
+ user='#cloud-config\npackage_update: false\npackage_upgrade: false\nmanage_etc_hosts: true\nruncmd:\n  - [python3, -c, '+json.dumps(script)+']\n'
+ files={'/seed/meta-data':f'instance-id: boot-discovery-{guest}-{SALT[:12]}\nlocal-hostname: guest-{guest}\n'.encode(),'/seed/user-data':user.encode(),'/seed/vendor-data':b'', '/seed/network-config':b'version: 2\nethernets:\n  eth0:\n    match:\n      name: "en*"\n    dhcp4: true\n'}
+ class Handler(http.server.BaseHTTPRequestHandler):
+  def log_message(self,*a):pass
+  def do_GET(self):
+   data=files.get(self.path)
+   if data is None:self.send_error(404);return
+   record('SEED_HTTP_GET',guest=guest,path=self.path,bytes=len(data));self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+ server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler);SERVERS.append(server)
+ t=threading.Thread(target=server.serve_forever,daemon=True);t.start();THREADS.append(t)
+ return server.server_address[1]
+
+def quiet_heavy_check():
+ active=[]
+ for proc in Path('/proc').iterdir():
+  if not proc.name.isdigit():continue
+  try:
+   comm=(proc/'comm').read_text().strip();i=identity(int(proc.name))
+   if i and i['state']!='Z' and any(x in comm.lower() for x in ['pytest','node','npm','vitest','pnpm']):active.append({'pid':int(proc.name),'comm':comm})
+  except (FileNotFoundError,PermissionError):continue
+ record('LOCAL_HEAVY_CHECK',active=active)
+ if active:raise RuntimeError('HEAVY_LOCAL_WORK_ACTIVE')
+
+def main():
+ record('BOOT_DISCOVERY_STARTED',scope='kernel_http_exact_stop_only',guest_memory_each=512*MiB,vcpus_each=1,same_physical_host=True,initial_oom=START_EVENTS)
+ threading.Thread(target=guard,daemon=True).start();admission('before-download')
+ run('verify-debian-signature',['/usr/bin/sqv','--keyring','/usr/share/keyrings/debian-archive-keyring.gpg','--cleartext','--output',RUN/'Release.authenticated',META/'InRelease'])
+ run('verify-ubuntu-signature',['/usr/bin/sqv','--keyring',META/'ubuntu-cloud-pubkey.asc',META/'ubuntu-dated-SHA256SUMS.gpg',META/'ubuntu-dated-SHA256SUMS'])
+ release=(RUN/'Release.authenticated').read_text();section=release.split('\nSHA256:\n',1)[1].split('\nSHA512:',1)[0]
+ entry=next(l.split() for l in section.splitlines() if l.endswith(' main/binary-amd64/Packages.xz'))
+ assert entry[:2]==[hashlib.sha256((META/'Packages.xz').read_bytes()).hexdigest(),str((META/'Packages.xz').stat().st_size)]
+ desired=json.loads((META/'uefi-missing-package-closure.json').read_text())['packages'];wanted={r['Package']:r for r in desired};found={}
+ with lzma.open(META/'Packages.xz','rt') as f:
+  d={}
+  for line in f:
+   if line=='\n':
+    if d.get('Package') in wanted:found[d['Package']]=d
+    d={}
+   elif not line.startswith(' '):
+    k,_,v=line.partition(': ');d[k]=v.rstrip()
+ for name,r in wanted.items():
+  for k in ['Version','Filename','Size','SHA256']:assert found[name][k]==r[k],(name,k)
+ assert len(wanted)==20
+ (RUN/'verified-package-closure.json').write_text(json.dumps(desired,indent=2)+'\n')
+ for r in desired:fetch(Path(r['Filename']).name,'https://deb.debian.org/debian/'+r['Filename'],int(r['Size']),r['SHA256'])
+ expected='bc9237bfdfa42b5f9a4404b6c6cab595d3e57599c6498f6664ad00e6192f9595'
+ assert expected+' *ubuntu-24.04-minimal-cloudimg-amd64.img' in (META/'ubuntu-dated-SHA256SUMS').read_text()
+ image=fetch('ubuntu-minimal-20261103.img','https://cloud-images.ubuntu.com/minimal/releases/noble/release-20261103/ubuntu-24.04-minimal-cloudimg-amd64.img',260112384,expected);image.chmod(0o400)
+ admission('before-extraction');prefix=ROOT/'prefix';prefix.mkdir(exist_ok=True)
+ env=dict(os.environ);env['TMPDIR']=str(ROOT/'tmp');Path(env['TMPDIR']).mkdir(exist_ok=True)
+ record('REUSE_VERIFIED_ROOTLESS_PREFIX',path=str(prefix))
+ env['LD_LIBRARY_PATH']=str(prefix/'usr/lib/x86_64-linux-gnu')+':'+str(prefix/'usr/lib');env['QEMU_MODULE_DIR']=str(prefix/'usr/lib/x86_64-linux-gnu/qemu')
+ qemu=prefix/'usr/bin/qemu-system-x86_64';img=prefix/'usr/bin/qemu-img'
+ run('qemu-version',[qemu,'--version'],env);run('qemu-img-version',[img,'--version'],env)
+ firmware=prefix/'usr/share/OVMF/OVMF_CODE_4M.fd';variables=prefix/'usr/share/OVMF/OVMF_VARS_4M.fd';assert firmware.exists() and variables.exists()
+ (RUN/'bridge.py').write_text('import os,select,socket,sys,time\ns=socket.create_connection(("127.0.0.1",int(sys.argv[1])),timeout=10);s.settimeout(None)\nend=time.monotonic()+30\nwhile time.monotonic()<end:\n r,_,_=select.select([0,s],[],[],1)\n for f in r:\n  b=os.read(0,65536) if f==0 else s.recv(65536)\n  if not b:sys.exit(0)\n  s.sendall(b) if f==0 else os.write(1,b)\n')
+ ports=[]
+ for guest in range(2):
+  quiet_heavy_check();admission('before-guest-'+str(guest));seed=seed_server(guest);port=free_port();ports.append(port)
+  overlay=ROOT/f'guest{guest}-attempt02.qcow2';run('create-overlay-'+str(guest),[img,'create','-f','qcow2','-F','qcow2','-b',image,overlay,'8G'],env)
+  var=ROOT/f'guest{guest}-attempt02-vars.fd';shutil.copyfile(variables,var)
+  net=f'user,id=n0,restrict=on,hostfwd=tcp:127.0.0.1:{port}-:8080,guestfwd=tcp:10.0.2.100:80-cmd:{sys.executable} {RUN}/bridge.py {seed}'
+  args=[qemu,'-name',f'owned-boot-discovery-{guest}','-machine','q35,accel=tcg','-cpu','max','-smp','1','-m','512','-display','none','-vga','none','-serial','stdio','-monitor','none','-no-reboot','-L',prefix/'usr/share/qemu','-drive',f'if=pflash,format=raw,readonly=on,file={firmware}','-drive',f'if=pflash,format=raw,file={var}','-drive',f'if=virtio,format=qcow2,file={overlay}','-netdev',net,'-device','virtio-net-pci,netdev=n0','-smbios',f'type=1,serial=ds=nocloud-net;s=http://10.0.2.100/seed/']
+  launcher=[sys.executable,'-c','import os,resource,sys;resource.setrlimit(resource.RLIMIT_FSIZE,(256*1024**2,256*1024**2));os.execv(sys.argv[1],sys.argv[1:])',*map(str,args)]
+  c=spawn('guest'+str(guest),launcher,env,vm=True);c['guest']=guest;c['port']=port;c['seed_port']=seed
+  t=threading.Thread(target=serial_reader,args=(c,),daemon=True);t.start();THREADS.append(t)
+  record('GUEST_ASSOCIATION',guest=guest,qemu_pid=c['pid'],qemu_start_ticks=c['start_ticks'],hostfwd_bind='127.0.0.1',hostfwd_port=port,seed_bind='127.0.0.1',seed_port=seed,restrict_on=True,guest_network_egress='none except owned bounded seed HTTP guestfwd')
+ admission('two-guest-overlap-start');overlap_start=None;seen_hashes={}
+ opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+ while True:
+  check();all_current=True
+  for c in VMS:
+   if c['process'].poll() is not None:raise RuntimeError('GUEST_EXITED_'+c['name'])
+   guest=c['guest']
+   try:
+    with opener.open(f"http://127.0.0.1:{c['port']}/identity",timeout=2) as resp:data=json.loads(resp.read(4096))
+    assert data['guest']==guest
+    for k in ['boot_id_hash','machine_id_hash']:assert re.fullmatch('[0-9a-f]{64}',data[k])
+    payload=f'public-owned-http-artifact-{guest}-{SALT[:16]}'.encode();req=urllib.request.Request(f"http://127.0.0.1:{c['port']}/roundtrip",data=payload,method='POST')
+    with opener.open(req,timeout=2) as resp:roundtrip=json.loads(resp.read(4096))
+    assert roundtrip['artifact_sha256']==hashlib.sha256(payload).hexdigest() and roundtrip['artifact_bytes']==len(payload)
+    assert all(roundtrip[k]==data[k] for k in ['guest','boot_id_hash','machine_id_hash'])
+    if guest in seen_hashes:assert seen_hashes[guest]==data
+    else:seen_hashes[guest]=data;record('FIRST_GUEST_HTTP',guest=guest,qemu_pid=c['pid'],identity=data,artifact_sha256=roundtrip['artifact_sha256'])
+    OBS[guest].append(time.monotonic())
+   except (OSError,ValueError):all_current=False
+  if len(seen_hashes)==2:
+   assert seen_hashes[0]['boot_id_hash']!=seen_hashes[1]['boot_id_hash']
+   assert seen_hashes[0]['machine_id_hash']!=seen_hashes[1]['machine_id_hash']
+  if all_current and len(seen_hashes)==2:
+   if overlap_start is None:overlap_start=time.monotonic();record('BOTH_GUEST_HTTP_OVERLAP_BEGIN')
+   if time.monotonic()-overlap_start>=30:break
+  else:overlap_start=None
+  time.sleep(1)
+ record('BOTH_GUEST_HTTP_OVERLAP_PROVEN',seconds=time.monotonic()-overlap_start,observations={str(k):len(v) for k,v in OBS.items()})
+ stop_child(VMS[0],'deliberate-provider-stop-while-peer-live')
+ assert VMS[1]['process'].poll() is None
+ with opener.open(f"http://127.0.0.1:{VMS[1]['port']}/identity",timeout=3) as resp:assert json.loads(resp.read(4096))==seen_hashes[1]
+ record('SURVIVING_GUEST_HTTP_AFTER_PEER_EXACT_STOP',guest=1)
+ stop_child(VMS[1],'final-owned-cleanup')
+ return {'guest_identities':seen_hashes,'http_overlap_seconds':time.monotonic()-overlap_start,'http_observation_counts':{str(k):len(v) for k,v in OBS.items()},'body_hashes_verified':21,'status':'PASS_BOOT_ONLY_DISCOVERY'}
+
+result={'status':'UNPROVEN'}
+try:result=main()
+except BaseException as e:
+ record('ATTEMPT_ERROR',error_type=type(e).__name__,error=str(e));result={'status':'UNPROVEN','error_type':type(e).__name__,'error':str(e)}
+finally:
+ for c in reversed(CHILDREN):
+  try:stop_child(c,'finally-owned-cleanup')
+  except BaseException as e:record('CLEANUP_ERROR',name=c['name'],error_type=type(e).__name__);result['status']='UNPROVEN'
+ for server in SERVERS:server.shutdown();server.server_close()
+ STOP.set()
+ for t in THREADS:t.join(timeout=3)
+ live=[]
+ for c in CHILDREN:
+  i=identity(c['pid'])
+  if i and i['start_ticks']==c['start_ticks']:live.append({'name':c['name'],'pid':c['pid']})
+  if c['pidfd'] is not None:os.close(c['pidfd'])
+ remaining_ports=[]
+ for c in VMS:
+  for port in [c['port'],c['seed_port']]:
+   with socket.socket() as s:
+    if s.connect_ex(('127.0.0.1',port))==0:remaining_ports.append(port)
+ owned_extra=[]
+ for proc in Path('/proc').iterdir():
+  if not proc.name.isdigit():continue
+  try:
+   argv=(proc/'cmdline').read_bytes().split(b'\0');comm=(proc/'comm').read_text().strip()
+   own_qemu=argv and argv[0]==str(ROOT/'prefix/usr/bin/qemu-system-x86_64').encode()
+   own_bridge=len(argv)>1 and argv[1]==str(RUN/'bridge.py').encode()
+   if own_qemu or own_bridge:owned_extra.append({'pid':int(proc.name),'comm':comm,'start_ticks':identity(int(proc.name))['start_ticks']})
+  except (FileNotFoundError,ProcessLookupError):continue
+ result['owned_qemu_or_bridge_processes_after_cleanup']=owned_extra
+ if owned_extra:result['status']='UNPROVEN'
+ final=snapshot();result.update({'profile':'local-qemu-tcg-v1','scope':'boot_http_kernel_exact_stop_only','native_readiness_earned_percent':0,'same_physical_host':True,'configured_guest_ram_bytes_each':512*MiB,'vcpus_each':1,'guard_failure':GUARD_FAILURE,'initial_oom_counters':START_EVENTS,'final_resource_snapshot':final,'max_observed_memory_current':MAX_MEM,'max_observed_owned_allocated_bytes':MAX_ALLOC,'owned_processes_live_after_cleanup':live,'listening_owned_ports_after_cleanup':remaining_ports,'elapsed_total_seconds':time.monotonic()-INIT['attempt_started_monotonic'],'domain_separated_common_salt_sha256':hashlib.sha256(bytes.fromhex(SALT)).hexdigest(),'qemu_exact_processes':[{'guest':c['guest'],'pid':c['pid'],'start_ticks':c['start_ticks'],'wait_reaped':c['reaped'],'returncode':c['process'].returncode} for c in VMS]})
+ if GUARD_FAILURE or live or remaining_ports or final['oom']>START_EVENTS['oom'] or final['oom_kill']>START_EVENTS['oom_kill']:result['status']='UNPROVEN'
+ (RUN/'receipt.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n');print(json.dumps(result,sort_keys=True),flush=True)

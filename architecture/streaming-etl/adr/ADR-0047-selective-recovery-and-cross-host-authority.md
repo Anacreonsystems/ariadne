@@ -179,3 +179,17 @@ guest two. The [principal review](../evidence/native-epoch2-qemu-readiness-2026-
 records `PASS_METADATA_READINESS_SCOPED`; VM execution, image-body verification,
 guest identity, stop/reap and native recovery remain `NOT_RUN`. The profile
 therefore remains proposed and earns zero A47-04 or readiness credit.
+
+The bounded [boot discovery](../evidence/native-epoch2-qemu-readiness-2026-11-05/boot-discovery-v1/index.json)
+then verified the signed package and image bodies and started two real 512 MiB
+QEMU TCG guests. Both reached Linux and cloud-init and fetched their restricted
+NoCloud configuration, but the cgroup guard stopped the attempt at
+15,041,576,960 bytes, above the 14 GiB ceiling. The OOM-kill counter did not
+increase, and the controller stopped, waited for and rechecked both exact owned
+QEMU process identities; no owned QEMU process, bridge or listening port
+remained. The guests never produced the required guest HTTP readiness,
+30-second overlap or distinct salted boot/machine identity witnesses. The
+[Principal review](../evidence/native-epoch2-qemu-readiness-2026-11-05/boot-discovery-v1/principal-review.json)
+therefore records `UNPROVEN_RESOURCE_GUARD`, zero readiness credit and no retry
+from the same resource premise. This result closes no A47 criterion and remains
+a same-physical-host infrastructure observation rather than NI2-053 evidence.

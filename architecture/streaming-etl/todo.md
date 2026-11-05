@@ -120,6 +120,11 @@ appended to each approved ADR.
 | NI2-054 | `planned` | NI2-050…053 | M/H | Region-expansion, shared-process loss, unavailable partition and cancellation races with exact explanations. A47-05, A47-06, A47-07. |
 | NI2-055 | `planned` | NI2-050…054 | M/H | Source-bound same-host and actual two-host fault matrix plus independent Principal verification. A42-05, A47-01…07. |
 
+The [local QEMU boot discovery](evidence/native-epoch2-qemu-readiness-2026-11-05/boot-discovery-v1/index.json)
+is retained as `UNPROVEN_RESOURCE_GUARD`: two guests booted, but the resource
+ceiling stopped them before the required overlap and guest identity witnesses.
+It earns zero credit and leaves NI2-053 `planned`.
+
 ### N2.7 — Rescale and compatibility (`+10%`)
 
 | ID | State | Depends | Size/risk | Deliverable and mapped criteria |
