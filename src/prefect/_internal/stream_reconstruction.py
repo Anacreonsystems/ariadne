@@ -188,14 +188,14 @@ class StreamReconstruction:
             entry.future.result()
 
 
-def reconstruction() -> StreamReconstruction | None:
+def reconstruction() -> Any:
     execution = get_stream_execution()
     return (
         getattr(execution, "_reconstruction", None) if execution is not None else None
     )
 
 
-def _begin(flow_run: Any) -> StreamReconstruction | None:
+def _begin(flow_run: Any) -> Any:
     execution = get_stream_execution()
     if execution is None:
         return None
@@ -204,6 +204,22 @@ def _begin(flow_run: Any) -> StreamReconstruction | None:
     previous = reconstruction()
     if previous is not None and previous.flow_attempt == flow_run.run_count:
         return previous
+    from prefect.context import FlowRunContext
+
+    context = FlowRunContext.get()
+    flow = context.flow if context is not None else None
+    if (
+        flow is not None
+        and flow.streaming is not None
+        and flow.streaming.profile == "partitioned-fixed-v1"
+    ):
+        from prefect._internal.stream_partitioned import PartitionedStreamReconstruction
+
+        if previous is not None:
+            previous.abort()
+        graph = PartitionedStreamReconstruction(execution, flow_run, flow)
+        object.__setattr__(execution, "_reconstruction", graph)
+        return graph
     if previous is not None:
         if previous.phase != "ABORTED":
             raise StreamProtocolError(
@@ -228,9 +244,16 @@ def stream_flow_scope(flow_run: Any):
         yield
         if graph is not None:
             graph.finish()
-    except BaseException:
+    except BaseException as original:
         if graph is not None:
-            graph.abort()
+            if getattr(graph, "_activated", False):
+                try:
+                    graph.finish()
+                except BaseException as cleanup:
+                    if cleanup is not original:
+                        raise original from cleanup
+            else:
+                graph.abort()
         raise
 
 
@@ -241,9 +264,16 @@ async def async_stream_flow_scope(flow_run: Any):
         yield
         if graph is not None:
             await run_sync(graph.finish)
-    except BaseException:
+    except BaseException as original:
         if graph is not None:
-            graph.abort()
+            if getattr(graph, "_activated", False):
+                try:
+                    await run_sync(graph.finish)
+                except BaseException as cleanup:
+                    if cleanup is not original:
+                        raise original from cleanup
+            else:
+                graph.abort()
         raise
 
 
@@ -273,6 +303,13 @@ def submit_reconstructed_stream(
     ):
         raise StreamProtocolError(
             "Keyed stream submission requires its native flow execution"
+        )
+    if (
+        context.flow.streaming is not None
+        and context.flow.streaming.profile == "partitioned-fixed-v1"
+    ):
+        raise StreamProtocolError(
+            "Use submit_partitioned_stream for the fixed-P2 profile"
         )
     if TaskRunContext.get() is not None or not isinstance(
         context.task_runner, ThreadPoolTaskRunner
@@ -462,6 +499,10 @@ def submit_reconstructed_stream(
 def prepare_flow_state(state: Any) -> None:
     """A sealed graph permits task retries and explicit generation takeover only."""
     graph = reconstruction()
+    if getattr(graph, "profile", None) == "partitioned-fixed-v1":
+        if state.is_failed() and (graph.admission_attempted or graph.plan is not None):
+            state.state_details.retriable = False
+        return
     if (
         graph is not None
         and (
@@ -478,6 +519,8 @@ def prepare_flow_state(state: Any) -> None:
 
 def reconcile_unstarted_graph(flow_run: Any) -> None:
     graph = reconstruction()
+    if getattr(graph, "profile", None) == "partitioned-fixed-v1":
+        return
     if (
         graph is None
         or graph.phase != "ABORTED"

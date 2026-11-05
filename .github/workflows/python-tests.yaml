@@ -20,6 +20,7 @@ on:
       - Dockerfile
       - scripts/entrypoint.sh
       - scripts/verify_test_selection.py
+      - pyrightconfig-native-physical.json
   push:
     branches:
       - main
@@ -32,6 +33,7 @@ on:
       - Dockerfile
       - scripts/entrypoint.sh
       - scripts/verify_test_selection.py
+      - pyrightconfig-native-physical.json
 permissions:
   contents: read
   actions: write
@@ -155,6 +157,8 @@ jobs:
               tests/test_stream_tasks.py
               tests/test_stream_sources.py
               tests/test_stream_routing.py
+              tests/test_stream_partitioned_runtime.py
+              tests/test_native_partitioned_stream_http.py
               tests/test_native_source_recovery_http.py
               tests/test_native_submission_http.py
               tests/test_native_execution_http.py
@@ -167,6 +171,7 @@ jobs:
               tests/test_native_stream_http.py
               tests/test_native_stream_recovery_http.py
               tests/test_native_stream_client_package.py
+              tests/test_native_physical_client_package.py
               tests/test_native_stream_code.py
               tests/test_task_engine.py
               tests/test_task_runs.py
@@ -249,6 +254,8 @@ jobs:
                 tests/test_stream_tasks.py
                 tests/test_stream_sources.py
                 tests/test_stream_routing.py
+                tests/test_stream_partitioned_runtime.py
+                tests/test_native_partitioned_stream_http.py
                 tests/test_native_source_recovery_http.py
                 tests/test_native_submission_http.py
                 tests/test_native_execution_http.py
@@ -261,6 +268,7 @@ jobs:
                 tests/test_native_stream_http.py
                 tests/test_native_stream_recovery_http.py
                 tests/test_native_stream_client_package.py
+                tests/test_native_physical_client_package.py
                 tests/test_native_stream_code.py
                 tests/test_task_engine.py
                 tests/test_task_runs.py
@@ -438,6 +446,137 @@ jobs:
         with:
           name: native-stream-tests-${{ strategy.job-index }}
           path: native-stream*.xml
+
+  run-partitioned-stream-tests:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    runs-on: ubuntu-latest
+    name: Native physical streams - python:3.12, ${{ matrix.database }}
+    # Includes both sync/async cardinality and real process-fault controls.
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        database: [sqlite, "postgres:17"]
+    services:
+      postgres:
+        image: postgres:17
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: prefect
+          POSTGRES_PASSWORD: prefect
+          POSTGRES_DB: prefect
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - *python-test-checkout
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install packages
+        run: uv sync --locked
+      - *python-test-database-url
+      - name: Check new server modules without inherited type exclusions
+        if: matrix.database == 'postgres:17'
+        run: |
+          uv run pyright -p pyrightconfig-native-physical.json --level error --outputjson > native-physical-types.json 2> native-physical-types.stderr.log && type_status=0 || type_status=$?
+          uv run python scripts/check_pyright_report.py native-physical-types.json --pyright-status "$type_status"
+          uv run python - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path("pyrightconfig-native-physical.json").read_text())
+          included = config["include"]
+          assert config["ignore"] == []
+          assert len(included) == len(set(included)) == 8
+          assert all(Path(path).is_file() for path in included)
+          report = json.loads(Path("native-physical-types.json").read_text())
+          assert report["summary"]["filesAnalyzed"] == len(included), report["summary"]
+          assert report["summary"]["errorCount"] == 0
+          PY
+      - name: Verify paired clients and physical task contracts
+        run: >-
+          uv run pytest tests/client/test_stream_subtasks.py
+          tests/client/test_stream_worker_subtasks.py
+          tests/test_stream_partitioned_runtime.py
+          -q --junitxml=native-physical-contract.xml
+      - name: Run physical authority, concurrency and paired migration controls
+        if: matrix.database == 'postgres:17'
+        run: >-
+          uv run pytest tests/server/models/test_stream_subtasks.py
+          tests/server/api/test_stream_subtasks.py
+          tests/server/api/test_stream_subtask_controls.py
+          tests/server/api/test_stream_workers.py
+          tests/server/database/test_stream_subtask_migrations.py
+          tests/workers/test_stream_subtasks.py
+          tests/workers/test_stream_startup_cleanup_http.py
+          -k 'not sqlite'
+          -q --junitxml=native-physical-server.xml
+      - name: Require SQLite refusal and migration compatibility
+        if: matrix.database == 'sqlite'
+        run: >-
+          uv run pytest tests/server/api/test_stream_subtasks.py
+          tests/server/api/test_stream_workers.py
+          tests/server/database/test_stream_subtask_migrations.py
+          -k 'not (test_child_http_scope_events_and_no_basic_or_anonymous_escape
+          or test_csrf_enabled_scoped_transport_is_exactly_exempt
+          or test_profile_admission_fails_closed_without_protected_api
+          or test_worker_poll_advertises_p2_without_assignments
+          or test_worker_poll_wrong_pool_never_registers_capability
+          or test_deployed_worker_poll_contains_only_own_assignments_and_parameters
+          or test_worker_control_proof_rejects_sibling_session_and_weak_locks
+          or test_startup_abort_and_competing_admission_lock_workers_in_one_order
+          or test_public_partitioned_seal_requires_deployment_before_any_topology_rows
+          or test_public_admission_cannot_promote_internal_local_discovery_graph)'
+          -q --junitxml=native-physical-sqlite.xml
+      - name: Build and run the stripped physical client wheel and source distribution
+        if: matrix.database == 'postgres:17'
+        run: >-
+          uv run pytest tests/test_native_physical_client_package.py
+          -q --junitxml=native-physical-package.xml
+      - name: Run real deployment and process-loss cases on PostgreSQL
+        if: matrix.database == 'postgres:17'
+        run: >-
+          uv run pytest tests/test_native_partitioned_stream_http.py
+          -q --junitxml=native-physical-runtime.xml
+      - name: Require successful cases without conditional skips
+        run: |
+          uv run python - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          paths = [Path("native-physical-contract.xml")]
+          if "${{ matrix.database }}" == "postgres:17":
+              paths.extend([Path("native-physical-server.xml"), Path("native-physical-package.xml"), Path("native-physical-runtime.xml")])
+          else:
+              paths.append(Path("native-physical-sqlite.xml"))
+          for path in paths:
+              cases = ET.parse(path).findall(".//testcase")
+              assert cases, f"Physical cases were not collected: {path}"
+              identities = {(case.get("classname"), case.get("name")) for case in cases}
+              assert len(identities) == len(cases), f"Physical cases were duplicated: {path}"
+              assert not any(
+                  case.find(tag) is not None
+                  for case in cases
+                  for tag in ("skipped", "failure", "error")
+              ), f"Physical cases did not all pass: {path}"
+              print(f"{path}: {len(cases)} cases passed without skips")
+          PY
+      - name: Preserve physical stream results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-physical-streams-${{ strategy.job-index }}
+          path: |
+            native-physical-*.xml
+            native-physical-types.json
+            native-physical-types.stderr.log
+          if-no-files-found: error
 
   run-stream-routing-tests:
     if: ${{ github.event_name != 'repository_dispatch' }}

@@ -53,6 +53,7 @@ from prefect._internal.observability import configure_logfire
 from prefect.client.constants import SERVER_API_VERSION
 from prefect.locking._filelock import FileLock
 from prefect.logging import get_logger
+from prefect.server.api._stream_subtask_routes import subtask_route_allowed
 from prefect.server.api._ui_static import UIBundle, UIVersion, log_ui_static_copy_error
 from prefect.server.api.background_workers import background_worker
 from prefect.server.api.dependencies import EnforceMinimumAPIVersion
@@ -106,6 +107,8 @@ API_ROUTERS = (
     api.flow_run_states.router,
     api.task_run_states.router,
     api.streams.router,
+    api.stream_subtasks.router,
+    api.stream_workers.router,
     api.native_deployments.router,
     api.deployments.router,
     api.saved_searches.router,
@@ -520,6 +523,20 @@ def create_api_app(
 
     auth_string = prefect.settings.PREFECT_SERVER_API_AUTH_STRING.value()
 
+    @api_app.middleware("http")
+    async def subtask_auth_boundary(request: Request, call_next: Any):
+        # A scoped credential is never a general API login. Every allowlisted
+        # handler also checks the grant, current attempt and exact resource.
+        authorization = request.headers.get("authorization", "")
+        if authorization.startswith("PrefectSubtask"):
+            scope = request.scope
+            path = scope["path"].removeprefix(scope.get("root_path", ""))
+            if not auth_string or not subtask_route_allowed(request.method, path):
+                return JSONResponse(
+                    status_code=401, content={"exception_message": "Unauthorized"}
+                )
+        return await call_next(request)
+
     if auth_string is not None:
         health_check_paths = {health_check_path, "/ready"}
 
@@ -535,6 +552,10 @@ def create_api_app(
             scope = request.scope
             app_path = scope["path"].removeprefix(scope.get("root_path", ""))
             if app_path in health_check_paths and request.method.upper() == "GET":
+                return await call_next(request)
+            if header_token is not None and header_token.startswith("PrefectSubtask "):
+                # The outer boundary and route dependency perform the scoped
+                # allowlist and resource checks. No Basic secret enters a child.
                 return await call_next(request)
             try:
                 if header_token is None:

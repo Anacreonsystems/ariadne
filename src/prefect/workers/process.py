@@ -40,6 +40,7 @@ from prefect.runner._workspace_starter import WorkspaceResolvingEngineCommandSta
 from prefect.runner.runner import Runner
 from prefect.states import Pending
 from prefect.utilities.processutils import command_to_string, get_sys_executable
+from prefect.workers._worker_channel import WorkPoolWorkerChannel
 from prefect.workers.base import (
     BaseJobConfiguration,
     BaseVariables,
@@ -53,6 +54,7 @@ if TYPE_CHECKING:
     from prefect.client.schemas.objects import FlowRun, WorkPool
     from prefect.client.schemas.responses import DeploymentResponse
     from prefect.flows import Flow
+    from prefect.workers._stream_subtasks import NativeStreamSubtaskSupervisor
 
 FR = TypeVar("FR")  # used to capture the return type of a flow
 
@@ -156,16 +158,46 @@ class ProcessWorker(
     _logo_url = "https://raw.githubusercontent.com/PrefectHQ/prefect/420d0d6a78bb6df1fc18bcf188fdad43c1d22ea9/assets/block-logos/process.png"
 
     async def get_and_submit_flow_runs(self) -> list["FlowRun"]:
+        await self._ensure_stream_subtask_supervisor()
         runs = await super().get_and_submit_flow_runs()
         if self._has_successfully_synced and self.work_pool.base_job_template.get(
             "prefect_native_streaming"
         ) == {"schema_version": 1, "profile": "bounded-linear-v1"}:
-            # Optional native protocol is discovered from the persisted pool
-            # marker. Ordinary pools keep their existing server compatibility.
+            # The marker opts into discovery, never determines a Flow profile.
+            # The server returns bounded-only legacy recovery candidates;
+            # assigned physical work has its separate supervisor above.
             from prefect.workers._native import recover_native_process_runs
 
             await recover_native_process_runs(self)
         return runs
+
+    async def _ensure_stream_subtask_supervisor(self) -> None:
+        if (
+            not self._has_successfully_synced
+            or self.work_pool.base_job_template.get("prefect_native_streaming")
+            != {"schema_version": 1, "profile": "bounded-linear-v1"}
+            or getattr(self, "_stream_subtask_supervisor", None) is not None
+        ):
+            return
+        lock = getattr(self, "_stream_subtask_start_lock", None)
+        if lock is None:
+            lock = self._stream_subtask_start_lock = anyio.Lock()
+        async with lock:
+            if getattr(self, "_stream_subtask_supervisor", None) is not None:
+                return
+            if self.backend_id is None and isinstance(
+                self._worker_channel, WorkPoolWorkerChannel
+            ):
+                await self._worker_channel.ensure_worker_identity()
+            if self.backend_id is None or self._runs_task_group is None:
+                return
+            # Native pools compose an optional protocol. Ordinary pools do not
+            # import it or make new API requests, preserving older-server behavior.
+            from prefect.workers._stream_subtasks import NativeStreamSubtaskSupervisor
+
+            supervisor = NativeStreamSubtaskSupervisor(self)
+            self._stream_subtask_supervisor = supervisor
+            self._runs_task_group.start_soon(supervisor.run)
 
     async def run(
         self,
@@ -181,6 +213,7 @@ class ProcessWorker(
         ).get("prefect.native-streaming"):
             from prefect.workers._native import run_native_process_worker
 
+            await self._ensure_stream_subtask_supervisor()
             return await run_native_process_worker(
                 self, flow_run, configuration, task_status
             )
@@ -325,6 +358,8 @@ class ProcessWorker(
 
     async def __aenter__(self) -> ProcessWorker:
         self._native_active_run_ids: set[UUID] = set()
+        self._stream_subtask_supervisor: NativeStreamSubtaskSupervisor | None = None
+        self._stream_subtask_start_lock = anyio.Lock()
         runner = Runner(pause_on_shutdown=False, limit=None)
         self._runner = await runner.__aenter__()
         try:
@@ -335,6 +370,9 @@ class ProcessWorker(
         return self
 
     async def __aexit__(self, *exc_info: Any) -> None:
+        supervisor = getattr(self, "_stream_subtask_supervisor", None)
+        if supervisor is not None:
+            supervisor.stop()
         try:
             # The worker task group owns ad-hoc submissions. Let those finish
             # while the runner is still available to supervise their children.

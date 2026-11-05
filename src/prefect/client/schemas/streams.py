@@ -40,6 +40,10 @@ def _strict_finite_json(value: object) -> object:
     raise ValueError("strict JSON values are required")
 
 
+# Native wire schemas share the same strict JSON validation contract.
+strict_finite_json = _strict_finite_json
+
+
 class _StreamRequest(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 

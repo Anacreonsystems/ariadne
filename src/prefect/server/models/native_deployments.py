@@ -22,6 +22,10 @@ from prefect.server.models.stream_executions import (
     _claim_execution,
     require_execution,
 )
+from prefect.server.models.stream_subtask_authority import (
+    require_bounded_flow_recovery,
+    require_no_assigned_physical_slots,
+)
 from prefect.server.orchestration.core_policy import CoreFlowPolicy, CoreTaskPolicy
 from prefect.server.schemas.core import FlowRunPolicy
 from prefect.server.schemas.native_deployments import (
@@ -788,6 +792,7 @@ async def recovery_candidates(
             .where(
                 db.NativeStreamDeploymentSnapshot.work_pool_id == work_pool_id,
                 db.NativeStreamDeploymentSnapshot.state == "ACTIVE",
+                db.NativeStreamDeploymentSnapshot.profile == "bounded-linear-v1",
                 db.NativeStreamLaunchIdentity.last_renewed_at <= stale_before,
                 db.NativeStreamLaunchIdentity.generation
                 == db.StreamExecutionAuthority.generation,
@@ -901,6 +906,7 @@ async def authorize_replacement(
         raise NativeStreamError(
             "UNSUPPORTED_BACKEND", "Native replacements require PostgreSQL 17"
         )
+    await require_bounded_flow_recovery(session, db, request.flow_run_id)
     flow = await session.scalar(
         sa.select(db.FlowRun)
         .where(db.FlowRun.id == request.flow_run_id)
@@ -1027,6 +1033,7 @@ async def confirm_replacement(
         raise NativeStreamError(
             "UNSUPPORTED_BACKEND", "Native replacements require PostgreSQL 17"
         )
+    await require_bounded_flow_recovery(session, db, request.flow_run_id)
     flow = await session.scalar(
         sa.select(db.FlowRun)
         .where(db.FlowRun.id == request.flow_run_id)
@@ -1199,6 +1206,8 @@ async def apply_control(
         )
     if authority is None or authority.generation != request.expected_generation:
         raise NativeStreamError("STALE_EXECUTION", "Control generation changed")
+    if kind == "CANCEL":
+        await require_no_assigned_physical_slots(session, db, request.flow_run_id)
     material = request.model_dump(mode="json") | {
         "schema": "native-stream-control-v1",
         "kind": kind,
@@ -1298,6 +1307,7 @@ async def finalize_cancelled_launch(
         )
     if authority is None or authority.generation != request.expected_generation:
         raise NativeStreamError("STALE_EXECUTION", "Cancellation generation changed")
+    await require_no_assigned_physical_slots(session, db, request.flow_run_id)
     material = request.model_dump(mode="json", exclude={"challenge_capability"}) | {
         "schema": "native-stream-cancel-finalization-v1"
     }
@@ -1469,6 +1479,7 @@ async def retire_verified_dead_launch(
         raise NativeStreamError(
             "UNSUPPORTED_BACKEND", "Native retirement requires PostgreSQL 17"
         )
+    await require_bounded_flow_recovery(session, db, request.flow_run_id)
     flow = await session.scalar(
         sa.select(db.FlowRun)
         .where(db.FlowRun.id == request.flow_run_id)

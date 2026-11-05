@@ -22,6 +22,7 @@ from prefect.streams import (
     StreamProtocolError,
     StreamRunResult,
     StreamSourceConfig,
+    _PartitionMetadata,  # pyright: ignore[reportPrivateUsage]
 )
 from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.utilities.callables import call_with_parameters
@@ -83,11 +84,13 @@ class _StreamRun:
         self.task_run = task_run
         self.registration_verified = False
         self.source = source
+        self.partition = _PartitionMetadata()
 
 
 def _fail_unstarted_run(run: _StreamRun, error: str) -> None:
     """Compensate a confirmed Pending registration through normal task events."""
     # utilities.engine imports Task; defer until Task initialization is complete.
+    from prefect._internal.stream_execution import get_stream_subtask_execution
     from prefect.utilities.engine import emit_task_run_state_change_event
 
     task_run = run.task_run
@@ -103,13 +106,25 @@ def _fail_unstarted_run(run: _StreamRun, error: str) -> None:
     failed = Failed(message=f"Stream startup failed: {error}")
     failed.state_details.task_run_id = task_run.id
     failed.state_details.flow_run_id = task_run.flow_run_id
+    physical = get_stream_subtask_execution()
+    if physical is not None:
+        failed.state_details.retriable = False
     task_run.state = failed
     task_run.state_id = failed.id
     task_run.state_type = failed.type
     task_run.state_name = failed.name
-    emit_task_run_state_change_event(
-        task_run=task_run, initial_state=initial, validated_state=failed
-    )
+    if physical is None:
+        emit_task_run_state_change_event(
+            task_run=task_run, initial_state=initial, validated_state=failed
+        )
+    else:
+        from prefect._internal.stream_subtask_entrypoint import emit_physical_task_event
+        from prefect.client.orchestration import get_client
+        from prefect.utilities.engine import build_task_run_state_change_event
+
+        event = build_task_run_state_change_event(task_run, initial, failed)
+        with get_client(sync_client=True) as client:
+            emit_physical_task_event(client, event)
 
 
 async def reject_stream_submission(run: _StreamRun, error: str) -> None:
@@ -184,6 +199,7 @@ def _parameters(engine: Any, record: Any, consumer_id: str) -> dict[str, Any]:
         input_sequence=record.sequence,
         attempt=engine.task_run.run_count,
         managed_state=_state_copy(record.managed_state),
+        _partition=validate_stream_parameters(engine.task, engine.parameters).partition,
     )
     return parameters
 
@@ -350,7 +366,11 @@ def _source_execution(
         if key != "__prefect_stream_run__"
     }
     context = SourceContext(
-        engine.task_run.id, run.output.stream_id, engine.task_run.run_count, 0
+        engine.task_run.id,
+        run.output.stream_id,
+        engine.task_run.run_count,
+        0,
+        _partition=run.partition,
     )
     parameters[engine.task.stream.context] = context
     return run, storage, context, parameters

@@ -21,7 +21,10 @@ from typing_extensions import Self
 import prefect
 from prefect._internal.compatibility.starlette import status
 from prefect._internal.server_maintenance import record_maintenance_backoff
-from prefect._internal.stream_execution import apply_stream_execution_headers
+from prefect._internal.stream_execution import (
+    apply_stream_execution_headers,
+    get_stream_subtask_execution,
+)
 from prefect.client import constants
 from prefect.client.attribution import get_attribution_headers
 from prefect.client.schemas.objects import CsrfToken
@@ -304,7 +307,11 @@ class PrefectHttpxAsyncClient(httpx.AsyncClient):
 
         is_change_request = request.method.lower() in {"post", "put", "patch", "delete"}
 
-        if self.enable_csrf_support and is_change_request:
+        if (
+            self.enable_csrf_support
+            and is_change_request
+            and get_stream_subtask_execution() is None
+        ):
             await self._add_csrf_headers(request=request)
 
         while try_count <= PREFECT_CLIENT_MAX_RETRIES.value():
@@ -326,7 +333,8 @@ class PrefectHttpxAsyncClient(httpx.AsyncClient):
                 # We got a response; check if it's a CSRF error, otherwise
                 # return immediately if it is not retryable
                 if (
-                    response.status_code == status.HTTP_403_FORBIDDEN
+                    get_stream_subtask_execution() is None
+                    and response.status_code == status.HTTP_403_FORBIDDEN
                     and "Invalid CSRF token" in response.text
                 ):
                     # We got a CSRF error, clear the token and try again
@@ -395,7 +403,10 @@ class PrefectHttpxAsyncClient(httpx.AsyncClient):
     def _build_redirect_request(self, request: Request, response: Response) -> Request:
         redirected = super()._build_redirect_request(request, response)
         apply_stream_execution_headers(
-            str(self.base_url), str(redirected.url), redirected.headers
+            str(self.base_url),
+            str(redirected.url),
+            redirected.headers,
+            redirected.method,
         )
         return redirected
 
@@ -411,8 +422,10 @@ class PrefectHttpxAsyncClient(httpx.AsyncClient):
         - Any additional status codes provided in `PREFECT_CLIENT_RETRY_EXTRA_CODES`
         """
         apply_stream_execution_headers(
-            str(self.base_url), str(request.url), request.headers
+            str(self.base_url), str(request.url), request.headers, request.method
         )
+        if get_stream_subtask_execution() is not None:
+            kwargs["auth"] = None
         # Add attribution headers for usage tracking
         self._add_attribution_headers(request)
 
@@ -467,7 +480,7 @@ class PrefectHttpxAsyncClient(httpx.AsyncClient):
     async def _add_csrf_headers(self, request: Request):
         now = datetime.now(timezone.utc)
 
-        if not self.enable_csrf_support:
+        if not self.enable_csrf_support or get_stream_subtask_execution() is not None:
             return
 
         if not self.csrf_token or (
@@ -587,7 +600,11 @@ class PrefectHttpxSyncClient(httpx.Client):
 
         is_change_request = request.method.lower() in {"post", "put", "patch", "delete"}
 
-        if self.enable_csrf_support and is_change_request:
+        if (
+            self.enable_csrf_support
+            and is_change_request
+            and get_stream_subtask_execution() is None
+        ):
             self._add_csrf_headers(request=request)
 
         while try_count <= PREFECT_CLIENT_MAX_RETRIES.value():
@@ -609,7 +626,8 @@ class PrefectHttpxSyncClient(httpx.Client):
                 # We got a response; check if it's a CSRF error, otherwise
                 # return immediately if it is not retryable
                 if (
-                    response.status_code == status.HTTP_403_FORBIDDEN
+                    get_stream_subtask_execution() is None
+                    and response.status_code == status.HTTP_403_FORBIDDEN
                     and "Invalid CSRF token" in response.text
                 ):
                     # We got a CSRF error, clear the token and try again
@@ -678,7 +696,10 @@ class PrefectHttpxSyncClient(httpx.Client):
     def _build_redirect_request(self, request: Request, response: Response) -> Request:
         redirected = super()._build_redirect_request(request, response)
         apply_stream_execution_headers(
-            str(self.base_url), str(redirected.url), redirected.headers
+            str(self.base_url),
+            str(redirected.url),
+            redirected.headers,
+            redirected.method,
         )
         return redirected
 
@@ -694,8 +715,10 @@ class PrefectHttpxSyncClient(httpx.Client):
         - Any additional status codes provided in `PREFECT_CLIENT_RETRY_EXTRA_CODES`
         """
         apply_stream_execution_headers(
-            str(self.base_url), str(request.url), request.headers
+            str(self.base_url), str(request.url), request.headers, request.method
         )
+        if get_stream_subtask_execution() is not None:
+            kwargs["auth"] = None
         # Add attribution headers for usage tracking
         self._add_attribution_headers(request)
 
@@ -750,7 +773,7 @@ class PrefectHttpxSyncClient(httpx.Client):
     def _add_csrf_headers(self, request: Request):
         now = datetime.now(timezone.utc)
 
-        if not self.enable_csrf_support:
+        if not self.enable_csrf_support or get_stream_subtask_execution() is not None:
             return
 
         if not self.csrf_token or (

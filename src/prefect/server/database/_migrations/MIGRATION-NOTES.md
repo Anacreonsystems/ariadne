@@ -8,6 +8,34 @@ Each time a database migration is written, an entry is included here with:
 
 This gives us a history of changes and will create merge conflicts if two migrations are made at once, flagging situations where a branch needs to be updated before merging.
 
+# Add fixed-partition physical stream topology
+SQLite: `e59a3f7b8d42`
+Postgres: `b48f2e6a7c31`
+
+Adds immutable graph revisions, logical operator groups, stable physical subtasks,
+scoped physical grants, local verified-replacement journals and durable region
+allocations against existing V2 concurrency counters. All data remains in the
+existing StreamPartition/Record/Consumer/Completion tables. A nullable graph FK
+on StreamSubmission scopes the one-source partial unique index to legacy rows;
+`bounded-linear-v1` retains its one-source constraint. SQLite retains structural
+parity and rejects physical execution before mutation. PostgreSQL 17 and a
+protected API authentication boundary are required for profile admission.
+
+Upgrade preserves existing manifests and their null graph binding. Downgrade
+refuses any graph-bound manifest history, even after payload release, rather than
+silently destroying metadata or violating the restored legacy one-source index.
+For databases where this profile has never been used, downgrade removes only the
+new metadata and restores the prior partial index.
+
+The fixed profile additionally stores deterministic two-worker placement, bounded
+per-Worker protocol advertisements, physical process slot state and exact
+startup-stop receipts. Capability records cascade on Worker or WorkPool removal;
+physical assignment history deliberately prevents deleting its referenced Worker.
+Startup abort remains ABORTING until each claimed/registered process has its
+unstarted acknowledgement or exact death receipt. Task/tag completion does not
+release an assigned OS process slot; verified worker retirement does. Cancellation
+and legacy whole-Flow recovery fail closed for live assigned physical children.
+
 # Add verified native replacement and drain/cancel journals
 SQLite: `d06e2a9f4b53`
 Postgres: `c95d1f8e3a42`

@@ -217,6 +217,34 @@ class PrefectDBInterface(metaclass=DBSingleton):
         return orm_models.StreamSubmission
 
     @property
+    def StreamGraphRevision(self) -> type[orm_models.StreamGraphRevision]:
+        return orm_models.StreamGraphRevision
+
+    @property
+    def StreamOperatorRun(self) -> type[orm_models.StreamOperatorRun]:
+        return orm_models.StreamOperatorRun
+
+    @property
+    def StreamPhysicalSubtask(self) -> type[orm_models.StreamPhysicalSubtask]:
+        return orm_models.StreamPhysicalSubtask
+
+    @property
+    def StreamSubtaskGrant(self) -> type[orm_models.StreamSubtaskGrant]:
+        return orm_models.StreamSubtaskGrant
+
+    @property
+    def StreamSubtaskReplacement(self) -> type[orm_models.StreamSubtaskReplacement]:
+        return orm_models.StreamSubtaskReplacement
+
+    @property
+    def StreamWorkerCapability(self) -> type[orm_models.StreamWorkerCapability]:
+        return orm_models.StreamWorkerCapability
+
+    @property
+    def StreamSubtaskAllocation(self) -> type[orm_models.StreamSubtaskAllocation]:
+        return orm_models.StreamSubtaskAllocation
+
+    @property
     def StreamFiniteSubmission(self) -> type[orm_models.StreamFiniteSubmission]:
         """An immutable finite Task submission manifest orm model"""
         return orm_models.StreamFiniteSubmission

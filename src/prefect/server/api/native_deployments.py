@@ -75,6 +75,10 @@ class _SecretRedactingRoute(APIRoute):
         return redacted_route_handler
 
 
+# Shared route validation boundary; retain the private spelling for legacy callers.
+SecretRedactingRoute = _SecretRedactingRoute
+
+
 router: PrefectRouter = PrefectRouter(
     prefix="/streams/v1/deployments",
     tags=["Streams"],

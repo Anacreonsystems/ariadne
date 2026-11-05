@@ -667,3 +667,7 @@ class StreamUnsealedAbortResult(BaseModel):
     state: Literal["TERMINAL"]
     items: list[StreamUnsealedAbortItem]
     outcome_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+# Shared strict JSON validator for the immutable physical graph wire.
+validate_strict_finite_json = _strict_finite_json

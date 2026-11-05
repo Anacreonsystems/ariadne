@@ -52,12 +52,20 @@ from prefect._internal.stream_engine import (
     finish_stream_sync,
     reject_stream_execution,
 )
-from prefect._internal.stream_execution import get_stream_execution
+from prefect._internal.stream_execution import (
+    get_stream_execution,
+    get_stream_subtask_execution,
+)
 from prefect._internal.stream_finite import (
     admit_finite_attempt,
     complete_finite_result,
     finite_run,
     replay_finite_result,
+)
+from prefect._internal.stream_subtask_entrypoint import (
+    PhysicalStreamExecutionStopped,
+    aemit_physical_task_event,
+    emit_physical_task_event,
 )
 from prefect._internal.uuid7 import uuid7
 from prefect.cache_policies import CachePolicy
@@ -90,9 +98,11 @@ from prefect.exceptions import (
     TerminationSignal,
     UpstreamTaskError,
 )
+from prefect.filesystems import LocalFileSystem, NullFileSystem
 from prefect.logging.loggers import get_logger, patch_print, task_run_logger
 from prefect.results import (
     ResultRecord,
+    ResultStore,
     _aget_default_persist_result,
     _format_user_supplied_storage_key,  # type: ignore[reportPrivateUsage]
     _get_default_persist_result,
@@ -129,6 +139,7 @@ from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.utilities.callables import call_with_parameters, parameters_to_args_kwargs
 from prefect.utilities.collections import visit_collection
 from prefect.utilities.engine import (
+    build_task_run_state_change_event,
     collect_task_run_inputs_sync,
     emit_task_run_state_change_event,
     link_state_to_task_run_result,
@@ -263,17 +274,29 @@ class BaseTaskRunEngine(Generic[P, R]):
     _is_started: bool = False
     _task_name_set: bool = False
     _last_event: Optional[PrefectEvent] = None
+    _physical_transport_failed: bool = False
     _telemetry: RunTelemetry = field(default_factory=RunTelemetry)
 
     def __post_init__(self) -> None:
         if self.parameters is None:
             self.parameters = {}
         execution = get_stream_execution()
+        physical = get_stream_subtask_execution()
+        if physical is not None:
+            if (
+                self.task.stream is None
+                or self.task_run is None
+                or self.task_run.id != physical.task_run_id
+                or self.task_run.flow_run_id != physical.flow_run_id
+                or FlowRunContext.get() is not None
+            ):
+                raise StreamProtocolError(
+                    "Physical execution requires its exact assigned stream TaskRun"
+                )
+            self.retries = max(self.retries, self.task_run.run_count)
         if execution is not None and (
             self.task_run is None or execution.manifest_digest(self.task_run.id) is None
         ):
-            from prefect.streams import StreamProtocolError
-
             raise StreamProtocolError(
                 "An enrolled native flow accepts only its keyed stream tasks"
             )
@@ -290,9 +313,12 @@ class BaseTaskRunEngine(Generic[P, R]):
     def _stream_initial_retry_delay(self) -> float:
         execution = get_stream_execution()
         if (
-            execution is None
+            (execution is None and get_stream_subtask_execution() is None)
             or self.task_run is None
-            or execution.manifest_digest(self.task_run.id) is None
+            or (
+                execution is not None
+                and execution.manifest_digest(self.task_run.id) is None
+            )
             or self.task_run.state is None
             or not self.task_run.state.is_scheduled()
         ):
@@ -301,6 +327,28 @@ class BaseTaskRunEngine(Generic[P, R]):
         if scheduled is None:
             return 0
         return max(0, (scheduled - prefect.types._datetime.now("UTC")).total_seconds())
+
+    def _emit_state_event(
+        self,
+        initial_state: State[Any] | None,
+        validated_state: State[Any],
+    ) -> PrefectEvent | None:
+        assert self.task_run is not None
+        if get_stream_subtask_execution() is None:
+            return emit_task_run_state_change_event(
+                task_run=self.task_run,
+                initial_state=initial_state,
+                validated_state=validated_state,
+                follows=self._last_event,
+            )
+        event = build_task_run_state_change_event(
+            self.task_run, initial_state, validated_state, self._last_event
+        )
+        try:
+            return emit_physical_task_event(getattr(self, "client"), event)
+        except PhysicalStreamExecutionStopped:
+            self._physical_transport_failed = True
+            raise
 
     @property
     def state(self) -> State:
@@ -475,12 +523,7 @@ class BaseTaskRunEngine(Generic[P, R]):
             message="Task rolled back as part of transaction",
         )
 
-        self._last_event = emit_task_run_state_change_event(
-            task_run=self.task_run,
-            initial_state=self.state,
-            validated_state=rolled_back_state,
-            follows=self._last_event,
-        )
+        self._last_event = self._emit_state_event(self.state, rolled_back_state)
 
 
 @dataclass
@@ -617,6 +660,10 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
         last_state = self.state
         if not self.task_run:
             raise ValueError("Task run is not set")
+        if get_stream_subtask_execution() is not None and (
+            state.is_failed() or state.is_crashed()
+        ):
+            state.state_details.retriable = False
 
         self.task_run.state = new_state = state
 
@@ -655,12 +702,7 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
             link_state_to_task_run_result(new_state, result)
 
         # emit a state change event
-        self._last_event = emit_task_run_state_change_event(
-            task_run=self.task_run,
-            initial_state=last_state,
-            validated_state=self.task_run.state,
-            follows=self._last_event,
-        )
+        self._last_event = self._emit_state_event(last_state, self.task_run.state)
         self._telemetry.update_state(new_state)
         return new_state
 
@@ -831,8 +873,17 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
         with ExitStack() as stack:
             if log_prints := should_log_prints(self.task):
                 stack.enter_context(patch_print())
-            result_store = get_result_store().update_for_task(self.task, _sync=True)
-            if self.task.persist_result is not None:
+            physical = get_stream_subtask_execution()
+            result_store = (
+                ResultStore(
+                    result_storage=LocalFileSystem(), metadata_storage=NullFileSystem()
+                )
+                if physical is not None
+                else get_result_store().update_for_task(self.task, _sync=True)
+            )
+            if physical is not None:
+                persist_result = False
+            elif self.task.persist_result is not None:
                 persist_result = self.task.persist_result
             elif settings.tasks.default_persist_result is not None:
                 persist_result = settings.tasks.default_persist_result
@@ -850,7 +901,8 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
                     persist_result=persist_result,
                 )
             )
-            stack.enter_context(ConcurrencyContext())
+            if physical is None:
+                stack.enter_context(ConcurrencyContext())
 
             self.logger: "logging.Logger" = task_run_logger(
                 task_run=self.task_run, task=self.task
@@ -860,6 +912,9 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
 
     @contextmanager
     def asset_context(self):
+        if get_stream_subtask_execution() is not None:
+            yield
+            return
         parent_asset_ctx = AssetContext.get()
 
         if parent_asset_ctx and parent_asset_ctx.copy_to_child_ctx:
@@ -895,7 +950,11 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
                 parent_task_run_context = TaskRunContext.get()
 
                 try:
-                    _emit_pending = False
+                    _emit_pending = (
+                        get_stream_subtask_execution() is not None
+                        and self.task_run is not None
+                        and self.task_run.state.is_pending()
+                    )
                     if not self.task_run:
                         self.task_run = _create_task_run_locally(
                             task=self.task,
@@ -914,10 +973,8 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
                         # rather than whatever TaskRunContext may be active from
                         # an enclosing scope (e.g. a parent task).
                         if _emit_pending:
-                            self._last_event = emit_task_run_state_change_event(
-                                task_run=self.task_run,
-                                initial_state=None,
-                                validated_state=self.task_run.state,
+                            self._last_event = self._emit_state_event(
+                                None, self.task_run.state
                             )
 
                         # setup_run_context might update the task run name, so log creation here
@@ -948,6 +1005,8 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
                     raise
                 except GeneratorExit:
                     # Do not capture generator exits as crashes
+                    raise
+                except PhysicalStreamExecutionStopped:
                     raise
                 except BaseException as exc:
                     # BaseExceptions are caught and handled as crashes
@@ -1010,12 +1069,18 @@ class SyncTaskRunEngine(BaseTaskRunEngine[P, R]):
                     self.call_hooks()
                     return
 
-                with _concurrency(
-                    names=[f"tag:{tag}" for tag in self.task_run.tags],
-                    occupy=1,
-                    holder=ConcurrencyLeaseHolder(type="task_run", id=self.task_run.id),
-                    lease_duration=60,
-                    suppress_warnings=True,
+                with (
+                    nullcontext()
+                    if get_stream_subtask_execution() is not None
+                    else _concurrency(
+                        names=[f"tag:{tag}" for tag in self.task_run.tags],
+                        occupy=1,
+                        holder=ConcurrencyLeaseHolder(
+                            type="task_run", id=self.task_run.id
+                        ),
+                        lease_duration=60,
+                        suppress_warnings=True,
+                    )
                 ):
                     raise_if_flow_run_suspension_requested()
                     self.begin_run()
@@ -1124,6 +1189,28 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
         if not self._is_started or self._client is None:
             raise RuntimeError("Engine has not started.")
         return self._client
+
+    async def _aemit_state_event(
+        self,
+        initial_state: State[Any] | None,
+        validated_state: State[Any],
+    ) -> PrefectEvent | None:
+        assert self.task_run is not None
+        if get_stream_subtask_execution() is None:
+            return emit_task_run_state_change_event(
+                task_run=self.task_run,
+                initial_state=initial_state,
+                validated_state=validated_state,
+                follows=self._last_event,
+            )
+        event = build_task_run_state_change_event(
+            self.task_run, initial_state, validated_state, self._last_event
+        )
+        try:
+            return await aemit_physical_task_event(self.client, event)
+        except PhysicalStreamExecutionStopped:
+            self._physical_transport_failed = True
+            raise
 
     async def can_retry(self, exc_or_state: Exception | State[R]) -> bool:
         retry_condition: Optional[
@@ -1262,6 +1349,10 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
         last_state = self.state
         if not self.task_run:
             raise ValueError("Task run is not set")
+        if get_stream_subtask_execution() is not None and (
+            state.is_failed() or state.is_crashed()
+        ):
+            state.state_details.retriable = False
 
         self.task_run.state = new_state = state
 
@@ -1301,11 +1392,8 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
             link_state_to_task_run_result(new_state, result)
 
         # emit a state change event
-        self._last_event = emit_task_run_state_change_event(
-            task_run=self.task_run,
-            initial_state=last_state,
-            validated_state=self.task_run.state,
-            follows=self._last_event,
+        self._last_event = await self._aemit_state_event(
+            last_state, self.task_run.state
         )
 
         self._telemetry.update_state(new_state)
@@ -1482,8 +1570,17 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
         with ExitStack() as stack:
             if log_prints := should_log_prints(self.task):
                 stack.enter_context(patch_print())
-            result_store = await get_result_store().aupdate_for_task(self.task)
-            if self.task.persist_result is not None:
+            physical = get_stream_subtask_execution()
+            result_store = (
+                ResultStore(
+                    result_storage=LocalFileSystem(), metadata_storage=NullFileSystem()
+                )
+                if physical is not None
+                else await get_result_store().aupdate_for_task(self.task)
+            )
+            if physical is not None:
+                persist_result = False
+            elif self.task.persist_result is not None:
                 persist_result = self.task.persist_result
             elif settings.tasks.default_persist_result is not None:
                 persist_result = settings.tasks.default_persist_result
@@ -1501,7 +1598,8 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
                     persist_result=persist_result,
                 )
             )
-            stack.enter_context(ConcurrencyContext())
+            if physical is None:
+                stack.enter_context(ConcurrencyContext())
 
             self.logger: "logging.Logger" = task_run_logger(
                 task_run=self.task_run, task=self.task
@@ -1511,6 +1609,9 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
 
     @asynccontextmanager
     async def asset_context(self):
+        if get_stream_subtask_execution() is not None:
+            yield
+            return
         parent_asset_ctx = AssetContext.get()
 
         if parent_asset_ctx and parent_asset_ctx.copy_to_child_ctx:
@@ -1546,7 +1647,11 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
                 parent_task_run_context = TaskRunContext.get()
 
                 try:
-                    _emit_pending = False
+                    _emit_pending = (
+                        get_stream_subtask_execution() is not None
+                        and self.task_run is not None
+                        and self.task_run.state.is_pending()
+                    )
                     if not self.task_run:
                         self.task_run = await self.task.create_local_run(
                             id=task_run_id,
@@ -1564,10 +1669,8 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
                         # rather than whatever TaskRunContext may be active from
                         # an enclosing scope (e.g. a parent task).
                         if _emit_pending:
-                            self._last_event = emit_task_run_state_change_event(
-                                task_run=self.task_run,
-                                initial_state=None,
-                                validated_state=self.task_run.state,
+                            self._last_event = await self._aemit_state_event(
+                                None, self.task_run.state
                             )
 
                         # setup_run_context might update the task run name, so log creation here
@@ -1598,6 +1701,8 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
                     raise
                 except GeneratorExit:
                     # Do not capture generator exits as crashes
+                    raise
+                except PhysicalStreamExecutionStopped:
                     raise
                 except BaseException as exc:
                     # BaseExceptions are caught and handled as crashes
@@ -1662,12 +1767,18 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
                     await self.call_hooks()
                     return
 
-                async with _aconcurrency(
-                    names=[f"tag:{tag}" for tag in self.task_run.tags],
-                    occupy=1,
-                    holder=ConcurrencyLeaseHolder(type="task_run", id=self.task_run.id),
-                    lease_duration=60,
-                    suppress_warnings=True,
+                async with (
+                    nullcontext()
+                    if get_stream_subtask_execution() is not None
+                    else _aconcurrency(
+                        names=[f"tag:{tag}" for tag in self.task_run.tags],
+                        occupy=1,
+                        holder=ConcurrencyLeaseHolder(
+                            type="task_run", id=self.task_run.id
+                        ),
+                        lease_duration=60,
+                        suppress_warnings=True,
+                    )
                 ):
                     raise_if_flow_run_suspension_requested()
                     await self.begin_run()
@@ -1783,7 +1894,11 @@ def run_task_sync(
             run_coro_as_sync(reject_stream_execution(engine, type(exc).__name__))
         raise
     finally:
-        if task.stream is not None and engine.task_run is not None:
+        if (
+            task.stream is not None
+            and engine.task_run is not None
+            and not engine._physical_transport_failed
+        ):
             finish_stream_sync(engine)
 
     return engine.state if return_type == "state" else engine.result()
@@ -1823,7 +1938,11 @@ async def run_task_async(
             await reject_stream_execution(engine, type(exc).__name__)
         raise
     finally:
-        if task.stream is not None and engine.task_run is not None:
+        if (
+            task.stream is not None
+            and engine.task_run is not None
+            and not engine._physical_transport_failed
+        ):
             await finish_stream_async(engine)
 
     return engine.state if return_type == "state" else await engine.result()

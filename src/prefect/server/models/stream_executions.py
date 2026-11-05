@@ -20,6 +20,10 @@ from prefect.server.models._stream_receipts import (
     canonical_json_digest,
     finite_receipt_outcome_digest,
 )
+from prefect.server.models.stream_subtask_authority import (
+    require_bounded_flow_recovery,
+    require_no_assigned_physical_slots,
+)
 from prefect.server.orchestration.core_policy import CoreFlowPolicy, CoreTaskPolicy
 from prefect.server.schemas.responses import SetStateStatus
 from prefect.server.schemas.states import TERMINAL_STATES, State, StateType
@@ -271,6 +275,7 @@ async def takeover_execution(
     """Fence a confirmed-dead child and govern its FlowRun into retry."""
 
     await _require_backend(session, db)
+    await require_bounded_flow_recovery(session, db, request.flow_run_id)
 
     flow = await session.scalar(
         sa.select(db.FlowRun)
@@ -526,6 +531,8 @@ async def guard_flow_lifecycle(
                 "Native deployment FlowRun must enrol its worker before execution",
             )
         return None
+    if proposed_state.is_cancelling() or proposed_state.is_cancelled():
+        await require_no_assigned_physical_slots(session, db, flow_run_id)
     if force:
         raise NativeStreamError(
             "PROTOCOL_ERROR", "Enrolled FlowRun lifecycle cannot bypass policy"
@@ -686,6 +693,50 @@ async def apply_flow_lifecycle_result(
     if result_state.is_running():
         authority.state = "ACTIVE"
         authority.flow_run_run_count = flow.run_count
+        graph = await session.scalar(
+            sa.select(db.StreamGraphRevision)
+            .where(db.StreamGraphRevision.flow_run_id == flow.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if graph is not None and graph.startup_completed_at is None:
+            tasks = (
+                await session.scalars(
+                    sa.select(db.TaskRun)
+                    .join(
+                        db.StreamPhysicalSubtask,
+                        db.StreamPhysicalSubtask.task_run_id == db.TaskRun.id,
+                    )
+                    .where(db.StreamPhysicalSubtask.graph_revision_id == graph.id)
+                    .order_by(db.TaskRun.id)
+                    .with_for_update(of=db.TaskRun)
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+            records = await session.scalar(
+                sa.select(sa.func.count())
+                .select_from(db.StreamRecord)
+                .join(
+                    db.StreamPartition,
+                    db.StreamPartition.id == db.StreamRecord.stream_id,
+                )
+                .where(db.StreamPartition.flow_run_id == flow.id)
+            )
+            if (
+                len(tasks) != 4
+                or records
+                or any(
+                    task.run_count != 0
+                    or task.state_type not in (StateType.PENDING, StateType.SCHEDULED)
+                    for task in tasks
+                )
+            ):
+                raise NativeStreamError(
+                    "RECOVERY_NOT_READY",
+                    "First Running reconciliation requires an unstarted zero-DATA physical graph",
+                )
+            for task in tasks:
+                task.flow_run_run_count = flow.run_count
     elif result_state.is_final():
         authority.state = "TERMINAL"
 
