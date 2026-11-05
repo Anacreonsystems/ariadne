@@ -1,0 +1,188 @@
+import asyncio
+import ctypes
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import time
+
+import asyncpg
+
+ROOT = Path('/tmp/native-main-p2-lock-observer-2026-11-05-v1')
+SOURCE = Path('/tmp/ariadne-ci-checkpoint-5r7nt1hd')
+DB = 'native_main_p2_lock_observer_20261105'
+URL = 'postgresql://native_recovery:native_recovery@127.0.0.1:55436/postgres'
+
+def write(path, value):
+    path.write_text(json.dumps(value, indent=2, default=str) + '\n')
+
+def processes():
+    result = {}
+    for item in Path('/proc').iterdir():
+        if not item.name.isdigit():
+            continue
+        try:
+            raw = (item / 'stat').read_text()
+            tail = raw[raw.rfind(')') + 2:].split()
+            result[int(item.name)] = {
+                'pid': int(item.name), 'ppid': int(tail[1]),
+                'state': tail[0], 'start_ticks': int(tail[19]),
+                'command': (item / 'cmdline').read_bytes().replace(b'\0', b' ').decode(errors='replace')[:800],
+            }
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+    return result
+
+def source_receipt():
+    files = ['tests/test_native_partitioned_stream_http.py', 'tests/test_native_stream_recovery_http.py',
+             'tests/test_native_stream_http.py', 'tests/conftest.py', 'tests/fixtures/database.py',
+             'src/prefect/server/models/stream_subtasks.py', 'src/prefect/server/models/stream_executions.py',
+             'src/prefect/server/models/streams.py', 'src/prefect/workers/_stream_subtasks.py',
+             'src/prefect/workers/process.py']
+    return {'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=SOURCE, text=True).strip(),
+            'status': subprocess.check_output(['git', 'status', '--porcelain'], cwd=SOURCE, text=True),
+            'files': {p: hashlib.sha256((SOURCE / p).read_bytes()).hexdigest() for p in files}}
+
+async def run_case(count, conn):
+    case = ROOT / f'case-{count}'
+    case.mkdir(mode=0o700)
+    env = dict(os.environ)
+    env.pop('NPM_CONFIG_PREFIX', None)
+    env.update(UV_PROJECT_ENVIRONMENT='/workspace/ariadne/.venv', UV_NO_SYNC='1',
+               PYTHONPATH=f'{SOURCE}/src:{SOURCE}', PYTHONUNBUFFERED='1',
+               PREFECT_SERVER_DATABASE_CONNECTION_URL=f'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/{DB}',
+               PREFECT_LOGGING_LEVEL='INFO', PREFECT_LOGGING_INTERNAL_LEVEL='WARNING')
+    command = ['uv', 'run', '--no-sync', 'pytest',
+               f'tests/test_native_partitioned_stream_http.py::test_actual_process_worker_runs_four_partition_tasks[{count}-none-False]',
+               '-vv', '-s', '--tb=short', f'--junitxml={case}/result.xml', f'--basetemp={case}/pytest-tmp']
+    write(case / 'command.json', {'command': command, 'cwd': str(SOURCE), 'database_basename': DB,
+          'outer_deadline_seconds': 180, 'source_before': source_receipt()})
+    log = (case / 'stdout.log').open('wb')
+    child = subprocess.Popen(command, cwd=SOURCE, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    started = time.monotonic()
+    owned = {}
+    first_wait = None
+    timed_out = False
+    observations = (case / 'postgres.jsonl').open('w')
+    history = (case / 'processes.jsonl').open('w')
+    print(json.dumps({'event': 'started', 'count': count, 'pytest_pid': child.pid}), flush=True)
+
+    def discover():
+        current = processes()
+        selected = {child.pid}
+        selected.update(p for p, v in owned.items() if p in current and current[p]['start_ticks'] == v['start_ticks'])
+        while True:
+            extra = {p for p, v in current.items() if v['ppid'] in selected}
+            if extra <= selected:
+                break
+            selected |= extra
+        for pid in selected:
+            if pid in current and pid not in owned:
+                owned[pid] = current[pid]
+                history.write(json.dumps({'elapsed': time.monotonic() - started, **current[pid]}) + '\n')
+                history.flush()
+        return current
+
+    try:
+        while child.poll() is None:
+            discover()
+            rows = await conn.fetch('''SELECT clock_timestamp() AS observed_at, pid, application_name,
+              client_addr::text, client_port, backend_start, xact_start, query_start, state_change,
+              state, wait_event_type, wait_event, backend_xid::text, backend_xmin::text,
+              EXTRACT(EPOCH FROM clock_timestamp()-xact_start)::float AS xact_age_seconds,
+              EXTRACT(EPOCH FROM clock_timestamp()-query_start)::float AS query_age_seconds,
+              pg_blocking_pids(pid) AS blockers, LEFT(query,12000) AS query
+              FROM pg_stat_activity WHERE datname=$1 ORDER BY pid''', DB + '_tests_master')
+            pids = [r['pid'] for r in rows]
+            locks = await conn.fetch('''SELECT locktype,database,relation,page,tuple,virtualxid,
+              transactionid::text,virtualtransaction,pid,mode,granted,fastpath,waitstart
+              FROM pg_locks WHERE pid=ANY($1::int[]) ORDER BY pid,granted,locktype,mode''', pids) if pids else []
+            snapshot = {'elapsed': time.monotonic()-started, 'activities': [dict(r) for r in rows], 'locks': [dict(r) for r in locks]}
+            observations.write(json.dumps(snapshot, default=str) + '\n')
+            observations.flush()
+            waiters = [dict(r) for r in rows if r['blockers']]
+            if waiters and first_wait is None:
+                first_wait = snapshot
+                write(case / 'first-blocking-snapshot.json', snapshot)
+                print(json.dumps({'event': 'first-blocking', 'count': count,
+                      'elapsed': snapshot['elapsed'], 'waiters': [{k: r[k] for k in ('pid','state','wait_event','blockers','xact_age_seconds','query_age_seconds')} for r in waiters]}), flush=True)
+            if time.monotonic()-started >= 180:
+                timed_out = True
+                child.send_signal(signal.SIGINT)
+                print(json.dumps({'event': 'deadline', 'count': count}), flush=True)
+                break
+            await asyncio.sleep(.2)
+        if timed_out:
+            try:
+                await asyncio.to_thread(child.wait, 15)
+            except subprocess.TimeoutExpired:
+                pass
+    finally:
+        current = discover()
+        signals = []
+        # Stop only descendants discovered under this exact test process identity.
+        for sig, grace in ((signal.SIGTERM, 3), (signal.SIGKILL, 2)):
+            for pid, identity in sorted(owned.items(), reverse=True):
+                observed = current.get(pid)
+                if observed is None or observed['start_ticks'] != identity['start_ticks'] or observed['state'] == 'Z':
+                    continue
+                try:
+                    fd = os.pidfd_open(pid)
+                    try:
+                        again = processes().get(pid)
+                        if again and again['start_ticks'] == identity['start_ticks']:
+                            signal.pidfd_send_signal(fd, sig)
+                            signals.append({'pid': pid, 'start_ticks': identity['start_ticks'], 'signal': sig.name})
+                    finally:
+                        os.close(fd)
+                except ProcessLookupError:
+                    pass
+            await asyncio.sleep(grace)
+            current = processes()
+        try:
+            child.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
+        reaped = []
+        for pid, identity in owned.items():
+            try:
+                result = os.waitpid(pid, os.WNOHANG)
+                if result[0]:
+                    reaped.append({'pid': pid, 'status': result[1]})
+            except ChildProcessError:
+                pass
+        current = processes()
+        lingering = [v for pid,v in owned.items() if pid in current and current[pid]['start_ticks'] == v['start_ticks']]
+        observations.close()
+        history.close()
+        log.close()
+        remaining_db = [dict(r) for r in await conn.fetch('SELECT pid,state,wait_event,pg_blocking_pids(pid) blockers,LEFT(query,2000) query FROM pg_stat_activity WHERE datname=$1', DB+'_tests_master')]
+        result = {'count':count, 'returncode':child.returncode,'timed_out':timed_out,
+                  'elapsed_seconds':time.monotonic()-started,'first_blocking_elapsed': first_wait['elapsed'] if first_wait else None,
+                  'cleanup_signals':signals,'reaped_adopted':reaped,'lingering_owned':lingering,
+                  'remaining_database_sessions':remaining_db,'source_after':source_receipt()}
+        write(case / 'receipt.json', result)
+        print(json.dumps({'event':'finished',**{k:result[k] for k in ('count','returncode','timed_out','elapsed_seconds','first_blocking_elapsed','lingering_owned')}}),flush=True)
+    return child.returncode == 0 and not timed_out
+
+async def main():
+    ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0)  # Own descendant reaping only.
+    write(ROOT/'source-before.json', source_receipt())
+    conn = await asyncpg.connect(URL,server_settings={'application_name':'native-main-p2-lock-observer','statement_timeout':'5000'})
+    try:
+        version = await conn.fetchval('SELECT version()')
+        write(ROOT/'database-version.json', {'version':version,'database_basename':DB})
+        exists = await conn.fetchval('SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1)', DB+'_tests_master')
+        if exists:
+            raise RuntimeError('Unique observer test database already exists')
+        ok = await run_case(8, conn)
+        if ok:
+            await run_case(500, conn)
+    finally:
+        await conn.close()
+        write(ROOT/'source-after.json', source_receipt())
+
+asyncio.run(main())

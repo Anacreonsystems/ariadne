@@ -1,0 +1,53 @@
+{
+  "approved_decisions": [
+    "ADR-0033 parent-first Flow lock order",
+    "ADR-0038 native launch renewal and death-proof boundary",
+    "ADR-0040 fixed-P2 integration acceptance"
+  ],
+  "authorized_successor": "FlowRun FOR SHARE -> StreamExecutionAuthority FOR SHARE -> exact NativeStreamLaunchIdentity FOR UPDATE. Preserve authentication, generation/state checks, API/request bytes, stale/horizon behavior and launch timestamp mutation.",
+  "implementation_checkout": "/tmp/ariadne-native-renewal-lock-fix-v1",
+  "owner": "native_worker_acceptance",
+  "principal_verdict": "pending independent source review and actual controls",
+  "published_source": {
+    "path": "src/prefect/server/models/native_deployments.py",
+    "sha256": "dac027ca3208bc7c9721c0e14b0a428936db679b9bfd81c59db012c8596e5dd5"
+  },
+  "readiness_delta": 0,
+  "recorded_at": "2026-11-05T10:41:19.083610Z",
+  "required_controls": [
+    "Held Flow SHARE permits renewal to commit before the holder releases.",
+    "Held Flow UPDATE, authority UPDATE and launch UPDATE each block renewal until release.",
+    "Stale credentials/generation and released/non-active authority retain exact typed refusals without mutation.",
+    "Actual 8-document and 500-document fixed-P2 runs are source-bound and show no repeated renewal cancellation/degraded loop.",
+    "Existing injected HTTP500 + accepted-ACK-loss + held-Flow-SHARE gate remains green with 200->201 recovery and zero final slots.",
+    "No timeout increase; hosted physical job layout/observability may change only after the product correction is verified."
+  ],
+  "retained_causal_evidence": [
+    {
+      "finding": "Exact Flow UPDATE waiter is blocked by retained Flow SHARE transaction.",
+      "path": "../native-epoch2-p2-renewal-diagnosis-2026-11-05/correction-v1/injected-positive/pg-lock-observations-v2.jsonl.log",
+      "sha256": "1f924c29ddfd33900411861836db8ff48feaa4fca76e1f119a9bdb778bba3cef"
+    },
+    {
+      "finding": "Normal real run shows the same Flow UPDATE waiter successively blocked by rotating Flow SHARE request PIDs.",
+      "path": "../native-epoch2-p2-renewal-diagnosis-2026-11-05/isolated-v1/pg-lock-observations.jsonl.log",
+      "sha256": "2ef4f4902814b1e5257e03fd587a60a43e06efcabad8135507b98054d7ab5ab2"
+    }
+  ],
+  "schema": "native-epoch2-p2-renewal-lock-contention-handoff-v1",
+  "scope": "Narrow fixed-P2 launch-renewal lock-mode correction; no NI2-012 implementation or accepted ADR body change.",
+  "source_finding": "renew_launch locks FlowRun FOR UPDATE and calls require_execution(update=True), but mutates only NativeStreamLaunchIdentity.last_renewed_at; routed DATA transactions intentionally hold FlowRun FOR SHARE for their atomic transaction.",
+  "status": "correction_authorized_evidence_pending",
+  "trigger": {
+    "artifact_result": "759 contract + 271 server + 2 package passed with zero skips; native runtime XML absent",
+    "conclusion": "cancelled_at_75_minute_job_limit",
+    "database_observation": "86 statement cancellations, all FlowRun FOR UPDATE tuple waits across multiple successive FlowRuns; no deadlock report.",
+    "job": 127155085741,
+    "raw_log": {
+      "path": "/tmp/native-pg17-job-127155085741-final.log",
+      "sha256": "e06148c4036d43547f707dc03c12d0a31051898ef33de93afa80b886af032ca5"
+    },
+    "verified_artifact_sha256": "68ddd4ec0782662fe57383bf9190df46643924cab5244be5b3fbf7c6112fa1ee",
+    "workflow_run": 42000763887
+  }
+}

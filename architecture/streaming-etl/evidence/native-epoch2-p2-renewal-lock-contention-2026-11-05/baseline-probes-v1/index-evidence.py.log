@@ -1,0 +1,38 @@
+import hashlib
+import json
+from pathlib import Path
+import shutil
+
+ROOT=Path('/tmp/native-main-p2-lock-observer-2026-11-05-v1')
+SOURCE=Path('/tmp/ariadne-ci-checkpoint-5r7nt1hd')
+before=json.loads((ROOT/'source-before.json').read_text())
+after=json.loads((ROOT/'source-after.json').read_text())
+assert before==after and not before['status']
+sources=ROOT/'source-snapshot'
+for relative in before['files']|json.loads((ROOT/'static-source-hashes.json').read_text()):
+    target=sources/(relative+'.log')
+    target.parent.mkdir(parents=True,exist_ok=True)
+    shutil.copyfile(SOURCE/relative,target)
+
+for name in ('summarize.py','index-evidence.py'):
+    path=ROOT/name
+    shutil.copyfile(path,ROOT/(name+'.log'))
+
+selected=[]
+for path in ROOT.rglob('*'):
+    if not path.is_file() or path.name=='index.json' or path.suffix=='.py':
+        continue
+    relative=path.relative_to(ROOT).as_posix()
+    if '/pytest-tmp/' in relative:
+        if path.suffix!='.log' and path.name!='case-observation.json' and path.suffix!='.ppid':
+            continue
+    payload=path.read_bytes()
+    selected.append({'path':relative,'bytes':len(payload),'sha256':hashlib.sha256(payload).hexdigest()})
+selected.sort(key=lambda row:row['path'])
+index={'status':'BASELINE_TWO_STANDALONE_CASES_PASS_CI_HANG_NOT_REPRODUCED',
+       'source_head':before['head'],'source_before_after_identical':True,
+       'main_receipt':'final-receipt.json','payload_count':len(selected),
+       'total_bytes':sum(row['bytes'] for row in selected),'payloads':selected}
+(ROOT/'index.json').write_text(json.dumps(index,indent=2)+'\n')
+print(json.dumps({k:v for k,v in index.items() if k!='payloads'},indent=2))
+print('index_sha256='+hashlib.sha256((ROOT/'index.json').read_bytes()).hexdigest())
