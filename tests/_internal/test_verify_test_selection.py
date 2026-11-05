@@ -109,6 +109,7 @@ def test_one_dedicated_file_does_not_implicitly_cover_its_sibling(tmp_path: Path
         "error",
         "duplicate",
         "missing-module",
+        "missing-backend-module",
         "empty",
         "missing-report",
     ],
@@ -140,7 +141,13 @@ def test_actual_dag_workflow_guard_requires_executed_unique_passing_modules(
                     name="test_executed_case",
                 )
         ET.ElementTree(suite).write(tmp_path / report)
-    report = tmp_path / "native-dag-contract.xml"
+    report = tmp_path / (
+        "native-dag-server.xml"
+        if fault == "missing-backend-module" and database == "postgres:17"
+        else "native-dag-sqlite.xml"
+        if fault == "missing-backend-module"
+        else "native-dag-contract.xml"
+    )
     if fault == "missing-report":
         report.unlink()
     elif fault is not None:
@@ -150,7 +157,7 @@ def test_actual_dag_workflow_guard_requires_executed_unique_passing_modules(
             ET.SubElement(suite[0], fault)
         elif fault == "duplicate":
             suite.append(copy.deepcopy(suite[0]))
-        elif fault == "missing-module":
+        elif fault in {"missing-module", "missing-backend-module"}:
             suite.remove(suite[0])
         elif fault == "empty":
             suite.clear()

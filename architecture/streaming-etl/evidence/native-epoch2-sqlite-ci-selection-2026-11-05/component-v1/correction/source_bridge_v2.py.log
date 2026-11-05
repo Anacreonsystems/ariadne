@@ -1,0 +1,30 @@
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+
+import yaml
+
+root=Path('/tmp/ariadne-native-5000-diagnosis-v1');base=Path('/tmp/native-ni013-sqlite-ci-correction-v1');name='.github/workflows/python-tests.yaml'
+old=subprocess.check_output(['git','show','835b8c21c83e4d0a2d95ddc6abe0b06fb9d75db5:'+name],cwd=root,text=True)
+new=(root/name).read_text()
+get=lambda text:yaml.safe_load(text)['jobs']['run-stream-dag-execution-tests']['steps']
+a=get(old);b=get(new)
+step='Require SQLite DAG capability and migration controls';module='tests/server/models/test_stream_dag_launches.py'
+assert len(a)==len(b)
+changed=[(i,x,y) for i,(x,y) in enumerate(zip(a,b)) if x!=y]
+assert len(changed)==1
+_,old_step,new_step=changed[0]
+assert old_step.get('name')==new_step.get('name')==step
+assert old_step['run'].count(module)==1
+assert old_step['run'].replace(module+' ','',1)==new_step['run']
+assert old_step.keys()==new_step.keys() and all(old_step[k]==new_step[k] for k in old_step if k!='run')
+assert 'tests/server/api/test_stream_dag_launches.py' in new_step['run']
+assert 'test_worker_journal_controls_refuse_sqlite_without_mutation' in (root/'tests/server/api/test_stream_dag_launches.py').read_text()
+oldguard=next(x['run'] for x in a if x.get('name')=='Require every declared DAG module to pass without skips')
+newguard=next(x['run'] for x in b if x.get('name')=='Require every declared DAG module to pass without skips')
+assert oldguard==newguard
+proof={'schema':'ariadne-native-sqlite-selection-source-bridge-v2','base_head':'835b8c21c83e4d0a2d95ddc6abe0b06fb9d75db5','workflow_sha256':hashlib.sha256(new.encode()).hexdigest(),'guard_test_sha256':hashlib.sha256((root/'tests/_internal/test_verify_test_selection.py').read_bytes()).hexdigest(),'only_changed_workflow_step':step,'only_removed_argument':module,'postgres_command_byte_equal':True,'all_other_steps_byte_equal':True,'guard_byte_equal':True,'guard_sha256':hashlib.sha256(newguard.encode()).hexdigest(),'sqlite_api_refusal_module_retained':True,'qualification':'CI applicability proof; historical XML does not substitute for the expanded835 suite.'}
+(base/'source-bridge-v2.json').write_text(json.dumps(proof,indent=2)+'\n')
+(base/'source-bridge-v1-attempt.json').write_text(json.dumps({'status':'failed-harness','exception':'KeyError: name','cause':'First comparison indexed unnamed workflow steps by mandatory name. No source mutation resulted. Corrected v2 compares the full ordered step list.'},indent=2)+'\n')
+print(json.dumps(proof,indent=2))
