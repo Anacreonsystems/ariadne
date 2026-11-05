@@ -12,6 +12,7 @@ from uuid import UUID
 
 import httpx
 import pytest
+import sqlalchemy as sa
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -210,7 +211,7 @@ async def test_public_facade_seal_and_recovered_authoring_keep_exact_metadata(
         recovered = declared_graph(shape=shape).seal()
         assert recovered == sealed
         plan = client.read_stream_dag(graph_revision_id=sealed.graph_revision_id)
-        for terminal in (Completed(), Failed(), Cancelling()):
+        for terminal in (Completed(), Failed()):
             with pytest.raises(httpx.HTTPStatusError) as refused:
                 client.set_flow_run_state(run.id, terminal)
             assert refused.value.response.status_code == 409
@@ -241,6 +242,49 @@ async def test_public_facade_seal_and_recovered_authoring_keep_exact_metadata(
         "stream_physical_slot_allocation",
     ):
         assert counts[table] == 0
+
+    # An ordinary platform cancellation closes an unstarted preview without
+    # admitting workers or executing any of the sealed Task bodies.
+    task_ids = {item.manifest.task_run_id for item in plan.subtasks}
+    with parent_context(hosted_api_server, request, headers) as (client, _):
+        cancelled = client.set_flow_run_state(run.id, Cancelling())
+        assert cancelled.status.value == "ACCEPT"
+        assert cancelled.state is not None and cancelled.state.is_cancelled()
+        assert client.read_flow_run(run.id).state.is_cancelled()
+    async with db.session_context() as check:
+        graph_row = await check.get(db.StreamGraphRevision, sealed.graph_revision_id)
+        assert graph_row is not None and graph_row.state == "RELEASED"
+        assert graph_row.admission_operation_id is None
+        assert graph_row.terminal_operation_id is not None
+        terminal = await check.get(
+            db.StreamDAGLifecycleOperation, graph_row.terminal_operation_id
+        )
+        assert terminal is not None and terminal.kind == "FINALIZE"
+        assert terminal.terminal_state == "FAILED"
+        assert terminal.effective_control_kind == "PREVIEW_ABORT"
+        tasks = list(
+            await check.scalars(
+                sa.select(db.TaskRun).where(db.TaskRun.flow_run_id == run.id)
+            )
+        )
+        assert len(tasks) == physical_count
+        assert {task.id for task in tasks} == task_ids
+        assert all(
+            task.run_count == 0
+            and task.state_type is not None
+            and task.state_type.value == "FAILED"
+            for task in tasks
+        )
+        for model in (
+            db.StreamRecord,
+            db.StreamSubtaskGrant,
+            db.StreamDAGLaunchAttempt,
+            db.StreamPhysicalSlotAllocation,
+            db.StreamSubtaskAllocation,
+        ):
+            assert (
+                await check.scalar(sa.select(sa.func.count()).select_from(model)) == 0
+            )
 
 
 async def test_lost_client_return_after_http_commit_replays_and_conflicts_safely(

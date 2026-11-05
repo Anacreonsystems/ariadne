@@ -1,0 +1,153 @@
+import asyncio
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
+
+import asyncpg
+
+ROOT=Path('/workspace/ariadne')
+BASE=Path('/tmp/native-ni012-personal-user-retry-d504c70')
+LEASE=BASE/'lease.json'
+EXPECTED_HEAD='d504c7042e72c8d18fb0f63f5ebeeee826a7d650'
+CONFIG=Path('/tmp/native-ni012-runtime-test-env.json')
+
+
+def snapshot(target):
+    entries=json.loads(LEASE.read_text())['files']
+    files={name:ROOT/name for name in entries}
+    result={name:{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size} for name,p in files.items()}
+    target.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+    return result
+
+
+async def create_database(config, name):
+    connection=await asyncpg.connect(config['admin_dsn'])
+    try:
+        major=int(await connection.fetchval('SHOW server_version_num'))//10000
+        if major!=17:
+            raise RuntimeError('The configured owned server is not PostgreSQL17')
+        quote=lambda value:'"'+value.replace('"','""')+'"'
+        await connection.execute('CREATE DATABASE '+quote(name)+' OWNER '+quote(config['database_role']))
+        return major
+    finally:
+        await connection.close()
+
+
+def main():
+    if len(sys.argv) not in {3,4} or sys.argv[1] not in {'collect','run'}:
+        raise SystemExit('usage: run.py collect|run sync|async')
+    current_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+    if current_head!=EXPECTED_HEAD: raise RuntimeError('Personal gate HEAD differs from d504c70')
+    leased=json.loads(LEASE.read_text())['files']
+    for rel,item in leased.items():
+        path=ROOT/rel
+        if {'bytes':path.stat().st_size,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}!=item: raise RuntimeError('Source lease changed: '+rel)
+    mode=sys.argv[1]
+    scenario=sys.argv[3] if len(sys.argv)==4 else 'normal'
+    if scenario not in {'normal','preview','failure','cancel','volume-500','accepted200','incomplete200','volume-5000','exchange-rebalance','exchange-keyed','sqlite-refusal','user-retry'}: raise SystemExit('invalid scenario')
+    asynchronous=sys.argv[2]=='async'
+    if sys.argv[2] not in {'sync','async'}:
+        raise SystemExit('invalid path')
+    if scenario in {'exchange-rebalance','exchange-keyed','sqlite-refusal','user-retry'} and asynchronous: raise SystemExit('This selector is sync only')
+    config=json.loads(CONFIG.read_text())
+    trial=BASE/(mode+'-'+sys.argv[2]+'-'+scenario+'-'+uuid4().hex[:8])
+    trial.mkdir(mode=0o700)
+    audit=trial/'audit';audit.mkdir(mode=0o700)
+    package=trial/'startup';package.mkdir(mode=0o700)
+    source_root=str(ROOT/'src/prefect')+'/'
+    site=r'''import hashlib,json,marshal,os,sys,time
+_seen=set()
+_root=SOURCE_ROOT
+_directory=AUDIT_DIRECTORY
+
+def _audit(event,args):
+    if event!='exec' or not args:
+        return
+    code=args[0]
+    path=getattr(code,'co_filename','')
+    if not isinstance(path,str) or not path.startswith(_root) or not path.endswith('.py') or path in _seen:
+        return
+    _seen.add(path)
+    try:
+        with open(path,'rb') as source:
+            digest=hashlib.sha256(source.read()).hexdigest()
+        item={'pid':os.getpid(),'parent':os.getppid(),'monotonic_ns':time.monotonic_ns(),'path':path,'source_sha256':digest,'code_sha256':hashlib.sha256(marshal.dumps(code)).hexdigest()}
+        payload=(json.dumps(item,sort_keys=True)+'\n').encode()
+        descriptor=os.open(_directory+'/'+str(os.getpid())+'.jsonl',os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
+        try: os.write(descriptor,payload)
+        finally: os.close(descriptor)
+    except OSError:
+        pass
+sys.addaudithook(_audit)
+'''.replace('SOURCE_ROOT',repr(source_root)).replace('AUDIT_DIRECTORY',repr(str(audit)))
+    (package/'sitecustomize.py').write_text(site)
+    name=config['database_prefix']+'_'+uuid4().hex[:8]
+    if not re.fullmatch('[a-z][a-z0-9_]{1,55}',name):
+        raise RuntimeError('Invalid owned database namespace')
+    environment=os.environ.copy()
+    environment.pop('PREFECT_API_DATABASE_CONNECTION_URL',None)
+    parsed=urlsplit(config['admin_dsn'])
+    dsn=urlunsplit((config['sqlalchemy_scheme'],parsed.netloc,'/'+name,parsed.query,''))
+    environment['PREFECT_SERVER_DATABASE_CONNECTION_URL']=('sqlite+aiosqlite:///'+str(trial/'sqlite.db')) if scenario=='sqlite-refusal' else dsn
+    scratch=trial/'temp';scratch.mkdir(mode=0o700);environment['TMPDIR']=str(scratch)
+    environment['PYTHONPATH']=os.pathsep.join([str(package),str(ROOT/'src'),environment.get('PYTHONPATH','')])
+    environment['PREFECT_LOGGING_LEVEL']='INFO'
+    environment['PREFECT_LOGGING_INTERNAL_LEVEL']='WARNING'
+    node='tests/test_native_stream_dag_execution_http.py::test_public_dag_lifecycle_two_real_workers_postgres['+('True' if asynchronous else 'False')+'-'+scenario+']'
+    if scenario in {'volume-500','volume-5000'}:
+        node='tests/test_native_stream_dag_execution_http.py::test_public_dag_bounded_volume_postgres['+('True' if asynchronous else 'False')+'-'+scenario.removeprefix('volume-')+']'
+    if scenario in {'accepted200','incomplete200'}:
+        node='tests/test_native_stream_dag_execution_http.py::test_public_dag_branch_recovery_postgres['+('True' if asynchronous else 'False')+'-'+scenario+']'
+    if scenario in {'exchange-rebalance','exchange-keyed'}:
+        node='tests/test_native_stream_dag_execution_http.py::test_public_dag_exchange_modes_postgres['+scenario.removeprefix('exchange-')+']'
+    if scenario=='sqlite-refusal':
+        node='tests/test_native_stream_dag_execution_http.py::test_public_dag_start_refuses_without_metadata_mutation_sqlite'
+    if scenario=='user-retry':
+        node=str(BASE/'test_dag_user_retry.py')+'::test_dag_user_exception_retries_only_unaccepted_input_postgres'
+    command=[str(ROOT/'.venv/bin/python'),'-m','pytest','-q','-o','addopts=',node,'--junitxml='+str(trial/'pytest.xml'),'--basetemp='+str(trial/'pytest')]
+    if scenario=='user-retry':
+        command.extend(['-c',str(ROOT/'pyproject.toml'),'--confcutdir='+str(BASE),'-p','tests.conftest'])
+    if mode=='collect':
+        command.extend(['--noconftest','--collect-only'])
+    else:
+        if scenario=='sqlite-refusal':
+            (trial/'database.json').write_text(json.dumps({'backend':'sqlite','namespace':str(scratch),'scope':'Root fixture derives isolated PREFECT_HOME beneath owned TMPDIR'},indent=2)+'\n')
+        else:
+            major=asyncio.run(create_database(config,name))
+            (trial/'database.json').write_text(json.dumps({'backend':'postgresql','name':name,'major':major,'scope':'owned fresh base; root fixture derives _tests_master; base retained empty'},indent=2)+'\n')
+    observer=None
+    if mode=='run' and scenario!='sqlite-refusal':
+        observer=subprocess.Popen([str(ROOT/'.venv/bin/python'),str(BASE/'observe.py'),str(trial)],cwd=ROOT,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        (trial/'observer-session.json').write_text(json.dumps({'pid':observer.pid},indent=2)+'\n')
+    before=snapshot(trial/'source-before.json')
+    (trial/'command.json').write_text(json.dumps({'command':command,'cwd':str(ROOT),'mode':mode,'asynchronous':asynchronous,'database_config_selector':str(CONFIG),'head':EXPECTED_HEAD,'lease_sha256':hashlib.sha256(LEASE.read_bytes()).hexdigest(),'controller_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'audit_hook_sha256':hashlib.sha256(site.encode()).hexdigest()},indent=2)+'\n')
+    raw=trial/'pytest.private.log'
+    descriptor=os.open(raw,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+    with os.fdopen(descriptor,'wb') as output:
+        process=subprocess.Popen(command,cwd=ROOT,env=environment,stdout=output,stderr=subprocess.STDOUT,start_new_session=True)
+        (trial/'session.json').write_text(json.dumps({'pytest_pid':process.pid,'trial':str(trial)},indent=2)+'\n')
+        print(json.dumps({'trial':str(trial),'pytest_pid':process.pid,'mode':mode,'asynchronous':asynchronous}),flush=True)
+        result=process.wait()
+    (trial/'exit').write_text(str(result)+'\n')
+    if observer is not None:
+        observer.wait(timeout=10)
+    after=snapshot(trial/'source-after.json')
+    drift=[name for name in sorted(before.keys()|after.keys()) if before.get(name)!=after.get(name)]
+    (trial/'drift.json').write_text(json.dumps(drift,indent=2)+'\n')
+    readable=re.sub(r'(?i)(postgres(?:ql)?(?:\+asyncpg)?://)[^\s\'"<>]+',r'\1[redacted-owned-test-dsn]',raw.read_text(errors='replace'))
+    (trial/'pytest.log').write_text(readable)
+    (trial/'private-log-sha256').write_text(hashlib.sha256(raw.read_bytes()).hexdigest()+'\n')
+    source_lease=str(LEASE)
+    if mode=='run' and source_lease:
+        subprocess.run([str(ROOT/'.venv/bin/python'),str(BASE/'formal-stop.py'),str(trial),source_lease],cwd=ROOT,check=True)
+    print(json.dumps({'trial':str(trial),'exit':result,'source_drift':drift,'log':str(trial/'pytest.log')}),flush=True)
+    raise SystemExit(result)
+
+if __name__=='__main__':
+    main()

@@ -22,7 +22,7 @@ against the actual runtime and storage.
 | N2.1b — Scoped authority and store | `done` | 10% | +5% | NI2-003, NI2-004 | Strict subtask-only authentication, existing-store fences, whole-region admission and canonical keys pass cross-resource negatives; codec alone earns 0%. |
 | N2.1c — Physical runtime gate | `done` | 15% | +5% | NI2-005, NI2-006 | Four ordinary physical TaskRuns run in separate processes, recover 200/201 and keep metadata constant at 500/5000 under the complete real gate. |
 | N2.2a — DAG and routes | `progress` | 21% | +6% | NI2-010, NI2-011 | Typed acyclic graph and four append-materialized exchanges preserve independent edge identities. |
-| N2.2b — Fan-out runtime gate | `progress` | 27% | +6% | NI2-012…014 | Real fan-out SDK/process execution survives retry and branch replacement without route or cursor drift. Normal/lifecycle/500 and sync recovery gates are green; terminal-PREPARE, exchange-mode, 5000 and final-union gates remain open. |
+| N2.2b — Fan-out runtime gate | `progress` | 27% | +6% | NI2-012…014 | Real fan-out SDK/process execution survives retry and branch replacement without route or cursor drift. Normal/lifecycle/500, four OS-loss recovery cases, terminal-PREPARE and exchange-mode controls have passing records; both personal 5000 runs failed finalization, so corrected 5000 and final-union gates remain open. |
 | N2.3a — State and mailbox | `planned` | 32% | +5% | NI2-020, NI2-021 | Journaled state and deterministic multi-input apply order recover without accepted-body replay. |
 | N2.3b — Join, outcomes and cuts | `planned` | 37% | +5% | NI2-022…024 | OUTPUT/NO_OUTPUT, bounded correlated join and complete barrier cuts compose atomically. |
 | N2.3c — Stateful join gate | `planned` | 42% | +5% | NI2-025 | Native process-loss matrix closes every ADR-0044 criterion. |
@@ -583,3 +583,13 @@ NI2-011 therefore moves to `accepted`. N2.2a and ADR-0043 remain `progress`,
 and earned readiness remains 15% while the complete hosted publication matrix
 is pending. Public DAG execution and lifecycle stay fenced for NI2-012 through
 NI2-014.
+
+## N2.2 finalization gate update — 2026-11-05
+
+The [current epoch evidence note](epochs/epoch-02-native-streaming-completion.md#n22-retained-verification-and-finalization-correction--2026-11-05)
+records the historical terminal-PREPARE and exchange-mode PASS successors,
+both personal 5000 lifecycle failures and the separate ordinary Task retry.
+The [retained finalization archive](evidence/native-epoch2-finalization-2026-11-05/index.json)
+and [four-index causal proof](evidence/native-epoch2-route-cleanup-indexes-2026-11-05/component-v1/index.json)
+do not replace corrected native 5000 execution or full frozen-union acceptance.
+N2.2 remains `progress`, with 15% earned; the 27% target is unearned.

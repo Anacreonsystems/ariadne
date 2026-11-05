@@ -21,6 +21,8 @@ env:
     --ignore=tests/test_stream_dag_bootstrap.py
     --ignore=tests/test_native_stream_dag_execution_http.py
     --ignore=tests/workers/test_stream_dag_subtasks.py
+    --ignore=tests/workers/test_native_recovery_poll.py
+    --ignore=tests/server/database/test_stream_route_cleanup_indexes.py
     --ignore=tests/workers/test_stream_dag_launches.py
     --ignore=tests/workers/test_stream_dag_bootstrap.py
 
@@ -737,7 +739,7 @@ jobs:
           config = json.loads(Path("pyrightconfig-native-dag.json").read_text())
           included = config["include"]
           assert config["ignore"] == []
-          assert len(included) == len(set(included)) == 28
+          assert len(included) == len(set(included)) == 29
           assert all(Path(path).is_file() for path in included)
           report = json.loads(Path("native-dag-types.json").read_text())
           assert report["summary"]["filesAnalyzed"] == len(included), report["summary"]
@@ -754,6 +756,7 @@ jobs:
           tests/workers/test_stream_dag_subtasks.py
           tests/workers/test_stream_dag_launches.py
           tests/workers/test_stream_dag_bootstrap.py
+          tests/workers/test_native_recovery_poll.py
           -q --junitxml=native-dag-contract.xml
       - name: Run real PostgreSQL DAG lifecycle and launch controls
         if: matrix.database == 'postgres:17'
@@ -763,6 +766,7 @@ jobs:
           tests/server/api/test_stream_dag_executions.py
           tests/server/api/test_stream_dag_launches.py
           tests/server/database/test_stream_dag_execution_migrations.py
+          tests/server/database/test_stream_route_cleanup_indexes.py
           tests/test_native_dag_execution_client_http.py
           -k 'not sqlite'
           -q --junitxml=native-dag-server.xml
@@ -774,6 +778,7 @@ jobs:
           tests/server/api/test_stream_dag_executions.py
           tests/server/api/test_stream_dag_launches.py
           tests/server/database/test_stream_dag_execution_migrations.py
+          tests/server/database/test_stream_route_cleanup_indexes.py
           tests/test_native_dag_execution_client_http.py
           tests/test_native_stream_dag_execution_http.py
           -k 'not postgres'

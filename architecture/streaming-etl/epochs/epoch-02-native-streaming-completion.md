@@ -381,3 +381,63 @@ the final frozen union and independent Principal acceptance also remain open.
 Therefore NI2-013 and NI2-014 stay planned, N2.2 stays `progress`, and earned
 native readiness remains 15%; no approved ADR body or acceptance criterion is
 changed by this status update.
+
+## N2.2 retained verification and finalization correction — 2026-11-05
+
+N2.2 remains `progress` with **15% earned** for epoch 2. The evidence below
+retains actual earlier executions and their own frozen source bindings; they
+are not executions of the corrected candidate. This status update changes no
+approved ADR solution or acceptance criterion.
+
+The retained [sync 500](../evidence/native-epoch2-dag-execution-runtime-2026-11-05/actual-sync500-v1/receipt.json)
+and [async 500](../evidence/native-epoch2-dag-execution-runtime-2026-11-05/actual-async500-v1/receipt.json)
+passed with four stable ordinary TaskRuns, seven channels, exact accepted
+cursors and zero remaining allocations. All four 500-document OS-loss cases
+also have passing successors: sync/async accepted 200 resume at 201, while
+sync/async incomplete 200 resume at 200. The
+[async incomplete-200 successor](../evidence/native-epoch2-dag-execution-runtime-2026-11-05/actual-async-incomplete200-green-v2/receipt.json)
+closes the previously observed terminal-PREPARE race with the unchanged strict
+five-process oracle; its [earlier failure](../evidence/native-epoch2-dag-execution-runtime-2026-11-05/actual-async-incomplete200-red-v1/receipt.json)
+is preserved. No healthy sibling is replaced in these passing cases.
+
+The archived [earlier Principal exchange trials](../evidence/native-epoch2-personal-controls-2026-11-05/index.json)
+include passing 64-document rebalance and keyed native process controls, with
+per-partition order. Their retained observations also passed an independent
+post-hoc canonical signed-i64/SHA-256/G16 key check. Therefore terminal-PREPARE and exchange-mode checks are no longer
+unexecuted gates. They do not imply that every later source union is accepted.
+
+Both [personal 5000-document trials](../evidence/native-epoch2-finalization-2026-11-05/personal5000-red-v1/receipt.json)
+on `d504c7042e72c8d18fb0f63f5ebeeee826a7d650` failed lifecycle acceptance.
+The source and three subscriber cursors reached 5000 and all four TaskRuns
+were observed Completed, but reference cleanup exceeded the original ten-second
+statement budget. The last graph remained ADMITTED, the Flow remained RUNNING
+and one physical allocation remained held. A recovery-discovery HTTP 500 then
+escaped the worker poll. Later process/database cleanup is operational cleanup,
+not successful platform finalization.
+
+The [four-index causal proof and paired migration controls](../evidence/native-epoch2-route-cleanup-indexes-2026-11-05/component-v1/index.json)
+address child foreign-key lookup scans without changing constraints, locks,
+cleanup order or timeouts. On the same seeded rows the first DELETE timed out
+at 10.030 seconds before indexing; the indexed five-statement cleanup and
+commit completed in 1.044 seconds. PostgreSQL/SQLite upgrade, downgrade,
+retained-row and existing execution-migration checks passed. These are scoped
+component measurements, not throughput objectives or corrected native 5000
+acceptance. The separately archived narrow worker correction defers only
+untyped HTTP 5xx recovery discovery to its next poll and preserves other
+refusals. The [scoped successor review](../evidence/native-epoch2-successor-review-2026-11-05/index.json)
+retains the final strict 29-file type check and the three constant-table-name
+ORM typing corrections. Those corrections preserve both dialects' table/index
+metadata and keep earlier execution hashes historical.
+
+The same [archive](../evidence/native-epoch2-finalization-2026-11-05/index.json)
+retains a passing real 16-document ordinary Task retry probe: a ValueError on
+input 5 before yield repeats only that unfinished input; the B TaskRun keeps
+its process and physical epoch 1, and its run count becomes 2. That Task retry
+is distinct from replacing a dead OS process.
+
+NI2-012 through NI2-014 remain open. Their final exit requires both corrected
+sync/async 5000-document native runs on a fresh frozen source lease, successful
+terminal resource release, the required hosted matrix and independent
+Principal verification. Neither this archive nor a component PASS earns the
+planned 27% target. Joins, managed state, continuous input/retention,
+cross-host recovery and rescaling remain later epoch-2 gates.

@@ -752,6 +752,9 @@ class StreamRecord(Base):
     size_bytes: Mapped[int]
 
     __table_args__: Any = (
+        # Parent-record cleanup probes these immediate RESTRICT foreign keys.
+        sa.Index("ix_stream_record__payload_record_id", "payload_record_id"),
+        sa.Index("ix_stream_record__route_receipt_id", "route_receipt_id"),
         sa.UniqueConstraint(
             "id",
             "graph_revision_id",
@@ -1058,6 +1061,15 @@ class StreamRouteReceipt(Base):
     outcome_size: Mapped[int]
 
     __table_args__: Any = (
+        # Bound both immediate payload checks and deferred reference checks.
+        sa.Index(
+            "ix_stream_route_receipt__input_payload_record_id",
+            "input_payload_record_id",
+        ),
+        sa.Index(
+            "ix_stream_route_receipt__input_reference_record_id",
+            "input_reference_record_id",
+        ),
         sa.UniqueConstraint("producer_stream_id", "producer_position"),
         sa.UniqueConstraint("payload_record_id"),
         sa.UniqueConstraint(
@@ -1284,7 +1296,10 @@ class StreamSubmission(Base):
 class StreamDAGLifecycleOperation(Base):
     """Immutable DAG actions, canonical controls and terminal outcome receipts."""
 
-    __tablename__ = "stream_dag_lifecycle_operation"
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "stream_dag_lifecycle_operation"
+
     graph_revision_id: Mapped[uuid.UUID]
     profile: Mapped[str] = mapped_column(
         default="partitioned-dag-v1", server_default="partitioned-dag-v1"
@@ -1400,7 +1415,10 @@ class StreamDAGLifecycleOperation(Base):
 class StreamDAGLaunchAttempt(Base):
     """One durably prepared process birth, recorded before cap-free import."""
 
-    __tablename__ = "stream_dag_launch_attempt"
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "stream_dag_launch_attempt"
+
     graph_revision_id: Mapped[uuid.UUID]
     subtask_id: Mapped[uuid.UUID]
     task_run_id: Mapped[uuid.UUID]
@@ -1559,7 +1577,10 @@ class StreamDAGLaunchAttempt(Base):
 class StreamDAGControlTarget(Base):
     """An admitted assignment retains capacity until its complete launch set closes."""
 
-    __tablename__ = "stream_dag_control_target"
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "stream_dag_control_target"
+
     graph_revision_id: Mapped[uuid.UUID]
     control_operation_id: Mapped[uuid.UUID]
     start_operation_id: Mapped[uuid.UUID]
