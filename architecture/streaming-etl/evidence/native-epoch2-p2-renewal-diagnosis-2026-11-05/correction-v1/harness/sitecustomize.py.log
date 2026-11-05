@@ -1,0 +1,179 @@
+"""Owned import-origin observer and deterministic ASGI renewal fault injector."""
+import importlib.abc
+import importlib.machinery
+import json
+import os
+import sys
+from pathlib import Path
+
+_OWNED = Path('/tmp/ariadne-p2-heartbeat-repro-22dc093').resolve()
+_RUN = Path(os.environ['RENEWAL_PROBE_DIR'])
+_RUN.mkdir(parents=True, exist_ok=True)
+_AUDIT = os.open(str(_RUN / ('imports-' + str(os.getpid()) + '.jsonl')), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+os.write(_AUDIT, (json.dumps({'kind': 'process', 'pid': os.getpid(), 'cwd': os.getcwd()}) + '\n').encode())
+
+def _install_faults(module):
+    import asyncio
+    import hashlib
+    import time
+    import asyncpg
+    original = module.create_app
+    events = _RUN / ('faults-' + str(os.getpid()) + '.jsonl')
+    def event(kind, **fields):
+        with events.open('a') as sink:
+            sink.write(json.dumps({'kind': kind, 'monotonic': time.monotonic(), **fields}) + '\n')
+    async def snapshot(label, flow_id):
+        import uuid
+        uri = os.environ['PREFECT_SERVER_DATABASE_CONNECTION_URL'].replace('postgresql+asyncpg://', 'postgresql://')
+        connection = await asyncpg.connect(uri, command_timeout=5)
+        try:
+            data = {'label': label, 'monotonic': time.monotonic(), 'api_pid': os.getpid()}
+            queries = {
+                'flow': 'SELECT id,state_type,state_name,run_count,infrastructure_pid FROM flow_run WHERE id=$1',
+                'graphs': 'SELECT id,state,startup_completed_at FROM stream_graph_revision WHERE flow_run_id=$1',
+                'subtasks': 'SELECT s.id,s.task_run_id,s.physical_slot_released,s.physical_epoch FROM stream_physical_subtask s JOIN stream_graph_revision g ON g.id=s.graph_revision_id WHERE g.flow_run_id=$1',
+                'grants': 'SELECT r.id,r.subtask_id,r.state,r.child_process_id,r.process_start_ticks FROM stream_subtask_grant r JOIN stream_physical_subtask s ON s.id=r.subtask_id JOIN stream_graph_revision g ON g.id=s.graph_revision_id WHERE g.flow_run_id=$1',
+            }
+            for name, query in queries.items():
+                data[name] = [dict(row) for row in await connection.fetch(query, uuid.UUID(flow_id))]
+            data['limits'] = [dict(row) for row in await connection.fetch('SELECT name,active_slots FROM concurrency_limit_v2')]
+            data['unreleased_tag_allocations'] = await connection.fetchval('SELECT count(*) FROM stream_subtask_allocation WHERE NOT released')
+            pids = {int(row['infrastructure_pid']) for row in data['flow'] if row['infrastructure_pid']}
+            pids.update(int(row['child_process_id']) for row in data['grants'] if row['child_process_id'])
+            data['kernel_processes'] = []
+            for pid in sorted(pids):
+                path = Path('/proc') / str(pid) / 'stat'
+                observed = {'pid': pid, 'exists': path.exists()}
+                if path.exists():
+                    text = path.read_text(); fields = text[text.rfind(')') + 2:].split()
+                    observed.update(state=fields[0], start_ticks=int(fields[19]), live=fields[0] != 'Z')
+                data['kernel_processes'].append(observed)
+            (_RUN / ('snapshot-' + label + '.json')).write_text(json.dumps(data, default=str, indent=2) + '\n')
+            event('snapshot', label=label)
+        except Exception as error:
+            event('snapshot_error', label=label, error_type=type(error).__name__)
+        finally:
+            await connection.close()
+    class FaultMiddleware:
+        def __init__(self, app):
+            self.app = app
+            self.attempt = 0
+            self.fault_step = 0
+            self.releases = set()
+        async def __call__(self, scope, receive, send):
+            if scope['type'] != 'http' or not scope.get('path', '').endswith('/streams/v1/deployments/launches/heartbeat'):
+                return await self.app(scope, receive, send)
+            self.attempt += 1
+            attempt = self.attempt
+            messages = []
+            raw = b''
+            while True:
+                message = await receive()
+                messages.append(message)
+                raw += message.get('body', b'')
+                if not message.get('more_body', False):
+                    break
+            body = json.loads(raw)
+            event('renewal_request', attempt=attempt, body_sha256=hashlib.sha256(raw).hexdigest(), flow_run_id=body['flow_run_id'])
+            async def replay():
+                if messages:
+                    return messages.pop(0)
+                return await receive()
+            # Gate faults on the actual activated four-subtask graph. Early
+            # enrollment/bootstrap renewals remain ordinary authenticated calls.
+            import uuid
+            uri = os.environ['PREFECT_SERVER_DATABASE_CONNECTION_URL'].replace('postgresql+asyncpg://', 'postgresql://')
+            eligibility = await asyncpg.connect(uri, command_timeout=5)
+            try:
+                activated = await eligibility.fetchval('SELECT EXISTS(SELECT 1 FROM stream_graph_revision WHERE flow_run_id=$1 AND startup_completed_at IS NOT NULL)', uuid.UUID(body['flow_run_id']))
+            finally:
+                await eligibility.close()
+            if not activated:
+                event('ordinary_pre_activation_renewal', attempt=attempt)
+                return await self.app(scope, replay, send)
+            self.fault_step += 1
+            step = self.fault_step
+            event('activated_fault_step', attempt=attempt, step=step)
+            if step == 1:
+                await snapshot('before-500', body['flow_run_id'])
+                async def after_fault():
+                    for label, delay in (('after-500-100ms', .1), ('after-500-500ms', .4), ('after-500-1s', .5)):
+                        await asyncio.sleep(delay)
+                        await snapshot(label, body['flow_run_id'])
+                task = asyncio.create_task(after_fault())
+                self.releases.add(task)
+                task.add_done_callback(self.releases.discard)
+                event('injected_500_before_commit', attempt=attempt)
+                payload = b'{"exception_message":"Injected renewal-only transient"}'
+                await send({'type': 'http.response.start', 'status': 500, 'headers': [(b'content-type', b'application/json'), (b'content-length', str(len(payload)).encode())]})
+                await send({'type': 'http.response.body', 'body': payload})
+                return
+            if step == 3:
+                uri = os.environ['PREFECT_SERVER_DATABASE_CONNECTION_URL'].replace('postgresql+asyncpg://', 'postgresql://')
+                holder = await asyncpg.connect(uri, command_timeout=5)
+                await holder.execute('BEGIN')
+                import uuid
+                await holder.fetchval('SELECT id FROM flow_run WHERE id=$1 FOR SHARE', uuid.UUID(body['flow_run_id']))
+                event('held_flow_share_lock', attempt=attempt, backend_pid=holder.get_server_pid(), hold_seconds=11)
+                async def release():
+                    try:
+                        await asyncio.sleep(11)
+                    finally:
+                        await holder.execute('ROLLBACK')
+                        await holder.close()
+                        event('released_flow_share_lock', attempt=attempt)
+                release_task = asyncio.create_task(release())
+                self.releases.add(release_task)
+                release_task.add_done_callback(self.releases.discard)
+            if step == 2:
+                response = []
+                async def collect(message):
+                    response.append(message)
+                await self.app(scope, replay, collect)
+                status = next(m['status'] for m in response if m['type'] == 'http.response.start')
+                event('actual_renewal_reply', attempt=attempt, status=status)
+                if status == 200:
+                    event('injected_lost_ack_after_commit', attempt=attempt)
+                    await send({'type': 'http.response.start', 'status': 200, 'headers': [(b'content-length', b'4096')]})
+                    # The real server committed before this intentionally
+                    # incomplete response. h11 closes it, producing ReadError.
+                    await send({'type': 'http.response.body', 'body': b''})
+                    return
+                for message in response:
+                    await send(message)
+                return
+            async def observe(message):
+                if message['type'] == 'http.response.start':
+                    event('actual_renewal_reply', attempt=attempt, status=message['status'])
+                await send(message)
+            return await self.app(scope, replay, observe)
+    def create_app(*args, **kwargs):
+        app = original(*args, **kwargs)
+        if not getattr(app.state, '_renewal_probe_installed', False):
+            app.add_middleware(FaultMiddleware)
+            app.state._renewal_probe_installed = True
+        return app
+    module.create_app = create_app
+
+class Observer(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'prefect' or fullname.startswith('prefect.'):
+            spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+            origin = None if spec is None else spec.origin
+            if origin and origin not in {'built-in', 'frozen'}:
+                owned = Path(origin).resolve().is_relative_to(_OWNED)
+                os.write(_AUDIT, (json.dumps({'module': fullname, 'origin': origin, 'owned': owned}) + '\n').encode())
+                if not owned:
+                    raise ImportError('Prefect import escaped the owned detached source')
+            if fullname == 'prefect.server.api.server' and spec is not None:
+                loader = spec.loader
+                class FaultLoader(importlib.abc.Loader):
+                    def create_module(self, spec):
+                        return loader.create_module(spec)
+                    def exec_module(self, module):
+                        loader.exec_module(module)
+                        _install_faults(module)
+                spec.loader = FaultLoader()
+                return spec
+        return None
+sys.meta_path.insert(0, Observer())

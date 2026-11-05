@@ -1,0 +1,328 @@
+FFFFF......F...                                                          [100%]
+=================================== FAILURES ===================================
+_ test_native_renewal_retries_server_error_with_same_identity_and_authority[500] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fe288312b10>
+status = 500
+
+    @pytest.mark.parametrize("status", [500, 502, 503, 599])
+    async def test_native_renewal_retries_server_error_with_same_identity_and_authority(
+        monkeypatch: pytest.MonkeyPatch, status: int
+    ):
+        calls = []
+        sleeps = []
+    
+        async def renew(**kwargs):
+            calls.append((kwargs, get_stream_execution()))
+            if len(calls) == 1:
+                raise StreamRequestError("HTTP_ERROR", "temporary", status_code=status)
+            return "renewed"
+    
+        async def sleep(delay):
+            sleeps.append(delay)
+    
+        starter = _renewal_starter(SimpleNamespace(renew_native_stream_launch=renew))
+        monkeypatch.setattr(native_starter, "anyio", SimpleNamespace(sleep=sleep))
+        kwargs = {
+            "flow_run_id": starter.flow_run.id,
+            "generation": 1,
+            "enrollment_operation_id": starter.enrollment.operation_id,
+        }
+        with stream_execution_context(starter.execution):
+            assert (
+>               await starter._request("renew_native_stream_launch", **kwargs) == "renewed"
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            )
+
+tests/runner/test_native_process.py:188: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/runner/_starter_native.py:145: in _request
+    return await getattr(self.client, method)(**kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+kwargs = {'flow_run_id': UUID('523e2997-ddb2-41d2-b380-4042901782a3'), 'generation': 1, 'enrollment_operation_id': UUID('854b8e74-e3d2-4e93-a231-030dd1ccca6a')}
+
+    async def renew(**kwargs):
+        calls.append((kwargs, get_stream_execution()))
+        if len(calls) == 1:
+>           raise StreamRequestError("HTTP_ERROR", "temporary", status_code=status)
+E           prefect.client.orchestration._streams.client.StreamRequestError: temporary
+
+tests/runner/test_native_process.py:173: StreamRequestError
+_ test_native_renewal_retries_server_error_with_same_identity_and_authority[502] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fe2886c4f20>
+status = 502
+
+    @pytest.mark.parametrize("status", [500, 502, 503, 599])
+    async def test_native_renewal_retries_server_error_with_same_identity_and_authority(
+        monkeypatch: pytest.MonkeyPatch, status: int
+    ):
+        calls = []
+        sleeps = []
+    
+        async def renew(**kwargs):
+            calls.append((kwargs, get_stream_execution()))
+            if len(calls) == 1:
+                raise StreamRequestError("HTTP_ERROR", "temporary", status_code=status)
+            return "renewed"
+    
+        async def sleep(delay):
+            sleeps.append(delay)
+    
+        starter = _renewal_starter(SimpleNamespace(renew_native_stream_launch=renew))
+        monkeypatch.setattr(native_starter, "anyio", SimpleNamespace(sleep=sleep))
+        kwargs = {
+            "flow_run_id": starter.flow_run.id,
+            "generation": 1,
+            "enrollment_operation_id": starter.enrollment.operation_id,
+        }
+        with stream_execution_context(starter.execution):
+            assert (
+>               await starter._request("renew_native_stream_launch", **kwargs) == "renewed"
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            )
+
+tests/runner/test_native_process.py:188: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/runner/_starter_native.py:145: in _request
+    return await getattr(self.client, method)(**kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+kwargs = {'flow_run_id': UUID('f544e4b7-f776-470d-9f96-3009480c862c'), 'generation': 1, 'enrollment_operation_id': UUID('8afeca49-2a99-462e-a0c4-56ac7b22db8c')}
+
+    async def renew(**kwargs):
+        calls.append((kwargs, get_stream_execution()))
+        if len(calls) == 1:
+>           raise StreamRequestError("HTTP_ERROR", "temporary", status_code=status)
+E           prefect.client.orchestration._streams.client.StreamRequestError: temporary
+
+tests/runner/test_native_process.py:173: StreamRequestError
+_ test_native_renewal_retries_server_error_with_same_identity_and_authority[503] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fe2886c7f50>
+status = 503
+
+    @pytest.mark.parametrize("status", [500, 502, 503, 599])
+    async def test_native_renewal_retries_server_error_with_same_identity_and_authority(
+        monkeypatch: pytest.MonkeyPatch, status: int
+    ):
+        calls = []
+        sleeps = []
+    
+        async def renew(**kwargs):
+            calls.append((kwargs, get_stream_execution()))
+            if len(calls) == 1:
+                raise StreamRequestError("HTTP_ERROR", "temporary", status_code=status)
+            return "renewed"
+    
+        async def sleep(delay):
+            sleeps.append(delay)
+    
+        starter = _renewal_starter(SimpleNamespace(renew_native_stream_launch=renew))
+        monkeypatch.setattr(native_starter, "anyio", SimpleNamespace(sleep=sleep))
+        kwargs = {
+            "flow_run_id": starter.flow_run.id,
+            "generation": 1,
+            "enrollment_operation_id": starter.enrollment.operation_id,
+        }
+        with stream_execution_context(starter.execution):
+            assert (
+>               await starter._request("renew_native_stream_launch", **kwargs) == "renewed"
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            )
+
+tests/runner/test_native_process.py:188: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/runner/_starter_native.py:145: in _request
+    return await getattr(self.client, method)(**kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+kwargs = {'flow_run_id': UUID('e6ff7a37-96c9-4828-8c19-4dcbd9c2582c'), 'generation': 1, 'enrollment_operation_id': UUID('18a411a4-e863-430a-83a0-155c297bf6fe')}
+
+    async def renew(**kwargs):
+        calls.append((kwargs, get_stream_execution()))
+        if len(calls) == 1:
+>           raise StreamRequestError("HTTP_ERROR", "temporary", status_code=status)
+E           prefect.client.orchestration._streams.client.StreamRequestError: temporary
+
+tests/runner/test_native_process.py:173: StreamRequestError
+_ test_native_renewal_retries_server_error_with_same_identity_and_authority[599] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fe2886e2ff0>
+status = 599
+
+    @pytest.mark.parametrize("status", [500, 502, 503, 599])
+    async def test_native_renewal_retries_server_error_with_same_identity_and_authority(
+        monkeypatch: pytest.MonkeyPatch, status: int
+    ):
+        calls = []
+        sleeps = []
+    
+        async def renew(**kwargs):
+            calls.append((kwargs, get_stream_execution()))
+            if len(calls) == 1:
+                raise StreamRequestError("HTTP_ERROR", "temporary", status_code=status)
+            return "renewed"
+    
+        async def sleep(delay):
+            sleeps.append(delay)
+    
+        starter = _renewal_starter(SimpleNamespace(renew_native_stream_launch=renew))
+        monkeypatch.setattr(native_starter, "anyio", SimpleNamespace(sleep=sleep))
+        kwargs = {
+            "flow_run_id": starter.flow_run.id,
+            "generation": 1,
+            "enrollment_operation_id": starter.enrollment.operation_id,
+        }
+        with stream_execution_context(starter.execution):
+            assert (
+>               await starter._request("renew_native_stream_launch", **kwargs) == "renewed"
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            )
+
+tests/runner/test_native_process.py:188: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/runner/_starter_native.py:145: in _request
+    return await getattr(self.client, method)(**kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+kwargs = {'flow_run_id': UUID('a8b9603f-e891-4022-a94c-763aaf8d942a'), 'generation': 1, 'enrollment_operation_id': UUID('61a5350a-69de-4adc-bedc-5969b8bf91d9')}
+
+    async def renew(**kwargs):
+        calls.append((kwargs, get_stream_execution()))
+        if len(calls) == 1:
+>           raise StreamRequestError("HTTP_ERROR", "temporary", status_code=status)
+E           prefect.client.orchestration._streams.client.StreamRequestError: temporary
+
+tests/runner/test_native_process.py:173: StreamRequestError
+_______ test_native_renewal_lost_ack_reuses_accepted_heartbeat_identity ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fe288310380>
+
+    async def test_native_renewal_lost_ack_reuses_accepted_heartbeat_identity(
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        calls = []
+        accepted = set()
+    
+        async def renew(**kwargs):
+            calls.append(kwargs)
+            accepted.add(tuple(sorted(kwargs.items())))
+            if len(calls) == 1:
+                raise httpx.ReadTimeout("accepted response was lost")
+            if len(calls) == 2:
+                raise StreamRequestError("HTTP_ERROR", "temporary", status_code=500)
+            return "renewed"
+    
+        async def sleep(delay):
+            assert delay == 0.1
+    
+        starter = _renewal_starter(SimpleNamespace(renew_native_stream_launch=renew))
+        monkeypatch.setattr(native_starter, "anyio", SimpleNamespace(sleep=sleep))
+        kwargs = {
+            "flow_run_id": starter.flow_run.id,
+            "generation": 1,
+            "enrollment_operation_id": starter.enrollment.operation_id,
+        }
+>       assert await starter._request("renew_native_stream_launch", **kwargs) == "renewed"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/runner/test_native_process.py:220: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/runner/_starter_native.py:145: in _request
+    return await getattr(self.client, method)(**kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+kwargs = {'flow_run_id': UUID('881fba1b-46a4-48c7-87c0-0aad1f342f51'), 'generation': 1, 'enrollment_operation_id': UUID('20466a30-44a1-489e-8d17-c1df87ec9927')}
+
+    async def renew(**kwargs):
+        calls.append(kwargs)
+        accepted.add(tuple(sorted(kwargs.items())))
+        if len(calls) == 1:
+            raise httpx.ReadTimeout("accepted response was lost")
+        if len(calls) == 2:
+>           raise StreamRequestError("HTTP_ERROR", "temporary", status_code=500)
+E           prefect.client.orchestration._streams.client.StreamRequestError: temporary
+
+tests/runner/test_native_process.py:207: StreamRequestError
+_____ test_native_renewal_exhaustion_keeps_live_process_and_paces_monitor ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fe28836df70>
+native_child = <Popen: returncode: None args: ['/workspace/ariadne/.venv/bin/python', '-c',...>
+
+    async def test_native_renewal_exhaustion_keeps_live_process_and_paces_monitor(
+        monkeypatch: pytest.MonkeyPatch, native_child: subprocess.Popen[bytes]
+    ):
+        clock = [100.0]
+        sleeps = []
+        renewals = []
+        plans = []
+        warnings = []
+    
+        async def sleep(delay):
+            sleeps.append(delay)
+            clock[0] += delay
+    
+        async def plan(**kwargs):
+            plans.append(kwargs)
+            return SimpleNamespace(
+                state="RELEASED" if len(plans) == 3 else "ACTIVE", cancel_requested=False
+            )
+    
+        async def renew(**kwargs):
+            renewals.append((clock[0], kwargs))
+            if clock[0] < 120.0:
+                raise StreamRequestError("HTTP_ERROR", "temporary", status_code=500)
+            # The exhausted first batch must not silently advance renewed_at.
+            # A second batch therefore runs on the next paced monitor iteration.
+            if not any(delay == 0.5 for delay in sleeps):
+                raise StreamRequestError("HTTP_ERROR", "budget exhausted", status_code=500)
+    
+        starter = _renewal_starter(
+            SimpleNamespace(
+                read_native_stream_deployment_plan=plan, renew_native_stream_launch=renew
+            )
+        )
+        monkeypatch.setattr(
+            native_starter, "time", SimpleNamespace(monotonic=lambda: clock[0])
+        )
+        monkeypatch.setattr(native_starter, "anyio", SimpleNamespace(sleep=sleep))
+        monkeypatch.setattr(
+            native_starter,
+            "get_logger",
+            lambda name: SimpleNamespace(warning=lambda *args: warnings.append(args)),
+        )
+>       await starter._monitor(native_child)
+
+tests/runner/test_native_process.py:296: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/runner/_starter_native.py:357: in _monitor
+    await self._request(
+src/prefect/runner/_starter_native.py:145: in _request
+    return await getattr(self.client, method)(**kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+kwargs = {'flow_run_id': UUID('3f97b366-7493-43b6-a663-d6eac1285536'), 'generation': 1, 'enrollment_operation_id': UUID('58c2ae58-9433-451b-80f3-be431912b10d')}
+
+    async def renew(**kwargs):
+        renewals.append((clock[0], kwargs))
+        if clock[0] < 120.0:
+>           raise StreamRequestError("HTTP_ERROR", "temporary", status_code=500)
+E           prefect.client.orchestration._streams.client.StreamRequestError: temporary
+
+tests/runner/test_native_process.py:276: StreamRequestError
+=========================== short test summary info ============================
+FAILED tests/runner/test_native_process.py::test_native_renewal_retries_server_error_with_same_identity_and_authority[500]
+FAILED tests/runner/test_native_process.py::test_native_renewal_retries_server_error_with_same_identity_and_authority[502]
+FAILED tests/runner/test_native_process.py::test_native_renewal_retries_server_error_with_same_identity_and_authority[503]
+FAILED tests/runner/test_native_process.py::test_native_renewal_retries_server_error_with_same_identity_and_authority[599]
+FAILED tests/runner/test_native_process.py::test_native_renewal_lost_ack_reuses_accepted_heartbeat_identity
+FAILED tests/runner/test_native_process.py::test_native_renewal_exhaustion_keeps_live_process_and_paces_monitor
+6 failed, 9 passed, 6 deselected in 0.39s
