@@ -1,0 +1,131 @@
+name: Native stream progress
+
+on:
+  workflow_dispatch:
+    inputs:
+      case:
+        description: Exact existing native process case
+        type: choice
+        required: true
+        default: 500-sync
+        options:
+          - 8-sync
+          - 500-sync
+          - 5000-sync
+          - 5000-async
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    name: Native progress - ${{ inputs.case }}
+    runs-on: anacreon-runners
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17
+        ports:
+          - "5432/tcp"
+        env:
+          POSTGRES_USER: prefect
+          POSTGRES_PASSWORD: prefect
+          POSTGRES_DB: prefect
+        options: >-
+          --health-cmd "pg_isready -U prefect -d prefect"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install packages
+        run: uv sync --locked
+      - name: Configure the isolated database and selected case
+        env:
+          PROGRESS_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+          PROGRESS_CASE: ${{ inputs.case }}
+        run: |
+          echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://prefect:prefect@127.0.0.1:${PROGRESS_POSTGRES_PORT}/prefect" >> "$GITHUB_ENV"
+          uv run python - <<'PY'
+          import os
+          from pathlib import Path
+
+          cases = {
+              "8-sync": "8-none-False",
+              "500-sync": "500-none-False",
+              "5000-sync": "5000-none-False",
+              "5000-async": "5000-none-True",
+          }
+          selected = cases[os.environ["PROGRESS_CASE"]]
+          node = "tests/test_native_partitioned_stream_http.py::test_actual_process_worker_runs_four_partition_tasks[" + selected + "]"
+          with Path(os.environ["GITHUB_ENV"]).open("a") as output:
+              output.write("NATIVE_PROGRESS_NODE=" + node + "\n")
+          PY
+      - name: Run the existing case with read-only progress observation
+        env:
+          NATIVE_PROGRESS_DIR: ${{ runner.temp }}/native-stream-progress/progress
+          NATIVE_PROGRESS_BASETEMP: ${{ runner.temp }}/native-stream-progress/pytest
+        run: |
+          mkdir -p "${RUNNER_TEMP}/native-stream-progress"
+          uv run python - <<'PY'
+          import json
+          import os
+          import platform
+          from pathlib import Path
+
+          limits = {}
+          for name in ("cpu.max", "cpu.stat", "memory.max", "memory.events", "io.stat"):
+              path = Path("/sys/fs/cgroup") / name
+              if path.is_file():
+                  limits[name] = path.read_text()
+          result = {
+              "platform": platform.platform(),
+              "python": platform.python_version(),
+              "logical_cpus": os.cpu_count(),
+              "cpu_affinity": sorted(os.sched_getaffinity(0)),
+              "cgroup": limits,
+          }
+          target = Path(os.environ["RUNNER_TEMP"]) / "native-stream-progress" / "runner-limits.json"
+          target.write_text(json.dumps(result, indent=2) + "\n")
+          PY
+          export NATIVE_PROGRESS_SOURCE_ROOT="$PWD"
+          export PYTHONPATH="$PWD/src:$PWD:$PWD/scripts"
+          uv run --no-sync pytest -p native_progress "$NATIVE_PROGRESS_NODE" \
+            -vv -s --basetemp="$NATIVE_PROGRESS_BASETEMP" \
+            --junitxml="${RUNNER_TEMP}/native-stream-progress/result.xml"
+      - name: Validate observation coverage
+        if: always()
+        run: |
+          uv run python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          folder = Path(os.environ["RUNNER_TEMP"]) / "native-stream-progress" / "progress"
+          receipt = json.loads((folder / "session-receipt.json").read_text())
+          assert receipt["observer_stopped"], receipt
+          for name in ("imports-start.json", "imports-finish.json"):
+              imports = json.loads((folder / name).read_text())
+              assert not imports["foreign_prefect_files"], name
+          samples = [json.loads(line) for line in (folder / "timeline.jsonl").read_text().splitlines()]
+          required = {"flows", "tasks", "consumers", "records", "capacity", "activities", "locks"}
+          valid = [sample for sample in samples if required <= sample.keys() and len(sample["tasks"]) == 4]
+          assert valid, "No complete PostgreSQL snapshot with four physical tasks was captured"
+          print(json.dumps({"samples": len(samples), "complete_samples": len(valid), "latest": valid[-1]["summary"]}))
+          PY
+      - name: Preserve progress, process logs and source provenance
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-stream-progress-${{ inputs.case }}
+          path: ${{ runner.temp }}/native-stream-progress/
+          if-no-files-found: error
