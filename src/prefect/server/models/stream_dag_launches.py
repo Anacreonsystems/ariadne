@@ -81,6 +81,7 @@ async def lock_worker_subtask(
     *,
     new_launch: bool = False,
     all_workers: bool = False,
+    graph_update: bool = True,
 ) -> DAGWorkerScope:
     await require_physical_backend(session, db)
     graph_id = await session.scalar(
@@ -91,7 +92,7 @@ async def lock_worker_subtask(
     if graph_id is None:
         raise NativeStreamError("NOT_FOUND", "Unknown DAG target")
     scope = await lifecycle.lock_dag_graph(
-        session, db, graph_id, None, update=True, worker=True
+        session, db, graph_id, None, update=graph_update, worker=True
     )
     if all_workers:
         assigned = sa.select(db.StreamPhysicalSubtask.assigned_worker_id).where(
@@ -923,8 +924,9 @@ async def renew_subtask(
     subtask_id: UUID,
     request: physical.StreamWorkerRenewRequest,
 ) -> physical.StreamSubtaskGrant:
+    # Renewal updates the current grant while shared parent locks fence control.
     scope = await lock_worker_subtask(
-        session, db, worker_id, subtask_id, request.principal
+        session, db, worker_id, subtask_id, request.principal, graph_update=False
     )
     grant = await session.scalar(
         sa.select(db.StreamSubtaskGrant)

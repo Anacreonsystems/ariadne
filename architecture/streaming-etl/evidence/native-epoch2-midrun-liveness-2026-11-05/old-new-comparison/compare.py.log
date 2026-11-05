@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+import collections
+import datetime
+import gzip
+import hashlib
+import io
+import json
+import re
+from pathlib import Path
+
+
+OUT = Path('/tmp/native-ni012-midrun-comparison-v1')
+OLD = Path('/tmp/native-ni012-personal-5000-red-d504c70-v2/trials')
+NEW = Path('/tmp/native-ni012-restored-principal-2026-11-05/source-835b8c21c83e')
+UUID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+TIME = re.compile(r'^(\d{2}:\d{2}:\d{2}\.\d+)')
+REQUEST = re.compile(r'"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) (\S+) HTTP/[^\"]+" (\d{3})')
+ERROR_CLASS = re.compile(r'(?<![A-Za-z_])(?:[A-Za-z_]\w*\.)*([A-Za-z_][A-Za-z_0-9]*(?:Error|Exception))\b')
+CLASS_LINE = re.compile(r'^\s*(?:[|+ ]+\s*)?(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*(?:Error|Exception))(?::|\s*$)')
+
+
+def safe(text: str) -> str:
+    text = re.sub(r'(?:[A-Za-z][A-Za-z0-9+.-]*://)[^\s\x27\"<>]+', '[URL]', text)
+    return UUID.sub('{uuid}', text)
+
+
+def payload(path: Path) -> tuple[bytes, dict]:
+    raw = path.read_bytes()
+    before = path.stat()
+    public = gzip.decompress(raw) if path.suffix == '.gz' else raw
+    return public, {'path': str(path), 'bytes_read': len(raw), 'sha256_of_bytes_read': hashlib.sha256(raw).hexdigest(), 'stat_size_after_read': before.st_size, 'stat_mtime_ns_after_read': before.st_mtime_ns, 'compression': 'gzip' if path.suffix == '.gz' else None, 'scope': 'Snapshot of bytes read; new logs may still append after this diagnostic.'}
+
+
+def log_stats(path: Path) -> dict:
+    raw, binding = payload(path)
+    requests = collections.Counter()
+    errors = []
+    events = []
+    class_counts = collections.Counter()
+    seen_classes = []
+    sql_fingerprints = collections.Counter()
+    first_time = last_time = None
+    first_gc = None
+    t = None
+    lines = raw.decode(errors='replace').splitlines()
+    for i, line in enumerate(lines, 1):
+        m = TIME.match(line)
+        if m:
+            t = m.group(1)
+            first_time = first_time or t
+            last_time = t
+        match = REQUEST.search(line)
+        if match:
+            method, endpoint, status = match.groups()
+            endpoint = UUID.sub('{uuid}', endpoint).split('?')[0]
+            requests[f'{status} {method} {endpoint}'] += 1
+            if int(status) >= 500:
+                errors.append({'time': t, 'line': i, 'method': method, 'endpoint': endpoint, 'status': int(status)})
+        cm = CLASS_LINE.match(line)
+        if cm:
+            class_counts[cm.group(1)] += 1
+            if len(seen_classes) < 20:
+                seen_classes.append({'time_context': t, 'line': i, 'class': cm.group(1), 'snippet': safe(line.strip())[:240]})
+        if 'finalize_completed_dag' in line or 'DELETE FROM stream_record' in line or 'DELETE FROM "stream_record' in line:
+            first_gc = first_gc or {'time_context': t, 'line': i, 'marker': safe(line.strip())[:200]}
+        if '[SQL:' in line or re.search(r'^\s*(?:\|\s*)?(?:SELECT|DELETE FROM|UPDATE)\s+(?:"?stream|"?worker)', line):
+            statement = safe(line.strip())
+            # SQL variable values remain omitted; fingerprints identify tables and operation only.
+            tables = re.findall(r'\b(?:FROM|UPDATE|JOIN|INTO)\s+["\[]?([a-z_]+)', statement, re.I)
+            operation = re.search(r'\b(SELECT|DELETE|UPDATE|INSERT)\b', statement)
+            if operation:
+                sql_fingerprints[f'{operation.group(1)} ' + ','.join(sorted(set(tables)))] += 1
+        if 'Retrying' in line or 'Retrying(' in line or ('Attempt ' in line and 'fail' in line.lower()) or 'HTTP_ERROR' in line or 'Failed to renew' in line or 'recovery candidate' in line.lower():
+            if len(events) < 40:
+                events.append({'time_context': t, 'line': i, 'snippet': safe(line.strip())[:260]})
+    grouped = {}
+    for e in errors:
+        key = f"{e['status']} {e['method']} {e['endpoint']}"
+        row = grouped.setdefault(key, {'count': 0, 'first_time': e['time'], 'last_time': e['time'], 'first_line': e['line'], 'last_line': e['line']})
+        row['count'] += 1
+        row['last_time'] = e['time']
+        row['last_line'] = e['line']
+    return {'input': binding, 'lines': len(lines), 'first_log_time': first_time, 'last_log_time': last_time, 'http5xx_by_route': grouped, 'http5xx_total': len(errors), 'http5xx_events': errors, 'exception_class_line_occurrences': dict(class_counts), 'exception_examples': seen_classes, 'sql_statement_fingerprint_occurrences': dict(sql_fingerprints), 'first_terminal_gc_trace_marker': first_gc, 'retry_and_recovery_examples': events, 'counting_note': 'HTTP counts are access-log responses, not exception stack copies. Exception class counts are matching standalone trace lines and can repeat one failure via framework wrappers. time_context is latest preceding timestamp and is not an independent event timestamp.'}
+
+
+def progress_stats(path: Path) -> dict:
+    raw, binding = payload(path)
+    first_ns = last_ns = None
+    max_source = 0
+    max_cursors = collections.defaultdict(int)
+    max_counts = collections.defaultdict(int)
+    first_retry = {}
+    first_all = None
+    last = None
+    n = 0
+    malformed = 0
+    for line in io.BytesIO(raw):
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            malformed += 1
+            continue
+        if 'snapshot' not in obj:
+            continue
+        n += 1
+        snapshot = obj['snapshot']
+        ns = obj['monotonic_ns']
+        first_ns = first_ns or ns
+        last_ns = ns
+        last = snapshot
+        tasks = snapshot.get('subtasks', [])
+        roles = {t['subtask_id']: t['operator_uid'] + '-' + str(t['subtask_index']) for t in tasks}
+        source_ids = {t['output_stream_id'] for t in tasks if t['operator_uid'] == 'A'}
+        source = max((c['producer_position'] for c in snapshot.get('channels', []) if c['id'] in source_ids), default=0)
+        max_source = max(max_source, source)
+        consumers = snapshot.get('consumers', [])
+        for c in consumers:
+            role = roles.get(c['subtask_id'], c['subtask_id'])
+            max_cursors[role] = max(max_cursors[role], c['completed_through'])
+        for t in tasks:
+            role = t['operator_uid'] + '-' + str(t['subtask_index'])
+            max_counts[role] = max(max_counts[role], t['run_count'])
+            if t['run_count'] > 1 and role not in first_retry:
+                first_retry[role] = {'monotonic_ns': ns, 'seconds_since_first_progress': (ns - first_ns) / 1e9, 'run_count': t['run_count'], 'source_position': source, 'consumer_cursors': {roles.get(c['subtask_id'], c['subtask_id']): c['completed_through'] for c in consumers}, 'state_type': t['state_type'], 'physical_epoch': t['physical_epoch']}
+        if first_all is None and source == 5000 and len(consumers) == 3 and all(c['completed_through'] == 5000 for c in consumers):
+            first_all = {'monotonic_ns': ns, 'seconds_since_first_progress': (ns - first_ns) / 1e9}
+    return {'input': binding, 'snapshots': n, 'malformed_lines': malformed, 'first_monotonic_ns': first_ns, 'last_monotonic_ns': last_ns, 'duration_seconds': (last_ns - first_ns) / 1e9 if last_ns else None, 'max_source': max_source, 'max_consumer_cursors_by_role': dict(max_cursors), 'max_task_run_counts_by_role': dict(max_counts), 'first_retry_by_role': first_retry, 'first_all5000_observation': first_all, 'last_graph_state': last.get('graph_state') if last else None, 'last_task_states': {t['operator_uid'] + '-' + str(t['subtask_index']): {'state_type': t['state_type'], 'run_count': t['run_count'], 'physical_epoch': t['physical_epoch'], 'physical_slot_released': t['physical_slot_released']} for t in last.get('subtasks', [])} if last else None, 'time_note': 'Progress times are original monotonic clock readings. No unsupported exact conversion to wall time is made.'}
+
+
+assert not OUT.exists()
+OUT.mkdir(mode=0o700)
+report = {'schema': 'native-ni012-midrun-comparison-v1', 'created_at_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'reads_only': True, 'repo_writes': 0, 'test_bodies_started': 0, 'private_logs_read': False, 'cases': {}, 'limitations': ['New log snapshots may precede final stop. Hashes bind exactly the bytes read, not a future final file.', 'No pg_stat_activity/lock data is read and no database queries are issued.', 'The same exception class/route predating indexes does not prove the same root cause, nor establish that the indexes are unrelated to every new slowdown.', 'Wall-clock log windows and original monotonic progress windows are kept separate; timestamp context for traceback lines is approximate.', 'Traceback exception occurrences duplicate framework wrapping and must not be called independent request failures.']}
+for generation, mode, trial in [('d504', 'sync', OLD / 'sync'), ('d504', 'async', OLD / 'async'), ('835', 'sync', NEW / 'run-sync-volume-5000-897ed763'), ('835', 'async', NEW / 'run-async-volume-5000-c63e9223')]:
+    testout = trial / 'test-output' if generation == 'd504' else next((trial / 'pytest').glob('test_public_dag_bounded_volume*'))
+    api = next(testout.glob('api-*'))
+    progress = next(testout.glob('progress.jsonl*'))
+    logs = {'api': log_stats(api)}
+    for p in sorted(testout.glob('worker-*.log*')):
+        logs[p.name.split('.')[0]] = log_stats(p)
+    report['cases'][generation + '-' + mode] = {'logs': logs, 'progress': progress_stats(progress)}
+(OUT / 'report.json').write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
+for label, data in report['cases'].items():
+    print(label, json.dumps({'http5xx': data['logs']['api']['http5xx_by_route'], 'first_gc_trace': data['logs']['api']['first_terminal_gc_trace_marker'], 'source': data['progress']['max_source'], 'cursors': data['progress']['max_consumer_cursors_by_role'], 'max_run_counts': data['progress']['max_task_run_counts_by_role'], 'first_all5000': data['progress']['first_all5000_observation'], 'first_retry': data['progress']['first_retry_by_role']}, sort_keys=True))
+print('REPORT', str(OUT / 'report.json'), hashlib.sha256((OUT / 'report.json').read_bytes()).hexdigest())

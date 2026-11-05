@@ -22,7 +22,7 @@ against the actual runtime and storage.
 | N2.1b — Scoped authority and store | `done` | 10% | +5% | NI2-003, NI2-004 | Strict subtask-only authentication, existing-store fences, whole-region admission and canonical keys pass cross-resource negatives; codec alone earns 0%. |
 | N2.1c — Physical runtime gate | `done` | 15% | +5% | NI2-005, NI2-006 | Four ordinary physical TaskRuns run in separate processes, recover 200/201 and keep metadata constant at 500/5000 under the complete real gate. |
 | N2.2a — DAG and routes | `progress` | 21% | +6% | NI2-010, NI2-011 | Typed acyclic graph and four append-materialized exchanges preserve independent edge identities. |
-| N2.2b — Fan-out runtime gate | `progress` | 27% | +6% | NI2-012…014 | Real fan-out SDK/process execution survives retry and branch replacement without route or cursor drift. Normal/lifecycle/500, four OS-loss recovery cases, terminal-PREPARE and exchange-mode controls have passing records; both personal 5000 runs failed finalization, so corrected 5000 and final-union gates remain open. |
+| N2.2b — Fan-out runtime gate | `progress` | 27% | +6% | NI2-012…014 | Real fan-out SDK/process execution survives retry and branch replacement without route or cursor drift. Historical normal/lifecycle/500, branch recovery and exchange controls have passing records. Latest `835b8c2` attempts were interrupted on renewal/read liveness; the renewal component is verified, partition causality is unresolved, and the next 1000/5000/native CI gates remain open. |
 | N2.3a — State and mailbox | `planned` | 32% | +5% | NI2-020, NI2-021 | Journaled state and deterministic multi-input apply order recover without accepted-body replay. |
 | N2.3b — Join, outcomes and cuts | `planned` | 37% | +5% | NI2-022…024 | OUTPUT/NO_OUTPUT, bounded correlated join and complete barrier cuts compose atomically. |
 | N2.3c — Stateful join gate | `planned` | 42% | +5% | NI2-025 | Native process-loss matrix closes every ADR-0044 criterion. |
@@ -593,3 +593,24 @@ The [retained finalization archive](evidence/native-epoch2-finalization-2026-11-
 and [four-index causal proof](evidence/native-epoch2-route-cleanup-indexes-2026-11-05/component-v1/index.json)
 do not replace corrected native 5000 execution or full frozen-union acceptance.
 N2.2 remains `progress`, with 15% earned; the 27% target is unearned.
+
+## N2.2 mid-run liveness hold — 2026-11-05
+
+The [current epoch note](epochs/epoch-02-native-streaming-completion.md#n22-mid-run-liveness-hold--2026-11-05)
+records the interrupted corrected-candidate 5000 attempts. The
+[liveness archive](evidence/native-epoch2-midrun-liveness-2026-11-05/index.json)
+preserves actual renewal/read HTTP failures, the same-PID C0 Task retry without
+accepted-prefix replay, exact source closure and controlled stop. Final 5000
+assertions were not reached. The [renewal component](evidence/native-epoch2-dag-renewal-liveness-2026-11-05/component-v1/index.json)
+is a scoped lock correction; the separate partition-read cause and subsequent
+native/hosted gates remain open. N2.2 is `progress`, with **15% earned** and the
+27% target unearned. No ADR status is accepted by this note.
+
+
+## N2.2 latest probe/CI status — 2026-11-05
+
+The [current epoch observations](epochs/epoch-02-native-streaming-completion.md#n22-bounded-read-probe-and-hosted-observations--2026-11-05)
+separate the historical d504 GC failure, latest `835b8c2` controlled interruption,
+scoped renewal correction, bounded read non-reproduction and hosted failures.
+The planned next normal 1000 probe earns no completion credit by being planned.
+N2.2 stays `progress` at 15% earned; native and hosted exits remain open.

@@ -72,7 +72,7 @@ appended to each approved ADR.
 | --- | --- | --- | --- | --- |
 | NI2-010 | `accepted` | NI2-006 | M/H | Seal named typed ports, DAG revision and acyclic topology; reject cycles, duplicate subscribers and unsupported edges before user code. The [Principal acceptance](evidence/native-epoch2-ni2-010-principal-acceptance-2026-11-05/acceptance.json) closes the metadata-only component with zero earned epoch percentage; public execution remains fenced. A43-02 remains partial until NI2-012…014. |
 | NI2-011 | `accepted` | NI2-010 | L/H | Materialize bounded forward/rebalance/broadcast/keyed routes in the existing terminal transaction, with independent edge partitions/cursors/pins. The [Principal acceptance](evidence/native-epoch2-routed-server-2026-11-05/principal-v1/acceptance.json) closes the finite storage component with zero earned epoch percentage; public DAG execution remains fenced until NI2-012. A43-03 and A43-09 remain partial. |
-| NI2-012 | `progress` | NI2-010, NI2-011 | M/H | SDK/client/worker graph bootstrap and fan-out while retaining ordinary Task definitions and constant metadata per fixed graph. Real normal/lifecycle/500 and all four branch-recovery cases have passing records, including the terminal-PREPARE successor; exchange controls passed. Both personal 5000 runs failed finalization, so corrected 5000 and final frozen-union acceptance remain open. A42-02, A43-02, A43-04. |
+| NI2-012 | `progress` | NI2-010, NI2-011 | M/H | SDK/client/worker graph bootstrap and fan-out while retaining ordinary Task definitions and constant metadata per fixed graph. Real normal/lifecycle/500 and all four branch-recovery cases have passing records, including the terminal-PREPARE successor; exchange controls passed. The latest `835b8c2` normal 5000 attempts were interrupted on renewal/read liveness. The renewal component is independently verified; partition causality remains unresolved, so native 1000/5000 and final hosted acceptance remain open. Earlier d504 GC failures are retained as history. A42-02, A43-02, A43-04. |
 | NI2-013 | `planned` | NI2-011, NI2-012 | M/H | Exact append/read retry and branch replacement with immutable route digest, different partition counts and no cross-branch acknowledgement. A43-03, A43-09. |
 | NI2-014 | `planned` | NI2-010…013 | M/H | Real branched native process gate and independent Principal verification on frozen source. A43-02, A43-03, A43-09. |
 
@@ -887,3 +887,12 @@ The [retained finalization archive](evidence/native-epoch2-finalization-2026-11-
 and [four-index causal proof](evidence/native-epoch2-route-cleanup-indexes-2026-11-05/component-v1/index.json)
 do not replace corrected native 5000 execution or full frozen-union acceptance.
 N2.2 remains `progress`, with 15% earned; the 27% target is unearned.
+
+
+## NI2-012 current liveness evidence — 2026-11-05
+
+The [latest epoch note](epochs/epoch-02-native-streaming-completion.md#n22-bounded-read-probe-and-hosted-observations--2026-11-05)
+links the scoped renew proof, retained-volume read probe and actual hosted
+failures. Read non-reproduction is not root-cause closure; the next native 1000
+probe remains unexecuted until its exact candidate is published. No task/ADR
+acceptance or readiness credit changes here.

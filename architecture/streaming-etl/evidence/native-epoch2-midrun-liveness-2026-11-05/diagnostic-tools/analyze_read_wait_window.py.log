@@ -1,0 +1,23 @@
+from pathlib import Path
+import collections,datetime,gzip,hashlib,json,time
+B=Path('/tmp/native-ni012-restored-principal-2026-11-05/source-835b8c21c83e');trial=B/'run-async-volume-5000-c63e9223';path=trial/'db-catalog-diagnostics.jsonl.gz'
+low=122603000000000;high=122651000000000;matches=[];samples=0
+with gzip.open(path,'rt') as f:
+ for line in f:
+  x=json.loads(line);stamp=x['monotonic_ns']
+  if stamp<low:continue
+  if stamp>high:break
+  samples+=1;cat=x['catalog_observations'];lookup={a['pid']:a for a in cat['activity']};by_pid=collections.defaultdict(list)
+  for lock in cat['locks']:by_pid[lock['pid']].append(lock)
+  for pid,a in lookup.items():
+   if not a['blocking_pids']:continue
+   own=by_pid[pid]
+   if not any(v['relation_name']=='stream_partition' and v['locktype']=='tuple' for v in own):continue
+   related={pid,*a['blocking_pids']};rows=[lookup[p] for p in sorted(related) if p in lookup]
+   locks=[v for v in cat['locks'] if v['pid'] in related and (not v['granted'] or v['relation_name'] in {'stream_partition','stream_record','stream_route_receipt','stream_completion','stream_consumer','flow_run','stream_execution_authority','stream_graph_revision','task_run','worker'})]
+   matches.append({'monotonic_ns':stamp,'waiter_pid':pid,'activity':rows,'locks':locks})
+r={'status':'HISTORICAL_PARTITION_WAIT_WINDOW_OBSERVATION','source':'835b8c21c83e4d0a2d95ddc6abe0b06fb9d75db5','trial':trial.name,'source_gzip':str(path),'source_gzip_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'window_monotonic_ns':[low,high],'source_samples_in_window':samples,'matches':matches,'qualification':'Owned read-only catalog samples around actual18:08:27 consumer-read500; no SQL text and no guaranteed request/backend correlation. Relation locks and blockingPIDs are observed; request identity needs separate causal reproduction.'};p=B/'partition-read-historical-window-v1.json';p.write_text(json.dumps(r,indent=2,sort_keys=True)+'\n');p.chmod(0o600)
+summary=[]
+for pid in sorted({x['waiter_pid'] for x in matches}):
+ group=[x for x in matches if x['waiter_pid']==pid];summary.append({'waiter':pid,'samples':len(group),'first_ns':group[0]['monotonic_ns'],'last_ns':group[-1]['monotonic_ns'],'query_starts':sorted({a['query_start'] for x in group for a in x['activity'] if a['pid']==pid}),'blockers':sorted({b for x in group for a in x['activity'] if a['pid']==pid for b in a['blocking_pids']})})
+print(json.dumps({'receipt':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'source_samples':samples,'partition_wait_matches':len(matches),'waiters':summary}))

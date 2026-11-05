@@ -1,0 +1,51 @@
+"""Read-only owned-DB observation; never writes application tables."""
+import asyncio,gzip,json,sys,time
+from pathlib import Path
+from urllib.parse import urlsplit,urlunsplit
+import asyncpg
+
+trial=Path(sys.argv[1]);config=json.loads(Path('/tmp/native-ni012-runtime-test-env.json').read_text());meta=json.loads((trial/'database.json').read_text());p=urlsplit(config['admin_dsn']);dsn=urlunsplit((p.scheme,p.netloc,'/'+meta['name']+'_tests_master',p.query,''))
+queries={
+ 'flows':'SELECT id,name,state_type,run_count FROM flow_run ORDER BY id',
+ 'graphs':'SELECT id,flow_run_id,state,activation_operation_id,current_control_operation_id,terminal_operation_id FROM stream_graph_revision ORDER BY id',
+ 'subtasks':'''SELECT p.id,p.task_run_id,p.subtask_index,p.assigned_worker_id,p.physical_epoch,p.physical_slot_released,o.operator_uid,t.state_type,t.run_count,s.state AS output_state,s.last_sequence AS output_sequence,s.tail_sequence AS output_tail,i.state AS input_state,i.tail_sequence AS input_tail FROM stream_physical_subtask p JOIN stream_operator_run o ON o.id=p.operator_run_id JOIN task_run t ON t.id=p.task_run_id JOIN stream_partition s ON s.id=p.output_stream_id LEFT JOIN stream_partition i ON i.id=p.input_stream_id ORDER BY o.operator_uid,p.subtask_index''',
+ 'consumers':'SELECT id,subtask_id,task_run_id,input_stream_id,output_stream_id,attempt,completed_through,inflight_sequence FROM stream_consumer ORDER BY id',
+ 'channels':'SELECT id,state,last_sequence,tail_sequence,producer_position,record_count,byte_count FROM stream_partition ORDER BY id',
+ 'grants':'SELECT id,subtask_id,physical_epoch,state,child_process_id,process_start_ticks,bootstrap_ready_at FROM stream_subtask_grant ORDER BY subtask_id,physical_epoch',
+ 'launches':'SELECT id,subtask_id,worker_id,attempt_index,planned_physical_epoch,state,child_process_id,process_start_ticks,close_proof_kind FROM stream_dag_launch_attempt ORDER BY subtask_id,attempt_index',
+ 'physical_allocations':'SELECT subtask_id,worker_id,released FROM stream_physical_slot_allocation ORDER BY subtask_id',
+ 'tag_allocations':'SELECT subtask_id,released FROM stream_subtask_allocation ORDER BY subtask_id',
+ 'tag_counters':"SELECT name,active_slots FROM concurrency_limit_v2 WHERE name='tag:native-dag-runtime-capacity' ORDER BY name",
+}
+queries.update({
+ 'schema_heads':'SELECT version_num FROM alembic_version ORDER BY version_num',
+ 'activity':"SELECT pid,backend_type,state,wait_event_type,wait_event,backend_xid::text,backend_xmin::text,xact_start,query_start,pg_blocking_pids(pid) AS blocking_pids FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() ORDER BY pid",
+ 'locks':"SELECT pid,locktype,mode,granted,relation::regclass::text AS relation_name,page,tuple,transactionid::text,virtualxid,virtualtransaction,fastpath,waitstart FROM pg_locks WHERE pid IN (SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()) ORDER BY pid,locktype,relation,transactionid,mode",
+})
+async def main():
+ connection=None;previous=None;snapshots=0;errors=[]
+ try:
+  while not (trial/'exit').exists():
+   try:
+    if connection is None:connection=await asyncpg.connect(dsn,timeout=2)
+    async with connection.transaction(isolation='repeatable_read',readonly=True):
+     result={name:[dict(row) for row in await connection.fetch(query)] for name,query in queries.items()}
+    diagnostics={name:result.pop(name) for name in ('schema_heads','activity','locks')}
+    with gzip.open(trial/'db-catalog-diagnostics.jsonl.gz','at',encoding='utf-8',compresslevel=1) as diagnostic_output:
+     diagnostic_output.write(json.dumps({'monotonic_ns':time.monotonic_ns(),'catalog_observations':diagnostics},sort_keys=True,default=str)+'\n')
+    encoded=json.dumps(result,sort_keys=True,default=str)
+    if result['graphs'] and encoded!=previous:
+     previous=encoded;snapshots+=1
+     with (trial/'db-observations.jsonl').open('a') as output:output.write(json.dumps({'monotonic_ns':time.monotonic_ns(),'snapshot':result},sort_keys=True,default=str)+'\n')
+   except (asyncpg.PostgresError,OSError,asyncio.TimeoutError) as error:
+    # Only exception class is recorded: credentials/SQL request material are not.
+    errors.append(type(error).__name__)
+    if connection is not None:
+     try:await connection.close(timeout=1)
+     except Exception:pass
+     connection=None
+   await asyncio.sleep(.2)
+ finally:
+  if connection is not None:await connection.close(timeout=2)
+  (trial/'db-observer-summary.json').write_text(json.dumps({'snapshots':snapshots,'exception_types':sorted(set(errors)),'readonly':True,'application_writes':0},indent=2)+'\n')
+asyncio.run(main())

@@ -1,7 +1,10 @@
 """Server-recorded process births and exact replay under a winning stop fence."""
 
 import asyncio
-from uuid import uuid4, uuid5
+import json
+from pathlib import Path
+from typing import Any
+from uuid import UUID, uuid4, uuid5
 
 import httpx
 import pytest
@@ -11,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from prefect.server.database import PrefectDBInterface, orm_models
 from prefect.server.models import stream_dag_executions as lifecycle
 from prefect.server.models import stream_dag_launches as m
+from prefect.server.models import stream_workers
 from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.schemas import stream_dag_executions as s
 from prefect.server.schemas import stream_subtasks as physical
@@ -32,6 +36,302 @@ from tests.server.models.test_stream_dag_executions import (
 )
 
 pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
+
+
+async def _renewal_grant_row(db: PrefectDBInterface, grant_id: UUID) -> dict[str, Any]:
+    async with db.session_context() as check:
+        row = (
+            (
+                await check.execute(
+                    sa.select(db.StreamSubtaskGrant.__table__).where(
+                        db.StreamSubtaskGrant.id == grant_id
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        return dict(row)
+
+
+async def _hold_data_reader_prefix(
+    holder: AsyncSession, db: PrefectDBInterface, flow_id: UUID, graph_id: UUID
+) -> None:
+    for model, condition in (
+        (db.FlowRun, db.FlowRun.id == flow_id),
+        (
+            db.StreamExecutionAuthority,
+            db.StreamExecutionAuthority.flow_run_id == flow_id,
+        ),
+        (db.StreamGraphRevision, db.StreamGraphRevision.id == graph_id),
+    ):
+        await holder.execute(
+            sa.select(model.id).where(condition).with_for_update(read=True)
+        )
+
+
+async def test_worker_renewal_commits_under_data_reader_prefix_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    tmp_path: Path,
+):
+    plan, _, children = await ready_deployed_region(
+        db, session, execution_api, deployment
+    )
+    child = children[0]
+    subtask_id, grant_id = child.bootstrap.assignment.id, child.bootstrap.grant.id
+    request = physical.StreamWorkerRenewRequest(
+        principal=child.principal, grant_id=grant_id
+    )
+    started: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
+    async def rows() -> dict[str, list[Any]]:
+        async with db.session_context() as check:
+            return {
+                model.__tablename__: (
+                    await check.execute(sa.select(model.__table__).order_by(model.id))
+                ).all()
+                for model in (
+                    db.FlowRun,
+                    db.StreamExecutionAuthority,
+                    db.StreamGraphRevision,
+                    db.StreamPhysicalSubtask,
+                    db.StreamDAGLaunchAttempt,
+                    db.StreamPhysicalSlotAllocation,
+                    db.StreamSubtaskAllocation,
+                    db.Worker,
+                    db.StreamWorkerCapability,
+                )
+            }
+
+    async def renew() -> physical.StreamSubtaskGrant:
+        async with db.session_context(begin_transaction=True) as transaction:
+            pid = await transaction.scalar(sa.text("SELECT pg_backend_pid()"))
+            assert isinstance(pid, int)
+            started.set_result(pid)
+            return await stream_workers.renew_subtask(
+                transaction, db, child.worker_id, subtask_id, request
+            )
+
+    before = await rows()
+    original_grant = await _renewal_grant_row(db, grant_id)
+    task: asyncio.Task[physical.StreamSubtaskGrant] | None = None
+    try:
+        async with db.session_context(begin_transaction=True) as holder:
+            holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+            assert isinstance(holder_pid, int)
+            await _hold_data_reader_prefix(holder, db, plan.flow_run_id, plan.id)
+            task = asyncio.create_task(renew())
+            waiter_pid = await asyncio.wait_for(asyncio.shield(started), timeout=5)
+            try:
+                result = await asyncio.wait_for(asyncio.shield(task), timeout=5)
+                assert holder.in_transaction()
+                assert result.id == grant_id
+                assert result.state == "REGISTERED"
+            except TimeoutError:
+                async with db.session_context() as observer:
+                    blocked = (
+                        (
+                            await observer.execute(
+                                sa.text(
+                                    "SELECT pg_blocking_pids(pid) AS blockers, "
+                                    "wait_event_type, wait_event, "
+                                    "query LIKE 'SELECT flow_run.%' AS selecting_flow "
+                                    "FROM pg_stat_activity "
+                                    "WHERE pid = :waiter AND datname = current_database()"
+                                ),
+                                {"waiter": waiter_pid},
+                            )
+                        )
+                        .mappings()
+                        .one()
+                    )
+                witness = {
+                    "holder_pid": holder_pid,
+                    "waiter_pid": waiter_pid,
+                    "holder_still_open": holder.in_transaction(),
+                    "test_deadline_seconds": 5,
+                    "platform_timeout_unchanged": True,
+                    **dict(blocked),
+                }
+                (tmp_path / "renewal-lock-witness.json").write_text(
+                    json.dumps(witness, indent=2) + "\n"
+                )
+                assert holder_pid in blocked["blockers"]
+                assert blocked["selecting_flow"]
+                raise
+            finally:
+                await holder.commit()
+                await asyncio.wait_for(task, timeout=5)
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert await rows() == before
+    renewed = await _renewal_grant_row(db, grant_id)
+    assert renewed["last_renewed_at"] > original_grant["last_renewed_at"]
+    unchanged = set(renewed) - {"last_renewed_at", "updated"}
+    assert {key: renewed[key] for key in unchanged} == {
+        key: original_grant[key] for key in unchanged
+    }
+
+
+async def test_worker_renewal_http_commits_under_reader_prefix_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+):
+    plan, _, children = await ready_deployed_region(
+        db, session, execution_api, deployment
+    )
+    child = children[0]
+    request = physical.StreamWorkerRenewRequest(
+        principal=child.principal, grant_id=child.bootstrap.grant.id
+    )
+    transport = execution_api._transport
+    assert isinstance(transport, httpx.ASGITransport)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=transport.app, raise_app_exceptions=False),
+        base_url=execution_api.base_url,
+        auth=execution_api.auth,
+    ) as api:
+        async with db.session_context(begin_transaction=True) as holder:
+            await _hold_data_reader_prefix(holder, db, plan.flow_run_id, plan.id)
+            response = await asyncio.wait_for(
+                api.post(
+                    f"/streams/v2/workers/{child.worker_id}/subtasks/"
+                    f"{child.bootstrap.assignment.id}/renew",
+                    json=request.model_dump(mode="json"),
+                ),
+                timeout=5,
+            )
+            assert holder.in_transaction()
+            assert response.status_code == 200, response.text
+            result = physical.StreamSubtaskGrant.model_validate(response.json())
+            assert result.id == child.bootstrap.grant.id
+            assert result.state == "REGISTERED"
+
+
+@pytest.mark.parametrize("held_lock", ["flow", "authority", "graph"])
+async def test_worker_renewal_waits_for_exclusive_parent_fence_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    held_lock: str,
+):
+    plan, _, children = await ready_deployed_region(
+        db, session, execution_api, deployment
+    )
+    child = children[0]
+    request = physical.StreamWorkerRenewRequest(
+        principal=child.principal, grant_id=child.bootstrap.grant.id
+    )
+    before = await _renewal_grant_row(db, request.grant_id)
+    started: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
+    async def renew() -> physical.StreamSubtaskGrant:
+        async with db.session_context(begin_transaction=True) as transaction:
+            pid = await transaction.scalar(sa.text("SELECT pg_backend_pid()"))
+            assert isinstance(pid, int)
+            started.set_result(pid)
+            return await stream_workers.renew_subtask(
+                transaction, db, child.worker_id, child.bootstrap.assignment.id, request
+            )
+
+    task: asyncio.Task[physical.StreamSubtaskGrant] | None = None
+    try:
+        async with db.session_context(begin_transaction=True) as holder:
+            holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+            assert isinstance(holder_pid, int)
+            for name, model, condition in (
+                ("flow", db.FlowRun, db.FlowRun.id == plan.flow_run_id),
+                (
+                    "authority",
+                    db.StreamExecutionAuthority,
+                    db.StreamExecutionAuthority.flow_run_id == plan.flow_run_id,
+                ),
+                ("graph", db.StreamGraphRevision, db.StreamGraphRevision.id == plan.id),
+            ):
+                await holder.execute(
+                    sa.select(model.id)
+                    .where(condition)
+                    .with_for_update(read=name != held_lock)
+                )
+                if name == held_lock:
+                    table = model.__tablename__
+                    break
+            task = asyncio.create_task(renew())
+            waiter_pid = await asyncio.wait_for(asyncio.shield(started), timeout=5)
+            await _observe_heartbeat_blocker(db, waiter_pid, holder_pid, table)
+            assert not task.done()
+            assert await _renewal_grant_row(db, request.grant_id) == before
+            await holder.commit()
+            response = await asyncio.wait_for(task, timeout=5)
+            assert response.id == request.grant_id
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("fault", ["worker", "principal", "grant", "control"])
+async def test_worker_renewal_preserves_current_control_and_identity_fences_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    fault: str,
+):
+    plan, credentials, children = await ready_deployed_region(
+        db, session, execution_api, deployment
+    )
+    child = children[0]
+    principal = child.principal
+    grant_id = child.bootstrap.grant.id
+    worker_id = child.worker_id
+    if fault == "worker":
+        worker_id = next(
+            item.worker_id for item in children if item.worker_id != worker_id
+        )
+    elif fault == "principal":
+        principal = principal.model_copy(
+            update={"launcher_start_ticks": principal.launcher_start_ticks + 1}
+        )
+    elif fault == "grant":
+        grant_id = uuid4()
+    else:
+        async with db.session_context(begin_transaction=True) as controller:
+            await lifecycle.cancel_stream_dag(
+                controller,
+                db,
+                plan.id,
+                s.StreamDAGCancelRequest.model_validate(
+                    parent_body(plan.id, "cancel", plan.graph_digest)
+                ),
+                credentials,
+            )
+    before = await _renewal_grant_row(db, child.bootstrap.grant.id)
+    async with db.session_context(begin_transaction=True) as transaction:
+        with pytest.raises(NativeStreamError) as error:
+            await stream_workers.renew_subtask(
+                transaction,
+                db,
+                worker_id,
+                child.bootstrap.assignment.id,
+                physical.StreamWorkerRenewRequest(
+                    principal=principal, grant_id=grant_id
+                ),
+            )
+        assert error.value.code == (
+            "SUBTASK_SCOPE_DENIED"
+            if fault in {"worker", "principal"}
+            else "SUBTASK_FENCED"
+        )
+    assert await _renewal_grant_row(db, child.bootstrap.grant.id) == before
 
 
 @pytest.mark.parametrize("new_replacement", [True, False])

@@ -1,0 +1,135 @@
+"""Copy an idle owned forensic DB; touch only disposable probe clones."""
+
+import argparse
+import asyncio
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
+
+import asyncpg
+
+
+BASE=Path(__file__).resolve().parent
+ROOT=Path('/tmp/ariadne-native-5000-diagnosis-v1')
+CONFIG=Path('/tmp/native-ni012-runtime-test-env.json')
+SOURCE='native_ni012_runtime_2b7eb929_tests_master'
+PARSER=argparse.ArgumentParser()
+PARSER.add_argument('--seconds',type=float,default=45)
+PARSER.add_argument('--only',choices=['controls','baseline','old-renew','fixed-renew'])
+ARGS=PARSER.parse_args()
+
+
+def quote(name):
+    assert re.fullmatch('[a-z][a-z0-9_]{1,62}',name)
+    return '"'+name+'"'
+
+
+def dsn_for(config,name,sqlalchemy=False):
+    p=urlsplit(config['admin_dsn'])
+    return urlunsplit((config['sqlalchemy_scheme'] if sqlalchemy else p.scheme,p.netloc,'/'+name,p.query,''))
+
+
+def source_hashes():
+    paths=sorted((ROOT/'src/prefect').rglob('*.py'))+[ROOT/'tests/server/models/test_stream_dag_launches.py',ROOT/'pyproject.toml',ROOT/'uv.lock']
+    return {str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+
+
+def profile():
+    return {name:(Path('/sys/fs/cgroup')/name).read_text() for name in ['cpu.max','cpu.stat','memory.current','memory.max','memory.events'] if (Path('/sys/fs/cgroup')/name).is_file()}
+
+
+async def source_snapshot(config):
+    connection=await asyncpg.connect(dsn_for(config,SOURCE))
+    try:
+        async with connection.transaction(readonly=True):
+            counts={name:await connection.fetchval('SELECT count(*) FROM '+quote(name)) for name in ['stream_record','stream_route_receipt','stream_completion','task_run','stream_subtask_grant']}
+            cursors=[dict(row) for row in await connection.fetch('SELECT id,input_stream_id,output_stream_id,completed_through,inflight_sequence FROM stream_consumer ORDER BY id')]
+            states=[dict(row) for row in await connection.fetch('SELECT id,state,current_control_operation_id FROM stream_graph_revision ORDER BY id')]
+            raw=json.dumps({'counts':counts,'cursors':cursors,'states':states},default=str,sort_keys=True).encode()
+            return {'counts':counts,'cursors':cursors,'states':states,'sha256':hashlib.sha256(raw).hexdigest()}
+    finally:await connection.close()
+
+
+async def clone(config,name):
+    assert name.startswith('native_readprobe_') and name!=SOURCE
+    connection=await asyncpg.connect(config['admin_dsn'])
+    try:
+        assert int(await connection.fetchval('SHOW server_version_num'))//10000==17
+        sessions=[dict(row) for row in await connection.fetch('SELECT pid,state FROM pg_stat_activity WHERE datname=$1',SOURCE)]
+        if sessions:raise RuntimeError('Forensic source is not idle; no sessions are terminated')
+        await connection.execute('CREATE DATABASE '+quote(name)+' WITH TEMPLATE '+quote(SOURCE)+' OWNER '+quote(config['database_role']))
+    finally:await connection.close()
+
+
+async def cleanup(config,name):
+    assert name.startswith('native_readprobe_') and name!=SOURCE
+    connection=await asyncpg.connect(config['admin_dsn'])
+    try:
+        sessions=[dict(row) for row in await connection.fetch('SELECT pid,state,application_name FROM pg_stat_activity WHERE datname=$1',name)]
+        if sessions:raise RuntimeError('Disposable probe DB has sessions after child stop; retain it for inspection')
+        await connection.execute('DROP DATABASE '+quote(name))
+        return {'database':name,'sessions_before_drop':sessions,'dropped':True}
+    finally:await connection.close()
+
+
+def summarize(path):
+    events=[json.loads(line) for line in path.read_text().splitlines()]
+    summary={}
+    for op in ['append','read','renew']:
+        selected=[e for e in events if e['kind']=='operation' and e['operation']==op]
+        latency=sorted(e['elapsed_seconds'] for e in selected)
+        summary[op]={'calls':len(selected),'success':sum(e['status']=='success' for e in selected),'errors':[{'class':e['error_class'],'code':e['code'],'phase':e['phase'],'seconds':e['elapsed_seconds']} for e in selected if e['status']=='error'],'max_seconds':max(latency,default=None),'p50_seconds':latency[len(latency)//2] if latency else None}
+    summary['control_events']=[e for e in events if e['kind'].startswith('control_')]
+    summary['observed_waits']=sum(bool(a['blockers']) for e in events if e['kind']=='catalog' for a in e['activity'])
+    return summary
+
+
+def main():
+    run=BASE/('run-'+uuid4().hex[:8]);run.mkdir(mode=0o700)
+    config=json.loads(CONFIG.read_text());before=source_hashes()
+    assert before['src/prefect/server/models/stream_dag_launches.py']=='28983761cd7d6cfd2fbe922c783ef4eff8273b6320820c2448a63416f94ecd5c'
+    assert before['tests/server/models/test_stream_dag_launches.py']=='585db8c4e089bcc2de19166b59ab539f6a0b445d8c128fb653f36b619972c20c'
+    (run/'source-before.json').write_text(json.dumps(before,indent=2)+'\n')
+    source_before=asyncio.run(source_snapshot(config));(run/'forensic-before.json').write_text(json.dumps(source_before,default=str,indent=2)+'\n')
+    receipts=[]
+    for variant in ([ARGS.only] if ARGS.only else ['controls','baseline','old-renew','fixed-renew']):
+        out=run/variant;out.mkdir(mode=0o700);name='native_readprobe_'+uuid4().hex[:12]
+        asyncio.run(clone(config,name))
+        env=os.environ.copy();env.pop('PREFECT_API_DATABASE_CONNECTION_URL',None)
+        env['PREFECT_SERVER_DATABASE_CONNECTION_URL']=dsn_for(config,name,sqlalchemy=True)
+        env['PYTHONPATH']=str(ROOT/'src')+':'+str(ROOT)
+        env['PREFECT_HOME']=str(out/'prefect-home')
+        cmd=[sys.executable,str(BASE/'probe.py'),'--out',str(out),'--variant',variant,'--seconds',str(ARGS.seconds)]
+        (out/'command.json').write_text(json.dumps({'command':cmd,'cwd':str(ROOT),'owned_clone':name,'forensic_source':SOURCE,'profile_before':profile(),'qualification':'Plain Python/production model calls on an adapted forensic clone. No native/business acceptance.'},indent=2)+'\n')
+        private=out/'child.private.log';fd=os.open(private,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+        with os.fdopen(fd,'wb') as log:
+            process=subprocess.Popen(cmd,cwd=ROOT,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+            (out/'process.json').write_text(json.dumps({'pid':process.pid,'pgid':os.getpgid(process.pid)},indent=2)+'\n')
+            print(json.dumps({'variant':variant,'pid':process.pid,'out':str(out)}),flush=True)
+            try:code=process.wait(timeout=180)
+            except subprocess.TimeoutExpired:
+                process.terminate();code=process.wait(timeout=15)
+        (out/'exit').write_text(str(code)+'\n')
+        public=re.sub(r'(?i)(postgres(?:ql)?(?:\+asyncpg)?://)[^\s\'"<>]+',r'\1[redacted-owned-probe-dsn]',private.read_text(errors='replace'))
+        (out/'child.log').write_text(public)
+        (out/'profile-after.json').write_text(json.dumps(profile(),indent=2)+'\n')
+        cleanup_receipt=asyncio.run(cleanup(config,name));(out/'cleanup.json').write_text(json.dumps(cleanup_receipt,indent=2)+'\n')
+        summary=summarize(out/'events.jsonl') if (out/'events.jsonl').exists() else {}
+        receipt={'variant':variant,'exit':code,'summary':summary,'cleanup':cleanup_receipt}
+        (out/'summary.json').write_text(json.dumps(receipt,indent=2)+'\n');receipts.append(receipt)
+        print(json.dumps({'variant':variant,'exit':code,'summary':summary},default=str),flush=True)
+        if code:break
+    source_after=asyncio.run(source_snapshot(config));after=source_hashes()
+    (run/'forensic-after.json').write_text(json.dumps(source_after,default=str,indent=2)+'\n');(run/'source-after.json').write_text(json.dumps(after,indent=2)+'\n')
+    result={'status':'BOUNDED_PROBE_NOT_ACCEPTANCE','run':str(run),'forensic_source_unchanged':source_before==source_after,'source_drift':[p for p in before.keys()|after.keys() if before.get(p)!=after.get(p)],'variants':receipts,'harness_hashes':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in [BASE/'probe.py',BASE/'controller.py']}}
+    (run/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,default=str),flush=True)
+    raise SystemExit(0 if all(r['exit']==0 for r in receipts) and result['forensic_source_unchanged'] and not result['source_drift'] else 1)
+
+
+if __name__=='__main__':main()

@@ -524,6 +524,7 @@ jobs:
         with:
           node-version-file: ui-v2/.nvmrc
       - name: Install packages
+        id: physical-dependencies
         run: uv sync --locked --python 3.12.14
       - name: Set native test database connection URL
         if: ${{ startsWith(matrix.database, 'postgres') }}
@@ -621,7 +622,8 @@ jobs:
         if: matrix.database == 'postgres:17'
         run: >-
           uv run pytest tests/test_native_partitioned_stream_http.py
-          -k 'not 5000' -vv --durations=11 --junitxml=native-physical-runtime.xml
+          -k 'not 5000' -vv --durations=11
+          --basetemp=native-physical-runtime-work --junitxml=native-physical-runtime.xml
       - name: Require successful cases without conditional skips
         run: |
           uv run python - <<'PY'
@@ -672,6 +674,11 @@ jobs:
               ), f"Physical cases did not all pass: {path}"
               print(f"{path}: {len(cases)} cases passed without skips")
           PY
+      - name: Preserve physical runtime diagnostics and final resources
+        if: always() && matrix.database == 'postgres:17' && steps.physical-dependencies.outcome == 'success'
+        run: >-
+          uv run --no-sync python scripts/native_runtime_diagnostics.py
+          --source native-physical-runtime-work --destination native-physical-runtime-diagnostics
       - name: Preserve physical stream results
         if: always()
         uses: actions/upload-artifact@v7
@@ -681,6 +688,7 @@ jobs:
             native-physical-*.xml
             native-physical-types.json
             native-physical-types.stderr.log
+            native-physical-runtime-diagnostics/
           if-no-files-found: error
 
   run-stream-dag-execution-tests:
@@ -960,6 +968,7 @@ jobs:
           python-version: "3.12.14"
           enable-cache: true
       - name: Install packages
+        id: runtime-dependencies
         env:
           UV_PYTHON_PREFERENCE: only-managed
         run: uv sync --locked --python 3.12.14
@@ -1000,7 +1009,7 @@ jobs:
           NATIVE_RUNTIME_NODE: ${{ matrix.node }}
         run: >-
           uv run pytest "$NATIVE_RUNTIME_NODE" -vv --durations=1
-          --junitxml=native-runtime-case.xml
+          --basetemp=native-runtime-work --junitxml=native-runtime-case.xml
       - name: Require that exact case to pass without skips
         env:
           NATIVE_RUNTIME_NODE: ${{ matrix.node }}
@@ -1020,6 +1029,11 @@ jobs:
           assert all(case.find(tag) is None for tag in ("skipped", "failure", "error")), "Native runtime case did not pass"
           print(f"{node}: one actual passing case, no skips")
           PY
+      - name: Preserve selected runtime diagnostics and final resources
+        if: always() && steps.runtime-dependencies.outcome == 'success'
+        run: >-
+          uv run --no-sync python scripts/native_runtime_diagnostics.py
+          --source native-runtime-work --destination native-runtime-diagnostics
       - name: Preserve native runtime case results
         if: always()
         uses: actions/upload-artifact@v7
@@ -1028,6 +1042,7 @@ jobs:
           path: |
             native-runtime-case.xml
             native-runtime-profile.json
+            native-runtime-diagnostics/
           if-no-files-found: error
 
   run-stream-routing-tests:

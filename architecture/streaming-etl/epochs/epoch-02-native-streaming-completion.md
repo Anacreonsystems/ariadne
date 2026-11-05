@@ -441,3 +441,77 @@ terminal resource release, the required hosted matrix and independent
 Principal verification. Neither this archive nor a component PASS earns the
 planned 27% target. Joins, managed state, continuous input/retention,
 cross-host recovery and rescaling remain later epoch-2 gates.
+
+## N2.2 mid-run liveness hold — 2026-11-05
+
+The [corrected-candidate attempts](../evidence/native-epoch2-midrun-liveness-2026-11-05/cohort/controlled-red-attempt-summary-v1.json)
+on `835b8c21c83e4d0a2d95ddc6abe0b06fb9d75db5` were stopped with exit 2 after
+an independently observed normal-path liveness/metadata violation. Both sources
+accepted 5000 yields; the subscribers had processed only about 2600–2750 inputs.
+Final 5000, EOF and lifecycle assertions were not reached. Sync was interrupted
+under the paired diagnostic policy. The [exact controlled-stop receipt](../evidence/native-epoch2-midrun-liveness-2026-11-05/cohort/controlled-red-stop-v1.json)
+records guarded owned-process shutdown; both source closures retain 1599
+unchanged files, zero remaining observed PIDs and zero database sessions.
+Operational cleanup is not successful platform resource release.
+
+The [actual C0 retry record](../evidence/native-epoch2-midrun-liveness-2026-11-05/cohort/retry-state-diagnosis-124241500348051.json)
+links a consumer-read HTTP 500 to a persisted Retrying event at
+18:08:27.397961 UTC. The same physical C0 process and TaskRun executed inputs
+1–763 in attempt 1 and 764–2649 in attempt 2, with no repeated accepted-prefix
+business sequence. Physical epoch stayed 1 while Task run count became 2.
+This is an unexpected ordinary Task retry in the no-fault gate; data corruption
+or accepted-body replay was not established.
+
+The [old/new comparison](../evidence/native-epoch2-midrun-liveness-2026-11-05/old-new-comparison/report.json)
+shows mid-run renewal timeouts on both the earlier `d504c70…` and corrected
+`835b8c2…` code. They occurred before final GC. The four cleanup indexes address
+the separately demonstrated GC scan; no causal index regression is claimed.
+Both renewal and consumer-read failures retain their own error locations and
+raw observations in the [liveness archive](../evidence/native-epoch2-midrun-liveness-2026-11-05/index.json).
+
+The [renewal component](../evidence/native-epoch2-dag-renewal-liveness-2026-11-05/component-v1/index.json)
+reproduced a real PostgreSQL lock wait: renewal requested an exclusive FlowRun
+prefix while another transaction held the legitimate shared Flow/authority/graph
+prefix. The five-second test deadline observed this blocked request; that RED
+is not a newly reproduced HTTP 500 or a change to the platform's ten-second
+budget. The narrow correction uses a shared parent prefix only for renewal,
+retaining worker/capability reads, subtask/grant update locks and all identity,
+control and stale-grant fences. Its scoped model/API controls and type check
+passed. The [independent personal repeat](../evidence/native-epoch2-dag-renewal-liveness-2026-11-05/principal-v1/index.json)
+then passed all 16 real PostgreSQL model/control cases in 62.266 seconds, with
+zero skips, failures, errors or source drift and clean owned-database teardown.
+This verifies the renewal component; native 5000 acceptance remains open.
+
+The consumer-read timeout reached partition locking after the parent prefix.
+Its causal relationship to the renewal queue remains open. The retained
+[historical partition window](../evidence/native-epoch2-midrun-liveness-2026-11-05/cohort/partition-read-historical-window-v1.json)
+contains actual waiters/blockers but no exact HTTP-request/backend correlation.
+A bounded controlled read/append comparison must distinguish a direct partition
+conflict from the global renewal queue before the next full 5000 runs. The
+forensic databases remain intact; new probes use separate owned databases.
+
+N2.2 stays `progress` at **15% earned**. The 27% target, NI2-012…014 closure and
+ADR acceptance remain withheld until both liveness paths, fresh frozen-source
+native runs and the required actual hosted matrix pass. No approved solution
+or acceptance criterion changes in this update.
+
+## N2.2 bounded read probe and hosted observations — 2026-11-05
+
+The [retained-volume read/append probe](../evidence/native-epoch2-partition-read-probe-2026-11-05/component-v1/index.json)
+used separate adapted clones and left the forensic cohort unchanged. Disjoint
+append/read completed; a shared-input reader waited on the observed partition
+lock and completed after release. Baseline, old-renewal and fixed-renewal
+variants each ran 45 seconds without errors. These sequential bounded
+measurements establish neither a performance gain nor the historical
+consumer-read cause: that timeout remains **not reproduced / unresolved**.
+
+The [diagnostic CI extension](../evidence/native-epoch2-runtime-ci-diagnostics-2026-11-05/component-v2/index.json)
+preserves selected API/worker logs, PID/call traces and post-command resources
+for native shards and the physical PG batch without changing bodies, oracles
+or budgets. The [two actual async recovery CI failures](../evidence/native-epoch2-runtime-ci-diagnostics-2026-11-05/ci-observation-v1/index.json)
+and [physical P2 extra-marker observation](../evidence/native-epoch2-runtime-ci-diagnostics-2026-11-05/ci-physical-pg17-red-v1/index.json)
+remain open observations with incomplete role/blocker attribution; no data
+corruption or common cause is inferred. The next declared native probe is one
+normal async 1000-document run with live health checks, crossing the historical
+input-764 boundary. Further 5000 runs depend on its actual result. N2.2 remains
+`progress` with 15% earned; no ADR criterion is accepted by these measurements.
