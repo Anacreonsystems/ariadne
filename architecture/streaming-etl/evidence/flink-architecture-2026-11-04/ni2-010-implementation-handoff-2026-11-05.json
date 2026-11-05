@@ -5,7 +5,9 @@
     "For the A1/B1/C2 fixture, seal four stable unassigned TaskRuns/subtasks and atomically admit them on two workers. Also prove generic N=sum(P) with an N=6/three-worker metadata admission and exact two-worker refusal; no hardcoded four-subtask profile rule.",
     "Preserve old fixed-P2 API/eligibility while capable workers advertise both profiles.",
     "Architect repeats selected server/client/runtime controls before done.",
-    "DAG claim, register and activation are typed EXECUTION_PROFILE_NOT_READY; production workers keep advertising/polling fixed-P2 only in NI2-010."
+    "DAG claim, register and activation are typed EXECUTION_PROFILE_NOT_READY; production workers keep advertising/polling fixed-P2 only in NI2-010.",
+    "Refuse multiple roots, disconnected operators, fan-in, fewer than three operators, linear-only topology and same-operator input/output UID collision with zero side effects.",
+    "Refuse terminal Flow completion for an unadmitted sealed DAG with DAG_NOT_STARTED; old P2 routes refuse DAG IDs with EXECUTION_PROFILE_NOT_READY before DTO projection."
   ],
   "approval_version": "fae53c90aa3b44dbc45032833b4d193001e5c8bd",
   "bounds": {
@@ -29,12 +31,15 @@
     "identity": "Stable graph revision, operator UID, port UID, edge UID, subscriber UID and edge-partition identity exclude TaskRun attempts. Physical subtasks remain ordinary TaskRuns.",
     "keyed_yield": "Later keyed edges use explicit KeyedStreamOutput(value,key) encoded by tagged-key-v1. Plain yield remains unchanged; no reserved payload field or server-side callback.",
     "placement": "Seal persists the complete topology plus N=sum(operator parallelism) stable unassigned TaskRuns/subtasks, bounded by 128. Admission locks enough eligible workers/capabilities for N placements under the shared max-two-live-children capacity, writes every assigned_worker_id and allocation row atomically, or writes none. SEALED rows are not occupied slots and are invisible to worker poll/claim. Four subtasks/two workers is only the first real A1/B1/C2 fixture; it is not a profile constant.",
+    "port_identity": "Port identity is qualified by (operator_uid,direction,port_uid), so different operators may reuse names. Within one operator the input and output UIDs must differ.",
     "port_schema_digest": "json-value-v1 digest is SHA256 of canonical UTF-8 JSON {\"id\":\"json-value-v1\",\"type\":\"json-value\",\"version\":1} using sorted keys and compact separators.",
     "ports": "One named output and at most one named logical input per operator. Portable schema ID json-value-v1 uses exact version/digest equality; Python annotations are not wire identity.",
+    "seal_authority": "Public metadata seal requires current Flow execution credentials and a matching deployed native snapshot with profile partitioned-dag-v1. Standalone/SQLite compilation uses internal model helpers only.",
     "sqlite_boundary": "SQLite supports internal model/service topology compile, metadata seal and read-plan tests without grants, activation or DATA. Public executing seal/admit remains PostgreSQL17-only and returns exact UNSUPPORTED_BACKEND on SQLite.",
     "storage": "Reuse existing StreamPartition/StreamRecord/StreamConsumer/StreamCompletion; no second store or client mailbox.",
     "tail": "Flow code after graph.wait is supported. A finite Task tail is typed unsupported until its witness binds graph revision, full leaf set and physical retirements.",
-    "topology": "Reject cycles, duplicate operator/port/edge/subscriber identities, missing sources, fan-in, multiple outputs, incompatible schemas and unsupported profiles before grant, DATA or user code.",
+    "topology": "Exactly one SOURCE root; source has zero inputs, every other operator exactly one input, every operator exactly one named output. All operators must be reachable, indegree<=1, at least 3 operators, at least 2 edges and at least one fan-out. Reject cycles, disconnected/extra roots, duplicate identities, fan-in, multiple outputs, incompatible schemas and unsupported profiles before grant, DATA or user code.",
+    "unstarted_terminal": "A terminal Flow transition with a SEALED but unadmitted DAG refuses with DAG_NOT_STARTED before false Completed; NI2-010 does not auto-release metadata. Internal cleanup exists for tests/operators; NI2-012 adds runtime start/abort compensation.",
     "worker_capability": "Capabilities are additive per (worker, protocol, version); fixed-P2 and DAG coexist and share one max-two-live-children occupancy counter."
   },
   "deferred": {
