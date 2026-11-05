@@ -54,6 +54,14 @@ from tests.test_stream_dag_authoring import dag_bare_source, dag_operator, dag_s
 pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
 
 
+@pytest.fixture(autouse=True)
+async def dag_metadata_backend(db: PrefectDBInterface, session: AsyncSession) -> None:
+    connection = await session.connection()
+    version = connection.dialect.server_version_info or ()
+    if db.dialect.name != "postgresql" or not version or version[0] != 17:
+        pytest.skip("DAG metadata HTTP integration requires PostgreSQL 17")
+
+
 def declared_graph(source_port: str = "out", *, shape: str = "fanout") -> StreamGraph:
     source_count = 2 if shape == "rebalance" else 1
     branches = (

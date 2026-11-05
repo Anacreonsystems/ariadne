@@ -31,6 +31,21 @@ from tests.server.models.test_stream_dags import dag_request
 pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
 
 
+@pytest.fixture
+async def dag_postgres17_backend(db: PrefectDBInterface, session: AsyncSession) -> None:
+    if db.dialect.name != "postgresql":
+        pytest.skip("DAG metadata publication requires PostgreSQL 17")
+    connection = await session.connection()
+    if connection.dialect.server_version_info[0] != 17:
+        pytest.skip("DAG metadata publication requires PostgreSQL 17")
+
+
+@pytest.fixture
+def dag_sqlite_backend(db: PrefectDBInterface) -> None:
+    if db.dialect.name != "sqlite":
+        pytest.skip("This control verifies the SQLite backend refusal")
+
+
 @pytest.fixture(scope="module")
 async def hosted_api_server(
     unused_tcp_port_factory: Callable[[], int], test_database_connection_url: str
@@ -55,6 +70,7 @@ async def hosted_api_server(
     [("branched", 4, ["B", "C"]), ("linear_rebalance", 5, ["B"]), ("chain", 6, ["C"])],
 )
 @pytest.mark.parametrize("synchronous", [True, False])
+@pytest.mark.usefixtures("dag_postgres17_backend")
 async def test_postgres_sdk_seal_read_replay_publish_only_stable_metadata(
     db: PrefectDBInterface,
     session: AsyncSession,
@@ -150,6 +166,7 @@ async def test_postgres_sdk_seal_read_replay_publish_only_stable_metadata(
 
 
 @pytest.mark.parametrize("synchronous", [True, False])
+@pytest.mark.usefixtures("dag_sqlite_backend")
 async def test_sqlite_sdk_public_dag_metadata_fails_closed(
     db: PrefectDBInterface, hosted_api_server: str, synchronous: bool
 ):

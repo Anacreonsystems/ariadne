@@ -23,8 +23,19 @@ from prefect.settings import (
 from tests.server.api.test_native_deployments import _declaration, _enrollment_body
 from tests.server.api.test_stream_workers import new_worker
 from tests.server.models.test_stream_dags import dag_request
+from tests.server.models.test_stream_executions import _require_postgres_17
 
 pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
+
+
+@pytest.fixture(autouse=True)
+async def supported_dag_backend(
+    request: pytest.FixtureRequest, db: PrefectDBInterface
+) -> None:
+    if request.node.name.startswith("test_postgres_"):
+        await _require_postgres_17(db)
+    elif request.node.name.startswith("test_sqlite_") and db.dialect.name != "sqlite":
+        pytest.skip("This API refusal is specific to SQLite")
 
 
 @pytest.fixture(autouse=True)

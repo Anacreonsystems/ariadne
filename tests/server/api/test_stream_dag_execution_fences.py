@@ -41,6 +41,9 @@ from tests.server.api.test_stream_dags import (
     deployed_dag_request,
     topology_counts,
 )
+from tests.server.api.test_stream_dags import (
+    supported_dag_backend as supported_dag_backend,
+)
 from tests.server.models.test_stream_dags import dag_request
 from tests.server.models.test_stream_subtasks import graph_request
 
