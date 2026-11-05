@@ -1,0 +1,317 @@
+E701 Multiple statements on one line (colon)
+  --> /tmp/native-5000-progress-collector-v1/native_progress.py:71:29
+   |
+69 |  current={}
+70 |  for path in Path('/proc').iterdir():
+71 |   if not path.name.isdigit(): continue
+   |                             ^
+72 |   try:
+73 |    raw=(path/'stat').read_text();v=raw[raw.rfind(')')+2:].split()
+   |
+
+E702 Multiple statements on one line (semicolon)
+  --> /tmp/native-5000-progress-collector-v1/native_progress.py:73:33
+   |
+71 |   if not path.name.isdigit(): continue
+72 |   try:
+73 |    raw=(path/'stat').read_text();v=raw[raw.rfind(')')+2:].split()
+   |                                 ^
+74 |    io={}
+75 |    try:
+   |
+
+E701 Multiple statements on one line (colon)
+  --> /tmp/native-5000-progress-collector-v1/native_progress.py:77:46
+   |
+75 |    try:
+76 |     io={k:int(n) for k,n in (line.split(':',1) for line in (path/'io').read_text().splitlines())}
+77 |    except (PermissionError,FileNotFoundError): pass
+   |                                              ^
+78 |    current[int(path.name)]={'pid':int(path.name),'ppid':int(v[1]),'state':v[0],
+79 |     'start_ticks':int(v[19]),'cpu_ticks':int(v[11])+int(v[12]),'rss_bytes':int(v[21])*os.sysconf('SC_PAGE_SIZE'),
+   |
+
+E701 Multiple statements on one line (colon)
+  --> /tmp/native-5000-progress-collector-v1/native_progress.py:81:64
+   |
+79 |     'start_ticks':int(v[19]),'cpu_ticks':int(v[11])+int(v[12]),'rss_bytes':int(v[21])*os.sysconf('SC_PAGE_SIZE'),
+80 |     'io':io,'command':(path/'cmdline').read_bytes().replace(b'\0',b' ').decode(errors='replace')[:600]}
+81 |   except (FileNotFoundError,ProcessLookupError,PermissionError): pass
+   |                                                                ^
+82 |  selected={ROOT_PID}|{pid for pid,identity in SEEN.items() if pid in current and current[pid]['start_ticks']==identity['start_ticks']}
+83 |  while True:
+   |
+
+E701 Multiple statements on one line (colon)
+  --> /tmp/native-5000-progress-collector-v1/native_progress.py:85:19
+   |
+83 |  while True:
+84 |   new={pid for pid,p in current.items() if p['ppid'] in selected}
+85 |   if new<=selected: break
+   |                   ^
+86 |   selected|=new
+87 |  result=[]
+   |
+
+E701 Multiple statements on one line (colon)
+  --> /tmp/native-5000-progress-collector-v1/native_progress.py:89:24
+   |
+87 |  result=[]
+88 |  for pid in selected:
+89 |   if pid not in current: continue
+   |                        ^
+90 |   row=current[pid];SEEN.setdefault(pid,row.copy());result.append(row)
+91 |  return sorted(result,key=lambda r:r['pid'])
+   |
+
+E702 Multiple statements on one line (semicolon)
+  --> /tmp/native-5000-progress-collector-v1/native_progress.py:90:19
+   |
+88 |  for pid in selected:
+89 |   if pid not in current: continue
+90 |   row=current[pid];SEEN.setdefault(pid,row.copy());result.append(row)
+   |                   ^
+91 |  return sorted(result,key=lambda r:r['pid'])
+   |
+
+E702 Multiple statements on one line (semicolon)
+  --> /tmp/native-5000-progress-collector-v1/native_progress.py:90:51
+   |
+88 |  for pid in selected:
+89 |   if pid not in current: continue
+90 |   row=current[pid];SEEN.setdefault(pid,row.copy());result.append(row)
+   |                                                   ^
+91 |  return sorted(result,key=lambda r:r['pid'])
+   |
+
+E701 Multiple statements on one line (colon)
+  --> /tmp/native-5000-progress-collector-v1/native_progress.py:95:26
+   |
+93 | def effects():
+94 |  result=[]
+95 |  if not BASETEMP.exists(): return result
+   |                          ^
+96 |  for path in BASETEMP.iterdir():
+97 |   if not path.is_dir() or path.is_symlink(): continue
+   |
+
+E701 Multiple statements on one line (colon)
+  --> /tmp/native-5000-progress-collector-v1/native_progress.py:97:44
+   |
+95 |  if not BASETEMP.exists(): return result
+96 |  for path in BASETEMP.iterdir():
+97 |   if not path.is_dir() or path.is_symlink(): continue
+   |                                            ^
+98 |   names=[p.name for p in path.iterdir() if p.is_file()]
+99 |   result.append({'directory':str(path),'signed_effect_files':sum(n.startswith('signed-') and n.endswith('.json') for n in names),
+   |
+
+E702 Multiple statements on one line (semicolon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:106:30
+    |
+104 | def summarize(sample):
+105 |  global LAST_VECTOR,LAST_ADVANCED
+106 |  tasks=sample.get('tasks',[]);consumers=sample.get('consumers',[]);flows=sample.get('flows',[])
+    |                              ^
+107 |  source=sum(t['producer_position'] for t in tasks if t['operator_uid']=='source.documents')
+108 |  accepted=sum(c['completed_through'] for c in consumers)
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:106:67
+    |
+104 | def summarize(sample):
+105 |  global LAST_VECTOR,LAST_ADVANCED
+106 |  tasks=sample.get('tasks',[]);consumers=sample.get('consumers',[]);flows=sample.get('flows',[])
+    |                                                                   ^
+107 |  source=sum(t['producer_position'] for t in tasks if t['operator_uid']=='source.documents')
+108 |  accepted=sum(c['completed_through'] for c in consumers)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:111:24
+    |
+109 |  vector=(source,accepted,tuple((str(t['id']),t['task_state'],t['output_state'],t['physical_slot_released']) for t in tasks))
+110 |  now=time.monotonic()
+111 |  if vector!=LAST_VECTOR: LAST_VECTOR=vector;LAST_ADVANCED=now
+    |                        ^
+112 |  expected=sum(int(f['expected_count'] or 0) for f in flows)
+113 |  complete=(len(tasks)==4*len(flows) and bool(tasks) and all(t['output_state']=='COMPLETED' and t['task_state']=='COMPLETED' for t in …
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:111:44
+    |
+109 |  vector=(source,accepted,tuple((str(t['id']),t['task_state'],t['output_state'],t['physical_slot_released']) for t in tasks))
+110 |  now=time.monotonic()
+111 |  if vector!=LAST_VECTOR: LAST_VECTOR=vector;LAST_ADVANCED=now
+    |                                            ^
+112 |  expected=sum(int(f['expected_count'] or 0) for f in flows)
+113 |  complete=(len(tasks)==4*len(flows) and bool(tasks) and all(t['output_state']=='COMPLETED' and t['task_state']=='COMPLETED' for t in …
+    |
+
+E701 Multiple statements on one line (colon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:118:36
+    |
+116 |  terminal=bool(flows) and all(f['state_type'] in ('COMPLETED','FAILED','CANCELLED','CRASHED') for f in flows)
+117 |  label='NO_GRAPH_YET' if not flows else 'DATA_OR_LIFECYCLE_ADVANCING'
+118 |  if flows and now-LAST_ADVANCED>=30: label='NO_VECTOR_CHANGE_30S_CANDIDATE'
+    |                                    ^
+119 |  if all_data and not complete: label='DATA_ACCEPTED_EOF_OR_TASKS_PENDING'
+120 |  if all_data and complete and not terminal:
+    |
+
+E701 Multiple statements on one line (colon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:119:30
+    |
+117 |  label='NO_GRAPH_YET' if not flows else 'DATA_OR_LIFECYCLE_ADVANCING'
+118 |  if flows and now-LAST_ADVANCED>=30: label='NO_VECTOR_CHANGE_30S_CANDIDATE'
+119 |  if all_data and not complete: label='DATA_ACCEPTED_EOF_OR_TASKS_PENDING'
+    |                              ^
+120 |  if all_data and complete and not terminal:
+121 |   label='ALL_DATA_EOF_TASKS_DONE_SLOTS_HELD_CANDIDATE' if slots else 'ALL_DATA_EOF_TASKS_SLOTS_DONE_FLOW_PENDING_CANDIDATE'
+    |
+
+E701 Multiple statements on one line (colon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:122:13
+    |
+120 |  if all_data and complete and not terminal:
+121 |   label='ALL_DATA_EOF_TASKS_DONE_SLOTS_HELD_CANDIDATE' if slots else 'ALL_DATA_EOF_TASKS_SLOTS_DONE_FLOW_PENDING_CANDIDATE'
+122 |  if terminal: label='FLOW_TERMINAL'
+    |             ^
+123 |  return {'elapsed':round(now-STARTED,3),'phase_candidate':label,'expected_documents':expected,
+124 |   'source_accepted_positions':source,'consumer_accepted_sequences':accepted,
+    |
+
+E701 Multiple statements on one line (colon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:137:13
+    |
+135 |  connection=None
+136 |  try:
+137 |   if not raw: raise RuntimeError('No configured PostgreSQL connection URL')
+    |             ^
+138 |   parts=urlsplit(raw)
+139 |   database=parts.path.strip('/')+os.environ.get('NATIVE_PROGRESS_TEST_DB_SUFFIX','_tests_master')
+    |
+
+E701 Multiple statements on one line (colon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:142:32
+    |
+140 |   url=urlunsplit(('postgresql',parts.netloc,'/'+database,parts.query,parts.fragment))
+141 |   connection=await asyncpg.connect(url,timeout=2,server_settings={'application_name':'native-progress-observer','default_transaction_…
+142 |   for name,query in SQL.items(): result[name]=[dict(row) for row in await connection.fetch(query)]
+    |                                ^
+143 |  except Exception as error:
+144 |   result['observer_error']={'type':type(error).__name__,'message':str(error)[:240]}
+    |
+
+E701 Multiple statements on one line (colon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:146:28
+    |
+144 |   result['observer_error']={'type':type(error).__name__,'message':str(error)[:240]}
+145 |  finally:
+146 |   if connection is not None: await connection.close()
+    |                            ^
+147 |  result['summary']=summarize(result);SAMPLES+=1
+148 |  with (OUTPUT/'timeline.jsonl').open('a') as stream: stream.write(json.dumps(result,default=str)+'\n')
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:147:37
+    |
+145 |  finally:
+146 |   if connection is not None: await connection.close()
+147 |  result['summary']=summarize(result);SAMPLES+=1
+    |                                     ^
+148 |  with (OUTPUT/'timeline.jsonl').open('a') as stream: stream.write(json.dumps(result,default=str)+'\n')
+149 |  save('latest.json',result)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:148:52
+    |
+146 |   if connection is not None: await connection.close()
+147 |  result['summary']=summarize(result);SAMPLES+=1
+148 |  with (OUTPUT/'timeline.jsonl').open('a') as stream: stream.write(json.dumps(result,default=str)+'\n')
+    |                                                    ^
+149 |  save('latest.json',result)
+150 |  print('NATIVE_PROGRESS '+json.dumps(result['summary'],separators=(',',':')),flush=True)
+    |
+
+E701 Multiple statements on one line (colon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:155:7
+    |
+153 |  while not STOP.is_set():
+154 |   if not PAUSED.is_set():
+155 |    try: asyncio.run(sample('checkpoint' if REQUEST.is_set() else 'periodic'))
+    |       ^
+156 |    except Exception as error: save('collector-error.json',{'type':type(error).__name__,'message':str(error)[:240]})
+157 |   REQUEST.clear();DONE.set()
+    |
+
+E701 Multiple statements on one line (colon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:156:29
+    |
+154 |   if not PAUSED.is_set():
+155 |    try: asyncio.run(sample('checkpoint' if REQUEST.is_set() else 'periodic'))
+156 |    except Exception as error: save('collector-error.json',{'type':type(error).__name__,'message':str(error)[:240]})
+    |                             ^
+157 |   REQUEST.clear();DONE.set()
+158 |   STOP.wait(5)
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:157:18
+    |
+155 |    try: asyncio.run(sample('checkpoint' if REQUEST.is_set() else 'periodic'))
+156 |    except Exception as error: save('collector-error.json',{'type':type(error).__name__,'message':str(error)[:240]})
+157 |   REQUEST.clear();DONE.set()
+    |                  ^
+158 |   STOP.wait(5)
+159 |   if REQUEST.is_set(): continue
+    |
+
+E701 Multiple statements on one line (colon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:159:22
+    |
+157 |   REQUEST.clear();DONE.set()
+158 |   STOP.wait(5)
+159 |   if REQUEST.is_set(): continue
+    |                      ^
+160 |
+161 | def import_map(name):
+    |
+
+E702 Multiple statements on one line (semicolon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:182:14
+    |
+180 |  # Snapshot while fixtures and test DB still exist, then close the observer
+181 |  # connection before fixture DROP DATABASE. No client/server state mutation.
+182 |  DONE.clear();REQUEST.set()
+    |              ^
+183 |  deadline=time.monotonic()+8
+184 |  while not DONE.wait(.1) and time.monotonic()<deadline: pass
+    |
+
+E701 Multiple statements on one line (colon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:184:55
+    |
+182 |  DONE.clear();REQUEST.set()
+183 |  deadline=time.monotonic()+8
+184 |  while not DONE.wait(.1) and time.monotonic()<deadline: pass
+    |                                                       ^
+185 |  PAUSED.set()
+    |
+
+E701 Multiple statements on one line (colon)
+   --> /tmp/native-5000-progress-collector-v1/native_progress.py:191:23
+    |
+189 |  STOP.set()
+190 |  thread=getattr(session.config,'_native_progress_thread',None)
+191 |  if thread is not None: thread.join(timeout=10)
+    |                       ^
+192 |  import_map('imports-finish.json')
+193 |  current=processes()
+    |
+
+Found 30 errors (1 fixed, 29 remaining).
