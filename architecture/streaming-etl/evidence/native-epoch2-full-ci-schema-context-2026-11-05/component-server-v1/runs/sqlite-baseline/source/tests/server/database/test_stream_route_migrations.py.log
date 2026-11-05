@@ -1,0 +1,1027 @@
+"""Actual paired routed-record migrations and relational retention guarantees.
+
+All routed rows below are explicit DDL fixtures. Metadata seal is supported on
+both dialects; no routed mutation service or execution bypass is used.
+"""
+
+import hashlib
+from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any
+from uuid import UUID, uuid4
+
+import pytest
+import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from tests.server.database.test_migrations import _isolated_postgres_schema_changes
+from tests.server.models.test_stream_dags import dag_request
+
+from prefect._internal.stream_route_plan import (
+    canonical_route_json,
+    graph_routing_digest,
+    route_outcome_digest,
+    route_semantic_digest,
+)
+from prefect.server.database import PrefectDBInterface, orm_models
+from prefect.server.database.alembic_commands import alembic_downgrade, alembic_upgrade
+from prefect.server.models import flow_runs, stream_dags
+from prefect.server.schemas import core, states
+from prefect.server.schemas import stream_dags as topology
+from prefect.server.schemas.stream_routes import StreamDAGRouteOutcome
+from prefect.utilities.asyncutils import run_sync_in_worker_thread
+
+pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
+PREVIOUS = {"postgresql": "d8a3f76b2c90", "sqlite": "e9b4a87c3d01"}
+ROUTED_HEAD = {"postgresql": "f1c5b98d4e12", "sqlite": "02d6ca9e5f23"}
+
+
+@dataclass(frozen=True)
+class Chain:
+    plan: topology.StreamDAGPlan
+    payloads: dict[str, UUID]
+    payload_digests: dict[str, str]
+    references: dict[str, UUID]
+    receipts: dict[str, UUID]
+    consumers: dict[str, UUID]
+    completions: dict[str, UUID]
+
+
+async def ddl_chain(db: PrefectDBInterface, flow_run_id: UUID) -> Chain:
+    """Seed A→B→C→D with valid wire outcomes and real migrated FK parents."""
+    body = dag_request(flow_run_id, branch_p=1).model_dump(mode="json")
+    fourth = deepcopy(body["operators"][2])
+    fourth.update(operator_uid="D", task_name="branch-d", task_key="branch-d-key")
+    body["operators"].append(fourth)
+    body["edges"][1].update(
+        producer_operator_uid="B", edge_uid="B-C", exchange="forward"
+    )
+    body["edges"].append(
+        body["edges"][1]
+        | {
+            "producer_operator_uid": "C",
+            "consumer_operator_uid": "D",
+            "edge_uid": "C-D",
+            "subscriber_uid": "subscriber-D",
+        }
+    )
+    request = topology.StreamDAGSealRequest.model_validate(body)
+    payloads = {uid: uuid4() for uid in "ABCD"}
+    receipts = {uid: uuid4() for uid in "ABCD"}
+    references = {uid: uuid4() for uid in "BCD"}
+    completions = {uid: uuid4() for uid in "BCD"}
+    consumers: dict[str, UUID] = {}
+    digests: dict[str, str] = {}
+    async with db.session_context(begin_transaction=True) as session:
+        plan = await stream_dags.seal_dag_metadata(session, db, request)
+        tasks = {row.operator_uid: row for row in plan.subtasks}
+        operators = {row.operator_uid: row for row in plan.operators}
+        edges = {row.consumer_operator_uid: row for row in plan.edges}
+        owners = {uid: uuid4() for uid in "ABCD"}
+        for uid in "BCD":
+            subtask, operator, edge = tasks[uid], operators[uid], edges[uid]
+            part = edge.partitions[0]
+            assert operator.input_port is not None
+            consumers[uid] = part.subscriber_id
+            session.add(
+                db.StreamConsumer(
+                    id=part.subscriber_id,
+                    consumer_kind="DAG",
+                    graph_revision_id=plan.id,
+                    flow_run_id=flow_run_id,
+                    edge_partition_id=part.id,
+                    edge_id=edge.id,
+                    input_port_id=operator.input_port.id,
+                    subtask_id=subtask.id,
+                    task_run_id=subtask.manifest.task_run_id,
+                    subscriber_uid=edge.subscriber_uid,
+                    input_port_uid=operator.input_port.uid,
+                    input_stream_id=part.stream_id,
+                    output_stream_id=subtask.output_stream_id,
+                    owner_id=owners[uid],
+                    attempt=1,
+                    owner_epoch=1,
+                    completed_through=1,
+                    managed_state={"processed": 1},
+                )
+            )
+        await session.flush()
+        for index, uid in enumerate("ABCD"):
+            subtask = tasks[uid]
+            value = {"document": 200, "operator": uid}
+            encoded = canonical_route_json(value)
+            digests[uid] = hashlib.sha256(encoded).hexdigest()
+            session.add(
+                db.StreamRecord(
+                    id=payloads[uid],
+                    stream_id=subtask.output_stream_id,
+                    record_kind="PAYLOAD",
+                    graph_revision_id=plan.id,
+                    flow_run_id=flow_run_id,
+                    sequence=1,
+                    producer_position=1,
+                    value=value,
+                    value_digest=digests[uid],
+                    size_bytes=len(encoded),
+                )
+            )
+            await session.execute(
+                sa.update(db.StreamPartition)
+                .where(db.StreamPartition.id == subtask.output_stream_id)
+                .values(
+                    last_sequence=1,
+                    producer_position=1,
+                    record_count=1,
+                    byte_count=len(encoded),
+                    owner_id=owners[uid],
+                    attempt=1,
+                    owner_epoch=1,
+                )
+            )
+            await session.flush()
+            previous = "ABCD"[index - 1] if index else None
+            incoming = edges[uid].partitions[0] if previous else None
+            outgoing = edges["ABCD"[index + 1]] if index < 3 else None
+            state = {"processed": 1} if previous else None
+            semantic = route_semantic_digest(
+                {
+                    "graph_revision_id": str(plan.id),
+                    "operator_uid": uid,
+                    "producer_position": 1,
+                    "kind": "YIELD",
+                    "value": value,
+                    "state": state,
+                }
+            )
+            outcome = {
+                "receipt_id": receipts[uid],
+                "graph_revision_id": plan.id,
+                "routing_digest": graph_routing_digest(plan.graph_digest),
+                "semantic_digest": semantic,
+                "outcome_digest": "00" * 32,
+                "producer_stream_id": subtask.output_stream_id,
+                "producer_position": 1,
+                "producer_role": "OPERATOR" if previous else "SOURCE",
+                "kind": "YIELD",
+                "input_stream_id": incoming.stream_id if incoming else None,
+                "input_record_id": references[uid] if previous else None,
+                "input_payload_record_id": payloads[previous] if previous else None,
+                "input_payload_value_digest": digests[previous] if previous else None,
+                "input_sequence": 1 if previous else None,
+                "consumer_id": consumers[uid] if previous else None,
+                "producer_sequence": 1,
+                "output_ordinal": 0,
+                "payload_record_id": payloads[uid],
+                "payload_value_digest": digests[uid],
+                "payload_size_bytes": len(encoded),
+                "references": [
+                    {
+                        "edge_id": outgoing.id,
+                        "edge_partition_id": outgoing.partitions[0].id,
+                        "stream_id": outgoing.partitions[0].stream_id,
+                        "sequence": 1,
+                        "record_id": references["ABCD"[index + 1]],
+                        "payload_record_id": payloads[uid],
+                    }
+                ]
+                if outgoing
+                else [],
+            }
+            valid = StreamDAGRouteOutcome.model_validate(outcome).model_dump(
+                mode="json"
+            )
+            valid["outcome_digest"] = route_outcome_digest(valid)
+            StreamDAGRouteOutcome.model_validate(valid)
+            session.add(
+                db.StreamRouteReceipt(
+                    id=receipts[uid],
+                    graph_revision_id=plan.id,
+                    flow_run_id=flow_run_id,
+                    producer_subtask_id=subtask.id,
+                    producer_task_run_id=subtask.manifest.task_run_id,
+                    producer_stream_id=subtask.output_stream_id,
+                    producer_position=1,
+                    producer_sequence=1,
+                    producer_role=valid["producer_role"],
+                    kind="YIELD",
+                    routing_digest=valid["routing_digest"],
+                    semantic_digest=semantic,
+                    outcome_digest=valid["outcome_digest"],
+                    value_digest=digests[uid],
+                    managed_state_digest=hashlib.sha256(
+                        canonical_route_json(state)
+                    ).hexdigest()
+                    if previous
+                    else None,
+                    key_present=False,
+                    output_ordinal=0,
+                    payload_record_id=payloads[uid],
+                    payload_record_kind="PAYLOAD",
+                    input_stream_id=incoming.stream_id if incoming else None,
+                    input_reference_record_id=references[uid] if previous else None,
+                    input_reference_record_kind="REFERENCE" if previous else None,
+                    input_payload_record_id=payloads[previous] if previous else None,
+                    input_payload_record_kind="PAYLOAD" if previous else None,
+                    input_payload_value_digest=digests[previous] if previous else None,
+                    input_sequence=1 if previous else None,
+                    consumer_id=consumers[uid] if previous else None,
+                    outcome=valid,
+                    outcome_size=len(canonical_route_json(valid)),
+                )
+            )
+            await session.flush()
+            if previous:
+                session.add(
+                    db.StreamCompletion(
+                        id=completions[uid],
+                        consumer_id=consumers[uid],
+                        consumer_kind="DAG",
+                        route_receipt_id=receipts[uid],
+                        input_sequence=1,
+                        delivery_id=uuid4(),
+                        owner_epoch=1,
+                        kind="YIELD",
+                        intent_digest=semantic,
+                        output_sequence=1,
+                    )
+                )
+            if outgoing:
+                target = "ABCD"[index + 1]
+                part = outgoing.partitions[0]
+                session.add(
+                    db.StreamRecord(
+                        id=references[target],
+                        stream_id=part.stream_id,
+                        record_kind="REFERENCE",
+                        graph_revision_id=plan.id,
+                        flow_run_id=flow_run_id,
+                        payload_record_id=payloads[uid],
+                        payload_record_kind="PAYLOAD",
+                        payload_value_digest=digests[uid],
+                        route_receipt_id=receipts[uid],
+                        edge_partition_id=part.id,
+                        sequence=1,
+                        producer_position=1,
+                        value=None,
+                        value_digest=hashlib.sha256(b"null").hexdigest(),
+                        size_bytes=4,
+                    )
+                )
+                await session.execute(
+                    sa.update(db.StreamPartition)
+                    .where(db.StreamPartition.id == part.stream_id)
+                    .values(
+                        last_sequence=1,
+                        producer_position=1,
+                        record_count=1,
+                        byte_count=4,
+                    )
+                )
+            await session.flush()
+    return Chain(plan, payloads, digests, references, receipts, consumers, completions)
+
+
+async def data_snapshot(db: PrefectDBInterface) -> dict[str, list[dict[str, Any]]]:
+    async with db.session_context() as session:
+        result: dict[str, list[dict[str, Any]]] = {}
+        for model in (
+            db.StreamRecord,
+            db.StreamConsumer,
+            db.StreamCompletion,
+            db.StreamRouteReceipt,
+            db.StreamPartition,
+        ):
+            rows = await session.execute(sa.select(model.__table__).order_by(model.id))
+            result[model.__tablename__] = [dict(row) for row in rows.mappings()]
+        return result
+
+
+def assert_fk(error: IntegrityError, db: PrefectDBInterface, *names: str) -> None:
+    if db.dialect.name == "postgresql":
+        assert any(name in str(error.orig) for name in names), str(error.orig)
+    else:
+        assert "FOREIGN KEY constraint failed" in str(error.orig)
+
+
+async def test_three_hop_ddl_fixture_has_committed_direct_payloads_and_receipts(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+):
+    chain = await ddl_chain(db, flow_run.id)
+    snapshot = await data_snapshot(db)
+    assert len(snapshot["stream_record"]) == 7
+    assert len(snapshot["stream_route_receipt"]) == 4
+    assert len(snapshot["stream_consumer"]) == len(snapshot["stream_completion"]) == 3
+    assert {
+        row["payload_record_id"]
+        for row in snapshot["stream_record"]
+        if row["record_kind"] == "REFERENCE"
+    } == {chain.payloads[uid] for uid in "ABC"}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "payload-digest",
+        "receipt-payload",
+        "edge-partition",
+        "subscriber-port",
+        "input-port-uid",
+        "completion-intent",
+    ],
+)
+async def test_routed_composite_foreign_keys_reject_single_coordinate_corruption(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun, case: str
+):
+    chain = await ddl_chain(db, flow_run.id)
+    baseline = await data_snapshot(db)
+    choices = {
+        "payload-digest": (
+            db.StreamRecord,
+            chain.references["B"],
+            {"payload_value_digest": "ff" * 32},
+            "fk_stream_record__direct_payload",
+        ),
+        "receipt-payload": (
+            db.StreamRecord,
+            chain.references["B"],
+            {"route_receipt_id": chain.receipts["C"]},
+            "fk_stream_record__route_receipt_payload",
+        ),
+        "edge-partition": (
+            db.StreamRecord,
+            chain.references["B"],
+            {"edge_partition_id": chain.plan.edges[1].partitions[0].id},
+            "fk_stream_record__edge_partition",
+        ),
+        "subscriber-port": (
+            db.StreamConsumer,
+            chain.consumers["B"],
+            {"subscriber_uid": "other-subscriber"},
+            "fk_stream_consumer__edge_subscriber_port",
+        ),
+        "input-port-uid": (
+            db.StreamConsumer,
+            chain.consumers["B"],
+            {"input_port_uid": "other-port"},
+            "fk_stream_consumer__input_port_uid",
+        ),
+        "completion-intent": (
+            db.StreamCompletion,
+            chain.completions["B"],
+            {"intent_digest": "ff" * 32},
+            "fk_stream_completion__route_receipt",
+        ),
+    }
+    model, identity, change, constraint = choices[case]
+    with pytest.raises(IntegrityError) as rejected:
+        async with db.session_context(begin_transaction=True) as session:
+            await session.execute(
+                sa.update(model).where(model.id == identity).values(**change)
+            )
+    assert_fk(rejected.value, db, constraint)
+    assert await data_snapshot(db) == baseline
+
+
+@pytest.mark.parametrize("case", ["missing-reference", "changed-reference-payload"])
+async def test_deferred_input_reference_cannot_commit_partial_history(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun, case: str
+):
+    chain = await ddl_chain(db, flow_run.id)
+    baseline = await data_snapshot(db)
+    marker = uuid4()
+    flushed = False
+    with pytest.raises(IntegrityError) as rejected:
+        async with db.session_context(begin_transaction=True) as session:
+            session.add(
+                db.StreamPartition(id=marker, flow_run_id=flow_run.id, limits={})
+            )
+            if case == "missing-reference":
+                await session.execute(
+                    sa.delete(db.StreamRecord).where(
+                        db.StreamRecord.id == chain.references["C"]
+                    )
+                )
+            else:
+                await session.execute(
+                    sa.update(db.StreamRouteReceipt)
+                    .where(db.StreamRouteReceipt.id == chain.receipts["C"])
+                    .values(
+                        input_payload_record_id=chain.payloads["A"],
+                        input_payload_value_digest=chain.payload_digests["A"],
+                    )
+                )
+            await session.flush()
+            flushed = True
+    assert flushed, "The input REFERENCE FK must defer until transaction commit"
+    assert_fk(rejected.value, db, "fk_stream_route_receipt__input_reference")
+    assert await data_snapshot(db) == baseline
+
+
+@pytest.mark.parametrize("case", ["output-payload", "input-payload"])
+async def test_payload_pins_are_immediate_even_while_input_references_are_deferred(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun, case: str
+):
+    chain = await ddl_chain(db, flow_run.id)
+    baseline = await data_snapshot(db)
+    with pytest.raises(IntegrityError) as rejected:
+        async with db.session_context(begin_transaction=True) as session:
+            if case == "input-payload":
+                await session.execute(
+                    sa.delete(db.StreamRecord).where(
+                        db.StreamRecord.id == chain.references["B"]
+                    )
+                )
+                await session.execute(
+                    sa.delete(db.StreamRouteReceipt).where(
+                        db.StreamRouteReceipt.id == chain.receipts["A"]
+                    )
+                )
+            await session.execute(
+                sa.delete(db.StreamRecord).where(
+                    db.StreamRecord.id
+                    == chain.payloads["A" if case == "input-payload" else "D"]
+                )
+            )
+            pytest.fail("A payload pin must reject the DELETE before commit")
+    assert_fk(
+        rejected.value,
+        db,
+        "fk_stream_route_receipt__"
+        + ("input_payload" if case == "input-payload" else "output_payload"),
+    )
+    assert await data_snapshot(db) == baseline
+
+
+async def ordered_cleanup(session: AsyncSession, db: PrefectDBInterface) -> None:
+    await session.execute(
+        sa.delete(db.StreamRecord).where(db.StreamRecord.record_kind == "REFERENCE")
+    )
+    await session.execute(sa.delete(db.StreamCompletion))
+    await session.execute(sa.delete(db.StreamRouteReceipt))
+    await session.execute(sa.delete(db.StreamConsumer))
+    await session.execute(
+        sa.delete(db.StreamRecord).where(db.StreamRecord.record_kind == "PAYLOAD")
+    )
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+async def test_three_hop_cleanup_is_one_ordered_atomic_transaction(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun, rollback: bool
+):
+    await ddl_chain(db, flow_run.id)
+    baseline = await data_snapshot(db)
+
+    class InjectedCleanupRollback(Exception):
+        pass
+
+    try:
+        async with db.session_context(begin_transaction=True) as session:
+            # The production cleanup owns the whole Flow before descendants.
+            await session.execute(
+                sa.select(db.FlowRun.id)
+                .where(db.FlowRun.id == flow_run.id)
+                .with_for_update()
+            )
+            await ordered_cleanup(session, db)
+            for model in (
+                db.StreamRecord,
+                db.StreamCompletion,
+                db.StreamRouteReceipt,
+                db.StreamConsumer,
+            ):
+                assert (
+                    await session.scalar(sa.select(sa.func.count()).select_from(model))
+                    == 0
+                )
+            if rollback:
+                raise InjectedCleanupRollback
+    except InjectedCleanupRollback:
+        assert rollback
+    if rollback:
+        assert await data_snapshot(db) == baseline
+    else:
+        remaining = await data_snapshot(db)
+        assert all(
+            not remaining[name]
+            for name in (
+                "stream_record",
+                "stream_completion",
+                "stream_route_receipt",
+                "stream_consumer",
+            )
+        )
+
+
+async def test_migrated_schema_has_exact_scoped_composites_and_one_deferred_fk(
+    db: PrefectDBInterface, database_engine: AsyncEngine
+):
+    expected = {
+        "stream_record": {
+            "fk_stream_record__direct_payload": (
+                [
+                    "payload_record_id",
+                    "graph_revision_id",
+                    "payload_record_kind",
+                    "payload_value_digest",
+                ],
+                "stream_record",
+                ["id", "graph_revision_id", "record_kind", "value_digest"],
+            ),
+            "fk_stream_record__route_receipt_payload": (
+                ["route_receipt_id", "graph_revision_id", "payload_record_id"],
+                "stream_route_receipt",
+                ["id", "graph_revision_id", "payload_record_id"],
+            ),
+            "fk_stream_record__edge_partition": (
+                ["edge_partition_id", "stream_id", "graph_revision_id"],
+                "stream_graph_edge_partition",
+                ["id", "stream_id", "graph_revision_id"],
+            ),
+        },
+        "stream_consumer": {
+            "fk_stream_consumer__stable_subscriber": (
+                [
+                    "edge_partition_id",
+                    "graph_revision_id",
+                    "edge_id",
+                    "subtask_id",
+                    "input_stream_id",
+                    "id",
+                ],
+                "stream_graph_edge_partition",
+                [
+                    "id",
+                    "graph_revision_id",
+                    "edge_id",
+                    "target_subtask_id",
+                    "stream_id",
+                    "subscriber_id",
+                ],
+            ),
+            "fk_stream_consumer__current_dag_task": (
+                ["subtask_id", "graph_revision_id", "task_run_id", "output_stream_id"],
+                "stream_physical_subtask",
+                ["id", "graph_revision_id", "task_run_id", "output_stream_id"],
+            ),
+            "fk_stream_consumer__edge_subscriber_port": (
+                ["edge_id", "graph_revision_id", "subscriber_uid", "input_port_id"],
+                "stream_graph_edge",
+                ["id", "graph_revision_id", "subscriber_uid", "consumer_port_id"],
+            ),
+            "fk_stream_consumer__input_port_uid": (
+                ["input_port_id", "graph_revision_id", "input_port_uid"],
+                "stream_graph_port",
+                ["id", "graph_revision_id", "port_uid"],
+            ),
+        },
+        "stream_route_receipt": {
+            "fk_stream_route_receipt__stable_consumer": (
+                [
+                    "consumer_id",
+                    "graph_revision_id",
+                    "producer_subtask_id",
+                    "producer_task_run_id",
+                    "input_stream_id",
+                    "producer_stream_id",
+                ],
+                "stream_consumer",
+                [
+                    "id",
+                    "graph_revision_id",
+                    "subtask_id",
+                    "task_run_id",
+                    "input_stream_id",
+                    "output_stream_id",
+                ],
+            ),
+            "fk_stream_route_receipt__input_reference": (
+                [
+                    "input_reference_record_id",
+                    "graph_revision_id",
+                    "input_reference_record_kind",
+                    "input_payload_record_id",
+                ],
+                "stream_record",
+                ["id", "graph_revision_id", "record_kind", "payload_record_id"],
+            ),
+            "fk_stream_route_receipt__output_payload": (
+                [
+                    "payload_record_id",
+                    "graph_revision_id",
+                    "payload_record_kind",
+                    "value_digest",
+                ],
+                "stream_record",
+                ["id", "graph_revision_id", "record_kind", "value_digest"],
+            ),
+            "fk_stream_route_receipt__input_payload": (
+                [
+                    "input_payload_record_id",
+                    "graph_revision_id",
+                    "input_payload_record_kind",
+                    "input_payload_value_digest",
+                ],
+                "stream_record",
+                ["id", "graph_revision_id", "record_kind", "value_digest"],
+            ),
+        },
+        "stream_completion": {
+            "fk_stream_completion__consumer_kind": (
+                ["consumer_id", "consumer_kind"],
+                "stream_consumer",
+                ["id", "consumer_kind"],
+            ),
+            "fk_stream_completion__route_receipt": (
+                [
+                    "route_receipt_id",
+                    "consumer_id",
+                    "input_sequence",
+                    "kind",
+                    "intent_digest",
+                ],
+                "stream_route_receipt",
+                ["id", "consumer_id", "input_sequence", "kind", "semantic_digest"],
+            ),
+        },
+    }
+    deferred = []
+    async with database_engine.connect() as connection:
+        if db.dialect.name == "sqlite":
+            assert await connection.scalar(sa.text("PRAGMA foreign_keys")) == 1
+        for table, constraints in expected.items():
+            reflected = await connection.run_sync(
+                lambda sync, name=table: sa.inspect(sync).get_foreign_keys(name)
+            )
+            by_name = {row["name"]: row for row in reflected}
+            for name, (columns, target, target_columns) in constraints.items():
+                row = by_name[name]
+                assert row["constrained_columns"] == columns
+                assert row["referred_table"] == target
+                assert row["referred_columns"] == target_columns
+                if name in {
+                    "fk_stream_record__direct_payload",
+                    "fk_stream_record__route_receipt_payload",
+                    "fk_stream_record__edge_partition",
+                    "fk_stream_route_receipt__output_payload",
+                    "fk_stream_route_receipt__input_payload",
+                    "fk_stream_completion__route_receipt",
+                }:
+                    assert row["options"]["ondelete"].upper() == "RESTRICT"
+            for row in reflected:
+                if row["options"].get("deferrable"):
+                    assert row["options"].get("initially", "").upper() == "DEFERRED"
+                    deferred.append((table, row["name"]))
+        assert deferred == [
+            ("stream_route_receipt", "fk_stream_route_receipt__input_reference")
+        ]
+        required_checks = {
+            "stream_record": {
+                "ck_stream_record__graph_flow_shape_valid",
+                "ck_stream_record__record_reference_shape_valid",
+            },
+            "stream_consumer": {"ck_stream_consumer__dag_subscriber_shape_valid"},
+            "stream_completion": {"ck_stream_completion__route_receipt_shape_valid"},
+            "stream_route_receipt": {
+                "ck_stream_route_receipt__terminal_shape_valid",
+                "ck_stream_route_receipt__input_shape_valid",
+                "ck_stream_route_receipt__key_shape_valid",
+            },
+        }
+        for table, names in required_checks.items():
+            checks = await connection.run_sync(
+                lambda sync, name=table: sa.inspect(sync).get_check_constraints(name)
+            )
+            assert names <= {row["name"] for row in checks}
+
+
+@pytest.mark.parametrize("case", ["reference-kind", "receipt-payload-kind"])
+async def test_reference_links_cannot_be_relabelled_as_reference_chains(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun, case: str
+):
+    chain = await ddl_chain(db, flow_run.id)
+    baseline = await data_snapshot(db)
+    with pytest.raises(IntegrityError) as rejected:
+        async with db.session_context(begin_transaction=True) as session:
+            if case == "reference-kind":
+                await session.execute(
+                    sa.update(db.StreamRecord)
+                    .where(db.StreamRecord.id == chain.references["B"])
+                    .values(payload_record_kind="REFERENCE")
+                )
+            else:
+                await session.execute(
+                    sa.update(db.StreamRouteReceipt)
+                    .where(db.StreamRouteReceipt.id == chain.receipts["A"])
+                    .values(payload_record_kind="REFERENCE")
+                )
+    name = (
+        "ck_stream_record__record_reference_shape_valid"
+        if case == "reference-kind"
+        else "ck_stream_route_receipt__terminal_shape_valid"
+    )
+    assert name in str(rejected.value.orig)
+    assert await data_snapshot(db) == baseline
+
+
+@pytest.mark.parametrize("case", ["graph-flow", "partition-flow"])
+async def test_record_composites_refuse_a_real_foreign_flow_partition(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun, case: str
+):
+    chain = await ddl_chain(db, flow_run.id)
+    async with db.session_context(begin_transaction=True) as session:
+        foreign = await flow_runs.create_flow_run(
+            session=session,
+            flow_run=core.FlowRun(flow_id=flow_run.flow_id, state=states.Pending()),
+        )
+        partition = db.StreamPartition(flow_run_id=foreign.id, limits={})
+        session.add(partition)
+        await session.flush()
+        foreign_id, partition_id = foreign.id, partition.id
+    baseline = await data_snapshot(db)
+    with pytest.raises(IntegrityError) as rejected:
+        async with db.session_context(begin_transaction=True) as session:
+            session.add(
+                db.StreamRecord(
+                    stream_id=partition_id,
+                    graph_revision_id=chain.plan.id,
+                    flow_run_id=foreign_id if case == "graph-flow" else flow_run.id,
+                    record_kind="PAYLOAD",
+                    sequence=1,
+                    producer_position=1,
+                    value=None,
+                    value_digest=hashlib.sha256(b"null").hexdigest(),
+                    size_bytes=4,
+                )
+            )
+            await session.flush()
+    assert_fk(
+        rejected.value,
+        db,
+        "fk_stream_record__"
+        + ("graph_flow" if case == "graph-flow" else "partition_flow"),
+    )
+    assert await data_snapshot(db) == baseline
+
+
+async def legacy_snapshot(engine: AsyncEngine) -> dict[str, list[dict[str, Any]]]:
+    queries = {
+        "records": "SELECT id, stream_id, sequence, producer_position, CAST(value AS TEXT) AS value_text, value_digest, size_bytes, created, updated FROM stream_record ORDER BY id",
+        "consumers": "SELECT id, flow_run_id, input_stream_id, output_stream_id, owner_id, attempt, owner_epoch, completed_through, CAST(managed_state AS TEXT) AS state_text, inflight_sequence, delivery_id, created, updated FROM stream_consumer ORDER BY id",
+        "completions": "SELECT id, consumer_id, input_sequence, delivery_id, owner_epoch, kind, intent_digest, output_sequence, created, updated FROM stream_completion ORDER BY id",
+    }
+    async with engine.connect() as connection:
+        result: dict[str, list[dict[str, Any]]] = {}
+        for name, query in queries.items():
+            rows = await connection.execute(sa.text(query))
+            result[name] = [dict(row) for row in rows.mappings()]
+        return result
+
+
+async def seed_legacy_predecessor(engine: AsyncEngine, flow_run_id: UUID) -> None:
+    input_id, output_id, consumer_id = uuid4(), uuid4(), uuid4()
+    owner_id = uuid4()
+    value = canonical_route_json(
+        {"signed_zero": -0.0, "big": 9007199254740993, "unicode": "Аня", "null": None}
+    ).decode()
+    state = canonical_route_json({"signed_zero": -0.0, "processed": 1}).decode()
+    json_value = (
+        "CAST(:value AS JSON)" if engine.dialect.name == "postgresql" else ":value"
+    )
+    json_state = (
+        "CAST(:state AS JSON)" if engine.dialect.name == "postgresql" else ":state"
+    )
+    async with engine.begin() as connection:
+        for stream_id, kind, encoded in (
+            (input_id, "SOURCE", value),
+            (output_id, "CONSUMER", "null"),
+        ):
+            await connection.execute(
+                sa.text(
+                    "INSERT INTO stream_partition (id, flow_run_id, protocol_version, state, last_sequence, producer_position, producer_kind, producer_task_run_id, owner_id, attempt, owner_epoch, limits, record_count, byte_count, released) "
+                    "VALUES (:id, :flow, 1, 'OPEN', 1, 1, :kind, :task, :owner, 1, 1, '{}', 1, :size, false)"
+                ),
+                {
+                    "id": str(stream_id),
+                    "flow": str(flow_run_id),
+                    "kind": kind,
+                    "task": str(consumer_id if kind == "CONSUMER" else uuid4()),
+                    "owner": str(owner_id),
+                    "size": len(encoded.encode()),
+                },
+            )
+            await connection.execute(
+                sa.text(
+                    "INSERT INTO stream_record (id, stream_id, sequence, producer_position, value, value_digest, size_bytes) "
+                    f"VALUES (:id, :stream, 1, 1, {json_value}, :digest, :size)"
+                ),
+                {
+                    "id": str(uuid4()),
+                    "stream": str(stream_id),
+                    "value": encoded,
+                    "digest": hashlib.sha256(encoded.encode()).hexdigest(),
+                    "size": len(encoded.encode()),
+                },
+            )
+        await connection.execute(
+            sa.text(
+                "INSERT INTO stream_consumer (id, flow_run_id, input_stream_id, output_stream_id, owner_id, attempt, owner_epoch, completed_through, managed_state) "
+                f"VALUES (:id, :flow, :input, :output, :owner, 1, 1, 1, {json_state})"
+            ),
+            {
+                "id": str(consumer_id),
+                "flow": str(flow_run_id),
+                "input": str(input_id),
+                "output": str(output_id),
+                "owner": str(owner_id),
+                "state": state,
+            },
+        )
+        await connection.execute(
+            sa.text(
+                "INSERT INTO stream_completion (id, consumer_id, input_sequence, delivery_id, owner_epoch, kind, intent_digest, output_sequence) "
+                "VALUES (:id, :consumer, 1, :delivery, 1, 'YIELD', :digest, 1)"
+            ),
+            {
+                "id": str(uuid4()),
+                "consumer": str(consumer_id),
+                "delivery": str(uuid4()),
+                "digest": "ab" * 32,
+            },
+        )
+
+
+async def test_explicit_ni010_upgrade_downgrade_preserves_legacy_payload_cursor_and_completion_bytes(
+    db: PrefectDBInterface, database_engine: AsyncEngine, flow_run: orm_models.FlowRun
+):
+    async with _isolated_postgres_schema_changes(db, database_engine):
+        await database_engine.dispose()
+        try:
+            await run_sync_in_worker_thread(
+                alembic_downgrade, PREVIOUS[db.dialect.name]
+            )
+            await database_engine.dispose()
+            await seed_legacy_predecessor(database_engine, flow_run.id)
+            before = await legacy_snapshot(database_engine)
+            assert (
+                len(before["records"]) == 2
+                and len(before["consumers"]) == len(before["completions"]) == 1
+            )
+            assert any(
+                '"signed_zero":-0.0' in row["value_text"] for row in before["records"]
+            )
+            assert any(row["value_text"] == "null" for row in before["records"])
+            await run_sync_in_worker_thread(
+                alembic_upgrade, ROUTED_HEAD[db.dialect.name]
+            )
+            await database_engine.dispose()
+            assert await legacy_snapshot(database_engine) == before
+            async with database_engine.connect() as connection:
+                assert (
+                    await connection.scalar(
+                        sa.text(
+                            "SELECT COUNT(*) FROM stream_record WHERE record_kind='PAYLOAD' AND graph_revision_id IS NULL AND payload_record_id IS NULL"
+                        )
+                    )
+                    == 2
+                )
+                assert (
+                    await connection.scalar(
+                        sa.text(
+                            "SELECT COUNT(*) FROM stream_record WHERE value IS NULL"
+                        )
+                    )
+                    == 0
+                )
+                assert (
+                    await connection.scalar(
+                        sa.text(
+                            "SELECT COUNT(*) FROM stream_consumer WHERE consumer_kind='LEGACY' AND graph_revision_id IS NULL"
+                        )
+                    )
+                    == 1
+                )
+                assert (
+                    await connection.scalar(
+                        sa.text(
+                            "SELECT COUNT(*) FROM stream_completion WHERE consumer_kind='LEGACY' AND route_receipt_id IS NULL"
+                        )
+                    )
+                    == 1
+                )
+            await run_sync_in_worker_thread(
+                alembic_downgrade, PREVIOUS[db.dialect.name]
+            )
+            await database_engine.dispose()
+            assert await legacy_snapshot(database_engine) == before
+        finally:
+            await run_sync_in_worker_thread(alembic_upgrade, "head")
+            await database_engine.dispose()
+        assert await legacy_snapshot(database_engine) == before
+
+
+async def test_metadata_only_dag_roundtrips_to_ni010_without_losing_topology(
+    db: PrefectDBInterface, database_engine: AsyncEngine, flow_run: orm_models.FlowRun
+):
+    async with db.session_context(begin_transaction=True) as session:
+        plan = await stream_dags.seal_dag_metadata(
+            session, db, dag_request(flow_run.id)
+        )
+    async with _isolated_postgres_schema_changes(db, database_engine):
+        await database_engine.dispose()
+        try:
+            await run_sync_in_worker_thread(
+                alembic_downgrade, PREVIOUS[db.dialect.name]
+            )
+            await database_engine.dispose()
+            async with database_engine.connect() as connection:
+                assert (
+                    await connection.scalar(
+                        sa.text(
+                            "SELECT COUNT(*) FROM stream_physical_subtask WHERE graph_revision_id=:id"
+                        ),
+                        {"id": str(plan.id)},
+                    )
+                    == 4
+                )
+                assert (
+                    await connection.scalar(
+                        sa.text(
+                            "SELECT graph_digest FROM stream_graph_revision WHERE id=:id"
+                        ),
+                        {"id": str(plan.id)},
+                    )
+                    == plan.graph_digest
+                )
+        finally:
+            await run_sync_in_worker_thread(alembic_upgrade, "head")
+            await database_engine.dispose()
+    async with db.session_context(begin_transaction=True) as session:
+        after = await stream_dags.read_dag_plan(
+            session, db, plan.id, metadata_only=True
+        )
+    assert after.model_dump(mode="json") == plan.model_dump(mode="json")
+
+
+@pytest.mark.parametrize(
+    "history", ["receipts-and-references", "retained-cursor-horizon", "graph-payload"]
+)
+async def test_downgrade_refuses_routed_and_retained_horizon_history_and_restores_head(
+    db: PrefectDBInterface,
+    database_engine: AsyncEngine,
+    flow_run: orm_models.FlowRun,
+    history: str,
+):
+    chain = await ddl_chain(db, flow_run.id)
+    if history != "receipts-and-references":
+        original = await data_snapshot(db)
+        consumer = next(
+            row
+            for row in original["stream_consumer"]
+            if row["id"] == chain.consumers["B"]
+        )
+        async with db.session_context(begin_transaction=True) as session:
+            await ordered_cleanup(session, db)
+            await session.execute(
+                sa.update(db.StreamPartition)
+                .where(db.StreamPartition.flow_run_id == flow_run.id)
+                .values(
+                    state="COMPLETED",
+                    tail_sequence=1,
+                    released=True,
+                    record_count=0,
+                    byte_count=0,
+                )
+            )
+            if history == "retained-cursor-horizon":
+                session.add(db.StreamConsumer(**consumer))
+            else:
+                source = next(
+                    row for row in chain.plan.subtasks if row.operator_uid == "A"
+                )
+                session.add(
+                    db.StreamRecord(
+                        stream_id=source.output_stream_id,
+                        graph_revision_id=chain.plan.id,
+                        flow_run_id=flow_run.id,
+                        record_kind="PAYLOAD",
+                        sequence=1,
+                        producer_position=1,
+                        value=None,
+                        value_digest=hashlib.sha256(b"null").hexdigest(),
+                        size_bytes=4,
+                    )
+                )
+    baseline = await data_snapshot(db)
+    async with _isolated_postgres_schema_changes(db, database_engine):
+        await database_engine.dispose()
+        try:
+            with pytest.raises(
+                RuntimeError, match="Cannot downgrade durable DAG routed"
+            ):
+                await run_sync_in_worker_thread(
+                    alembic_downgrade, PREVIOUS[db.dialect.name]
+                )
+        finally:
+            await run_sync_in_worker_thread(alembic_upgrade, "head")
+            await database_engine.dispose()
+    assert await data_snapshot(db) == baseline
