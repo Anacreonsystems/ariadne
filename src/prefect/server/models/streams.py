@@ -21,6 +21,7 @@ from prefect.server.database import PrefectDBInterface, orm_models
 from prefect.server.models import task_runs as task_run_models
 from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.models.stream_executions import require_execution
+from prefect.server.models.stream_route_legacy import guard_legacy_stream_prefix
 from prefect.server.models.stream_subtask_authority import (
     release_allocations,
     release_terminal_allocation,
@@ -1774,6 +1775,9 @@ class NativeStreamStore:
     async def read_prefix(self, stream_id: UUID, limit: int) -> list[StreamEnvelope]:
         _attempt(limit)
         async with self._session() as session:
+            await guard_legacy_stream_prefix(
+                session, self.db, stream_id, self.execution
+            )
             stream = (await self._streams(session, [stream_id]))[stream_id]
             limits = StreamLimits.model_validate(stream.limits)
             if limit > limits.max_prefix_records:

@@ -212,6 +212,10 @@ class PrefectDBInterface(metaclass=DBSingleton):
         return orm_models.StreamCompletion
 
     @property
+    def StreamRouteReceipt(self) -> type[orm_models.StreamRouteReceipt]:
+        return orm_models.StreamRouteReceipt
+
+    @property
     def StreamSubmission(self) -> type[orm_models.StreamSubmission]:
         """An immutable native stream submission manifest orm model"""
         return orm_models.StreamSubmission

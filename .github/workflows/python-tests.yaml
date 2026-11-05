@@ -159,6 +159,9 @@ jobs:
               tests/test_stream_routing.py
               tests/test_stream_partitioned_runtime.py
               tests/test_stream_graph_contracts.py
+              tests/test_stream_key_wire.py
+              tests/test_stream_route_terminals.py
+              tests/test_stream_route_plan.py
               tests/test_stream_dag_authoring.py
               tests/test_stream_dag_dependencies.py
               tests/test_native_partitioned_stream_http.py
@@ -261,6 +264,9 @@ jobs:
                 tests/test_stream_routing.py
                 tests/test_stream_partitioned_runtime.py
                 tests/test_stream_graph_contracts.py
+                tests/test_stream_key_wire.py
+                tests/test_stream_route_terminals.py
+                tests/test_stream_route_plan.py
                 tests/test_stream_dag_authoring.py
                 tests/test_stream_dag_dependencies.py
                 tests/test_native_partitioned_stream_http.py
@@ -512,7 +518,7 @@ jobs:
           config = json.loads(Path("pyrightconfig-native-physical.json").read_text())
           included = config["include"]
           assert config["ignore"] == []
-          assert len(included) == len(set(included)) == 12
+          assert len(included) == len(set(included)) == 17
           assert all(Path(path).is_file() for path in included)
           report = json.loads(Path("native-physical-types.json").read_text())
           assert report["summary"]["filesAnalyzed"] == len(included), report["summary"]
@@ -523,8 +529,13 @@ jobs:
           uv run pytest tests/client/test_stream_subtasks.py
           tests/client/test_stream_worker_subtasks.py
           tests/client/test_stream_dags.py
+          tests/client/test_stream_routes.py
+          tests/server/schemas/test_stream_routes.py
           tests/test_stream_partitioned_runtime.py
           tests/test_stream_graph_contracts.py
+          tests/test_stream_key_wire.py
+          tests/test_stream_route_terminals.py
+          tests/test_stream_route_plan.py
           tests/test_stream_dag_authoring.py
           tests/test_stream_dag_dependencies.py
           -q --junitxml=native-physical-contract.xml
@@ -540,6 +551,10 @@ jobs:
           tests/server/api/test_stream_dags.py
           tests/server/api/test_stream_dag_execution_fences.py
           tests/server/database/test_stream_dag_migrations.py
+          tests/server/models/test_stream_routes.py
+          tests/server/api/test_stream_routes.py
+          tests/server/api/test_stream_route_prefix_fences.py
+          tests/server/database/test_stream_route_migrations.py
           tests/test_native_dag_client_http.py
           tests/test_native_stream_dag_http.py
           tests/workers/test_stream_subtasks.py
@@ -556,6 +571,10 @@ jobs:
           tests/server/api/test_stream_dags.py
           tests/server/api/test_stream_dag_execution_fences.py
           tests/server/database/test_stream_dag_migrations.py
+          tests/server/models/test_stream_routes.py
+          tests/server/api/test_stream_routes.py
+          tests/server/api/test_stream_route_prefix_fences.py
+          tests/server/database/test_stream_route_migrations.py
           tests/test_native_dag_client_http.py
           -k 'not (test_child_http_scope_events_and_no_basic_or_anonymous_escape
           or test_csrf_enabled_scoped_transport_is_exactly_exempt

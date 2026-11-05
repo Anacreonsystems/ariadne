@@ -200,14 +200,25 @@ async def test_dag_validation_redacts_input_secrets(
     assert secret not in response.text
 
 
-async def test_dag_surface_exposes_only_seal_and_read(dag_api: httpx.AsyncClient):
+async def test_dag_surface_contains_only_metadata_and_fenced_terminal_routes(
+    dag_api: httpx.AsyncClient,
+):
     response = await dag_api.get("/openapi.json")
     assert response.status_code == 200, response.text
     paths = response.json()["paths"]
     assert {path for path in paths if path.startswith("/streams/v2/dags")} == {
         "/streams/v2/dags/seal",
         "/streams/v2/dags/{graph_id}",
+        "/streams/v2/dags/sources/append",
+        "/streams/v2/dags/consumers/complete",
     }
+    for path, method in (
+        ("/streams/v2/dags/seal", "post"),
+        ("/streams/v2/dags/{graph_id}", "get"),
+        ("/streams/v2/dags/sources/append", "post"),
+        ("/streams/v2/dags/consumers/complete", "post"),
+    ):
+        assert set(paths[path]) == {method}
     for path in ("/streams/v2/dags/seal", "/streams/v2/dags/{graph_id}"):
         for operation in paths[path].values():
             assert all(
