@@ -1,0 +1,18 @@
+import ast
+from pathlib import Path
+
+def span(t,name):
+ tree=ast.parse(t)
+ f=next(x for x in tree.body if isinstance(x,ast.AsyncFunctionDef) and x.name==name)
+ lines=t.splitlines(keepends=True)
+ return sum(map(len,lines[:f.lineno-1])),sum(map(len,lines[:f.end_lineno]))
+
+p=Path('src/prefect/server/models/native_deployments.py');t=p.read_text();at=t.index('from prefect.server.orchestration');t=t[:at]+'from prefect.server.models.stream_subtask_authority import require_no_assigned_physical_slots, require_bounded_flow_recovery\n'+t[at:]
+a,b=span(t,'recovery_candidates');part=t[a:b].replace('db.NativeStreamDeploymentSnapshot.state == "ACTIVE",','db.NativeStreamDeploymentSnapshot.state == "ACTIVE",\n                db.NativeStreamDeploymentSnapshot.profile == "bounded-linear-v1",',1);t=t[:a]+part+t[b:]
+for name in ['authorize_replacement','confirm_replacement','retire_verified_dead_launch']:
+ a,b=span(t,name);part=t[a:b];marker='    flow = await session.scalar(';assert marker in part;part=part.replace(marker,'    await require_bounded_flow_recovery(session,db,request.flow_run_id)\n'+marker,1);t=t[:a]+part+t[b:]
+a,b=span(t,'apply_control');part=t[a:b];marker='    material = request.model_dump(mode="json")';assert marker in part;part=part.replace(marker,'    if kind == "CANCEL":\n        await require_no_assigned_physical_slots(session,db,request.flow_run_id)\n'+marker,1);t=t[:a]+part+t[b:]
+a,b=span(t,'finalize_cancelled_launch');part=t[a:b];marker='    material = request.model_dump(mode="json", exclude={"challenge_capability"})';assert marker in part;part=part.replace(marker,'    await require_no_assigned_physical_slots(session,db,request.flow_run_id)\n'+marker,1);t=t[:a]+part+t[b:];ast.parse(t);p.write_text(t)
+p=Path('src/prefect/server/models/stream_executions.py');t=p.read_text();at=t.index('from prefect.server.orchestration');t=t[:at]+'from prefect.server.models.stream_subtask_authority import require_no_assigned_physical_slots, require_bounded_flow_recovery\n'+t[at:]
+a,b=span(t,'takeover_execution');part=t[a:b];marker='    await _require_backend(session, db)';assert marker in part;part=part.replace(marker,marker+'\n    await require_bounded_flow_recovery(session,db,request.flow_run_id)',1);t=t[:a]+part+t[b:]
+a,b=span(t,'guard_flow_lifecycle');part=t[a:b];marker='    if force:';assert marker in part;part=part.replace(marker,'    if proposed_state.is_cancelling() or proposed_state.is_cancelled():\n        await require_no_assigned_physical_slots(session,db,flow_run_id)\n'+marker,1);t=t[:a]+part+t[b:];ast.parse(t);p.write_text(t)

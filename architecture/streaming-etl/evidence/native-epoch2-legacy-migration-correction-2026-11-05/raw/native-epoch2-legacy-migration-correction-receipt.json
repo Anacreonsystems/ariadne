@@ -1,0 +1,175 @@
+{
+  "schema": "legacy-stream-storage-migration-boundary-correction-v1",
+  "created_at": "2026-11-05T01:15:35.474507+00:00",
+  "base_head": "1e0ac8d6f189c4c20128944fa4d5bffb44c1f63c",
+  "changed_product_files": [],
+  "changed_test_file": "tests/server/database/test_stream_storage_migrations.py",
+  "before_sha256": "6dd8d3eac5863c207cb443ea9cca7d6f7dd074a69e7553e8341fb9f366fdf0d1",
+  "after_sha256": "df3f0c4dbb2ed3ee9c31bb3518a9f7de18465517a10f4c5d4623da0581654817",
+  "before_after_asserts_AST_identical": true,
+  "original_assert_count": 41,
+  "original_assertions_weakened": false,
+  "changed_function": "test_native_stream_storage_upgrade_and_downgrade",
+  "root_cause": "The epoch-1 test assumed every head-relative -1 step corresponded to the next epoch-1 feature. New paired physical topology heads correctly downgrade only their own metadata, so the first expected control-table removal was one revision too early.",
+  "correction": "Pin each of the seven existing feature-removal assertions to its actual paired predecessor revision; preserve every original assertion and final upgrade-to-head. No production ORM/DDL/fixture changes.",
+  "paired_predecessors": {
+    "postgresql": {
+      "replacement_controls": "f73b9d6a1c20",
+      "deployment_launch": "e41c7b6d2a90",
+      "finite_authority": "a75e1c6d9b43",
+      "unsealed_abort": "d53e8c4f7a21",
+      "execution_authority": "c31f8a2d6e40",
+      "submission_manifests": "7f3c2a9e4b11",
+      "stream_storage": "d4a7e1c93f52"
+    },
+    "sqlite": {
+      "replacement_controls": "b84c0e7d2f31",
+      "deployment_launch": "a12d8e4f6c30",
+      "finite_authority": "b86f2d7e0c54",
+      "unsealed_abort": "f64a9d5b8c32",
+      "execution_authority": "e42d7b9c5f10",
+      "submission_manifests": "9b6d4e1c8a20",
+      "stream_storage": "a3b9c7d2e5f1"
+    }
+  },
+  "results": [
+    {
+      "backend": "sqlite",
+      "junit": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "1",
+        "skipped": "0",
+        "tests": "1",
+        "time": "14.769",
+        "timestamp": "2026-11-05T01:12:22.367430+00:00",
+        "hostname": "f8abb611283c"
+      },
+      "cases_by_module": {
+        "tests.server.database.test_stream_storage_migrations": 1
+      },
+      "observed_exit_status": 1,
+      "log": "/tmp/native-epoch2-legacy-migration-sqlite-before.log",
+      "xml": "/tmp/native-epoch2-legacy-migration-sqlite-before.xml"
+    },
+    {
+      "backend": "sqlite",
+      "junit": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "60",
+        "time": "34.793",
+        "timestamp": "2026-11-05T01:13:46.923021+00:00",
+        "hostname": "f8abb611283c"
+      },
+      "cases_by_module": {
+        "tests.server.database.test_stream_storage_migrations": 45,
+        "tests.server.database.test_stream_subtask_migrations": 15
+      },
+      "observed_exit_status": 0,
+      "log": "/tmp/native-epoch2-legacy-and-physical-migrations-sqlite-after.log",
+      "xml": "/tmp/native-epoch2-legacy-and-physical-migrations-sqlite-after.xml"
+    },
+    {
+      "backend": "postgresql17",
+      "junit": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "60",
+        "time": "26.325",
+        "timestamp": "2026-11-05T01:13:58.400589+00:00",
+        "hostname": "f8abb611283c"
+      },
+      "cases_by_module": {
+        "tests.server.database.test_stream_storage_migrations": 45,
+        "tests.server.database.test_stream_subtask_migrations": 15
+      },
+      "observed_exit_status": 0,
+      "log": "/tmp/native-epoch2-legacy-and-physical-migrations-pg-after.log",
+      "xml": "/tmp/native-epoch2-legacy-and-physical-migrations-pg-after.xml"
+    }
+  ],
+  "ruff_check_exit": 0,
+  "ruff_format_check_exit": 0,
+  "ruff_version": "0.15.19",
+  "python_version": "3.12.14",
+  "sqlite_version": "3.53.1",
+  "postgresql_version": "17.11",
+  "commands": {
+    "reproduction": "uv run --no-sync pytest tests/server/database/test_stream_storage_migrations.py::test_native_stream_storage_upgrade_and_downgrade -x -q",
+    "successors": "uv run --no-sync pytest tests/server/database/test_stream_storage_migrations.py tests/server/database/test_stream_subtask_migrations.py -x -q"
+  },
+  "source_scope": "Only the permitted root working-tree test file was edited. The independent frozen checkout was not accessed or changed. All test databases are isolated from other acceptance campaigns.",
+  "ac_relationship": {
+    "kind": "LEGACY_MIGRATION_COMPATIBILITY_TEST_REPAIR",
+    "preserves": "Epoch-1 storage/submission/execution/abort/finite/deployment/control upgrade-downgrade assertions while later epoch-2 schema heads evolve.",
+    "new_native_acceptance": false,
+    "earned_percent": 0
+  },
+  "limitations": [
+    "Hosted CI raw blob logs were unavailable; this local failure is reproduced and corrected, not claimed as the exact unseen CI traceback.",
+    "Local successors used Python3.12; hosted Python3.13 must rerun its CI job.",
+    "No new product behavior, routing implementation or complete-union acceptance is claimed."
+  ],
+  "files": [
+    {
+      "path": "/tmp/native-epoch2-legacy-and-physical-migrations-pg-after.log",
+      "sha256": "61bc6b13d82ffb0174933a9ddd0b61f809dc946414609b4ae7f029176476a311",
+      "bytes": 100
+    },
+    {
+      "path": "/tmp/native-epoch2-legacy-and-physical-migrations-pg-after.xml",
+      "sha256": "a2474353294e8e6a370a7c7e2d1966febe6452a798517e69ebe14811223779e4",
+      "bytes": 10739
+    },
+    {
+      "path": "/tmp/native-epoch2-legacy-and-physical-migrations-sqlite-after.log",
+      "sha256": "377f82598c4f24ac5f130d410133eac01acd036601418b8022c4ab96a4b356b8",
+      "bytes": 100
+    },
+    {
+      "path": "/tmp/native-epoch2-legacy-and-physical-migrations-sqlite-after.xml",
+      "sha256": "a03f54d598b74d95d54f89c3b3283778a48c376c8381f9f9e37350036309196f",
+      "bytes": 10740
+    },
+    {
+      "path": "/tmp/native-epoch2-legacy-migration-after.py.log",
+      "sha256": "df3f0c4dbb2ed3ee9c31bb3518a9f7de18465517a10f4c5d4623da0581654817",
+      "bytes": 38080
+    },
+    {
+      "path": "/tmp/native-epoch2-legacy-migration-before-hash.json",
+      "sha256": "12813d1f2d60817e5418b37639f50367e1787b43e08bd6125bb1c2b63ef2d3b0",
+      "bytes": 170
+    },
+    {
+      "path": "/tmp/native-epoch2-legacy-migration-before.py.log",
+      "sha256": "6dd8d3eac5863c207cb443ea9cca7d6f7dd074a69e7553e8341fb9f366fdf0d1",
+      "bytes": 36755
+    },
+    {
+      "path": "/tmp/native-epoch2-legacy-migration-correction.patch.log",
+      "sha256": "0a45aa51d291b60a75565f605ec4ee0d61ead1f0254a523190a3a0ab4d2dc671",
+      "bytes": 5173
+    },
+    {
+      "path": "/tmp/native-epoch2-legacy-migration-sqlite-before.log",
+      "sha256": "3a75d6f5e821426b187c5fa77733a01e67a5adfa7c20cacc0b8c2ce331c16c3f",
+      "bytes": 8325
+    },
+    {
+      "path": "/tmp/native-epoch2-legacy-migration-sqlite-before.xml",
+      "sha256": "bd0e71739e14e72b97e679a8e76cc681c3be1a3b84edd1be5dbc3718389610b1",
+      "bytes": 3689
+    },
+    {
+      "path": "/tmp/native-epoch2-legacy-refusals.py",
+      "sha256": "48f25d514747e12f152593ab424908bc0c91d3fbe13b04d0e96b7d767a0dc5f7",
+      "bytes": 2570
+    }
+  ]
+}

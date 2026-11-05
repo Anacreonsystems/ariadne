@@ -35,6 +35,30 @@ STREAM_TABLES = {
 }
 
 
+# These are the predecessors of the epoch-1 migrations whose removal each
+# assertion checks. Later schema heads must not shift these test boundaries.
+NATIVE_STREAM_MIGRATION_PREDECESSORS: dict[str, dict[str, str]] = {
+    "postgresql": {
+        "replacement_controls": "f73b9d6a1c20",
+        "deployment_launch": "e41c7b6d2a90",
+        "finite_authority": "a75e1c6d9b43",
+        "unsealed_abort": "d53e8c4f7a21",
+        "execution_authority": "c31f8a2d6e40",
+        "submission_manifests": "7f3c2a9e4b11",
+        "stream_storage": "d4a7e1c93f52",
+    },
+    "sqlite": {
+        "replacement_controls": "b84c0e7d2f31",
+        "deployment_launch": "a12d8e4f6c30",
+        "finite_authority": "b86f2d7e0c54",
+        "unsealed_abort": "f64a9d5b8c32",
+        "execution_authority": "e42d7b9c5f10",
+        "submission_manifests": "9b6d4e1c8a20",
+        "stream_storage": "a3b9c7d2e5f1",
+    },
+}
+
+
 async def _table_names(database_engine: AsyncEngine) -> set[str]:
     async with database_engine.connect() as connection:
         return set(
@@ -47,6 +71,7 @@ async def _table_names(database_engine: AsyncEngine) -> set[str]:
 async def test_native_stream_storage_upgrade_and_downgrade(
     database_engine: AsyncEngine,
 ):
+    revisions = NATIVE_STREAM_MIGRATION_PREDECESSORS[database_engine.dialect.name]
     assert STREAM_TABLES <= await _table_names(database_engine)
 
     async def execution_attempt_columns() -> set[str]:
@@ -94,7 +119,9 @@ async def test_native_stream_storage_upgrade_and_downgrade(
 
     await database_engine.dispose()
     try:
-        await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+        await run_sync_in_worker_thread(
+            alembic_downgrade, revision=revisions["replacement_controls"]
+        )
         replacement_tables = {
             "native_stream_replacement_operation",
             "native_stream_control_operation",
@@ -104,7 +131,9 @@ async def test_native_stream_storage_upgrade_and_downgrade(
         assert control_columns.isdisjoint(await execution_authority_columns())
 
         await database_engine.dispose()
-        await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+        await run_sync_in_worker_thread(
+            alembic_downgrade, revision=revisions["deployment_launch"]
+        )
         deployment_tables = {
             "native_stream_deployment_snapshot",
             "native_stream_launch_identity",
@@ -116,7 +145,9 @@ async def test_native_stream_storage_upgrade_and_downgrade(
         )
 
         await database_engine.dispose()
-        await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+        await run_sync_in_worker_thread(
+            alembic_downgrade, revision=revisions["finite_authority"]
+        )
         assert {
             "stream_finite_submission",
             "stream_finite_receipt",
@@ -131,7 +162,9 @@ async def test_native_stream_storage_upgrade_and_downgrade(
         assert abort_columns <= await execution_attempt_columns()
 
         await database_engine.dispose()
-        await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+        await run_sync_in_worker_thread(
+            alembic_downgrade, revision=revisions["unsealed_abort"]
+        )
         assert (
             STREAM_TABLES
             - replacement_tables
@@ -141,7 +174,9 @@ async def test_native_stream_storage_upgrade_and_downgrade(
         assert abort_columns.isdisjoint(await execution_attempt_columns())
 
         await database_engine.dispose()
-        await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+        await run_sync_in_worker_thread(
+            alembic_downgrade, revision=revisions["execution_authority"]
+        )
         assert {
             "stream_execution_authority",
             "stream_execution_attempt",
@@ -159,7 +194,9 @@ async def test_native_stream_storage_upgrade_and_downgrade(
         ) <= await _table_names(database_engine)
 
         await database_engine.dispose()
-        await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+        await run_sync_in_worker_thread(
+            alembic_downgrade, revision=revisions["submission_manifests"]
+        )
         assert "stream_submission" not in await _table_names(database_engine)
         assert (
             STREAM_TABLES
@@ -175,7 +212,9 @@ async def test_native_stream_storage_upgrade_and_downgrade(
         ) <= await _table_names(database_engine)
 
         await database_engine.dispose()
-        await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+        await run_sync_in_worker_thread(
+            alembic_downgrade, revision=revisions["stream_storage"]
+        )
         assert STREAM_TABLES.isdisjoint(await _table_names(database_engine))
 
         await database_engine.dispose()

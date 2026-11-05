@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="14.769" timestamp="2026-11-05T01:12:22.367430+00:00" hostname="f8abb611283c"><testcase classname="tests.server.database.test_stream_storage_migrations" name="test_native_stream_storage_upgrade_and_downgrade" time="14.466"><failure message="AssertionError: assert False&#10; +  where False = &lt;built-in method isdisjoint of set object at 0x7f8f5c179b60&gt;({'agent', 'alembic_version', 'artifact', 'artifact_collection', 'automation', 'automation_bucket', ...})&#10; +    where &lt;built-in method isdisjoint of set object at 0x7f8f5c179b60&gt; = {'native_stream_control_operation', 'native_stream_replacement_operation'}.isdisjoint">database_engine = &lt;sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x7f8f5d4e9c90&gt;
+
+    async def test_native_stream_storage_upgrade_and_downgrade(
+        database_engine: AsyncEngine,
+    ):
+        assert STREAM_TABLES &lt;= await _table_names(database_engine)
+    
+        async def execution_attempt_columns() -&gt; set[str]:
+            async with database_engine.connect() as connection:
+                return set(
+                    await connection.run_sync(
+                        lambda sync_connection: {
+                            column["name"]
+                            for column in sa.inspect(sync_connection).get_columns(
+                                "stream_execution_attempt"
+                            )
+                        }
+                    )
+                )
+    
+        abort_columns = {
+            "abort_operation_id",
+            "abort_request_digest",
+            "abort_outcome",
+            "abort_outcome_digest",
+        }
+        finite_columns = {
+            "finite_prefix_manifest_digest",
+            "finite_prefix_task_run_id",
+            "finite_prefix_sealed_at",
+        }
+        assert abort_columns &lt;= await execution_attempt_columns()
+    
+        async def execution_authority_columns() -&gt; set[str]:
+            async with database_engine.connect() as connection:
+                return set(
+                    await connection.run_sync(
+                        lambda sync_connection: {
+                            column["name"]
+                            for column in sa.inspect(sync_connection).get_columns(
+                                "stream_execution_authority"
+                            )
+                        }
+                    )
+                )
+    
+        assert finite_columns &lt;= await execution_authority_columns()
+        control_columns = {"source_admission_closed", "cancel_requested"}
+        assert control_columns &lt;= await execution_authority_columns()
+    
+        await database_engine.dispose()
+        try:
+            await run_sync_in_worker_thread(alembic_downgrade, revision="-1")
+            replacement_tables = {
+                "native_stream_replacement_operation",
+                "native_stream_control_operation",
+            }
+&gt;           assert replacement_tables.isdisjoint(await _table_names(database_engine))
+E           AssertionError: assert False
+E            +  where False = &lt;built-in method isdisjoint of set object at 0x7f8f5c179b60&gt;({'agent', 'alembic_version', 'artifact', 'artifact_collection', 'automation', 'automation_bucket', ...})
+E            +    where &lt;built-in method isdisjoint of set object at 0x7f8f5c179b60&gt; = {'native_stream_control_operation', 'native_stream_replacement_operation'}.isdisjoint
+
+tests/server/database/test_stream_storage_migrations.py:102: AssertionError</failure></testcase></testsuite></testsuites>
