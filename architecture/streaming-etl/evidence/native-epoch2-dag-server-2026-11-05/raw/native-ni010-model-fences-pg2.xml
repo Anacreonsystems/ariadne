@@ -1,0 +1,317 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="2" time="8.010" timestamp="2026-11-05T02:52:46.372377+00:00" hostname="f8abb611283c"><testcase classname="tests.server.models.test_stream_dags" name="test_seal_reuses_existing_stream_metadata_and_exact_read_plan" time="5.916" /><testcase classname="tests.server.models.test_stream_dags" name="test_postgres_metadata_region_admits_complete_n_and_exact_replay[1-2-2]" time="1.612"><failure message="sqlalchemy.exc.ProgrammingError: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) &lt;class 'asyncpg.exceptions.UndefinedFunctionError'&gt;: function min(uuid) does not exist&#10;HINT:  No function matches the given name and argument types. You might need to add explicit type casts.&#10;[SQL: SELECT anon_1.host_id, anon_1.boot_id &#10;FROM (SELECT worker.id AS id, stream_worker_capability.host_id AS host_id, stream_worker_capability.boot_id AS boot_id, coalesce(anon_2.occupied, $1::INTEGER) AS coalesce_1 &#10;FROM worker JOIN stream_worker_capability ON stream_worker_capability.worker_id = worker.id LEFT OUTER JOIN (SELECT anon_3.worker_id AS worker_id, count(*) AS occupied &#10;FROM (SELECT stream_physical_subtask.assigned_worker_id AS worker_id &#10;FROM stream_physical_subtask &#10;WHERE stream_physical_subtask.profile = $2::VARCHAR AND stream_physical_subtask.assigned_worker_id IS NOT NULL AND stream_physical_subtask.physical_slot_released IS false UNION ALL SELECT stream_physical_slot_allocation.worker_id AS worker_id &#10;FROM stream_physical_slot_allocation &#10;WHERE stream_physical_slot_allocation.released IS false) AS anon_3 GROUP BY anon_3.worker_id) AS anon_2 ON anon_2.worker_id = worker.id &#10;WHERE worker.work_pool_id = $3::UUID AND worker.status = $4::worker_status AND stream_worker_capability.protocol = $5::VARCHAR AND stream_worker_capability.protocol_version = $6::INTEGER AND stream_worker_capability.work_pool_id = $7::UUID AND stream_worker_capability.last_renewed_at &gt;= $8::TIMESTAMP WITH TIME ZONE AND coalesce(anon_2.occupied, $1::INTEGER) &lt; $9::INTEGER) AS anon_1 GROUP BY anon_1.host_id, anon_1.boot_id &#10;HAVING sum(CASE WHEN (anon_1.coalesce_1 &lt; $10::INTEGER) THEN $11::INTEGER - anon_1.coalesce_1 ELSE $12::INTEGER END) &gt;= $13::INTEGER ORDER BY min(anon_1.id) &#10; LIMIT $14::INTEGER]&#10;[parameters: (0, 'partitioned-fixed-v1', '5430f961-7acb-4321-990e-d10d29f10260', 'ONLINE', 'partitioned-dag-v1', 1, '5430f961-7acb-4321-990e-d10d29f10260', DateTime(2026, 11, 5, 2, 50, 52, 763077, tzinfo=Timezone('UTC')), 2, 2, 2, 0, 4, 1)]&#10;(Background on this error at: https://sqlalche.me/e/20/f405)">self = &lt;sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_cursor object at 0x7f33b7636560&gt;
+operation = 'SELECT anon_1.host_id, anon_1.boot_id \nFROM (SELECT worker.id AS id, stream_worker_capability.host_id AS host_id, st... $11::INTEGER - anon_1.coalesce_1 ELSE $12::INTEGER END) &gt;= $13::INTEGER ORDER BY min(anon_1.id) \n LIMIT $14::INTEGER'
+parameters = (0, 'partitioned-fixed-v1', '5430f961-7acb-4321-990e-d10d29f10260', 'ONLINE', 'partitioned-dag-v1', 1, ...)
+
+    async def _prepare_and_execute(self, operation, parameters):
+        adapt_connection = self._adapt_connection
+    
+        async with adapt_connection._execute_mutex:
+            if not adapt_connection._started:
+                await adapt_connection._start_transaction()
+    
+            if parameters is None:
+                parameters = ()
+    
+            try:
+&gt;               prepared_stmt, attributes = await adapt_connection._prepare(
+                    operation, self._invalidate_schema_cache_asof
+                )
+
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:526: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:773: in _prepare
+    prepared_stmt = await self._connection.prepare(
+.venv/lib/python3.12/site-packages/asyncpg/connection.py:638: in prepare
+    return await self._prepare(
+.venv/lib/python3.12/site-packages/asyncpg/connection.py:657: in _prepare
+    stmt = await self._get_statement(
+.venv/lib/python3.12/site-packages/asyncpg/connection.py:443: in _get_statement
+    statement = await self._protocol.prepare(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+&gt;   ???
+E   asyncpg.exceptions.UndefinedFunctionError: function min(uuid) does not exist
+E   HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+asyncpg/protocol/protocol.pyx:165: UndefinedFunctionError
+
+The above exception was the direct cause of the following exception:
+
+self = &lt;sqlalchemy.engine.base.Connection object at 0x7f33b78e72f0&gt;
+dialect = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x7f33bd818380&gt;
+context = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x7f33b79d9280&gt;
+statement = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGCompiler_asyncpg object at 0x7f33b7657560&gt;
+parameters = [(0, 'partitioned-fixed-v1', '5430f961-7acb-4321-990e-d10d29f10260', 'ONLINE', 'partitioned-dag-v1', 1, ...)]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -&gt; CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+&gt;                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1967: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x7f33bc3a2a80&gt;&gt;
+error = UndefinedFunctionError('function min(uuid) does not exist')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.ProgrammingError: &lt;class 'asyncpg.exceptions.UndefinedFunctionError'&gt;: function min(uuid) does not exist
+E                   HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: ProgrammingError
+
+The above exception was the direct cause of the following exception:
+
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f33bd8185f0&gt;
+flow_run = FlowRun(id=52a24c4a-9aa5-49f4-8848-719cbd40cd94), source_p = 1
+branch_p = 2, worker_count = 2
+
+    @pytest.mark.parametrize("source_p,branch_p,worker_count", [(1, 2, 2), (2, 2, 3)])
+    async def test_postgres_metadata_region_admits_complete_n_and_exact_replay(
+        db: PrefectDBInterface,
+        flow_run: orm_models.FlowRun,
+        source_p: int,
+        branch_p: int,
+        worker_count: int,
+    ):
+        request = dag_request(flow_run.id, source_p=source_p, branch_p=branch_p)
+        async with db.session_context(begin_transaction=True) as session:
+            pool, worker_rows = await metadata_workers(session, db, worker_count)
+            plan = await m.seal_dag_metadata(session, db, request)
+            admission = s.StreamDAGAdmissionRequest(
+                operation_id=uuid4(), graph_digest=plan.graph_digest
+            )
+&gt;           admitted = await m.admit_dag_metadata(
+                session, db, plan.id, admission, work_pool_id=pool.id
+            )
+
+tests/server/models/test_stream_dags.py:219: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/server/models/stream_dags.py:1030: in admit_dag_metadata
+    chosen_cohort = (await session.execute(cohort_query)).first()
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py:449: in execute
+    result = await greenlet_spawn(
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:2351: in execute
+    return self._execute_internal(
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:2249: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+.venv/lib/python3.12/site-packages/sqlalchemy/orm/context.py:306: in orm_execute_statement
+    result = conn.execute(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1419: in execute
+    return meth(
+.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py:527: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1641: in _execute_clauseelement
+    ret = self._execute_context(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1846: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1986: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2363: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x7f33bc3a2a80&gt;&gt;
+error = UndefinedFunctionError('function min(uuid) does not exist')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.exc.ProgrammingError: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) &lt;class 'asyncpg.exceptions.UndefinedFunctionError'&gt;: function min(uuid) does not exist
+E                   HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+E                   [SQL: SELECT anon_1.host_id, anon_1.boot_id 
+E                   FROM (SELECT worker.id AS id, stream_worker_capability.host_id AS host_id, stream_worker_capability.boot_id AS boot_id, coalesce(anon_2.occupied, $1::INTEGER) AS coalesce_1 
+E                   FROM worker JOIN stream_worker_capability ON stream_worker_capability.worker_id = worker.id LEFT OUTER JOIN (SELECT anon_3.worker_id AS worker_id, count(*) AS occupied 
+E                   FROM (SELECT stream_physical_subtask.assigned_worker_id AS worker_id 
+E                   FROM stream_physical_subtask 
+E                   WHERE stream_physical_subtask.profile = $2::VARCHAR AND stream_physical_subtask.assigned_worker_id IS NOT NULL AND stream_physical_subtask.physical_slot_released IS false UNION ALL SELECT stream_physical_slot_allocation.worker_id AS worker_id 
+E                   FROM stream_physical_slot_allocation 
+E                   WHERE stream_physical_slot_allocation.released IS false) AS anon_3 GROUP BY anon_3.worker_id) AS anon_2 ON anon_2.worker_id = worker.id 
+E                   WHERE worker.work_pool_id = $3::UUID AND worker.status = $4::worker_status AND stream_worker_capability.protocol = $5::VARCHAR AND stream_worker_capability.protocol_version = $6::INTEGER AND stream_worker_capability.work_pool_id = $7::UUID AND stream_worker_capability.last_renewed_at &gt;= $8::TIMESTAMP WITH TIME ZONE AND coalesce(anon_2.occupied, $1::INTEGER) &lt; $9::INTEGER) AS anon_1 GROUP BY anon_1.host_id, anon_1.boot_id 
+E                   HAVING sum(CASE WHEN (anon_1.coalesce_1 &lt; $10::INTEGER) THEN $11::INTEGER - anon_1.coalesce_1 ELSE $12::INTEGER END) &gt;= $13::INTEGER ORDER BY min(anon_1.id) 
+E                    LIMIT $14::INTEGER]
+E                   [parameters: (0, 'partitioned-fixed-v1', '5430f961-7acb-4321-990e-d10d29f10260', 'ONLINE', 'partitioned-dag-v1', 1, '5430f961-7acb-4321-990e-d10d29f10260', DateTime(2026, 11, 5, 2, 50, 52, 763077, tzinfo=Timezone('UTC')), 2, 2, 2, 0, 4, 1)]
+E                   (Background on this error at: https://sqlalche.me/e/20/f405)
+
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: ProgrammingError</failure></testcase></testsuite></testsuites>

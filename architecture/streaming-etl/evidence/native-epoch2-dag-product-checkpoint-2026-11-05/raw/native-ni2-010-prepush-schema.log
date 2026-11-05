@@ -1,0 +1,527 @@
+don't commit to branch...................................................Passed
+ruff check...............................................................Passed
+ruff format..............................................................Passed
+codespell................................................................Passed
+mypy.....................................................................Passed
+uv-lock..............................................(no files to check)Skipped
+No double backticks......................................................Passed
+Generate settings types..............................(no files to check)Skipped
+Check UI v2..........................................(no files to check)Skipped
+Sync UI v2 OpenAPI.......................................................Failed
+- hook id: service-sync-ui-v2-openapi
+- files were modified by this hook
+
+nvm is not compatible with the "NPM_CONFIG_PREFIX" environment variable: currently set to "/home/agent/.local"
+Run `unset NPM_CONFIG_PREFIX` to unset it.
+Found '/tmp/ariadne-ci-checkpoint-5r7nt1hd/ui-v2/.nvmrc' with version <24.20.0>
+nvm is not compatible with the "NPM_CONFIG_PREFIX" environment variable: currently set to "/home/agent/.local"
+Run `unset NPM_CONFIG_PREFIX` to unset it.
+
+> prefect-ui@0.0.0 service-sync
+> uv run ../scripts/generate_oss_openapi_schema.py && npx openapi-typescript oss_schema.json -o src/api/prefect.ts && rm oss_schema.json
+
+✨ openapi-typescript 7.13.0
+🚀 oss_schema.json → src/api/prefect.ts [564ms]
+
+All changes made by hooks:
+diff --git a/ui-v2/src/api/prefect.ts b/ui-v2/src/api/prefect.ts
+index af12e2a..ec47aa7 100644
+--- a/ui-v2/src/api/prefect.ts
++++ b/ui-v2/src/api/prefect.ts
+@@ -1781,6 +1781,40 @@ export interface paths {
+         patch?: never;
+         trace?: never;
+     };
++    "/streams/v2/dags/seal": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        get?: never;
++        put?: never;
++        /** Seal Dag */
++        post: operations["seal_dag_streams_v2_dags_seal_post"];
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/streams/v2/dags/{graph_id}": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /** Read Dag */
++        get: operations["read_dag_streams_v2_dags__graph_id__get"];
++        put?: never;
++        post?: never;
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
+     "/streams/v1/deployments/enroll": {
+         parameters: {
+             query?: never;
+@@ -10165,7 +10199,7 @@ export interface components {
+              * Profile
+              * @enum {string}
+              */
+-            profile: "bounded-linear-v1" | "partitioned-fixed-v1";
++            profile: "bounded-linear-v1" | "partitioned-fixed-v1" | "partitioned-dag-v1";
+             /** Flow Version */
+             flow_version: string;
+             /** Flow Code Digest */
+@@ -13179,6 +13213,297 @@ export interface components {
+             protocol_version: 1;
+             limits?: components["schemas"]["StreamLimits"] | null;
+         };
++        /** StreamDAGEdgePartitionProjection */
++        StreamDAGEdgePartitionProjection: {
++            /**
++             * Id
++             * Format: uuid
++             */
++            id: string;
++            /** Partition Index */
++            partition_index: number;
++            /**
++             * Stream Id
++             * Format: uuid
++             */
++            stream_id: string;
++            /**
++             * Subscriber Id
++             * Format: uuid
++             */
++            subscriber_id: string;
++            /**
++             * Target Subtask Id
++             * Format: uuid
++             */
++            target_subtask_id: string;
++        };
++        /** StreamDAGEdgeProjection */
++        StreamDAGEdgeProjection: {
++            /** Edge Uid */
++            edge_uid: string;
++            /** Producer Operator Uid */
++            producer_operator_uid: string;
++            /** Output Port Uid */
++            output_port_uid: string;
++            /** Subscriber Uid */
++            subscriber_uid: string;
++            /** Consumer Operator Uid */
++            consumer_operator_uid: string;
++            /** Input Port Uid */
++            input_port_uid: string;
++            /**
++             * Exchange
++             * @enum {string}
++             */
++            exchange: "forward" | "rebalance" | "broadcast" | "keyed";
++            /**
++             * Routing Version
++             * @default 1
++             * @constant
++             */
++            routing_version: 1;
++            /** Key Codec */
++            key_codec?: "tagged-key-v1" | null;
++            /** Hash Algorithm */
++            hash_algorithm?: "sha256" | null;
++            /** Key Group Count */
++            key_group_count?: number | null;
++            /**
++             * Id
++             * Format: uuid
++             */
++            id: string;
++            /** Partitions */
++            partitions: components["schemas"]["StreamDAGEdgePartitionProjection"][];
++        };
++        /** StreamDAGOperatorProjection */
++        StreamDAGOperatorProjection: {
++            /**
++             * Id
++             * Format: uuid
++             */
++            id: string;
++            /** Operator Uid */
++            operator_uid: string;
++            /**
++             * Role
++             * @enum {string}
++             */
++            role: "SOURCE" | "OPERATOR";
++            /** Parallelism */
++            parallelism: number;
++            input_port: components["schemas"]["StreamDAGPortProjection"] | null;
++            output_port: components["schemas"]["StreamDAGPortProjection"];
++        };
++        /** StreamDAGOperatorSpec */
++        StreamDAGOperatorSpec: {
++            /** Operator Uid */
++            operator_uid: string;
++            /**
++             * Role
++             * @enum {string}
++             */
++            role: "SOURCE" | "OPERATOR";
++            /** Parallelism */
++            parallelism: number;
++            /** Task Name */
++            task_name: string;
++            /** Task Key */
++            task_key: string;
++            /** Task Version */
++            task_version: string;
++            /** Artifact Digest */
++            artifact_digest: string;
++            /** Entrypoint */
++            entrypoint: string;
++            /** Context Key */
++            context_key: string;
++            /** Parameters */
++            parameters: {
++                [key: string]: unknown;
++            }[];
++            input_port?: components["schemas"]["StreamPortSpec"] | null;
++            output_port: components["schemas"]["StreamPortSpec"];
++            /** Input Key */
++            input_key?: string | null;
++            task_policy?: components["schemas"]["TaskRunPolicy"];
++            /** Timeout Seconds */
++            timeout_seconds?: number | null;
++            /** Tags */
++            tags?: string[];
++            limits?: components["schemas"]["StreamLimits"];
++        };
++        /** StreamDAGPlan */
++        StreamDAGPlan: {
++            /**
++             * Id
++             * Format: uuid
++             */
++            id: string;
++            /**
++             * Flow Run Id
++             * Format: uuid
++             */
++            flow_run_id: string;
++            /**
++             * Profile
++             * @default partitioned-dag-v1
++             * @constant
++             */
++            profile: "partitioned-dag-v1";
++            /**
++             * Assignment Epoch
++             * @default 1
++             * @constant
++             */
++            assignment_epoch: 1;
++            /**
++             * Operation Id
++             * Format: uuid
++             */
++            operation_id: string;
++            /** Graph Digest */
++            graph_digest: string;
++            /**
++             * State
++             * @enum {string}
++             */
++            state: "SEALED" | "ADMITTED" | "ABORTING" | "RELEASED";
++            /**
++             * Created At
++             * Format: date-time
++             */
++            created_at: string;
++            /** Placement Digest */
++            placement_digest?: string | null;
++            /**
++             * Execution Ready
++             * @default false
++             * @constant
++             */
++            execution_ready: false;
++            /** Operators */
++            operators: components["schemas"]["StreamDAGOperatorProjection"][];
++            /** Edges */
++            edges: components["schemas"]["StreamDAGEdgeProjection"][];
++            /** Subtasks */
++            subtasks: components["schemas"]["StreamDAGSubtaskProjection"][];
++            /** Leaf Operator Uids */
++            leaf_operator_uids: string[];
++        };
++        /** StreamDAGPortProjection */
++        StreamDAGPortProjection: {
++            /** Uid */
++            uid: string;
++            /**
++             * Schema Id
++             * @default json-value-v1
++             * @constant
++             */
++            schema_id: "json-value-v1";
++            /**
++             * Schema Version
++             * @default 1
++             * @constant
++             */
++            schema_version: 1;
++            /**
++             * Schema Digest
++             * @default d93f54187397ae62d4e1b98c56edab2a67a9d10422b028dfdea87ba6616a849c
++             */
++            schema_digest: string;
++            /**
++             * Id
++             * Format: uuid
++             */
++            id: string;
++            /**
++             * Direction
++             * @enum {string}
++             */
++            direction: "INPUT" | "OUTPUT";
++        };
++        /** StreamDAGSealRequest */
++        StreamDAGSealRequest: {
++            /**
++             * Flow Run Id
++             * Format: uuid
++             */
++            flow_run_id: string;
++            /**
++             * Operation Id
++             * Format: uuid
++             */
++            operation_id: string;
++            /**
++             * Profile
++             * @default partitioned-dag-v1
++             * @constant
++             */
++            profile: "partitioned-dag-v1";
++            /**
++             * Assignment Epoch
++             * @default 1
++             * @constant
++             */
++            assignment_epoch: 1;
++            /** Flow Version */
++            flow_version: string;
++            /** Deployment Id */
++            deployment_id?: string | null;
++            /** Deployment Version */
++            deployment_version?: string | null;
++            /** Working Directory */
++            working_directory?: string | null;
++            /** Operators */
++            operators: components["schemas"]["StreamDAGOperatorSpec"][];
++            /** Edges */
++            edges: components["schemas"]["StreamEdgeSpec"][];
++        };
++        /** StreamDAGSubtaskProjection */
++        StreamDAGSubtaskProjection: {
++            /**
++             * Id
++             * Format: uuid
++             */
++            id: string;
++            /**
++             * Operator Run Id
++             * Format: uuid
++             */
++            operator_run_id: string;
++            /** Operator Uid */
++            operator_uid: string;
++            /** Subtask Index */
++            subtask_index: number;
++            /**
++             * Assignment Epoch
++             * @default 1
++             * @constant
++             */
++            assignment_epoch: 1;
++            /** Input Stream Id */
++            input_stream_id: string | null;
++            /**
++             * Output Stream Id
++             * Format: uuid
++             */
++            output_stream_id: string;
++            manifest: components["schemas"]["StreamSubmissionManifest"];
++            /** Assigned Worker Id */
++            assigned_worker_id?: string | null;
++            /**
++             * Physical Slot Reserved
++             * @default false
++             */
++            physical_slot_reserved: boolean;
++            /**
++             * Physical Slot Released
++             * @default false
++             */
++            physical_slot_released: boolean;
++        };
+         /** StreamDelivery */
+         StreamDelivery: {
+             token: components["schemas"]["DeliveryToken"];
+@@ -13188,6 +13513,38 @@ export interface components {
+                 [key: string]: components["schemas"]["JsonValue"];
+             };
+         };
++        /** StreamEdgeSpec */
++        StreamEdgeSpec: {
++            /** Edge Uid */
++            edge_uid: string;
++            /** Producer Operator Uid */
++            producer_operator_uid: string;
++            /** Output Port Uid */
++            output_port_uid: string;
++            /** Subscriber Uid */
++            subscriber_uid: string;
++            /** Consumer Operator Uid */
++            consumer_operator_uid: string;
++            /** Input Port Uid */
++            input_port_uid: string;
++            /**
++             * Exchange
++             * @enum {string}
++             */
++            exchange: "forward" | "rebalance" | "broadcast" | "keyed";
++            /**
++             * Routing Version
++             * @default 1
++             * @constant
++             */
++            routing_version: 1;
++            /** Key Codec */
++            key_codec?: "tagged-key-v1" | null;
++            /** Hash Algorithm */
++            hash_algorithm?: "sha256" | null;
++            /** Key Group Count */
++            key_group_count?: number | null;
++        };
+         /** StreamEnvelope */
+         StreamEnvelope: {
+             /**
+@@ -13945,6 +14302,28 @@ export interface components {
+              */
+             task_run_id: string;
+         };
++        /** StreamPortSpec */
++        StreamPortSpec: {
++            /** Uid */
++            uid: string;
++            /**
++             * Schema Id
++             * @default json-value-v1
++             * @constant
++             */
++            schema_id: "json-value-v1";
++            /**
++             * Schema Version
++             * @default 1
++             * @constant
++             */
++            schema_version: 1;
++            /**
++             * Schema Digest
++             * @default d93f54187397ae62d4e1b98c56edab2a67a9d10422b028dfdea87ba6616a849c
++             */
++            schema_digest: string;
++        };
+         /** StreamRecoveryItem */
+         StreamRecoveryItem: {
+             /** Submission Key */
+@@ -20502,6 +20881,80 @@ export interface operations {
+             };
+         };
+     };
++    seal_dag_streams_v2_dags_seal_post: {
++        parameters: {
++            query?: never;
++            header?: {
++                "x-prefect-api-version"?: string;
++                "X-Prefect-Stream-Execution-Generation"?: number | null;
++                "X-Prefect-Stream-Execution-Holder"?: string | null;
++                "X-Prefect-Stream-Execution-Capability"?: string | null;
++            };
++            path?: never;
++            cookie?: never;
++        };
++        requestBody: {
++            content: {
++                "application/json": components["schemas"]["StreamDAGSealRequest"];
++            };
++        };
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["StreamDAGPlan"];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    read_dag_streams_v2_dags__graph_id__get: {
++        parameters: {
++            query?: never;
++            header?: {
++                "x-prefect-api-version"?: string;
++                "X-Prefect-Stream-Execution-Generation"?: number | null;
++                "X-Prefect-Stream-Execution-Holder"?: string | null;
++                "X-Prefect-Stream-Execution-Capability"?: string | null;
++            };
++            path: {
++                graph_id: string;
++            };
++            cookie?: never;
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["StreamDAGPlan"];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
+     enroll_native_stream_worker_streams_v1_deployments_enroll_post: {
+         parameters: {
+             query?: never;

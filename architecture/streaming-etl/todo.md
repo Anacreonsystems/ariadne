@@ -70,8 +70,8 @@ appended to each approved ADR.
 
 | ID | State | Depends | Size/risk | Deliverable and mapped criteria |
 | --- | --- | --- | --- | --- |
-| NI2-010 | `progress` | NI2-006 | M/H | Seal named typed ports, DAG revision and acyclic topology; reject cycles, duplicate subscribers and unsupported edges before user code. The [implementation handoff](evidence/flink-architecture-2026-11-04/ni2-010-implementation-handoff-2026-11-05.json) freezes the first A1 → B1/C2 shape and compatibility bounds. A43-02. |
-| NI2-011 | `planned` | NI2-010 | L/H | Materialize bounded forward/rebalance/broadcast/keyed routes in the existing terminal transaction, with independent edge partitions/cursors/pins. A43-03, A43-09. |
+| NI2-010 | `accepted` | NI2-006 | M/H | Seal named typed ports, DAG revision and acyclic topology; reject cycles, duplicate subscribers and unsupported edges before user code. The [Principal acceptance](evidence/native-epoch2-ni2-010-principal-acceptance-2026-11-05/acceptance.json) closes the metadata-only component with zero earned epoch percentage; public execution remains fenced. A43-02 remains partial until NI2-012…014. |
+| NI2-011 | `accepted` | NI2-010 | L/H | Materialize bounded forward/rebalance/broadcast/keyed routes in the existing terminal transaction, with independent edge partitions/cursors/pins. The [Principal acceptance](evidence/native-epoch2-routed-server-2026-11-05/principal-v1/acceptance.json) closes the finite storage component with zero earned epoch percentage; public DAG execution remains fenced until NI2-012. A43-03 and A43-09 remain partial. |
 | NI2-012 | `planned` | NI2-010, NI2-011 | M/H | SDK/client/worker graph bootstrap and fan-out while retaining ordinary Task definitions and constant metadata per fixed graph. A42-02, A43-02, A43-04. |
 | NI2-013 | `planned` | NI2-011, NI2-012 | M/H | Exact append/read retry and branch replacement with immutable route digest, different partition counts and no cross-branch acknowledgement. A43-03, A43-09. |
 | NI2-014 | `planned` | NI2-010…013 | M/H | Real branched native process gate and independent Principal verification on frozen source. A43-02, A43-03, A43-09. |
@@ -119,6 +119,11 @@ appended to each approved ADR.
 | NI2-053 | `planned` | NI2-051 | L/H | Real two-host placement with provider/old-host verified stop, portable package/state/object references and strict no-timeout-as-death admission. A47-04, A47-05. |
 | NI2-054 | `planned` | NI2-050…053 | M/H | Region-expansion, shared-process loss, unavailable partition and cancellation races with exact explanations. A47-05, A47-06, A47-07. |
 | NI2-055 | `planned` | NI2-050…054 | M/H | Source-bound same-host and actual two-host fault matrix plus independent Principal verification. A42-05, A47-01…07. |
+
+The [local QEMU boot discovery](evidence/native-epoch2-qemu-readiness-2026-11-05/boot-discovery-v1/index.json)
+is retained as `UNPROVEN_RESOURCE_GUARD`: two guests booted, but the resource
+ceiling stopped them before the required overlap and guest identity witnesses.
+It earns zero credit and leaves NI2-053 `planned`.
 
 ### N2.7 — Rescale and compatibility (`+10%`)
 

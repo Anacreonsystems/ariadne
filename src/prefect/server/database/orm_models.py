@@ -735,6 +735,16 @@ class StreamRecord(Base):
     stream_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("stream_partition.id", ondelete="CASCADE")
     )
+    record_kind: Mapped[str] = mapped_column(
+        default="PAYLOAD", server_default="PAYLOAD"
+    )
+    graph_revision_id: Mapped[Optional[uuid.UUID]]
+    flow_run_id: Mapped[Optional[uuid.UUID]]
+    payload_record_id: Mapped[Optional[uuid.UUID]]
+    payload_record_kind: Mapped[Optional[str]]
+    payload_value_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    route_receipt_id: Mapped[Optional[uuid.UUID]]
+    edge_partition_id: Mapped[Optional[uuid.UUID]]
     sequence: Mapped[int] = mapped_column(sa.BigInteger)
     producer_position: Mapped[int] = mapped_column(sa.BigInteger)
     value: Mapped[Any] = mapped_column(stream_value_JSON)
@@ -742,6 +752,75 @@ class StreamRecord(Base):
     size_bytes: Mapped[int]
 
     __table_args__: Any = (
+        sa.UniqueConstraint(
+            "id",
+            "graph_revision_id",
+            "record_kind",
+            "value_digest",
+            name="uq_stream_record__id_graph_kind_value",
+        ),
+        sa.UniqueConstraint(
+            "id",
+            "graph_revision_id",
+            "record_kind",
+            "payload_record_id",
+            name="uq_stream_record__id_graph_kind_payload",
+        ),
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "flow_run_id"],
+            ["stream_graph_revision.id", "stream_graph_revision.flow_run_id"],
+            name="fk_stream_record__graph_flow",
+        ),
+        sa.ForeignKeyConstraint(
+            ["stream_id", "flow_run_id"],
+            ["stream_partition.id", "stream_partition.flow_run_id"],
+            name="fk_stream_record__partition_flow",
+        ),
+        sa.ForeignKeyConstraint(
+            [
+                "payload_record_id",
+                "graph_revision_id",
+                "payload_record_kind",
+                "payload_value_digest",
+            ],
+            [
+                "stream_record.id",
+                "stream_record.graph_revision_id",
+                "stream_record.record_kind",
+                "stream_record.value_digest",
+            ],
+            ondelete="RESTRICT",
+            name="fk_stream_record__direct_payload",
+        ),
+        sa.ForeignKeyConstraint(
+            ["edge_partition_id", "stream_id", "graph_revision_id"],
+            [
+                "stream_graph_edge_partition.id",
+                "stream_graph_edge_partition.stream_id",
+                "stream_graph_edge_partition.graph_revision_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_stream_record__edge_partition",
+        ),
+        sa.ForeignKeyConstraint(
+            ["route_receipt_id", "graph_revision_id", "payload_record_id"],
+            [
+                "stream_route_receipt.id",
+                "stream_route_receipt.graph_revision_id",
+                "stream_route_receipt.payload_record_id",
+            ],
+            ondelete="RESTRICT",
+            use_alter=True,
+            name="fk_stream_record__route_receipt_payload",
+        ),
+        sa.CheckConstraint(
+            "(graph_revision_id IS NULL AND flow_run_id IS NULL) OR (graph_revision_id IS NOT NULL AND flow_run_id IS NOT NULL)",
+            name="graph_flow_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(record_kind = 'PAYLOAD' AND payload_record_id IS NULL AND payload_record_kind IS NULL AND payload_value_digest IS NULL AND route_receipt_id IS NULL AND edge_partition_id IS NULL) OR (record_kind = 'REFERENCE' AND graph_revision_id IS NOT NULL AND payload_record_id IS NOT NULL AND payload_record_kind = 'PAYLOAD' AND payload_value_digest IS NOT NULL AND length(payload_value_digest) = 64 AND route_receipt_id IS NOT NULL AND edge_partition_id IS NOT NULL)",
+            name="record_reference_shape_valid",
+        ),
         sa.UniqueConstraint("stream_id", "sequence"),
         sa.UniqueConstraint("stream_id", "producer_position"),
         sa.CheckConstraint("sequence > 0", name="sequence_positive"),
@@ -757,6 +836,17 @@ class StreamConsumer(Base):
     flow_run_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("flow_run.id", ondelete="CASCADE"), index=True
     )
+    consumer_kind: Mapped[str] = mapped_column(
+        default="LEGACY", server_default="LEGACY"
+    )
+    graph_revision_id: Mapped[Optional[uuid.UUID]]
+    edge_partition_id: Mapped[Optional[uuid.UUID]]
+    edge_id: Mapped[Optional[uuid.UUID]]
+    input_port_id: Mapped[Optional[uuid.UUID]]
+    subtask_id: Mapped[Optional[uuid.UUID]]
+    task_run_id: Mapped[Optional[uuid.UUID]]
+    subscriber_uid: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    input_port_uid: Mapped[Optional[str]] = mapped_column(sa.String(64))
     input_stream_id: Mapped[uuid.UUID]
     output_stream_id: Mapped[uuid.UUID]
     owner_id: Mapped[uuid.UUID]
@@ -772,6 +862,74 @@ class StreamConsumer(Base):
     delivery_id: Mapped[Optional[uuid.UUID]]
 
     __table_args__: Any = (
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "flow_run_id"],
+            ["stream_graph_revision.id", "stream_graph_revision.flow_run_id"],
+            name="fk_stream_consumer__graph_flow",
+        ),
+        sa.ForeignKeyConstraint(
+            [
+                "edge_partition_id",
+                "graph_revision_id",
+                "edge_id",
+                "subtask_id",
+                "input_stream_id",
+                "id",
+            ],
+            [
+                "stream_graph_edge_partition.id",
+                "stream_graph_edge_partition.graph_revision_id",
+                "stream_graph_edge_partition.edge_id",
+                "stream_graph_edge_partition.target_subtask_id",
+                "stream_graph_edge_partition.stream_id",
+                "stream_graph_edge_partition.subscriber_id",
+            ],
+            name="fk_stream_consumer__stable_subscriber",
+        ),
+        sa.ForeignKeyConstraint(
+            ["subtask_id", "graph_revision_id", "task_run_id", "output_stream_id"],
+            [
+                "stream_physical_subtask.id",
+                "stream_physical_subtask.graph_revision_id",
+                "stream_physical_subtask.task_run_id",
+                "stream_physical_subtask.output_stream_id",
+            ],
+            name="fk_stream_consumer__current_dag_task",
+        ),
+        sa.ForeignKeyConstraint(
+            ["edge_id", "graph_revision_id", "subscriber_uid", "input_port_id"],
+            [
+                "stream_graph_edge.id",
+                "stream_graph_edge.graph_revision_id",
+                "stream_graph_edge.subscriber_uid",
+                "stream_graph_edge.consumer_port_id",
+            ],
+            name="fk_stream_consumer__edge_subscriber_port",
+        ),
+        sa.ForeignKeyConstraint(
+            ["input_port_id", "graph_revision_id", "input_port_uid"],
+            [
+                "stream_graph_port.id",
+                "stream_graph_port.graph_revision_id",
+                "stream_graph_port.port_uid",
+            ],
+            name="fk_stream_consumer__input_port_uid",
+        ),
+        sa.UniqueConstraint("id", "consumer_kind"),
+        sa.UniqueConstraint(
+            "id",
+            "graph_revision_id",
+            "subtask_id",
+            "task_run_id",
+            "input_stream_id",
+            "output_stream_id",
+            name="uq_stream_consumer__dag_owner",
+        ),
+        sa.UniqueConstraint("edge_partition_id"),
+        sa.CheckConstraint(
+            "(consumer_kind = 'LEGACY' AND graph_revision_id IS NULL AND edge_partition_id IS NULL AND edge_id IS NULL AND input_port_id IS NULL AND subtask_id IS NULL AND task_run_id IS NULL AND subscriber_uid IS NULL AND input_port_uid IS NULL) OR (consumer_kind = 'DAG' AND graph_revision_id IS NOT NULL AND edge_partition_id IS NOT NULL AND edge_id IS NOT NULL AND input_port_id IS NOT NULL AND subtask_id IS NOT NULL AND task_run_id IS NOT NULL AND subscriber_uid IS NOT NULL AND length(subscriber_uid) BETWEEN 1 AND 64 AND input_port_uid IS NOT NULL AND length(input_port_uid) BETWEEN 1 AND 64)",
+            name="dag_subscriber_shape_valid",
+        ),
         sa.ForeignKeyConstraint(
             ["input_stream_id", "flow_run_id"],
             ["stream_partition.id", "stream_partition.flow_run_id"],
@@ -809,6 +967,10 @@ class StreamCompletion(Base):
     consumer_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("stream_consumer.id", ondelete="CASCADE")
     )
+    consumer_kind: Mapped[str] = mapped_column(
+        default="LEGACY", server_default="LEGACY"
+    )
+    route_receipt_id: Mapped[Optional[uuid.UUID]] = mapped_column(unique=True)
     input_sequence: Mapped[int] = mapped_column(sa.BigInteger)
     delivery_id: Mapped[uuid.UUID]
     owner_epoch: Mapped[int]
@@ -817,6 +979,33 @@ class StreamCompletion(Base):
     output_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
 
     __table_args__: Any = (
+        sa.ForeignKeyConstraint(
+            ["consumer_id", "consumer_kind"],
+            ["stream_consumer.id", "stream_consumer.consumer_kind"],
+            name="fk_stream_completion__consumer_kind",
+        ),
+        sa.ForeignKeyConstraint(
+            [
+                "route_receipt_id",
+                "consumer_id",
+                "input_sequence",
+                "kind",
+                "intent_digest",
+            ],
+            [
+                "stream_route_receipt.id",
+                "stream_route_receipt.consumer_id",
+                "stream_route_receipt.input_sequence",
+                "stream_route_receipt.kind",
+                "stream_route_receipt.semantic_digest",
+            ],
+            ondelete="RESTRICT",
+            name="fk_stream_completion__route_receipt",
+        ),
+        sa.CheckConstraint(
+            "(consumer_kind = 'LEGACY' AND route_receipt_id IS NULL) OR (consumer_kind = 'DAG' AND route_receipt_id IS NOT NULL)",
+            name="route_receipt_shape_valid",
+        ),
         sa.UniqueConstraint("consumer_id", "input_sequence"),
         sa.UniqueConstraint("consumer_id", "delivery_id"),
         sa.UniqueConstraint("consumer_id", "output_sequence"),
@@ -831,6 +1020,183 @@ class StreamCompletion(Base):
             "AND output_sequence > 0) OR "
             "(kind = 'RETURN' AND output_sequence IS NULL)",
             name="output_shape_valid",
+        ),
+    )
+
+
+class StreamRouteReceipt(Base):
+    """One immutable DAG terminal outcome; no raw business key is persisted."""
+
+    graph_revision_id: Mapped[uuid.UUID]
+    flow_run_id: Mapped[uuid.UUID]
+    producer_subtask_id: Mapped[uuid.UUID]
+    producer_task_run_id: Mapped[uuid.UUID]
+    producer_stream_id: Mapped[uuid.UUID]
+    producer_position: Mapped[int] = mapped_column(sa.BigInteger)
+    producer_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    producer_role: Mapped[str]
+    kind: Mapped[str]
+    routing_digest: Mapped[str] = mapped_column(sa.String(64))
+    semantic_digest: Mapped[str] = mapped_column(sa.String(64))
+    outcome_digest: Mapped[str] = mapped_column(sa.String(64))
+    value_digest: Mapped[str] = mapped_column(sa.String(64))
+    managed_state_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    key_present: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+    output_key_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    output_ordinal: Mapped[Optional[int]]
+    payload_record_id: Mapped[Optional[uuid.UUID]]
+    payload_record_kind: Mapped[Optional[str]]
+    input_stream_id: Mapped[Optional[uuid.UUID]]
+    input_reference_record_id: Mapped[Optional[uuid.UUID]]
+    input_reference_record_kind: Mapped[Optional[str]]
+    input_payload_record_id: Mapped[Optional[uuid.UUID]]
+    input_payload_record_kind: Mapped[Optional[str]]
+    input_payload_value_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    input_sequence: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    consumer_id: Mapped[Optional[uuid.UUID]]
+    outcome: Mapped[dict[str, Any]] = mapped_column(JSON)
+    outcome_size: Mapped[int]
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("producer_stream_id", "producer_position"),
+        sa.UniqueConstraint("payload_record_id"),
+        sa.UniqueConstraint(
+            "id",
+            "consumer_id",
+            "input_sequence",
+            "kind",
+            "semantic_digest",
+            name="uq_stream_route_receipt__completion_witness",
+        ),
+        sa.ForeignKeyConstraint(
+            [
+                "consumer_id",
+                "graph_revision_id",
+                "producer_subtask_id",
+                "producer_task_run_id",
+                "input_stream_id",
+                "producer_stream_id",
+            ],
+            [
+                "stream_consumer.id",
+                "stream_consumer.graph_revision_id",
+                "stream_consumer.subtask_id",
+                "stream_consumer.task_run_id",
+                "stream_consumer.input_stream_id",
+                "stream_consumer.output_stream_id",
+            ],
+            name="fk_stream_route_receipt__stable_consumer",
+        ),
+        sa.UniqueConstraint(
+            "id",
+            "graph_revision_id",
+            "payload_record_id",
+            name="uq_stream_route_receipt__reference_payload",
+        ),
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "flow_run_id"],
+            ["stream_graph_revision.id", "stream_graph_revision.flow_run_id"],
+            name="fk_stream_route_receipt__graph_flow",
+        ),
+        sa.ForeignKeyConstraint(
+            [
+                "producer_subtask_id",
+                "graph_revision_id",
+                "producer_task_run_id",
+                "producer_stream_id",
+            ],
+            [
+                "stream_physical_subtask.id",
+                "stream_physical_subtask.graph_revision_id",
+                "stream_physical_subtask.task_run_id",
+                "stream_physical_subtask.output_stream_id",
+            ],
+            name="fk_stream_route_receipt__producer",
+        ),
+        sa.ForeignKeyConstraint(
+            ["producer_stream_id", "flow_run_id"],
+            ["stream_partition.id", "stream_partition.flow_run_id"],
+            name="fk_stream_route_receipt__producer_flow",
+        ),
+        sa.ForeignKeyConstraint(
+            ["input_stream_id", "flow_run_id"],
+            ["stream_partition.id", "stream_partition.flow_run_id"],
+            name="fk_stream_route_receipt__input_flow",
+        ),
+        sa.ForeignKeyConstraint(
+            [
+                "payload_record_id",
+                "graph_revision_id",
+                "payload_record_kind",
+                "value_digest",
+            ],
+            [
+                "stream_record.id",
+                "stream_record.graph_revision_id",
+                "stream_record.record_kind",
+                "stream_record.value_digest",
+            ],
+            ondelete="RESTRICT",
+            name="fk_stream_route_receipt__output_payload",
+        ),
+        # Only this edge is deferred: whole-Flow locked cleanup deletes all
+        # REFERENCEs, completions, receipts, consumers, then PAYLOADs in one txn.
+        # Committed dangling input references remain forbidden in both dialects.
+        sa.ForeignKeyConstraint(
+            [
+                "input_reference_record_id",
+                "graph_revision_id",
+                "input_reference_record_kind",
+                "input_payload_record_id",
+            ],
+            [
+                "stream_record.id",
+                "stream_record.graph_revision_id",
+                "stream_record.record_kind",
+                "stream_record.payload_record_id",
+            ],
+            deferrable=True,
+            initially="DEFERRED",
+            name="fk_stream_route_receipt__input_reference",
+        ),
+        sa.ForeignKeyConstraint(
+            [
+                "input_payload_record_id",
+                "graph_revision_id",
+                "input_payload_record_kind",
+                "input_payload_value_digest",
+            ],
+            [
+                "stream_record.id",
+                "stream_record.graph_revision_id",
+                "stream_record.record_kind",
+                "stream_record.value_digest",
+            ],
+            ondelete="RESTRICT",
+            name="fk_stream_route_receipt__input_payload",
+        ),
+        sa.CheckConstraint(
+            "producer_position > 0 AND (producer_sequence IS NULL OR producer_sequence > 0)",
+            name="position_valid",
+        ),
+        sa.CheckConstraint(
+            "length(routing_digest) = 64 AND length(semantic_digest) = 64 AND length(outcome_digest) = 64 AND length(value_digest) = 64 AND (managed_state_digest IS NULL OR length(managed_state_digest) = 64)",
+            name="digests_valid",
+        ),
+        sa.CheckConstraint(
+            "(key_present = false AND output_key_digest IS NULL) OR (key_present = true AND output_key_digest IS NOT NULL AND length(output_key_digest) = 64)",
+            name="key_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(kind = 'YIELD' AND producer_sequence IS NOT NULL AND output_ordinal = 0 AND payload_record_id IS NOT NULL AND payload_record_kind = 'PAYLOAD') OR (kind = 'RETURN' AND producer_sequence IS NULL AND output_ordinal IS NULL AND payload_record_id IS NULL AND payload_record_kind IS NULL AND key_present = false)",
+            name="terminal_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(producer_role = 'SOURCE' AND kind = 'YIELD' AND input_stream_id IS NULL AND input_reference_record_id IS NULL AND input_reference_record_kind IS NULL AND input_payload_record_id IS NULL AND input_payload_record_kind IS NULL AND input_payload_value_digest IS NULL AND input_sequence IS NULL AND consumer_id IS NULL AND managed_state_digest IS NULL) OR (producer_role = 'OPERATOR' AND input_stream_id IS NOT NULL AND input_reference_record_id IS NOT NULL AND input_reference_record_kind = 'REFERENCE' AND input_payload_record_id IS NOT NULL AND input_payload_record_kind = 'PAYLOAD' AND input_payload_value_digest IS NOT NULL AND length(input_payload_value_digest) = 64 AND input_sequence = producer_position AND consumer_id IS NOT NULL AND managed_state_digest IS NOT NULL)",
+            name="input_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "outcome_size BETWEEN 1 AND 65536", name="outcome_size_valid"
         ),
     )
 
@@ -939,8 +1305,11 @@ class StreamGraphRevision(Base):
     placement_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
 
     __table_args__: Any = (
+        sa.UniqueConstraint("id", "profile"),
+        sa.UniqueConstraint("id", "flow_run_id"),
+        sa.UniqueConstraint("id", "admission_operation_id", "profile"),
         sa.CheckConstraint(
-            "profile = 'partitioned-fixed-v1' AND assignment_epoch = 1",
+            "profile IN ('partitioned-fixed-v1', 'partitioned-dag-v1') AND assignment_epoch = 1",
             name="profile_valid",
         ),
         sa.CheckConstraint(
@@ -977,8 +1346,9 @@ class StreamGraphRevision(Base):
 class StreamOperatorRun(Base):
     """Logical operator grouping, independent from physical TaskRun invocations."""
 
-    graph_revision_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("stream_graph_revision.id", ondelete="CASCADE")
+    graph_revision_id: Mapped[uuid.UUID]
+    profile: Mapped[str] = mapped_column(
+        default="partitioned-fixed-v1", server_default="partitioned-fixed-v1"
     )
     operator_uid: Mapped[str] = mapped_column(sa.String(64))
     role: Mapped[str]
@@ -986,9 +1356,15 @@ class StreamOperatorRun(Base):
     specification: Mapped[dict[str, Any]] = mapped_column(JSON)
 
     __table_args__: Any = (
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "profile"],
+            ["stream_graph_revision.id", "stream_graph_revision.profile"],
+            ondelete="CASCADE",
+        ),
+        sa.UniqueConstraint("id", "graph_revision_id", "profile"),
         sa.UniqueConstraint("graph_revision_id", "operator_uid"),
         sa.CheckConstraint(
-            "role IN ('SOURCE', 'OPERATOR') AND parallelism = 2",
+            "role IN ('SOURCE', 'OPERATOR') AND ((profile = 'partitioned-fixed-v1' AND parallelism = 2) OR (profile = 'partitioned-dag-v1' AND parallelism BETWEEN 1 AND 16))",
             name="fixed_shape_valid",
         ),
     )
@@ -997,12 +1373,11 @@ class StreamOperatorRun(Base):
 class StreamPhysicalSubtask(Base):
     """Stable physical invocation; replacement never creates another TaskRun."""
 
-    graph_revision_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("stream_graph_revision.id", ondelete="CASCADE"), index=True
+    graph_revision_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    profile: Mapped[str] = mapped_column(
+        default="partitioned-fixed-v1", server_default="partitioned-fixed-v1"
     )
-    operator_run_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("stream_operator_run.id", ondelete="CASCADE")
-    )
+    operator_run_id: Mapped[uuid.UUID]
     subtask_index: Mapped[int]
     assignment_epoch: Mapped[int]
     task_run_id: Mapped[uuid.UUID] = mapped_column(
@@ -1033,9 +1408,32 @@ class StreamPhysicalSubtask(Base):
     )
 
     __table_args__: Any = (
+        sa.UniqueConstraint(
+            "id",
+            "graph_revision_id",
+            "task_run_id",
+            "output_stream_id",
+            name="uq_stream_physical_subtask__route_producer",
+        ),
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "profile"],
+            ["stream_graph_revision.id", "stream_graph_revision.profile"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["operator_run_id", "graph_revision_id", "profile"],
+            [
+                "stream_operator_run.id",
+                "stream_operator_run.graph_revision_id",
+                "stream_operator_run.profile",
+            ],
+            ondelete="CASCADE",
+        ),
+        sa.UniqueConstraint("id", "graph_revision_id", "profile", "subtask_index"),
+        sa.UniqueConstraint("id", "graph_revision_id", "assigned_worker_id"),
         sa.UniqueConstraint("operator_run_id", "subtask_index"),
         sa.CheckConstraint(
-            "subtask_index BETWEEN 0 AND 1 AND assignment_epoch = 1",
+            "assignment_epoch = 1 AND ((profile = 'partitioned-fixed-v1' AND subtask_index BETWEEN 0 AND 1) OR (profile = 'partitioned-dag-v1' AND subtask_index BETWEEN 0 AND 15))",
             name="assignment_valid",
         ),
         sa.CheckConstraint(
@@ -1159,7 +1557,7 @@ class StreamWorkerCapability(Base):
     """Bounded live protocol advertisement, never a process-death witness."""
 
     worker_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("worker.id", ondelete="CASCADE"), unique=True
+        sa.ForeignKey("worker.id", ondelete="CASCADE")
     )
     work_pool_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("work_pool.id", ondelete="CASCADE")
@@ -1173,8 +1571,9 @@ class StreamWorkerCapability(Base):
     last_renewed_at: Mapped[DateTime]
 
     __table_args__: Any = (
+        sa.UniqueConstraint("worker_id", "protocol", "protocol_version"),
         sa.CheckConstraint(
-            "protocol = 'partitioned-fixed-v1' AND protocol_version = 1",
+            "protocol IN ('partitioned-fixed-v1', 'partitioned-dag-v1') AND protocol_version = 1",
             name="protocol_valid",
         ),
         sa.CheckConstraint(
@@ -1196,6 +1595,233 @@ class StreamSubtaskAllocation(Base):
     released: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
 
     __table_args__: Any = (sa.UniqueConstraint("subtask_id", "concurrency_limit_id"),)
+
+
+class StreamGraphPort(Base):
+    """Immutable qualified operator port; no records or execution authority."""
+
+    graph_revision_id: Mapped[uuid.UUID]
+    operator_run_id: Mapped[uuid.UUID]
+    profile: Mapped[str] = mapped_column(
+        default="partitioned-dag-v1", server_default="partitioned-dag-v1"
+    )
+    port_uid: Mapped[str] = mapped_column(sa.String(64))
+    direction: Mapped[str]
+    schema_id: Mapped[str]
+    schema_version: Mapped[int]
+    schema_digest: Mapped[str] = mapped_column(sa.String(64))
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("id", "graph_revision_id", "port_uid"),
+        sa.ForeignKeyConstraint(
+            ["operator_run_id", "graph_revision_id", "profile"],
+            [
+                "stream_operator_run.id",
+                "stream_operator_run.graph_revision_id",
+                "stream_operator_run.profile",
+            ],
+            ondelete="CASCADE",
+        ),
+        sa.UniqueConstraint("operator_run_id", "direction"),
+        sa.UniqueConstraint("operator_run_id", "port_uid"),
+        sa.UniqueConstraint("id", "graph_revision_id", "direction"),
+        sa.CheckConstraint(
+            "profile = 'partitioned-dag-v1' AND direction IN ('INPUT', 'OUTPUT') AND length(port_uid) BETWEEN 1 AND 64",
+            name="port_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "schema_id = 'json-value-v1' AND schema_version = 1 AND schema_digest = 'd93f54187397ae62d4e1b98c56edab2a67a9d10422b028dfdea87ba6616a849c'",
+            name="schema_identity_valid",
+        ),
+    )
+
+
+class StreamGraphEdge(Base):
+    """Immutable logical subscriber/exchange metadata, never a second log."""
+
+    graph_revision_id: Mapped[uuid.UUID]
+    profile: Mapped[str] = mapped_column(
+        default="partitioned-dag-v1", server_default="partitioned-dag-v1"
+    )
+    edge_uid: Mapped[str] = mapped_column(sa.String(64))
+    subscriber_uid: Mapped[str] = mapped_column(sa.String(64))
+    producer_port_id: Mapped[uuid.UUID]
+    producer_direction: Mapped[str] = mapped_column(
+        default="OUTPUT", server_default="OUTPUT"
+    )
+    consumer_port_id: Mapped[uuid.UUID]
+    consumer_direction: Mapped[str] = mapped_column(
+        default="INPUT", server_default="INPUT"
+    )
+    producer_parallelism: Mapped[int]
+    target_parallelism: Mapped[int]
+    exchange: Mapped[str]
+    routing_version: Mapped[int]
+    key_codec: Mapped[Optional[str]]
+    hash_algorithm: Mapped[Optional[str]]
+    key_group_count: Mapped[Optional[int]]
+    specification: Mapped[dict[str, Any]] = mapped_column(JSON)
+
+    __table_args__: Any = (
+        sa.UniqueConstraint(
+            "id",
+            "graph_revision_id",
+            "subscriber_uid",
+            "consumer_port_id",
+            name="uq_stream_graph_edge__subscriber_port",
+        ),
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "profile"],
+            ["stream_graph_revision.id", "stream_graph_revision.profile"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["producer_port_id", "graph_revision_id", "producer_direction"],
+            [
+                "stream_graph_port.id",
+                "stream_graph_port.graph_revision_id",
+                "stream_graph_port.direction",
+            ],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["consumer_port_id", "graph_revision_id", "consumer_direction"],
+            [
+                "stream_graph_port.id",
+                "stream_graph_port.graph_revision_id",
+                "stream_graph_port.direction",
+            ],
+            ondelete="CASCADE",
+        ),
+        sa.UniqueConstraint("graph_revision_id", "edge_uid"),
+        sa.UniqueConstraint("graph_revision_id", "subscriber_uid"),
+        sa.UniqueConstraint("consumer_port_id"),
+        sa.UniqueConstraint("id", "graph_revision_id"),
+        sa.CheckConstraint(
+            "profile = 'partitioned-dag-v1' AND producer_direction = 'OUTPUT' AND consumer_direction = 'INPUT' AND producer_port_id != consumer_port_id",
+            name="edge_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "length(edge_uid) BETWEEN 1 AND 64 AND length(subscriber_uid) BETWEEN 1 AND 64",
+            name="identifiers_valid",
+        ),
+        sa.CheckConstraint(
+            "producer_parallelism BETWEEN 1 AND 16 AND target_parallelism BETWEEN 1 AND 16 AND exchange IN ('forward', 'rebalance', 'broadcast', 'keyed') AND routing_version = 1",
+            name="exchange_valid",
+        ),
+        sa.CheckConstraint(
+            "exchange != 'forward' OR producer_parallelism = target_parallelism",
+            name="forward_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(exchange = 'keyed' AND key_codec = 'tagged-key-v1' AND hash_algorithm = 'sha256' AND key_group_count IS NOT NULL AND key_group_count BETWEEN target_parallelism AND 2147483647) OR (exchange != 'keyed' AND key_codec IS NULL AND hash_algorithm IS NULL AND key_group_count IS NULL)",
+            name="key_shape_valid",
+        ),
+    )
+
+
+class StreamGraphEdgePartition(Base):
+    """Stable subscriber partition binding to the existing stream data plane."""
+
+    graph_revision_id: Mapped[uuid.UUID]
+    flow_run_id: Mapped[uuid.UUID]
+    profile: Mapped[str] = mapped_column(
+        default="partitioned-dag-v1", server_default="partitioned-dag-v1"
+    )
+    edge_id: Mapped[uuid.UUID]
+    partition_index: Mapped[int]
+    stream_id: Mapped[uuid.UUID]
+    subscriber_id: Mapped[uuid.UUID]
+    target_subtask_id: Mapped[uuid.UUID]
+
+    __table_args__: Any = (
+        sa.UniqueConstraint(
+            "id",
+            "stream_id",
+            "graph_revision_id",
+            name="uq_stream_graph_edge_partition__route_stream",
+        ),
+        sa.UniqueConstraint(
+            "id",
+            "graph_revision_id",
+            "edge_id",
+            "target_subtask_id",
+            "stream_id",
+            "subscriber_id",
+            name="uq_stream_graph_edge_partition__subscriber_target",
+        ),
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "flow_run_id"],
+            ["stream_graph_revision.id", "stream_graph_revision.flow_run_id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["edge_id", "graph_revision_id"],
+            ["stream_graph_edge.id", "stream_graph_edge.graph_revision_id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["stream_id", "flow_run_id"],
+            ["stream_partition.id", "stream_partition.flow_run_id"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["target_subtask_id", "graph_revision_id", "profile", "partition_index"],
+            [
+                "stream_physical_subtask.id",
+                "stream_physical_subtask.graph_revision_id",
+                "stream_physical_subtask.profile",
+                "stream_physical_subtask.subtask_index",
+            ],
+        ),
+        sa.UniqueConstraint("edge_id", "partition_index"),
+        sa.UniqueConstraint("stream_id"),
+        sa.UniqueConstraint("subscriber_id"),
+        sa.UniqueConstraint("target_subtask_id"),
+        sa.CheckConstraint(
+            "profile = 'partitioned-dag-v1' AND partition_index BETWEEN 0 AND 15",
+            name="partition_shape_valid",
+        ),
+    )
+
+
+class StreamPhysicalSlotAllocation(Base):
+    """Durable physical reservation; tag allocations may legitimately be empty."""
+
+    graph_revision_id: Mapped[uuid.UUID]
+    subtask_id: Mapped[uuid.UUID]
+    worker_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("worker.id"), index=True)
+    profile: Mapped[str] = mapped_column(
+        default="partitioned-dag-v1", server_default="partitioned-dag-v1"
+    )
+    admission_operation_id: Mapped[uuid.UUID]
+    released: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+    release_operation_id: Mapped[Optional[uuid.UUID]]
+    released_at: Mapped[Optional[DateTime]]
+
+    __table_args__: Any = (
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "admission_operation_id", "profile"],
+            [
+                "stream_graph_revision.id",
+                "stream_graph_revision.admission_operation_id",
+                "stream_graph_revision.profile",
+            ],
+        ),
+        sa.ForeignKeyConstraint(
+            ["subtask_id", "graph_revision_id", "worker_id"],
+            [
+                "stream_physical_subtask.id",
+                "stream_physical_subtask.graph_revision_id",
+                "stream_physical_subtask.assigned_worker_id",
+            ],
+        ),
+        sa.UniqueConstraint("subtask_id"),
+        sa.CheckConstraint("profile = 'partitioned-dag-v1'", name="profile_valid"),
+        sa.CheckConstraint(
+            "(released = false AND release_operation_id IS NULL AND released_at IS NULL) OR (released = true AND release_operation_id IS NOT NULL AND released_at IS NOT NULL)",
+            name="release_shape_valid",
+        ),
+    )
 
 
 class StreamFiniteSubmission(Base):
@@ -1478,7 +2104,7 @@ class NativeStreamDeploymentSnapshot(Base):
         sa.UniqueConstraint("flow_run_id"),
         sa.CheckConstraint("protocol_version = 1", name="protocol_version_valid"),
         sa.CheckConstraint(
-            "profile IN ('bounded-linear-v1', 'partitioned-fixed-v1')",
+            "profile IN ('bounded-linear-v1', 'partitioned-fixed-v1', 'partitioned-dag-v1')",
             name="profile_valid",
         ),
         sa.CheckConstraint(

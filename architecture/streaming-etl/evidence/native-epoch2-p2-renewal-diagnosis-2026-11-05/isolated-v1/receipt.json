@@ -1,0 +1,64 @@
+{
+  "verdict": "PASS_SINGLECASE_HOSTED_FAILURE_NOT_REPRODUCED",
+  "native_acceptance": false,
+  "scope": "Read-only diagnosis of published fixed-P2 heartbeat500 and follow-on slots leak; no product/test modification",
+  "published_head": "d8f82b6938b572a2e415654f19531814337df34c",
+  "isolated_commit": "22dc093d32f747476bfdc17540eb520fd37bef6a",
+  "commit_difference": "Four unrelated backend-prerequisite test fixtures only; fixed-P2 test/runtime bytes unchanged",
+  "hosted": {
+    "run_id": 41965463039,
+    "job_id": 127041836792,
+    "raw": "hosted-job.log",
+    "raw_sha256": "dc0c2faacfc27eefd4b202bc08f1be0f00d5fb19af0b8fbd51360552d9cd508b",
+    "first_failure": "500-operator-loss-200-True",
+    "database_evidence": "04:33:50.024 UTC canceling statement due to user request while locking FlowRun tuple; SELECT FlowRun FOR UPDATE",
+    "observed_deadlock_exception": false,
+    "secondary_failures": "Seven subsequent setup cases observe tag active_slots4; large5000 cases do not execute"
+  },
+  "isolated": {
+    "command": "PYTHONPATH=<owned>/src:<owned>:<observer> UV_PROJECT_ENVIRONMENT=/workspace/ariadne/.venv UV_NO_SYNC=1 uv run --no-sync pytest -n0 -q -s tests/test_native_partitioned_stream_http.py -k '500 and operator-loss-200 and True' --basetemp=/tmp/native-p2-heartbeat-repro-22dc093-v2/temp --junitxml=/tmp/native-p2-heartbeat-repro-22dc093-v2/tests.xml",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "deselected": 12,
+    "runtime_seconds": 96.07,
+    "own_database_base": "native_p2_heartbeat_sdk_22dc093_20261105",
+    "source_files": 1546,
+    "source_before_after_equal": true,
+    "source_map_sha256": "586ec2eb8c92bd80b3ab89e5a3d5d92190d1e5d184550f6787b70247c4511018",
+    "prefect_import_processes": 12,
+    "prefect_import_records": 3891,
+    "foreign_prefect_imports": 0,
+    "accepted_200_recovery_next": 201,
+    "final_deployment_slots": 0,
+    "tag_and_physical_stop_assertions": "Existing unchanged test passes all final tag/physical retirement assertions"
+  },
+  "lock_observation": {
+    "samples": 29,
+    "samples_with_blocked_queries": 19,
+    "max_observed_query_wait_seconds": 2.948401,
+    "flow_for_update_wait_observed": true,
+    "full_blocker_attribution": false,
+    "limitation": "Short initial observer captured waiters/blockerPIDs only. Expanded observer failed because relation regclass was resolved in postgres DB, not the owned test DB. Failure raw retained; no complete pg_locks proof claimed."
+  },
+  "code_findings": {
+    "database_command_timeout_default_seconds": 10.0,
+    "native_request_retry_budget_existing_seconds": 20.0,
+    "renewal_and_monitor_and_test_files_byte_equal_accepted_e0725b0": {
+      "src/prefect/server/models/native_deployments.py": true,
+      "src/prefect/runner/_starter_native.py": true,
+      "tests/test_native_partitioned_stream_http.py": true
+    },
+    "renewal_500_handling": "Generic HTTP_ERROR500 does not meet _request retry condition; _monitor raises; TaskGroup aborts and _start_attempt finally kills/waits coordinator. handed_off=True skips startup recovery branch.",
+    "causal_limit": "Local pass does not prove whether hosted contention trigger is latent or introduced by other NI010 paths. It proves the renewal/monitor/test mechanism predates NI010."
+  },
+  "critical_source_sha256": {
+    "src/prefect/server/models/native_deployments.py": "dac027ca3208bc7c9721c0e14b0a428936db679b9bfd81c59db012c8596e5dd5",
+    "src/prefect/runner/_starter_native.py": "97e780a63052e2a99d08c8a21e5eaff3a92e10e210b781f374194064b95ee648",
+    "tests/test_native_partitioned_stream_http.py": "707d663888ca15ef40ab4300e3b55b300ca2927242bd2ee2245346443501b0eb",
+    "src/prefect/server/models/stream_subtask_authority.py": "bf51aed23bf01ae71f1f4218f34318f1a1780bd52077dc708d5df3f2076656f5",
+    "src/prefect/server/models/stream_workers.py": "93d9f70fdb2a8114aa18f12fa7fd899cc34c8528b89e20a626363cf34676156b",
+    "src/prefect/server/models/stream_executions.py": "19fb20e2d3845f82f3a4b674f7e23b6c094730dce698f2890b7ceea430db5a42"
+  },
+  "next_authorized_scope": "Root/architect approved renewal-only bounded500..599 retry and monitor degradation; generic SDK/server/DDL and coordinator-death cleanup remain outside this correction."
+}

@@ -1781,6 +1781,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/streams/v2/dags/seal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Seal Dag */
+        post: operations["seal_dag_streams_v2_dags_seal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/{graph_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Dag */
+        get: operations["read_dag_streams_v2_dags__graph_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/sources/append": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Append Source */
+        post: operations["append_source_streams_v2_dags_sources_append_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/consumers/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete Consumer */
+        post: operations["complete_consumer_streams_v2_dags_consumers_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/streams/v1/deployments/enroll": {
         parameters: {
             query?: never;
@@ -10165,7 +10233,7 @@ export interface components {
              * Profile
              * @enum {string}
              */
-            profile: "bounded-linear-v1" | "partitioned-fixed-v1";
+            profile: "bounded-linear-v1" | "partitioned-fixed-v1" | "partitioned-dag-v1";
             /** Flow Version */
             flow_version: string;
             /** Flow Code Digest */
@@ -13090,6 +13158,26 @@ export interface components {
              */
             reason?: string | null;
         };
+        /** StreamBooleanOutputKey */
+        StreamBooleanOutputKey: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "B";
+            /** Value */
+            value: boolean;
+        };
+        /** StreamBytesOutputKey */
+        StreamBytesOutputKey: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Y";
+            /** Value */
+            value: string;
+        };
         /** StreamCompletionResult */
         StreamCompletionResult: {
             /** Input Sequence */
@@ -13179,6 +13267,440 @@ export interface components {
             protocol_version: 1;
             limits?: components["schemas"]["StreamLimits"] | null;
         };
+        /** StreamDAGConsumerCompleteRequest */
+        StreamDAGConsumerCompleteRequest: {
+            context: components["schemas"]["StreamDAGRouteContext"];
+            binding: components["schemas"]["ConsumerBinding"];
+            token: components["schemas"]["DeliveryToken"];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "YIELD" | "RETURN";
+            value: components["schemas"]["JsonValue"];
+            /** Managed State */
+            managed_state: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Output Key */
+            output_key?: (components["schemas"]["StreamNullOutputKey"] | components["schemas"]["StreamBooleanOutputKey"] | components["schemas"]["StreamIntegerOutputKey"] | components["schemas"]["StreamStringOutputKey"] | components["schemas"]["StreamBytesOutputKey"]) | null;
+        };
+        /** StreamDAGEdgePartitionProjection */
+        StreamDAGEdgePartitionProjection: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Partition Index */
+            partition_index: number;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /**
+             * Subscriber Id
+             * Format: uuid
+             */
+            subscriber_id: string;
+            /**
+             * Target Subtask Id
+             * Format: uuid
+             */
+            target_subtask_id: string;
+        };
+        /** StreamDAGEdgeProjection */
+        StreamDAGEdgeProjection: {
+            /** Edge Uid */
+            edge_uid: string;
+            /** Producer Operator Uid */
+            producer_operator_uid: string;
+            /** Output Port Uid */
+            output_port_uid: string;
+            /** Subscriber Uid */
+            subscriber_uid: string;
+            /** Consumer Operator Uid */
+            consumer_operator_uid: string;
+            /** Input Port Uid */
+            input_port_uid: string;
+            /**
+             * Exchange
+             * @enum {string}
+             */
+            exchange: "forward" | "rebalance" | "broadcast" | "keyed";
+            /**
+             * Routing Version
+             * @default 1
+             * @constant
+             */
+            routing_version: 1;
+            /** Key Codec */
+            key_codec?: "tagged-key-v1" | null;
+            /** Hash Algorithm */
+            hash_algorithm?: "sha256" | null;
+            /** Key Group Count */
+            key_group_count?: number | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Partitions */
+            partitions: components["schemas"]["StreamDAGEdgePartitionProjection"][];
+        };
+        /** StreamDAGOperatorProjection */
+        StreamDAGOperatorProjection: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Operator Uid */
+            operator_uid: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "SOURCE" | "OPERATOR";
+            /** Parallelism */
+            parallelism: number;
+            input_port: components["schemas"]["StreamDAGPortProjection"] | null;
+            output_port: components["schemas"]["StreamDAGPortProjection"];
+        };
+        /** StreamDAGOperatorSpec */
+        StreamDAGOperatorSpec: {
+            /** Operator Uid */
+            operator_uid: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "SOURCE" | "OPERATOR";
+            /** Parallelism */
+            parallelism: number;
+            /** Task Name */
+            task_name: string;
+            /** Task Key */
+            task_key: string;
+            /** Task Version */
+            task_version: string;
+            /** Artifact Digest */
+            artifact_digest: string;
+            /** Entrypoint */
+            entrypoint: string;
+            /** Context Key */
+            context_key: string;
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            }[];
+            input_port?: components["schemas"]["StreamPortSpec"] | null;
+            output_port: components["schemas"]["StreamPortSpec"];
+            /** Input Key */
+            input_key?: string | null;
+            task_policy?: components["schemas"]["TaskRunPolicy"];
+            /** Timeout Seconds */
+            timeout_seconds?: number | null;
+            /** Tags */
+            tags?: string[];
+            limits?: components["schemas"]["StreamLimits"];
+        };
+        /** StreamDAGPlan */
+        StreamDAGPlan: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Profile
+             * @default partitioned-dag-v1
+             * @constant
+             */
+            profile: "partitioned-dag-v1";
+            /**
+             * Assignment Epoch
+             * @default 1
+             * @constant
+             */
+            assignment_epoch: 1;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "SEALED" | "ADMITTED" | "ABORTING" | "RELEASED";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Placement Digest */
+            placement_digest?: string | null;
+            /**
+             * Execution Ready
+             * @default false
+             * @constant
+             */
+            execution_ready: false;
+            /** Operators */
+            operators: components["schemas"]["StreamDAGOperatorProjection"][];
+            /** Edges */
+            edges: components["schemas"]["StreamDAGEdgeProjection"][];
+            /** Subtasks */
+            subtasks: components["schemas"]["StreamDAGSubtaskProjection"][];
+            /** Leaf Operator Uids */
+            leaf_operator_uids: string[];
+        };
+        /** StreamDAGPortProjection */
+        StreamDAGPortProjection: {
+            /** Uid */
+            uid: string;
+            /**
+             * Schema Id
+             * @default json-value-v1
+             * @constant
+             */
+            schema_id: "json-value-v1";
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /**
+             * Schema Digest
+             * @default d93f54187397ae62d4e1b98c56edab2a67a9d10422b028dfdea87ba6616a849c
+             */
+            schema_digest: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "INPUT" | "OUTPUT";
+        };
+        /** StreamDAGRouteContext */
+        StreamDAGRouteContext: {
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /** Routing Digest */
+            routing_digest: string;
+            /**
+             * Producer Subtask Id
+             * Format: uuid
+             */
+            producer_subtask_id: string;
+            /** Operator Uid */
+            operator_uid: string;
+            /** Output Port Uid */
+            output_port_uid: string;
+            /** Subtask Index */
+            subtask_index: number;
+            /** Has Keyed Outgoing */
+            has_keyed_outgoing: boolean;
+        };
+        /** StreamDAGRouteOutcome */
+        StreamDAGRouteOutcome: {
+            /**
+             * Receipt Id
+             * Format: uuid
+             */
+            receipt_id: string;
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /** Routing Digest */
+            routing_digest: string;
+            /** Semantic Digest */
+            semantic_digest: string;
+            /** Outcome Digest */
+            outcome_digest: string;
+            /**
+             * Producer Stream Id
+             * Format: uuid
+             */
+            producer_stream_id: string;
+            /** Producer Position */
+            producer_position: number;
+            /**
+             * Producer Role
+             * @enum {string}
+             */
+            producer_role: "SOURCE" | "OPERATOR";
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "YIELD" | "RETURN";
+            /** Input Stream Id */
+            input_stream_id: string | null;
+            /** Input Record Id */
+            input_record_id: string | null;
+            /** Input Payload Record Id */
+            input_payload_record_id: string | null;
+            /** Input Payload Value Digest */
+            input_payload_value_digest: string | null;
+            /** Input Sequence */
+            input_sequence: number | null;
+            /** Consumer Id */
+            consumer_id: string | null;
+            /** Producer Sequence */
+            producer_sequence: number | null;
+            /** Output Ordinal */
+            output_ordinal: 0 | null;
+            /** Payload Record Id */
+            payload_record_id: string | null;
+            /** Payload Value Digest */
+            payload_value_digest: string | null;
+            /** Payload Size Bytes */
+            payload_size_bytes: number | null;
+            /** References */
+            references: components["schemas"]["StreamDAGRouteReference"][];
+        };
+        /** StreamDAGRouteReference */
+        StreamDAGRouteReference: {
+            /**
+             * Edge Id
+             * Format: uuid
+             */
+            edge_id: string;
+            /**
+             * Edge Partition Id
+             * Format: uuid
+             */
+            edge_partition_id: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * Record Id
+             * Format: uuid
+             */
+            record_id: string;
+            /**
+             * Payload Record Id
+             * Format: uuid
+             */
+            payload_record_id: string;
+        };
+        /** StreamDAGSealRequest */
+        StreamDAGSealRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Profile
+             * @default partitioned-dag-v1
+             * @constant
+             */
+            profile: "partitioned-dag-v1";
+            /**
+             * Assignment Epoch
+             * @default 1
+             * @constant
+             */
+            assignment_epoch: 1;
+            /** Flow Version */
+            flow_version: string;
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Deployment Version */
+            deployment_version?: string | null;
+            /** Working Directory */
+            working_directory?: string | null;
+            /** Operators */
+            operators: components["schemas"]["StreamDAGOperatorSpec"][];
+            /** Edges */
+            edges: components["schemas"]["StreamEdgeSpec"][];
+        };
+        /** StreamDAGSourceAppendRequest */
+        StreamDAGSourceAppendRequest: {
+            context: components["schemas"]["StreamDAGRouteContext"];
+            binding: components["schemas"]["SourceBinding"];
+            /** Position */
+            position: number;
+            value: components["schemas"]["JsonValue"];
+            /** Output Key */
+            output_key?: (components["schemas"]["StreamNullOutputKey"] | components["schemas"]["StreamBooleanOutputKey"] | components["schemas"]["StreamIntegerOutputKey"] | components["schemas"]["StreamStringOutputKey"] | components["schemas"]["StreamBytesOutputKey"]) | null;
+        };
+        /** StreamDAGSubtaskProjection */
+        StreamDAGSubtaskProjection: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Operator Run Id
+             * Format: uuid
+             */
+            operator_run_id: string;
+            /** Operator Uid */
+            operator_uid: string;
+            /** Subtask Index */
+            subtask_index: number;
+            /**
+             * Assignment Epoch
+             * @default 1
+             * @constant
+             */
+            assignment_epoch: 1;
+            /** Input Stream Id */
+            input_stream_id: string | null;
+            /**
+             * Output Stream Id
+             * Format: uuid
+             */
+            output_stream_id: string;
+            manifest: components["schemas"]["StreamSubmissionManifest"];
+            /** Assigned Worker Id */
+            assigned_worker_id?: string | null;
+            /**
+             * Physical Slot Reserved
+             * @default false
+             */
+            physical_slot_reserved: boolean;
+            /**
+             * Physical Slot Released
+             * @default false
+             */
+            physical_slot_released: boolean;
+        };
         /** StreamDelivery */
         StreamDelivery: {
             token: components["schemas"]["DeliveryToken"];
@@ -13187,6 +13709,38 @@ export interface components {
             managed_state: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
+        };
+        /** StreamEdgeSpec */
+        StreamEdgeSpec: {
+            /** Edge Uid */
+            edge_uid: string;
+            /** Producer Operator Uid */
+            producer_operator_uid: string;
+            /** Output Port Uid */
+            output_port_uid: string;
+            /** Subscriber Uid */
+            subscriber_uid: string;
+            /** Consumer Operator Uid */
+            consumer_operator_uid: string;
+            /** Input Port Uid */
+            input_port_uid: string;
+            /**
+             * Exchange
+             * @enum {string}
+             */
+            exchange: "forward" | "rebalance" | "broadcast" | "keyed";
+            /**
+             * Routing Version
+             * @default 1
+             * @constant
+             */
+            routing_version: 1;
+            /** Key Codec */
+            key_codec?: "tagged-key-v1" | null;
+            /** Hash Algorithm */
+            hash_algorithm?: "sha256" | null;
+            /** Key Group Count */
+            key_group_count?: number | null;
         };
         /** StreamEnvelope */
         StreamEnvelope: {
@@ -13756,6 +14310,16 @@ export interface components {
             /** Released */
             released: boolean;
         };
+        /** StreamIntegerOutputKey */
+        StreamIntegerOutputKey: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "I";
+            /** Value */
+            value: string;
+        };
         /** StreamLimits */
         StreamLimits: {
             /**
@@ -13835,6 +14399,14 @@ export interface components {
             submission_key: string;
             /** Manifest Digest */
             manifest_digest: string;
+        };
+        /** StreamNullOutputKey */
+        StreamNullOutputKey: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "N";
         };
         /** StreamOperatorSpec */
         StreamOperatorSpec: {
@@ -13944,6 +14516,28 @@ export interface components {
              * Format: uuid
              */
             task_run_id: string;
+        };
+        /** StreamPortSpec */
+        StreamPortSpec: {
+            /** Uid */
+            uid: string;
+            /**
+             * Schema Id
+             * @default json-value-v1
+             * @constant
+             */
+            schema_id: "json-value-v1";
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /**
+             * Schema Digest
+             * @default d93f54187397ae62d4e1b98c56edab2a67a9d10422b028dfdea87ba6616a849c
+             */
+            schema_digest: string;
         };
         /** StreamRecoveryItem */
         StreamRecoveryItem: {
@@ -14177,6 +14771,16 @@ export interface components {
              * @constant
              */
             source_protocol: "source-v1";
+        };
+        /** StreamStringOutputKey */
+        StreamStringOutputKey: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "S";
+            /** Value */
+            value: string;
         };
         /** StreamSubmissionLookupRequest */
         StreamSubmissionLookupRequest: {
@@ -20489,6 +21093,156 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StreamGraphPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    seal_dag_streams_v2_dags_seal_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGSealRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_dag_streams_v2_dags__graph_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    append_source_streams_v2_dags_sources_append_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGSourceAppendRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGRouteOutcome"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_consumer_streams_v2_dags_consumers_complete_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGConsumerCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGRouteOutcome"];
                 };
             };
             /** @description Validation Error */

@@ -103,8 +103,21 @@ async def _read_receipt(
 async def _reserve(
     task: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> _FiniteRun:
-    graph = reconstruction()
+    # utilities.engine imports Task; defer until the finite call is requested.
+    from prefect.utilities.engine import refuse_stream_graph_dependencies
+
+    refuse_stream_graph_dependencies((args, kwargs))
     context = FlowRunContext.get()
+    if (
+        context is not None
+        and context.flow is not None
+        and context.flow.streaming is not None
+        and context.flow.streaming.profile == "partitioned-dag-v1"
+    ):
+        raise StreamProtocolError(
+            "Finite Task prefix/tail execution is unsupported in the topology-only DAG profile"
+        )
+    graph = reconstruction()
     if (
         graph is None
         or context is None

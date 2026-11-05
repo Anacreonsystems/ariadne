@@ -20,6 +20,8 @@ from pathlib import Path
 from types import ModuleType
 from uuid import uuid4
 
+import cloudpickle
+
 
 class _NoServerImports(importlib.abc.MetaPathFinder):
     def find_spec(
@@ -49,13 +51,40 @@ from prefect._internal.stream_execution import (
     SubtaskExecutionContext,
     stream_subtask_execution_context,
 )
+from prefect._internal.stream_key_wire import (
+    decode_tagged_key_wire_v1,
+    encode_tagged_key_wire_v1,
+)
+from prefect._internal.stream_routed_storage import PrefectRoutedStreamStorage
 from prefect.client.orchestration import PrefectClient, SyncPrefectClient
+from prefect.client.schemas.native_deployments import NativeStreamDeclaration
 from prefect.client.schemas.objects import TaskRun
+from prefect.client.schemas.stream_dags import (
+    StreamDAGPlan,
+    StreamDAGSealRequest,
+    StreamPortSpec,
+)
+from prefect.client.schemas.stream_routes import (
+    StreamDAGConsumerCompleteRequest,
+    StreamDAGRouteContext,
+    StreamDAGRouteOutcome,
+    StreamDAGSourceAppendRequest,
+)
 from prefect.client.schemas.stream_subtasks import (
     StreamOperatorSpec,
     StreamSubtaskVerifiedRetirement,
 )
 from prefect.states import Running
+from prefect.streams import (
+    KeyedStreamOutput,
+    NativeStreamFlowConfig,
+    SealedStreamGraph,
+    StreamExchange,
+    StreamGraph,
+    StreamInput,
+    StreamOperatorHandle,
+    StreamPort,
+)
 from prefect.task_engine import AsyncTaskRunEngine, SyncTaskRunEngine
 
 package_root = Path(prefect.__file__).resolve().parent
@@ -72,6 +101,7 @@ for directory in (
     assert not (package_root / "server" / directory).exists()
 
 for module in (
+    "prefect._internal.stream_dag",
     "prefect._internal.stream_partitioned",
     "prefect._internal.stream_subtask_entrypoint",
     "prefect._internal.stream_routing",
@@ -80,6 +110,116 @@ for module in (
 ):
     imported = importlib.import_module(module)
     assert Path(imported.__file__).resolve().is_relative_to(package_root)
+
+local_graph_identity = object()
+declared_output = StreamOperatorHandle(
+    _graph_token=local_graph_identity,
+    operator_uid="A",
+    output_port=StreamPort("documents"),
+).output("documents")
+assert declared_output.graph_identity is local_graph_identity
+assert (
+    declared_output.port.schema_digest
+    == "d93f54187397ae62d4e1b98c56edab2a67a9d10422b028dfdea87ba6616a849c"
+)
+declared_input = StreamInput(
+    port=StreamPort("input"),
+    upstream=declared_output,
+    edge_uid="A-B",
+    subscriber_uid="B-input",
+    exchange=StreamExchange("forward"),
+)
+assert declared_input.upstream is declared_output
+assert KeyedStreamOutput({"ref": "object://document"}, None).key is None
+with StreamGraph():
+    pass
+sealed_metadata = SealedStreamGraph(graph_revision_id=uuid4(), graph_digest="a" * 64)
+assert not hasattr(sealed_metadata, "start")
+assert not hasattr(sealed_metadata, "wait")
+assert (
+    StreamPortSpec(uid="documents").schema_digest == declared_output.port.schema_digest
+)
+assert "execution_ready" in StreamDAGPlan.model_json_schema()["properties"]
+assert (
+    StreamDAGSealRequest.model_json_schema()["properties"]["operators"]["minItems"] == 2
+)
+assert StreamDAGSealRequest.model_json_schema()["properties"]["edges"]["minItems"] == 1
+assert (
+    StreamDAGPlan.model_json_schema()["properties"]["leaf_operator_uids"]["minItems"]
+    == 1
+)
+assert "partitioned-dag-v1" in json.dumps(NativeStreamDeclaration.model_json_schema())
+for client_type in (PrefectClient, SyncPrefectClient):
+    assert hasattr(client_type, "seal_stream_dag")
+    assert hasattr(client_type, "read_stream_dag")
+    assert hasattr(client_type, "append_stream_dag_source")
+    assert hasattr(client_type, "complete_stream_dag_consumer")
+    assert not hasattr(client_type, "admit_stream_dag_region")
+
+# These are cold-import/validation controls only; public route execution is fenced.
+route_context = StreamDAGRouteContext(
+    graph_revision_id=uuid4(),
+    graph_digest="a" * 64,
+    routing_digest="b" * 64,
+    producer_subtask_id=uuid4(),
+    operator_uid="A",
+    output_port_uid="documents",
+    subtask_index=0,
+    has_keyed_outgoing=True,
+)
+route_flow_id = uuid4()
+route_binding = {
+    "flow_run_id": str(route_flow_id),
+    "stream_id": str(uuid4()),
+    "task_run_id": str(uuid4()),
+    "owner_id": str(uuid4()),
+    "attempt": 1,
+    "owner_epoch": 1,
+}
+routed_storage = PrefectRoutedStreamStorage(
+    flow_run_id=route_flow_id,
+    api_url="http://127.0.0.1:1/api",
+    route_context=route_context,
+)
+assert routed_storage.route_context == route_context
+assert routed_storage.route_context is not route_context
+for scalar_key in (None, False, -9223372036854775808, "документ", b"\x00"):
+    tagged_key = encode_tagged_key_wire_v1(scalar_key)
+    assert decode_tagged_key_wire_v1(tagged_key) == scalar_key
+    route_request = StreamDAGSourceAppendRequest.model_validate(
+        {
+            "context": route_context.model_dump(mode="json"),
+            "binding": route_binding,
+            "position": 200,
+            "value": {"ref": "object://documents/200"},
+            "output_key": tagged_key,
+        }
+    )
+    assert (
+        StreamDAGSourceAppendRequest.model_validate(
+            route_request.model_dump(mode="json")
+        )
+        == route_request
+    )
+assert "input_payload_record_id" in StreamDAGRouteOutcome.model_fields
+assert "managed_state" in StreamDAGConsumerCompleteRequest.model_fields
+assert (
+    StreamDAGRouteOutcome.model_json_schema()["properties"]["references"]["maxItems"]
+    == 128
+)
+dag_declaration = NativeStreamFlowConfig(
+    profile="partitioned-dag-v1", partition_count=None
+)
+
+
+@prefect.flow(version="v1", retries=2, streaming=dag_declaration)
+def declared_dag_flow():
+    raise AssertionError("A package metadata probe must not execute business code")
+
+
+assert (
+    cloudpickle.loads(cloudpickle.dumps(declared_dag_flow)).streaming == dag_declaration
+)
 
 operator = StreamOperatorSpec.model_validate(
     {
@@ -285,6 +425,9 @@ print(
             "offscope_denied_before_transport": True,
             "server_only_imports_blocked": True,
             "business_calls": 0,
+            "routed_key_variants_validated": 5,
+            "routed_adapter_constructed": True,
+            "routed_execution": False,
             "native_acceptance": False,
         }
     )

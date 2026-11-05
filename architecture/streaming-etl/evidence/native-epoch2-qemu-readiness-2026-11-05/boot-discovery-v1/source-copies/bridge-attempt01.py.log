@@ -1,0 +1,9 @@
+import os,select,socket,sys,time
+s=socket.create_connection(("127.0.0.1",int(sys.argv[1])),timeout=10);s.settimeout(None)
+end=time.monotonic()+30
+while time.monotonic()<end:
+ r,_,_=select.select([0,s],[],[],1)
+ for f in r:
+  b=os.read(0,65536) if f==0 else s.recv(65536)
+  if not b:sys.exit(0)
+  s.sendall(b) if f==0 else os.write(1,b)

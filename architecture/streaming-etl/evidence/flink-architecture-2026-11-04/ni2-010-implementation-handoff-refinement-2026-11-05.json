@@ -1,0 +1,38 @@
+{
+  "approval_version": "fae53c90aa3b44dbc45032833b4d193001e5c8bd",
+  "claims": {
+    "adr43_status": "progress",
+    "earned_percent_delta": 0,
+    "native_ready": false
+  },
+  "decision": {
+    "acceptance_fixture_unchanged": "A1 -> B1 forward and A1 -> C2 broadcast remains the mandatory first branched metadata fixture.",
+    "generic_profile": "partitioned-dag-v1 accepts a connected acyclic graph with exactly one SOURCE, at least two operators, at least one edge, and exactly one logical input on every non-source operator.",
+    "linear_parallel_control": "Add a metadata control for a valid linear parallel DAG such as A2 -> B3 rebalance or A2 -> B2 -> C2.",
+    "unsupported": [
+      "source-only topology",
+      "multiple roots or disconnected operators",
+      "cycles",
+      "fan-in or joins",
+      "more than one logical input per operator"
+    ]
+  },
+  "reason": "Mandatory fan-out and a three-operator minimum describe the first acceptance fixture, not the approved generic acyclic DAG profile. Keeping them as profile constraints would reject valid fixed-parallelism chains and force a later profile fork.",
+  "replaces_in_handoff": [
+    "bounds.first_gate shape remains four TaskRuns/two workers but is not a minimum profile shape",
+    "contract.topology minimum changes from three operators/two edges/mandatory fan-out to two operators/one edge/fan-out optional",
+    "acceptance no longer refuses linear-only topology or fewer than three operators; it still refuses source-only topology"
+  ],
+  "retained": [
+    "N=sum(operator parallelism), bounded by 128",
+    "one SOURCE root and complete reachability",
+    "one output and at most one input port per operator",
+    "fan-in deferred",
+    "public seal/read only in NI2-010",
+    "no DAG execution, routing or DATA",
+    "fixed-P2 API and behavior"
+  ],
+  "schema": "native-epoch2-ni2-010-implementation-handoff-refinement-v1",
+  "status": "authorized-for-implementation",
+  "task": "NI2-010"
+}

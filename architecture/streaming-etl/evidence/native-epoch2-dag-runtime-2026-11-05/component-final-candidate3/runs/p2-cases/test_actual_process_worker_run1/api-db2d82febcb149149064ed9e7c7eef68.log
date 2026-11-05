@@ -1,0 +1,527 @@
+03:28:10.925 | INFO    | uvicorn.error - Started server process [197811]
+03:28:10.929 | INFO    | uvicorn.error - Waiting for application startup.
+03:28:11.112 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+03:28:11.114 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+03:28:11.115 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+03:28:11.118 | INFO    | prefect.server.services.task_run_recorder - Creating TaskRunRecorder consumer with batch size 1 and flush every 5 seconds
+03:28:11.119 | INFO    | uvicorn.error - Application startup complete.
+03:28:11.119 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 56659) (Press CTRL+C to quit)
+03:28:11.142 | INFO    | uvicorn.access - 127.0.0.1:43924 - "GET /api/health HTTP/1.1" 200
+03:28:11.727 | INFO    | uvicorn.access - 127.0.0.1:43932 - "GET /api/csrf-token?client=c6b1ad54-7c65-4ae3-80e2-d31f3e3aa4d6 HTTP/1.1" 422
+03:28:11.829 | ERROR   | prefect.server - Encountered exception in request:
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 550, in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 177, in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 268, in __bind_execute
+    data, status, _ = await self.__do_execute(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 257, in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 205, in bind_execute
+asyncpg.exceptions.UniqueViolationError: duplicate key value violates unique constraint "uq_concurrency_limit_v2__name"
+DETAIL:  Key (name)=(tag:partitioned-fixed-capacity) already exists.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "uq_concurrency_limit_v2__name"
+DETAIL:  Key (name)=(tag:partitioned-fixed-capacity) already exists.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 144, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/tmp/native-ni2-010-runtime-final-candidate3/snapshot/src/prefect/server/utilities/server.py", line 61, in handle_response_scoped_depends
+    response = await default_handler(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 706, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 352, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/native-ni2-010-runtime-final-candidate3/snapshot/src/prefect/server/api/concurrency_limits_v2.py", line 49, in create_concurrency_limit_v2
+    model = await models.concurrency_limits_v2.create_concurrency_limit(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/native-ni2-010-runtime-final-candidate3/snapshot/src/prefect/server/models/concurrency_limits_v2.py", line 132, in create_concurrency_limit
+    await session.flush()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 787, in flush
+    await greenlet_spawn(self.sync_session.flush, objects=objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 93, in save_obj
+    _emit_insert_statements(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 1233, in _emit_insert_statements
+    result = connection.execute(
+             ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+           ^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
+    self._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
+    self._adapt_connection._handle_exception(error)
+  File "/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "uq_concurrency_limit_v2__name"
+DETAIL:  Key (name)=(tag:partitioned-fixed-capacity) already exists.
+[SQL: INSERT INTO concurrency_limit_v2 (active, name, "limit", active_slots, denied_slots, slot_decay_per_second, avg_slot_occupancy_seconds, id, created, updated) VALUES ($1::BOOLEAN, $2::VARCHAR, $3::INTEGER, $4::INTEGER, $5::INTEGER, $6::FLOAT, $7::FLOAT, $8::UUID, $9::TIMESTAMP WITH TIME ZONE, $10::TIMESTAMP WITH TIME ZONE)]
+[parameters: (True, 'tag:partitioned-fixed-capacity', 4, 0, 0, 0, 2.0, 'b153b37b-cacb-44f1-a7d1-7d23f5c0b134', DateTime(2026, 11, 5, 3, 28, 11, 826024, tzinfo=Timezone('UTC')), DateTime(2026, 11, 5, 3, 28, 11, 826036, tzinfo=Timezone('UTC')))]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+03:28:11.836 | INFO    | uvicorn.access - 127.0.0.1:43932 - "POST /api/v2/concurrency_limits/ HTTP/1.1" 409
+03:28:11.892 | INFO    | uvicorn.access - 127.0.0.1:43932 - "GET /api/v2/concurrency_limits/tag%3Apartitioned-fixed-capacity HTTP/1.1" 200
+03:28:11.986 | INFO    | uvicorn.access - 127.0.0.1:43932 - "POST /api/work_pools/ HTTP/1.1" 201
+03:28:12.073 | INFO    | uvicorn.access - 127.0.0.1:43936 - "GET /api/deployments/name/partitioned-documents-async/partitioned HTTP/1.1" 404
+03:28:12.091 | INFO    | uvicorn.access - 127.0.0.1:43938 - "GET /api/csrf-token?client=8fb5baf3-1d64-4dd2-a589-f81e0f44e1bd HTTP/1.1" 422
+03:28:12.104 | INFO    | uvicorn.access - 127.0.0.1:43938 - "POST /api/flows/ HTTP/1.1" 201
+03:28:12.242 | INFO    | uvicorn.access - 127.0.0.1:43938 - "POST /api/deployments/ HTTP/1.1" 201
+03:28:12.315 | INFO    | uvicorn.access - 127.0.0.1:43938 - "DELETE /api/automations/owned-by/prefect.deployment.f180b133-e217-4ae3-bea4-587761f65a3d HTTP/1.1" 202
+03:28:12.370 | INFO    | uvicorn.access - 127.0.0.1:43950 - "GET /api/csrf-token?client=9fc33e0d-4080-49e0-b6b8-c1766d9ab78b HTTP/1.1" 422
+03:28:12.392 | INFO    | uvicorn.access - 127.0.0.1:43950 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:12.556 | INFO    | uvicorn.access - 127.0.0.1:43962 - "GET /api/csrf-token?client=605cbc46-a0cb-4953-8835-91d1b0a498d4 HTTP/1.1" 422
+03:28:12.564 | INFO    | uvicorn.access - 127.0.0.1:43962 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:12.730 | INFO    | uvicorn.access - 127.0.0.1:43970 - "GET /api/csrf-token?client=ff3a089b-be41-4862-9ffa-6dd0f8531cb1 HTTP/1.1" 422
+03:28:12.741 | INFO    | uvicorn.access - 127.0.0.1:43970 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:12.903 | INFO    | uvicorn.access - 127.0.0.1:43976 - "GET /api/csrf-token?client=5612a71e-79da-4249-8e82-e452a09f8f3c HTTP/1.1" 422
+03:28:12.911 | INFO    | uvicorn.access - 127.0.0.1:43976 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:13.072 | INFO    | uvicorn.access - 127.0.0.1:43988 - "GET /api/csrf-token?client=b97e19e8-cca7-4f5a-8e04-03ed7a36e322 HTTP/1.1" 422
+03:28:13.079 | INFO    | uvicorn.access - 127.0.0.1:43988 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:13.238 | INFO    | uvicorn.access - 127.0.0.1:43996 - "GET /api/csrf-token?client=3ce39650-a58a-4e5b-9cf0-e00bddfc60b8 HTTP/1.1" 422
+03:28:13.247 | INFO    | uvicorn.access - 127.0.0.1:43996 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:13.407 | INFO    | uvicorn.access - 127.0.0.1:44000 - "GET /api/csrf-token?client=bb7429a0-c93e-411b-b278-5085a431f8eb HTTP/1.1" 422
+03:28:13.414 | INFO    | uvicorn.access - 127.0.0.1:44000 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:13.572 | INFO    | uvicorn.access - 127.0.0.1:44016 - "GET /api/csrf-token?client=489662d3-ffb4-43cc-9905-bcd0a11f10ea HTTP/1.1" 422
+03:28:13.594 | INFO    | uvicorn.access - 127.0.0.1:44016 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:13.761 | INFO    | uvicorn.access - 127.0.0.1:44028 - "GET /api/csrf-token?client=997afc8c-ea87-4a74-9c77-c29909402186 HTTP/1.1" 422
+03:28:13.770 | INFO    | uvicorn.access - 127.0.0.1:44028 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:13.926 | INFO    | uvicorn.access - 127.0.0.1:44040 - "GET /api/csrf-token?client=f3dbddca-da82-49e9-a526-3599b3adf195 HTTP/1.1" 422
+03:28:13.934 | INFO    | uvicorn.access - 127.0.0.1:44040 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:14.095 | INFO    | uvicorn.access - 127.0.0.1:44056 - "GET /api/csrf-token?client=adee4fb7-6ca6-4633-aeba-79f54be2fa7b HTTP/1.1" 422
+03:28:14.103 | INFO    | uvicorn.access - 127.0.0.1:44056 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:14.163 | INFO    | uvicorn.access - 127.0.0.1:44068 - "GET /api/work_pools/partitioned-cae4965512514301903626f8543a4487 HTTP/1.1" 200
+03:28:14.178 | INFO    | uvicorn.access - 127.0.0.1:44074 - "GET /api/csrf-token?client=0aac625a-6522-498a-80dc-a4e7c1205c01 HTTP/1.1" 422
+03:28:14.191 | INFO    | uvicorn.access - 127.0.0.1:44074 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/queues/filter HTTP/1.1" 200
+03:28:14.263 | INFO    | uvicorn.access - 127.0.0.1:44084 - "GET /api/csrf-token?client=27579331-fc2b-4332-bf66-e4689a0ab1a4 HTTP/1.1" 422
+03:28:14.305 | INFO    | uvicorn.access - 127.0.0.1:44088 - "GET /api/admin/version HTTP/1.1" 200
+03:28:14.312 | INFO    | uvicorn.error - 127.0.0.1:44106 - "WebSocket /api/events/in" [accepted]
+03:28:14.312 | INFO    | uvicorn.error - connection open
+03:28:14.329 | INFO    | uvicorn.access - 127.0.0.1:44084 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:14.339 | INFO    | uvicorn.error - 127.0.0.1:44108 - "WebSocket /api/events/out" [accepted]
+03:28:14.339 | INFO    | uvicorn.error - connection open
+03:28:14.345 | INFO    | uvicorn.access - 127.0.0.1:44098 - "GET /api/work_pools/partitioned-cae4965512514301903626f8543a4487 HTTP/1.1" 200
+03:28:14.358 | INFO    | uvicorn.error - 127.0.0.1:44124 - "WebSocket /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/connect" [accepted]
+03:28:14.359 | INFO    | uvicorn.error - connection open
+03:28:14.363 | INFO    | uvicorn.access - 127.0.0.1:44138 - "GET /api/csrf-token?client=ab4f46b7-5ea5-4330-8b46-1133aa82a603 HTTP/1.1" 422
+03:28:14.378 | INFO    | uvicorn.access - 127.0.0.1:44138 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/queues/filter HTTP/1.1" 200
+03:28:14.451 | INFO    | uvicorn.access - 127.0.0.1:44142 - "GET /api/admin/version HTTP/1.1" 200
+03:28:14.455 | INFO    | uvicorn.error - 127.0.0.1:44154 - "WebSocket /api/events/in" [accepted]
+03:28:14.455 | INFO    | uvicorn.error - connection open
+03:28:14.467 | INFO    | uvicorn.error - 127.0.0.1:44158 - "WebSocket /api/events/out" [accepted]
+03:28:14.467 | INFO    | uvicorn.error - connection open
+03:28:14.498 | INFO    | uvicorn.error - 127.0.0.1:44174 - "WebSocket /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/connect" [accepted]
+03:28:14.501 | INFO    | uvicorn.error - connection open
+03:28:14.503 | INFO    | uvicorn.access - 127.0.0.1:44188 - "GET /api/csrf-token?client=0b9cb6ee-e9d2-40a5-bd16-64bc6a8a5f8e HTTP/1.1" 422
+03:28:14.509 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/csrf-token?client=68e3966e-7a89-4aa9-aeb6-2686695e9a39 HTTP/1.1" 422
+03:28:14.520 | INFO    | uvicorn.access - 127.0.0.1:44188 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:14.523 | INFO    | uvicorn.error - 127.0.0.1:44196 - "WebSocket /api/events/in" [accepted]
+03:28:14.523 | INFO    | uvicorn.error - connection open
+03:28:14.525 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/heartbeat HTTP/1.1" 200
+03:28:14.650 | INFO    | uvicorn.access - 127.0.0.1:44198 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/poll HTTP/1.1" 200
+03:28:14.667 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:14.684 | INFO    | uvicorn.access - 127.0.0.1:44204 - "GET /api/csrf-token?client=652c0235-5a69-4e67-9252-30256bdd868d HTTP/1.1" 422
+03:28:14.712 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/csrf-token?client=1483e9f4-3c34-48ae-ae4b-625902f40da3 HTTP/1.1" 422
+03:28:14.714 | INFO    | uvicorn.error - 127.0.0.1:44228 - "WebSocket /api/events/in" [accepted]
+03:28:14.714 | INFO    | uvicorn.error - connection open
+03:28:14.717 | INFO    | uvicorn.access - 127.0.0.1:44204 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:14.733 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/heartbeat HTTP/1.1" 200
+03:28:14.733 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:14.818 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:14.828 | INFO    | uvicorn.access - 127.0.0.1:44236 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/poll HTTP/1.1" 200
+03:28:14.871 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:14.889 | INFO    | uvicorn.access - 127.0.0.1:44248 - "GET /api/csrf-token?client=331d7531-a94d-4c94-8909-df0f6ca05393 HTTP/1.1" 422
+03:28:14.902 | INFO    | uvicorn.access - 127.0.0.1:44248 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/workers/filter HTTP/1.1" 200
+03:28:14.960 | INFO    | uvicorn.access - 127.0.0.1:44256 - "GET /api/csrf-token?client=09163299-f9a3-4205-b58b-9bc86e51d68c HTTP/1.1" 422
+03:28:15.026 | INFO    | uvicorn.access - 127.0.0.1:44256 - "POST /api/deployments/f180b133-e217-4ae3-bea4-587761f65a3d/create_flow_run HTTP/1.1" 201
+03:28:15.086 | INFO    | uvicorn.access - 127.0.0.1:44272 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:15.863 | INFO    | uvicorn.access - 127.0.0.1:44198 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/poll HTTP/1.1" 200
+03:28:15.867 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:15.929 | INFO    | uvicorn.access - 127.0.0.1:44198 - "GET /api/deployments/f180b133-e217-4ae3-bea4-587761f65a3d HTTP/1.1" 200
+03:28:15.951 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:15.955 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:15.959 | INFO    | uvicorn.access - 127.0.0.1:44236 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/poll HTTP/1.1" 200
+03:28:15.973 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:15.990 | INFO    | uvicorn.access - 127.0.0.1:44288 - "GET /api/deployments/f180b133-e217-4ae3-bea4-587761f65a3d HTTP/1.1" 200
+03:28:16.034 | INFO    | uvicorn.access - 127.0.0.1:44198 - "POST /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/set_state HTTP/1.1" 201
+03:28:16.050 | INFO    | uvicorn.access - 127.0.0.1:44236 - "POST /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/set_state HTTP/1.1" 200
+03:28:16.088 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/deployments/f180b133-e217-4ae3-bea4-587761f65a3d HTTP/1.1" 200
+03:28:16.093 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/flows/a05a9c70-cfe7-4aca-bd7d-c05ed38221f8 HTTP/1.1" 200
+03:28:16.105 | INFO    | uvicorn.access - 127.0.0.1:44296 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:16.170 | INFO    | uvicorn.access - 127.0.0.1:44194 - "PATCH /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/labels HTTP/1.1" 204
+03:28:16.196 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/set_state HTTP/1.1" 201
+03:28:16.251 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/deployments/f180b133-e217-4ae3-bea4-587761f65a3d HTTP/1.1" 200
+03:28:16.301 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:16.387 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v1/deployments/enroll HTTP/1.1" 200
+03:28:16.439 | INFO    | uvicorn.error - 127.0.0.1:44300 - "WebSocket /api/events/in" [accepted]
+03:28:16.439 | INFO    | uvicorn.error - connection open
+03:28:16.453 | INFO    | uvicorn.error - 127.0.0.1:44308 - "WebSocket /api/events/out" [accepted]
+03:28:16.454 | INFO    | uvicorn.error - connection open
+03:28:16.481 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v1/deployments/launches/register-process HTTP/1.1" 200
+03:28:16.535 | INFO    | uvicorn.access - 127.0.0.1:44194 - "PATCH /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 204
+03:28:16.546 | INFO    | uvicorn.access - 127.0.0.1:44198 - "PATCH /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 204
+03:28:16.549 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:16.603 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v1/deployments/launches/heartbeat HTTP/1.1" 409
+03:28:16.886 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/poll HTTP/1.1" 200
+03:28:16.903 | INFO    | uvicorn.access - 127.0.0.1:44198 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:16.918 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:16.978 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/poll HTTP/1.1" 200
+03:28:17.121 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:17.150 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:17.154 | INFO    | uvicorn.access - 127.0.0.1:44310 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:17.160 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:17.177 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v1/deployments/launches/heartbeat HTTP/1.1" 409
+03:28:17.732 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:17.751 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v1/deployments/launches/heartbeat HTTP/1.1" 409
+03:28:17.775 | INFO    | uvicorn.access - 127.0.0.1:44198 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:17.799 | INFO    | uvicorn.access - 127.0.0.1:44198 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:17.900 | INFO    | uvicorn.access - 127.0.0.1:44320 - "GET /api/csrf-token?client=f0361ed3-cd41-4e53-8dd6-c9e7e7fa9941 HTTP/1.1" 422
+03:28:17.914 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/poll HTTP/1.1" 200
+03:28:17.919 | INFO    | uvicorn.access - 127.0.0.1:44320 - "POST /api/logs/ HTTP/1.1" 201
+03:28:17.975 | INFO    | uvicorn.access - 127.0.0.1:44334 - "GET /api/csrf-token?client=b614ff66-a500-410e-9d93-0013f623d8a4 HTTP/1.1" 422
+03:28:17.987 | INFO    | uvicorn.access - 127.0.0.1:44334 - "POST /api/logs/ HTTP/1.1" 201
+03:28:17.996 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/poll HTTP/1.1" 200
+03:28:18.028 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:18.080 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:18.114 | INFO    | uvicorn.access - 127.0.0.1:44348 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:18.163 | INFO    | uvicorn.access - 127.0.0.1:44356 - "GET /api/admin/version HTTP/1.1" 200
+03:28:18.172 | INFO    | uvicorn.access - 127.0.0.1:44356 - "GET /api/csrf-token?client=393f1a55-3152-4163-8059-98294f1c48dd HTTP/1.1" 422
+03:28:18.174 | INFO    | uvicorn.access - 127.0.0.1:44364 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:18.225 | INFO    | uvicorn.access - 127.0.0.1:44356 - "PATCH /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 204
+03:28:18.255 | INFO    | uvicorn.access - 127.0.0.1:44376 - "GET /api/admin/version HTTP/1.1" 200
+03:28:18.258 | INFO    | uvicorn.error - 127.0.0.1:44380 - "WebSocket /api/events/out" [accepted]
+03:28:18.259 | INFO    | uvicorn.error - connection open
+03:28:18.276 | INFO    | uvicorn.access - 127.0.0.1:44386 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:18.289 | INFO    | uvicorn.access - 127.0.0.1:44356 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:18.301 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:18.341 | INFO    | uvicorn.access - 127.0.0.1:44356 - "POST /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/set_state HTTP/1.1" 201
+03:28:18.347 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v1/deployments/launches/heartbeat HTTP/1.1" 200
+03:28:18.398 | INFO    | uvicorn.access - 127.0.0.1:44356 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:18.454 | INFO    | uvicorn.access - 127.0.0.1:44396 - "GET /api/admin/storage HTTP/1.1" 200
+03:28:18.462 | INFO    | uvicorn.access - 127.0.0.1:44356 - "GET /api/admin/storage HTTP/1.1" 200
+03:28:18.515 | INFO    | uvicorn.access - 127.0.0.1:44402 - "GET /api/csrf-token?client=7b64ac3d-98b3-4034-973f-74f5a9b43722 HTTP/1.1" 422
+03:28:18.521 | INFO    | uvicorn.access - 127.0.0.1:44402 - "POST /api/v2/concurrency_limits/leases/ccc0a13f-7dc1-458d-b4e9-3be166a642d4/renew HTTP/1.1" 204
+03:28:18.540 | INFO    | uvicorn.error - 127.0.0.1:44416 - "WebSocket /api/events/in" [accepted]
+03:28:18.540 | INFO    | uvicorn.error - connection open
+03:28:18.587 | INFO    | uvicorn.access - 127.0.0.1:44424 - "GET /api/flows/a05a9c70-cfe7-4aca-bd7d-c05ed38221f8 HTTP/1.1" 200
+03:28:18.590 | INFO    | uvicorn.access - 127.0.0.1:44436 - "GET /api/work_queues/c5174f70-578d-4211-aefc-a2b9e9ac6d8f HTTP/1.1" 200
+03:28:18.590 | INFO    | uvicorn.access - 127.0.0.1:44426 - "GET /api/deployments/f180b133-e217-4ae3-bea4-587761f65a3d HTTP/1.1" 200
+03:28:18.593 | INFO    | uvicorn.access - 127.0.0.1:44448 - "GET /api/work_pools/partitioned-cae4965512514301903626f8543a4487 HTTP/1.1" 200
+03:28:18.662 | INFO    | uvicorn.access - 127.0.0.1:44458 - "GET /api/csrf-token?client=0c05172a-8f82-4d44-b102-6f94e75e02e5 HTTP/1.1" 422
+03:28:18.872 | INFO    | uvicorn.access - 127.0.0.1:44458 - "POST /api/streams/v2/graphs/seal HTTP/1.1" 200
+03:28:18.895 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:18.933 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/poll HTTP/1.1" 200
+03:28:18.937 | INFO    | uvicorn.access - 127.0.0.1:44470 - "GET /api/csrf-token?client=588f131a-1977-4acc-a57f-b0efe63bc59f HTTP/1.1" 422
+03:28:18.969 | INFO    | uvicorn.access - 127.0.0.1:44198 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:19.024 | INFO    | uvicorn.access - 127.0.0.1:44470 - "POST /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb/admit HTTP/1.1" 200
+03:28:19.026 | INFO    | uvicorn.access - 127.0.0.1:44198 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:19.028 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/poll HTTP/1.1" 200
+03:28:19.191 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:19.205 | INFO    | uvicorn.access - 127.0.0.1:44478 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:19.215 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:19.404 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:19.863 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:19.880 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:19.912 | INFO    | uvicorn.access - 127.0.0.1:44198 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:19.994 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/poll HTTP/1.1" 200
+03:28:20.027 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/subtasks/01a1a9c0-0f46-77a9-8cf2-814a7d0d7d4b/claim HTTP/1.1" 200
+03:28:20.045 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/poll HTTP/1.1" 200
+03:28:20.070 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/subtasks/01a1a9c0-0f66-7bbe-8304-eb6ad4eb9e04/claim HTTP/1.1" 200
+03:28:20.079 | INFO    | uvicorn.access - 127.0.0.1:44236 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:20.106 | INFO    | uvicorn.access - 127.0.0.1:44236 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:20.127 | INFO    | uvicorn.access - 127.0.0.1:44492 - "GET /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb HTTP/1.1" 200
+03:28:20.231 | INFO    | uvicorn.access - 127.0.0.1:38890 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:20.428 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:20.530 | INFO    | uvicorn.access - 127.0.0.1:38896 - "GET /api/csrf-token?client=b3da927e-dc00-46b9-8057-f92dfa4e750e HTTP/1.1" 422
+03:28:20.543 | INFO    | uvicorn.access - 127.0.0.1:38896 - "POST /api/logs/ HTTP/1.1" 201
+03:28:20.735 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:20.752 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:20.945 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:21.180 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:21.211 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:21.213 | INFO    | uvicorn.access - 127.0.0.1:38898 - "GET /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb HTTP/1.1" 200
+03:28:21.253 | INFO    | uvicorn.access - 127.0.0.1:38906 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:21.460 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:21.643 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:21.662 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:21.794 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/subtasks/01a1a9c0-0f46-77a9-8cf2-814a7d0d7d4b/register HTTP/1.1" 200
+03:28:21.810 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/subtasks/01a1a9c0-0f46-77a9-8cf2-814a7d0d7d4b/renew HTTP/1.1" 200
+03:28:21.836 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/subtasks/01a1a9c0-0f66-7bbe-8304-eb6ad4eb9e04/register HTTP/1.1" 200
+03:28:21.856 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/subtasks/01a1a9c0-0f66-7bbe-8304-eb6ad4eb9e04/renew HTTP/1.1" 200
+03:28:21.873 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/subtasks/01a1a9c0-0f85-70f7-9d5b-a603a5f21c9c/claim HTTP/1.1" 200
+03:28:21.924 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/subtasks/01a1a9c0-0fa8-7e63-84e3-56ef3035936c/claim HTTP/1.1" 200
+03:28:21.972 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:22.249 | INFO    | uvicorn.access - 127.0.0.1:38922 - "GET /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb HTTP/1.1" 200
+03:28:22.264 | INFO    | uvicorn.access - 127.0.0.1:38932 - "GET /api/csrf-token?client=af227f0e-48b2-4fa5-a44c-5b3ffd967520 HTTP/1.1" 422
+03:28:22.286 | INFO    | uvicorn.access - 127.0.0.1:38938 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:22.302 | INFO    | uvicorn.access - 127.0.0.1:38932 - "POST /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb/activate HTTP/1.1" 409
+03:28:22.377 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:22.393 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:22.482 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:22.759 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:22.776 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:22.992 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:23.326 | INFO    | uvicorn.access - 127.0.0.1:38946 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:23.384 | INFO    | uvicorn.access - 127.0.0.1:38960 - "GET /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb HTTP/1.1" 200
+03:28:23.405 | INFO    | uvicorn.access - 127.0.0.1:38972 - "GET /api/csrf-token?client=ad0978d6-0fb6-43fc-8092-9b87f26378f2 HTTP/1.1" 422
+03:28:23.440 | INFO    | uvicorn.access - 127.0.0.1:38972 - "POST /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb/activate HTTP/1.1" 409
+03:28:23.504 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:23.568 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:23.592 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:23.707 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/subtasks/01a1a9c0-0fa8-7e63-84e3-56ef3035936c/register HTTP/1.1" 200
+03:28:23.737 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/subtasks/01a1a9c0-0fa8-7e63-84e3-56ef3035936c/renew HTTP/1.1" 200
+03:28:23.746 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/subtasks/01a1a9c0-0f85-70f7-9d5b-a603a5f21c9c/register HTTP/1.1" 200
+03:28:23.765 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/subtasks/01a1a9c0-0f85-70f7-9d5b-a603a5f21c9c/renew HTTP/1.1" 200
+03:28:23.973 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:23.991 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:24.013 | INFO    | uvicorn.access - 127.0.0.1:44198 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:24.346 | INFO    | uvicorn.access - 127.0.0.1:38982 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:24.529 | INFO    | uvicorn.access - 127.0.0.1:38992 - "GET /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb HTTP/1.1" 200
+03:28:24.531 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:24.543 | INFO    | uvicorn.access - 127.0.0.1:39004 - "GET /api/csrf-token?client=8052b31f-bb09-4c7a-b4ab-0e2e8976864a HTTP/1.1" 422
+03:28:24.578 | INFO    | uvicorn.access - 127.0.0.1:39004 - "POST /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb/activate HTTP/1.1" 200
+03:28:24.644 | INFO    | uvicorn.access - 127.0.0.1:39014 - "GET /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb HTTP/1.1" 200
+03:28:24.661 | INFO    | uvicorn.access - 127.0.0.1:39030 - "GET /api/task_runs/01a1a9c0-0f22-72fd-8177-6a0426c6ec0c HTTP/1.1" 200
+03:28:24.679 | INFO    | uvicorn.access - 127.0.0.1:39046 - "GET /api/task_runs/01a1a9c0-0f54-784e-aeb8-d6ac21c27600 HTTP/1.1" 200
+03:28:24.696 | INFO    | uvicorn.access - 127.0.0.1:39050 - "GET /api/task_runs/01a1a9c0-0f74-78f3-b135-02b9f8985311 HTTP/1.1" 200
+03:28:24.717 | INFO    | uvicorn.access - 127.0.0.1:39056 - "GET /api/task_runs/01a1a9c0-0f91-77ae-b5dc-ae75be8ed1fb HTTP/1.1" 200
+03:28:24.800 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/poll HTTP/1.1" 200
+03:28:24.843 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/poll HTTP/1.1" 200
+03:28:24.868 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:24.903 | INFO    | uvicorn.access - 127.0.0.1:39072 - "GET /api/streams/v2/subtasks/01a1a9c0-0f66-7bbe-8304-eb6ad4eb9e04/bootstrap HTTP/1.1" 200
+03:28:24.905 | INFO    | uvicorn.access - 127.0.0.1:39076 - "GET /api/streams/v2/subtasks/01a1a9c0-0fa8-7e63-84e3-56ef3035936c/bootstrap HTTP/1.1" 200
+03:28:24.948 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:24.957 | INFO    | uvicorn.access - 127.0.0.1:39096 - "POST /api/streams/v2/subtasks/01a1a9c0-0f66-7bbe-8304-eb6ad4eb9e04/lease/renew HTTP/1.1" 204
+03:28:24.961 | INFO    | uvicorn.access - 127.0.0.1:39092 - "GET /api/streams/v2/subtasks/01a1a9c0-0f46-77a9-8cf2-814a7d0d7d4b/bootstrap HTTP/1.1" 200
+03:28:24.974 | INFO    | uvicorn.access - 127.0.0.1:39102 - "GET /api/streams/v2/subtasks/01a1a9c0-0f85-70f7-9d5b-a603a5f21c9c/bootstrap HTTP/1.1" 200
+03:28:24.975 | INFO    | uvicorn.access - 127.0.0.1:39112 - "POST /api/streams/v2/subtasks/01a1a9c0-0fa8-7e63-84e3-56ef3035936c/lease/renew HTTP/1.1" 204
+03:28:24.996 | INFO    | uvicorn.access - 127.0.0.1:39120 - "POST /api/streams/v2/subtasks/01a1a9c0-0f46-77a9-8cf2-814a7d0d7d4b/lease/renew HTTP/1.1" 204
+03:28:25.031 | INFO    | uvicorn.access - 127.0.0.1:39132 - "POST /api/streams/v2/subtasks/01a1a9c0-0f85-70f7-9d5b-a603a5f21c9c/lease/renew HTTP/1.1" 204
+03:28:25.072 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:25.106 | INFO    | uvicorn.access - 127.0.0.1:39128 - "POST /api/streams/v2/subtasks/01a1a9c0-0f66-7bbe-8304-eb6ad4eb9e04/events HTTP/1.1" 200
+03:28:25.142 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v2/subtasks/01a1a9c0-0fa8-7e63-84e3-56ef3035936c/events HTTP/1.1" 200
+03:28:25.162 | INFO    | uvicorn.access - 127.0.0.1:39160 - "POST /api/streams/v2/subtasks/01a1a9c0-0f46-77a9-8cf2-814a7d0d7d4b/events HTTP/1.1" 200
+03:28:25.188 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v2/subtasks/01a1a9c0-0f85-70f7-9d5b-a603a5f21c9c/events HTTP/1.1" 200
+03:28:25.208 | INFO    | uvicorn.access - 127.0.0.1:39128 - "POST /api/streams/v2/subtasks/01a1a9c0-0f66-7bbe-8304-eb6ad4eb9e04/events HTTP/1.1" 200
+03:28:25.257 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v2/subtasks/01a1a9c0-0fa8-7e63-84e3-56ef3035936c/events HTTP/1.1" 200
+03:28:25.272 | INFO    | uvicorn.access - 127.0.0.1:39160 - "POST /api/streams/v2/subtasks/01a1a9c0-0f46-77a9-8cf2-814a7d0d7d4b/events HTTP/1.1" 200
+03:28:25.285 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:25.302 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v2/subtasks/01a1a9c0-0f85-70f7-9d5b-a603a5f21c9c/events HTTP/1.1" 200
+03:28:25.316 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:25.405 | INFO    | uvicorn.access - 127.0.0.1:39178 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:25.450 | INFO    | uvicorn.access - 127.0.0.1:39128 - "POST /api/streams/v1/sources/open HTTP/1.1" 200
+03:28:25.494 | INFO    | uvicorn.access - 127.0.0.1:39160 - "POST /api/streams/v1/sources/open HTTP/1.1" 200
+03:28:25.503 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v1/consumers/open HTTP/1.1" 200
+03:28:25.534 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v1/consumers/open HTTP/1.1" 200
+03:28:25.588 | INFO    | uvicorn.access - 127.0.0.1:39128 - "POST /api/streams/v1/sources/append HTTP/1.1" 200
+03:28:25.611 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:25.633 | INFO    | uvicorn.access - 127.0.0.1:39160 - "POST /api/streams/v1/sources/append HTTP/1.1" 200
+03:28:25.671 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v1/consumers/read HTTP/1.1" 200
+03:28:25.694 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v1/consumers/read HTTP/1.1" 200
+03:28:25.711 | INFO    | uvicorn.access - 127.0.0.1:39128 - "POST /api/streams/v1/sources/append HTTP/1.1" 200
+03:28:25.782 | INFO    | uvicorn.access - 127.0.0.1:39160 - "POST /api/streams/v1/sources/append HTTP/1.1" 200
+03:28:25.797 | INFO    | uvicorn.access - 127.0.0.1:39190 - "GET /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb HTTP/1.1" 200
+03:28:25.855 | INFO    | uvicorn.access - 127.0.0.1:39202 - "GET /api/task_runs/01a1a9c0-0f22-72fd-8177-6a0426c6ec0c HTTP/1.1" 200
+03:28:25.901 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v1/consumers/complete HTTP/1.1" 200
+03:28:25.907 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/poll HTTP/1.1" 200
+03:28:25.925 | INFO    | uvicorn.access - 127.0.0.1:39212 - "GET /api/task_runs/01a1a9c0-0f54-784e-aeb8-d6ac21c27600 HTTP/1.1" 200
+03:28:25.941 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v1/consumers/complete HTTP/1.1" 200
+03:28:25.948 | INFO    | uvicorn.access - 127.0.0.1:39128 - "POST /api/streams/v1/sources/append HTTP/1.1" 200
+03:28:25.972 | INFO    | uvicorn.access - 127.0.0.1:39228 - "GET /api/task_runs/01a1a9c0-0f74-78f3-b135-02b9f8985311 HTTP/1.1" 200
+03:28:25.976 | INFO    | uvicorn.access - 127.0.0.1:39160 - "POST /api/streams/v1/sources/append HTTP/1.1" 200
+03:28:25.979 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/poll HTTP/1.1" 200
+03:28:26.010 | INFO    | uvicorn.access - 127.0.0.1:39244 - "GET /api/task_runs/01a1a9c0-0f91-77ae-b5dc-ae75be8ed1fb HTTP/1.1" 200
+03:28:26.083 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v1/consumers/read HTTP/1.1" 200
+03:28:26.084 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:26.123 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:26.126 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v1/consumers/read HTTP/1.1" 200
+03:28:26.145 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:26.154 | INFO    | uvicorn.access - 127.0.0.1:39160 - "POST /api/streams/v1/sources/append HTTP/1.1" 200
+03:28:26.178 | INFO    | uvicorn.access - 127.0.0.1:39128 - "POST /api/streams/v1/sources/append HTTP/1.1" 200
+03:28:26.246 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v1/consumers/complete HTTP/1.1" 200
+03:28:26.289 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v1/consumers/complete HTTP/1.1" 200
+03:28:26.294 | INFO    | uvicorn.access - 127.0.0.1:39160 - "POST /api/streams/v1/sources/close HTTP/1.1" 204
+03:28:26.307 | INFO    | uvicorn.access - 127.0.0.1:39128 - "POST /api/streams/v1/sources/close HTTP/1.1" 204
+03:28:26.409 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v1/consumers/read HTTP/1.1" 200
+03:28:26.417 | INFO    | uvicorn.access - 127.0.0.1:39160 - "POST /api/streams/v2/subtasks/01a1a9c0-0f46-77a9-8cf2-814a7d0d7d4b/events HTTP/1.1" 200
+03:28:26.453 | INFO    | uvicorn.access - 127.0.0.1:39246 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:26.470 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v1/consumers/read HTTP/1.1" 200
+03:28:26.480 | INFO    | uvicorn.access - 127.0.0.1:39128 - "POST /api/streams/v2/subtasks/01a1a9c0-0f66-7bbe-8304-eb6ad4eb9e04/events HTTP/1.1" 200
+03:28:26.493 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:26.526 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:26.530 | INFO    | uvicorn.access - 127.0.0.1:39120 - "GET /api/streams/v2/subtasks/01a1a9c0-0f46-77a9-8cf2-814a7d0d7d4b/task-run HTTP/1.1" 200
+03:28:26.590 | INFO    | uvicorn.access - 127.0.0.1:39120 - "GET /api/streams/v1/01a1a9c0-0f22-7d04-a0ae-0cb773c81e02 HTTP/1.1" 200
+03:28:26.593 | INFO    | uvicorn.access - 127.0.0.1:39096 - "GET /api/streams/v2/subtasks/01a1a9c0-0f66-7bbe-8304-eb6ad4eb9e04/task-run HTTP/1.1" 200
+03:28:26.599 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v1/consumers/complete HTTP/1.1" 200
+03:28:26.624 | INFO    | uvicorn.access - 127.0.0.1:39096 - "GET /api/streams/v1/01a1a9c0-0f54-738b-a012-fe12e0caa4c5 HTTP/1.1" 200
+03:28:26.636 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v1/consumers/complete HTTP/1.1" 200
+03:28:26.666 | INFO    | uvicorn.access - 127.0.0.1:39120 - "POST /api/streams/v2/subtasks/01a1a9c0-0f46-77a9-8cf2-814a7d0d7d4b/lease/release HTTP/1.1" 204
+03:28:26.670 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:26.718 | INFO    | uvicorn.access - 127.0.0.1:39096 - "POST /api/streams/v2/subtasks/01a1a9c0-0f66-7bbe-8304-eb6ad4eb9e04/lease/release HTTP/1.1" 204
+03:28:26.739 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v1/consumers/read HTTP/1.1" 200
+03:28:26.772 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v1/consumers/read HTTP/1.1" 200
+03:28:26.862 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v1/consumers/complete HTTP/1.1" 200
+03:28:26.897 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v1/consumers/complete HTTP/1.1" 200
+03:28:26.963 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/poll HTTP/1.1" 200
+03:28:27.005 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v1/consumers/read HTTP/1.1" 200
+03:28:27.027 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/subtasks/01a1a9c0-0f66-7bbe-8304-eb6ad4eb9e04/replacements/authorize HTTP/1.1" 200
+03:28:27.039 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/poll HTTP/1.1" 200
+03:28:27.073 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v1/consumers/read HTTP/1.1" 200
+03:28:27.080 | INFO    | uvicorn.access - 127.0.0.1:39248 - "GET /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb HTTP/1.1" 200
+03:28:27.100 | INFO    | uvicorn.access - 127.0.0.1:39264 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:27.103 | INFO    | uvicorn.access - 127.0.0.1:39146 - "GET /api/streams/v1/01a1a9c0-0f54-738b-a012-fe12e0caa4c5 HTTP/1.1" 200
+03:28:27.149 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/subtasks/01a1a9c0-0f46-77a9-8cf2-814a7d0d7d4b/replacements/authorize HTTP/1.1" 200
+03:28:27.154 | INFO    | uvicorn.access - 127.0.0.1:39276 - "GET /api/task_runs/01a1a9c0-0f22-72fd-8177-6a0426c6ec0c HTTP/1.1" 200
+03:28:27.190 | INFO    | uvicorn.access - 127.0.0.1:39162 - "GET /api/streams/v1/01a1a9c0-0f22-7d04-a0ae-0cb773c81e02 HTTP/1.1" 200
+03:28:27.203 | INFO    | uvicorn.access - 127.0.0.1:39278 - "GET /api/streams/v1/01a1a9c0-0f22-7d04-a0ae-0cb773c81e02 HTTP/1.1" 200
+03:28:27.207 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/subtasks/01a1a9c0-0f66-7bbe-8304-eb6ad4eb9e04/replacements/retire HTTP/1.1" 200
+03:28:27.211 | INFO    | uvicorn.access - 127.0.0.1:44198 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:27.217 | INFO    | uvicorn.access - 127.0.0.1:39264 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:27.256 | INFO    | uvicorn.access - 127.0.0.1:39290 - "GET /api/task_runs/01a1a9c0-0f54-784e-aeb8-d6ac21c27600 HTTP/1.1" 200
+03:28:27.281 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v1/consumers/read HTTP/1.1" 200
+03:28:27.290 | INFO    | uvicorn.access - 127.0.0.1:39294 - "GET /api/streams/v1/01a1a9c0-0f54-738b-a012-fe12e0caa4c5 HTTP/1.1" 200
+03:28:27.294 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/subtasks/01a1a9c0-0f46-77a9-8cf2-814a7d0d7d4b/replacements/retire HTTP/1.1" 200
+03:28:27.310 | INFO    | uvicorn.access - 127.0.0.1:39302 - "GET /api/task_runs/01a1a9c0-0f74-78f3-b135-02b9f8985311 HTTP/1.1" 200
+03:28:27.323 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v1/consumers/read HTTP/1.1" 200
+03:28:27.331 | INFO    | uvicorn.access - 127.0.0.1:39314 - "GET /api/task_runs/01a1a9c0-0f91-77ae-b5dc-ae75be8ed1fb HTTP/1.1" 200
+03:28:27.367 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v1/consumers/finish HTTP/1.1" 204
+03:28:27.433 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v1/consumers/finish HTTP/1.1" 204
+03:28:27.438 | INFO    | uvicorn.access - 127.0.0.1:39146 - "POST /api/streams/v2/subtasks/01a1a9c0-0fa8-7e63-84e3-56ef3035936c/events HTTP/1.1" 200
+03:28:27.477 | INFO    | uvicorn.access - 127.0.0.1:39322 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:27.480 | INFO    | uvicorn.access - 127.0.0.1:39162 - "POST /api/streams/v2/subtasks/01a1a9c0-0f85-70f7-9d5b-a603a5f21c9c/events HTTP/1.1" 200
+03:28:27.508 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:27.513 | INFO    | uvicorn.access - 127.0.0.1:39112 - "GET /api/streams/v2/subtasks/01a1a9c0-0fa8-7e63-84e3-56ef3035936c/task-run HTTP/1.1" 200
+03:28:27.541 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:27.550 | INFO    | uvicorn.access - 127.0.0.1:39112 - "GET /api/streams/v1/01a1a9c0-0f91-72f6-bb79-1bda0c3ae4e8 HTTP/1.1" 200
+03:28:27.569 | INFO    | uvicorn.access - 127.0.0.1:39132 - "GET /api/streams/v2/subtasks/01a1a9c0-0f85-70f7-9d5b-a603a5f21c9c/task-run HTTP/1.1" 200
+03:28:27.588 | INFO    | uvicorn.access - 127.0.0.1:39132 - "GET /api/streams/v1/01a1a9c0-0f74-79c1-b15c-273a1926dd38 HTTP/1.1" 200
+03:28:27.612 | INFO    | uvicorn.access - 127.0.0.1:39112 - "POST /api/streams/v2/subtasks/01a1a9c0-0fa8-7e63-84e3-56ef3035936c/lease/release HTTP/1.1" 204
+03:28:27.659 | INFO    | uvicorn.access - 127.0.0.1:39132 - "POST /api/streams/v2/subtasks/01a1a9c0-0f85-70f7-9d5b-a603a5f21c9c/lease/release HTTP/1.1" 204
+03:28:27.726 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:28.072 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:28.090 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:28.237 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:28.271 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/poll HTTP/1.1" 200
+03:28:28.290 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/subtasks/01a1a9c0-0fa8-7e63-84e3-56ef3035936c/replacements/authorize HTTP/1.1" 200
+03:28:28.385 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/poll HTTP/1.1" 200
+03:28:28.395 | INFO    | uvicorn.access - 127.0.0.1:39330 - "GET /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb HTTP/1.1" 200
+03:28:28.410 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/subtasks/01a1a9c0-0fa8-7e63-84e3-56ef3035936c/replacements/retire HTTP/1.1" 200
+03:28:28.421 | INFO    | uvicorn.access - 127.0.0.1:44198 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:28.441 | INFO    | uvicorn.access - 127.0.0.1:39336 - "GET /api/task_runs/01a1a9c0-0f22-72fd-8177-6a0426c6ec0c HTTP/1.1" 200
+03:28:28.453 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/subtasks/01a1a9c0-0f85-70f7-9d5b-a603a5f21c9c/replacements/authorize HTTP/1.1" 200
+03:28:28.455 | INFO    | uvicorn.access - 127.0.0.1:44198 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:28.467 | INFO    | uvicorn.access - 127.0.0.1:39352 - "GET /api/streams/v1/01a1a9c0-0f22-7d04-a0ae-0cb773c81e02 HTTP/1.1" 200
+03:28:28.481 | INFO    | uvicorn.access - 127.0.0.1:39366 - "GET /api/task_runs/01a1a9c0-0f54-784e-aeb8-d6ac21c27600 HTTP/1.1" 200
+03:28:28.504 | INFO    | uvicorn.access - 127.0.0.1:39370 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:28.508 | INFO    | uvicorn.access - 127.0.0.1:39382 - "GET /api/streams/v1/01a1a9c0-0f54-738b-a012-fe12e0caa4c5 HTTP/1.1" 200
+03:28:28.540 | INFO    | uvicorn.access - 127.0.0.1:39398 - "GET /api/task_runs/01a1a9c0-0f74-78f3-b135-02b9f8985311 HTTP/1.1" 200
+03:28:28.545 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/subtasks/01a1a9c0-0f85-70f7-9d5b-a603a5f21c9c/replacements/retire HTTP/1.1" 200
+03:28:28.557 | INFO    | uvicorn.access - 127.0.0.1:39402 - "GET /api/streams/v1/01a1a9c0-0f74-79c1-b15c-273a1926dd38 HTTP/1.1" 200
+03:28:28.573 | INFO    | uvicorn.access - 127.0.0.1:39406 - "GET /api/task_runs/01a1a9c0-0f91-77ae-b5dc-ae75be8ed1fb HTTP/1.1" 200
+03:28:28.587 | INFO    | uvicorn.access - 127.0.0.1:39418 - "GET /api/streams/v1/01a1a9c0-0f91-72f6-bb79-1bda0c3ae4e8 HTTP/1.1" 200
+03:28:28.749 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:28.772 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v1/deployments/launches/heartbeat HTTP/1.1" 200
+03:28:28.934 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:28.955 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:29.324 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:29.389 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:29.406 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:29.471 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/poll HTTP/1.1" 200
+03:28:29.522 | INFO    | uvicorn.access - 127.0.0.1:39434 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:29.601 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v2/workers/94775314-4a3f-46be-8500-dbccf749171a/poll HTTP/1.1" 200
+03:28:29.616 | INFO    | uvicorn.access - 127.0.0.1:39436 - "GET /api/streams/v2/graphs/01a1a9c0-0f09-7534-b106-9952c4bb4dcb HTTP/1.1" 200
+03:28:29.640 | INFO    | uvicorn.access - 127.0.0.1:39448 - "GET /api/task_runs/01a1a9c0-0f74-78f3-b135-02b9f8985311 HTTP/1.1" 200
+03:28:29.655 | INFO    | uvicorn.access - 127.0.0.1:39458 - "GET /api/streams/v1/01a1a9c0-0f74-79c1-b15c-273a1926dd38 HTTP/1.1" 200
+03:28:29.674 | INFO    | uvicorn.access - 127.0.0.1:39462 - "GET /api/task_runs/01a1a9c0-0f91-77ae-b5dc-ae75be8ed1fb HTTP/1.1" 200
+03:28:29.691 | INFO    | uvicorn.access - 127.0.0.1:39470 - "GET /api/streams/v1/01a1a9c0-0f91-72f6-bb79-1bda0c3ae4e8 HTTP/1.1" 200
+03:28:29.748 | INFO    | uvicorn.access - 127.0.0.1:39472 - "POST /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/set_state HTTP/1.1" 201
+03:28:29.833 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b/plan HTTP/1.1" 200
+03:28:29.930 | INFO    | uvicorn.access - 127.0.0.1:39480 - "POST /api/logs/ HTTP/1.1" 201
+03:28:30.053 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:30.076 | INFO    | uvicorn.access - 127.0.0.1:44218 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=0d8042ac-a0b3-4b48-b8ba-2a38be9e0825&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:30.153 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:30.227 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/streams/v1/release HTTP/1.1" 200
+03:28:30.488 | INFO    | uvicorn.access - 127.0.0.1:44218 - "POST /api/streams/v2/workers/0d8042ac-a0b3-4b48-b8ba-2a38be9e0825/poll HTTP/1.1" 200
+03:28:30.520 | INFO    | uvicorn.access - 127.0.0.1:44194 - "POST /api/work_pools/partitioned-cae4965512514301903626f8543a4487/get_scheduled_flow_runs HTTP/1.1" 200
+03:28:30.539 | INFO    | uvicorn.access - 127.0.0.1:44194 - "GET /api/streams/v1/deployments/replacements/candidates?worker_id=94775314-4a3f-46be-8500-dbccf749171a&work_pool_id=a07e9444-453b-44b0-8768-21d5393d97c6&host_id=52106e86-d4ad-5ab1-8979-e57ceaefcc9c HTTP/1.1" 200
+03:28:30.548 | INFO    | uvicorn.access - 127.0.0.1:39714 - "GET /api/flow_runs/36c26be5-b1eb-4d95-b93d-c541a5bb6e5b HTTP/1.1" 200
+03:28:30.567 | INFO    | uvicorn.access - 127.0.0.1:39724 - "GET /api/v2/concurrency_limits/tag%3Apartitioned-fixed-capacity HTTP/1.1" 200
+03:28:31.007 | INFO    | uvicorn.error - Shutting down
+03:28:31.109 | INFO    | uvicorn.error - Waiting for background tasks to complete. (CTRL+C to force quit)
+03:28:32.019 | INFO    | uvicorn.error - Waiting for application shutdown.
+03:28:32.021 | INFO    | uvicorn.error - Application shutdown complete.
+03:28:32.021 | INFO    | uvicorn.error - Finished server process [197811]

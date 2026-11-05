@@ -140,6 +140,9 @@ def test_stripped_distribution_has_physical_dtos_and_scoped_http(
             ]
     for module in (
         "prefect/client/schemas/stream_subtasks.py",
+        "prefect/client/schemas/stream_routes.py",
+        "prefect/_internal/stream_key_wire.py",
+        "prefect/_internal/stream_routed_storage.py",
         "prefect/_internal/stream_execution.py",
         "prefect/_internal/stream_event_auth.py",
         "prefect/_internal/stream_partitioned.py",
@@ -197,6 +200,9 @@ def test_stripped_distribution_has_physical_dtos_and_scoped_http(
         "offscope_denied_before_transport": True,
         "server_only_imports_blocked": True,
         "business_calls": 0,
+        "routed_key_variants_validated": 5,
+        "routed_adapter_constructed": True,
+        "routed_execution": False,
         "native_acceptance": False,
     }
     (working / "receipt.json").write_text(

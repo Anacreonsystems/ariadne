@@ -21,6 +21,8 @@ from prefect.server.models._stream_receipts import (
     finite_receipt_outcome_digest,
 )
 from prefect.server.models.stream_subtask_authority import (
+    metadata_task_control_active,
+    metadata_task_control_matches,
     require_bounded_flow_recovery,
     require_no_assigned_physical_slots,
 )
@@ -492,6 +494,98 @@ async def require_execution(
     return authority
 
 
+async def unstarted_graph_tasks(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph: orm_models.StreamGraphRevision,
+) -> list[orm_models.TaskRun]:
+    """Validate an unstarted graph under its already-held Flow/graph gate."""
+    tasks = list(
+        (
+            await session.scalars(
+                sa.select(db.TaskRun)
+                .join(
+                    db.StreamPhysicalSubtask,
+                    db.StreamPhysicalSubtask.task_run_id == db.TaskRun.id,
+                )
+                .where(db.StreamPhysicalSubtask.graph_revision_id == graph.id)
+                .order_by(db.TaskRun.id)
+                .with_for_update(of=db.TaskRun)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    )
+    if graph.profile == "partitioned-fixed-v1":
+        expected = 4
+    elif graph.profile == "partitioned-dag-v1":
+        flow_task_ids = set(
+            (
+                await session.scalars(
+                    sa.select(db.TaskRun.id).where(
+                        db.TaskRun.flow_run_id == graph.flow_run_id
+                    )
+                )
+            ).all()
+        )
+        if flow_task_ids != {task.id for task in tasks}:
+            raise NativeStreamError(
+                "RECOVERY_NOT_READY",
+                "DAG Flow task set differs from its sealed physical topology",
+            )
+        expected = int(
+            await session.scalar(
+                sa.select(sa.func.sum(db.StreamOperatorRun.parallelism)).where(
+                    db.StreamOperatorRun.graph_revision_id == graph.id
+                )
+            )
+            or 0
+        )
+        if not 2 <= expected <= 128 or graph.state not in ("SEALED", "ADMITTED"):
+            raise NativeStreamError(
+                "RECOVERY_NOT_READY", "DAG has no complete unstarted physical topology"
+            )
+        if (
+            await session.scalar(
+                sa.select(db.StreamSubtaskGrant.id)
+                .join(
+                    db.StreamPhysicalSubtask,
+                    db.StreamPhysicalSubtask.id == db.StreamSubtaskGrant.subtask_id,
+                )
+                .where(db.StreamPhysicalSubtask.graph_revision_id == graph.id)
+                .limit(1)
+            )
+            is not None
+        ):
+            raise NativeStreamError(
+                "RECOVERY_NOT_READY",
+                "DAG task counters cannot change after a grant exists",
+            )
+    else:
+        raise NativeStreamError("UNSUPPORTED_PROFILE", "Unknown physical graph profile")
+    records = await session.scalar(
+        sa.select(sa.func.count())
+        .select_from(db.StreamRecord)
+        .join(db.StreamPartition, db.StreamPartition.id == db.StreamRecord.stream_id)
+        .where(db.StreamPartition.flow_run_id == graph.flow_run_id)
+    )
+    if (
+        graph.startup_completed_at is not None
+        or len(tasks) != expected
+        or records
+        or any(
+            task.flow_run_id != graph.flow_run_id
+            or task.run_count != 0
+            or task.state_type not in (StateType.PENDING, StateType.SCHEDULED)
+            for task in tasks
+        )
+    ):
+        raise NativeStreamError(
+            "RECOVERY_NOT_READY",
+            "First Running reconciliation requires the complete unstarted zero-DATA physical graph",
+        )
+    return tasks
+
+
 async def guard_flow_lifecycle(
     session: AsyncSession,
     db: PrefectDBInterface,
@@ -517,6 +611,22 @@ async def guard_flow_lifecycle(
         update=True,
         allow_unclaimed_snapshot=True,
     )
+    graph = await session.scalar(
+        sa.select(db.StreamGraphRevision)
+        .where(db.StreamGraphRevision.flow_run_id == flow_run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if (
+        graph is not None
+        and graph.profile == "partitioned-dag-v1"
+        and graph.state != "RELEASED"
+        and (proposed_state.is_final() or proposed_state.is_cancelling())
+    ):
+        raise NativeStreamError(
+            "DAG_NOT_STARTED",
+            "Topology-only DAG cannot report terminal Flow execution before explicit graph control",
+        )
     if authority is None:
         snapshot = await session.scalar(
             sa.select(db.NativeStreamDeploymentSnapshot.id).where(
@@ -567,10 +677,13 @@ async def guard_flow_lifecycle(
         and authority.manifest_set_digest is not None
         and flow.state_type != StateType.RUNNING
     ):
-        raise NativeStreamError(
-            "RECOVERY_NOT_READY",
-            "A sealed execution requires an explicit newer-generation takeover",
-        )
+        if graph is not None and graph.profile == "partitioned-dag-v1":
+            await unstarted_graph_tasks(session, db, graph)
+        else:
+            raise NativeStreamError(
+                "RECOVERY_NOT_READY",
+                "A sealed execution requires an explicit newer-generation takeover",
+            )
     if proposed_state.is_completed():
         if authority.prepared_generation != authority.generation:
             raise NativeStreamError(
@@ -700,41 +813,7 @@ async def apply_flow_lifecycle_result(
             .execution_options(populate_existing=True)
         )
         if graph is not None and graph.startup_completed_at is None:
-            tasks = (
-                await session.scalars(
-                    sa.select(db.TaskRun)
-                    .join(
-                        db.StreamPhysicalSubtask,
-                        db.StreamPhysicalSubtask.task_run_id == db.TaskRun.id,
-                    )
-                    .where(db.StreamPhysicalSubtask.graph_revision_id == graph.id)
-                    .order_by(db.TaskRun.id)
-                    .with_for_update(of=db.TaskRun)
-                    .execution_options(populate_existing=True)
-                )
-            ).all()
-            records = await session.scalar(
-                sa.select(sa.func.count())
-                .select_from(db.StreamRecord)
-                .join(
-                    db.StreamPartition,
-                    db.StreamPartition.id == db.StreamRecord.stream_id,
-                )
-                .where(db.StreamPartition.flow_run_id == flow.id)
-            )
-            if (
-                len(tasks) != 4
-                or records
-                or any(
-                    task.run_count != 0
-                    or task.state_type not in (StateType.PENDING, StateType.SCHEDULED)
-                    for task in tasks
-                )
-            ):
-                raise NativeStreamError(
-                    "RECOVERY_NOT_READY",
-                    "First Running reconciliation requires an unstarted zero-DATA physical graph",
-                )
+            tasks = await unstarted_graph_tasks(session, db, graph)
             for task in tasks:
                 task.flow_run_run_count = flow.run_count
     elif result_state.is_final():
@@ -765,13 +844,60 @@ async def guard_task_lifecycle(
     )
     if flow is None:
         return None
-    authority = await require_execution(
-        session,
-        db,
-        flow_run_id,
-        credentials,
-        allowed_states=("ACTIVE",),
+    metadata_control = metadata_task_control_active(session)
+    if metadata_control:
+        authority = await session.scalar(
+            sa.select(db.StreamExecutionAuthority)
+            .where(db.StreamExecutionAuthority.flow_run_id == flow_run_id)
+            .with_for_update(read=True)
+            .execution_options(populate_existing=True)
+        )
+    else:
+        authority = await require_execution(
+            session,
+            db,
+            flow_run_id,
+            credentials,
+            allowed_states=("ACTIVE",),
+        )
+    graph = await session.scalar(
+        sa.select(db.StreamGraphRevision)
+        .where(db.StreamGraphRevision.flow_run_id == flow_run_id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
     )
+    if graph is not None and graph.profile == "partitioned-dag-v1":
+        bound = await session.scalar(
+            sa.select(db.StreamPhysicalSubtask.id)
+            .join(
+                db.StreamSubmission,
+                db.StreamSubmission.id == db.StreamPhysicalSubtask.submission_id,
+            )
+            .where(
+                db.StreamPhysicalSubtask.task_run_id == task_run_id,
+                db.StreamPhysicalSubtask.graph_revision_id == graph.id,
+                db.StreamSubmission.task_run_id == task_run_id,
+                db.StreamSubmission.graph_revision_id == graph.id,
+                db.StreamSubmission.state == "ACTIVE",
+            )
+        )
+        if bound is None:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "TaskRun is not bound to the exact immutable DAG"
+            )
+        if (
+            metadata_control
+            and metadata_task_control_matches(session, graph)
+            and not force
+            and proposed_state is not None
+            and proposed_state.is_failed()
+            and proposed_state.state_details.retriable is False
+        ):
+            return authority
+        raise NativeStreamError(
+            "EXECUTION_PROFILE_NOT_READY",
+            "Topology-only DAG TaskRuns cannot execute before runtime integration",
+        )
     if authority is None:
         return None
     if authority.cancel_requested and (

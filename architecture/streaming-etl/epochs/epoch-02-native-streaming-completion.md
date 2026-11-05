@@ -187,6 +187,14 @@ steps, so cancellation after the queue observation provides no second-host
 evidence. No further infrastructure probes are planned without a product
 criterion that needs a new observation.
 
+The later [local QEMU boot discovery](../evidence/native-epoch2-qemu-readiness-2026-11-05/boot-discovery-v1/index.json)
+also remains unproven. Two real guests booted Linux and cloud-init, but the
+14 GiB resource guard fired before guest HTTP readiness, 30-second overlap and
+distinct salted guest identity witnesses were established. Exact owned-process
+cleanup passed without an OOM-kill increment. The result earns zero credit,
+does not satisfy NI2-053 or ADR-0047, and will not be retried from the same
+resource premise.
+
 The [first physical CI discovery](../evidence/native-epoch2-physical-ci-2026-11-04/discovery.json)
 is also retained without readiness credit. Its initial SQLite run exposed an
 invalid test event fixture and its successor passed the corrected selector,
@@ -281,3 +289,53 @@ multi-exchange routing stay open in N2.2, while the later ADRs retain their
 original planning gates.
 The [N2.1 documentation graph](../evidence/native-epoch2-n2-1-graph-2026-11-05.json)
 validates the resulting statuses and local evidence links.
+
+The [publication closure](../evidence/native-epoch2-n2-1-publication-closure-2026-11-05.json)
+records that PR 19 merged the accepted tree without a code-tree delta as
+`266609b178fd3361c4588f16a6033d08f40bd0ea`. Hosted run `41950170943`
+completed with 71 successful jobs, one declared conditional skip and no
+failure. The [hosted archive](../evidence/native-epoch2-n2-1-hosted-ci-2026-11-05/index.json)
+preserves the run/job metadata, native PostgreSQL logs and XML count guards.
+This publishes the 15% fixed-P2 slice; it does not change the open
+ADR-0043 or epoch-02 boundaries above.
+
+## NI2-010 topology-only DAG acceptance — 2026-11-05
+
+The [source-bound Principal acceptance](../evidence/native-epoch2-ni2-010-principal-acceptance-2026-11-05/acceptance.json)
+closes NI2-010 as an independently verified metadata component. It covers
+protected public seal/read, generic connected single-root topology, paired
+PostgreSQL/SQLite migrations, atomic internal region reservation and hostile
+fences against existing Task, event and DATA paths. A real two-session
+fixed-P2/DAG admission race admits exactly one complete region and leaves no
+partial loser allocation.
+
+This result earns 0% by itself. The cumulative epoch value remains 15% and
+N2.2 remains `progress`: the public DAG is deliberately unusable until
+NI2-011 adds atomic routed records and NI2-012 adds verified start, wait,
+failure and cleanup. The [NI2-011 handoff](../evidence/flink-architecture-2026-11-04/ni2-011-implementation-handoff-2026-11-05.json)
+defines direct references in the existing data plane, exact replay receipts
+and the lock order for that next slice.
+
+The 2026-11-05 user direction «Все вливайте, для полных
+тестов» releases the publication hold for the current NI2-011 work and
+authorizes merging it for the complete repository test matrix. The direction
+does not award readiness or close an acceptance criterion. Public DAG
+execution remains fenced until the later lifecycle work and its independent
+evidence pass.
+
+## NI2-011 finite routed-storage acceptance — 2026-11-05
+
+The [source-bound Principal acceptance](../evidence/native-epoch2-routed-server-2026-11-05/principal-v1/acceptance.json)
+closes NI2-011's finite storage component. The final source materializes one
+PAYLOAD with bounded direct REFERENCE rows in the terminal transaction,
+persists exact replay outcomes, keeps subscriber cursors independent and pins
+referenced data across the paired PostgreSQL and SQLite migrations. Legacy
+prefix reads now refuse DAG edge partitions before taking their data-row lock.
+
+The independent final cut passed 38 PostgreSQL and one SQLite model controls,
+five PostgreSQL and one SQLite prefix controls, the earlier 23/23 migration
+gate and strict analysis of all 17 selected modules, with no skips or source
+drift. NI2-011 moves to `accepted`, but earns 0% until the N2.2a hosted
+publication gate completes. The cumulative epoch value remains 15%. Public
+DAG start, Task execution, finish, failure, cancellation and cleanup remain
+fenced for NI2-012 through NI2-014.

@@ -1,0 +1,15 @@
+import hashlib
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+root = Path("/workspace/ariadne")
+output = Path(sys.argv[1])
+paths = subprocess.run(["rg", "--files", "src/prefect", "tests/fixtures"], cwd=root, text=True, capture_output=True, check=True).stdout.splitlines()
+paths += ["tests/server/api/test_stream_routes.py", "tests/server/api/test_stream_dag_execution_fences.py", "tests/server/api/test_stream_dags.py", "tests/server/api/test_stream_workers.py", "tests/server/api/test_native_deployments.py", "tests/server/models/test_stream_dags.py", "tests/conftest.py", "pyproject.toml", "uv.lock", "pyrightconfig-ci.json"]
+hashes = {value: hashlib.sha256((root / value).read_bytes()).hexdigest() for value in sorted(set(paths)) if value.endswith(".py") or value in ("pyproject.toml", "uv.lock", "pyrightconfig-ci.json")}
+receipt = {"schema": "ni2-011-route-api-source-observation-v1", "observed_at": datetime.now(timezone.utc).isoformat(), "head": subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip(), "hash_algorithm": "sha256", "files": hashes}
+output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+print(json.dumps({"output": str(output), "file_count": len(hashes), "sha256": hashlib.sha256(output.read_bytes()).hexdigest()}))

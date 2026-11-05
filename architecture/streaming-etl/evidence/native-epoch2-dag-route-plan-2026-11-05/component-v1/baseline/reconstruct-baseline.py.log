@@ -1,0 +1,65 @@
+from pathlib import Path
+import hashlib
+p=Path('/workspace/ariadne/src/prefect/_internal/stream_route_plan.py');s=p.read_text()
+s=s.replace('import math\n','').replace('from typing import Literal, cast','from typing import Literal').replace('from prefect._internal.stream_routing import KeyEncodingError, encode_tagged_key_v1','from prefect._internal.stream_routing import encode_tagged_key_v1')
+a=s.index('_EPHEMERAL_FIELDS = frozenset(');b=s.index('\n\n\nclass RoutePlanningError',a);s=s[:a]+s[b+1:]
+a=s.index('def _validate_json(');b=s.index('def graph_routing_digest(',a)
+s=s[:a]+'''def canonical_route_json(value: object) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8", errors="strict")
+    except (TypeError, ValueError, UnicodeError) as error:
+        raise RoutePlanningError("Canonical finite UTF-8 JSON is required") from error
+
+
+'''+s[b:]
+s=s.replace('if type(self) is not RouteTarget or any(','if any(')
+s=s.replace('        # Validate exact bounds before range(), tuple traversal or user callbacks.\n        _positive(self.producer_parallelism, 16)\n        _positive(self.target_parallelism, 16)\n','')
+s=s.replace('            type(self) is not RouteEdge\n            or type(self.edge_id) is not UUID','            type(self.edge_id) is not UUID').replace('            or len(self.targets) != self.target_parallelism\n','')
+s=s.replace('        if type(self.routing_version) is not int or self.routing_version != 1:','        _positive(self.producer_parallelism, 16)\n        _positive(self.target_parallelism, 16)\n        if type(self.routing_version) is not int or self.routing_version != 1:')
+a=s.index('        if type(self.exchange) is not str or self.exchange not in {');b=s.index('        if any(\n            type(target.partition_index)',a)
+s=s[:a]+'''        if self.exchange not in {"forward", "rebalance", "broadcast", "keyed"}:
+            raise RoutePlanningError("Unknown exchange")
+        if len(self.targets) != self.target_parallelism or {
+            target.partition_index for target in self.targets
+        } != set(range(self.target_parallelism)):
+            raise RoutePlanningError(
+                "Targets must exactly cover the sealed target indices"
+            )
+'''+s[b:]
+a=s.index('    try:\n        key_bytes = encode_tagged_key_v1(key) if key_present else None');b=s.index('    selected: list[RouteTarget]',a);s=s[:a]+'    key_bytes = encode_tagged_key_v1(key) if key_present else None\n'+s[b:]
+s=s.replace('            assert key_hash is not None and edge.key_group_count is not None\n            group = key_hash % edge.key_group_count','''            assert key_bytes is not None and edge.key_group_count is not None
+            group = (
+                int.from_bytes(hashlib.sha256(key_bytes).digest(), "big")
+                % edge.key_group_count
+            )''')
+a=s.index('def route_semantic_digest(');b=s.index('def route_outcome_digest(',a)
+s=s[:a]+'''def route_semantic_digest(material: Mapping[str, object]) -> str:
+    """Hash an explicit stable material assembled by the authenticated store."""
+    forbidden = {
+        "attempt",
+        "owner_id",
+        "owner_epoch",
+        "grant_id",
+        "run_count",
+        "delivery_id",
+        "worker_id",
+        "process_id",
+    }
+    if forbidden.intersection(material):
+        raise RoutePlanningError(
+            "Ephemeral execution identity is not a semantic turn coordinate"
+        )
+    return hashlib.sha256(
+        b"prefect-dag-route-semantic-v1\\0" + canonical_route_json(dict(material))
+    ).hexdigest()
+
+
+'''+s[b:]
+s=s.replace('    if type(outcome) is not dict:\n        raise RoutePlanningError("A route outcome must be an exact JSON object")\n    material = cast(dict[str, object], outcome).copy()','    material = dict(outcome)')
+out=Path('/tmp/native-ni2-011-route-plan-v2/baseline-reconstruction');out.mkdir();(out/'stream_route_plan.py').write_text(s);print(hashlib.sha256(s.encode()).hexdigest())

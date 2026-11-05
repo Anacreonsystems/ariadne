@@ -158,7 +158,15 @@ jobs:
               tests/test_stream_sources.py
               tests/test_stream_routing.py
               tests/test_stream_partitioned_runtime.py
+              tests/test_stream_graph_contracts.py
+              tests/test_stream_key_wire.py
+              tests/test_stream_route_terminals.py
+              tests/test_stream_route_plan.py
+              tests/test_stream_dag_authoring.py
+              tests/test_stream_dag_dependencies.py
               tests/test_native_partitioned_stream_http.py
+              tests/test_native_dag_client_http.py
+              tests/test_native_stream_dag_http.py
               tests/test_native_source_recovery_http.py
               tests/test_native_submission_http.py
               tests/test_native_execution_http.py
@@ -255,7 +263,15 @@ jobs:
                 tests/test_stream_sources.py
                 tests/test_stream_routing.py
                 tests/test_stream_partitioned_runtime.py
+                tests/test_stream_graph_contracts.py
+                tests/test_stream_key_wire.py
+                tests/test_stream_route_terminals.py
+                tests/test_stream_route_plan.py
+                tests/test_stream_dag_authoring.py
+                tests/test_stream_dag_dependencies.py
                 tests/test_native_partitioned_stream_http.py
+                tests/test_native_dag_client_http.py
+                tests/test_native_stream_dag_http.py
                 tests/test_native_source_recovery_http.py
                 tests/test_native_submission_http.py
                 tests/test_native_execution_http.py
@@ -449,7 +465,7 @@ jobs:
 
   run-partitioned-stream-tests:
     if: ${{ github.event_name != 'repository_dispatch' }}
-    runs-on: ubuntu-latest
+    runs-on: anacreon-runners
     name: Native physical streams - python:3.12, ${{ matrix.database }}
     # Includes both sync/async cardinality and real process-fault controls.
     timeout-minutes: 75
@@ -461,7 +477,7 @@ jobs:
       postgres:
         image: postgres:17
         ports:
-          - 5432:5432
+          - "5432/tcp"
         env:
           POSTGRES_USER: prefect
           POSTGRES_PASSWORD: prefect
@@ -478,9 +494,18 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
+      - name: Set up Node for the type checker
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ui-v2/.nvmrc
       - name: Install packages
         run: uv sync --locked
-      - *python-test-database-url
+      - name: Set native test database connection URL
+        if: ${{ startsWith(matrix.database, 'postgres') }}
+        env:
+          NATIVE_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://prefect:prefect@localhost:${NATIVE_POSTGRES_PORT}/prefect" >> "$GITHUB_ENV"
       - name: Check new server modules without inherited type exclusions
         if: matrix.database == 'postgres:17'
         run: |
@@ -493,7 +518,7 @@ jobs:
           config = json.loads(Path("pyrightconfig-native-physical.json").read_text())
           included = config["include"]
           assert config["ignore"] == []
-          assert len(included) == len(set(included)) == 8
+          assert len(included) == len(set(included)) == 17
           assert all(Path(path).is_file() for path in included)
           report = json.loads(Path("native-physical-types.json").read_text())
           assert report["summary"]["filesAnalyzed"] == len(included), report["summary"]
@@ -503,7 +528,16 @@ jobs:
         run: >-
           uv run pytest tests/client/test_stream_subtasks.py
           tests/client/test_stream_worker_subtasks.py
+          tests/client/test_stream_dags.py
+          tests/client/test_stream_routes.py
+          tests/server/schemas/test_stream_routes.py
           tests/test_stream_partitioned_runtime.py
+          tests/test_stream_graph_contracts.py
+          tests/test_stream_key_wire.py
+          tests/test_stream_route_terminals.py
+          tests/test_stream_route_plan.py
+          tests/test_stream_dag_authoring.py
+          tests/test_stream_dag_dependencies.py
           -q --junitxml=native-physical-contract.xml
       - name: Run physical authority, concurrency and paired migration controls
         if: matrix.database == 'postgres:17'
@@ -513,6 +547,16 @@ jobs:
           tests/server/api/test_stream_subtask_controls.py
           tests/server/api/test_stream_workers.py
           tests/server/database/test_stream_subtask_migrations.py
+          tests/server/models/test_stream_dags.py
+          tests/server/api/test_stream_dags.py
+          tests/server/api/test_stream_dag_execution_fences.py
+          tests/server/database/test_stream_dag_migrations.py
+          tests/server/models/test_stream_routes.py
+          tests/server/api/test_stream_routes.py
+          tests/server/api/test_stream_route_prefix_fences.py
+          tests/server/database/test_stream_route_migrations.py
+          tests/test_native_dag_client_http.py
+          tests/test_native_stream_dag_http.py
           tests/workers/test_stream_subtasks.py
           tests/workers/test_stream_startup_cleanup_http.py
           -k 'not sqlite'
@@ -523,6 +567,15 @@ jobs:
           uv run pytest tests/server/api/test_stream_subtasks.py
           tests/server/api/test_stream_workers.py
           tests/server/database/test_stream_subtask_migrations.py
+          tests/server/models/test_stream_dags.py
+          tests/server/api/test_stream_dags.py
+          tests/server/api/test_stream_dag_execution_fences.py
+          tests/server/database/test_stream_dag_migrations.py
+          tests/server/models/test_stream_routes.py
+          tests/server/api/test_stream_routes.py
+          tests/server/api/test_stream_route_prefix_fences.py
+          tests/server/database/test_stream_route_migrations.py
+          tests/test_native_dag_client_http.py
           -k 'not (test_child_http_scope_events_and_no_basic_or_anonymous_escape
           or test_csrf_enabled_scoped_transport_is_exactly_exempt
           or test_profile_admission_fails_closed_without_protected_api
@@ -532,7 +585,7 @@ jobs:
           or test_worker_control_proof_rejects_sibling_session_and_weak_locks
           or test_startup_abort_and_competing_admission_lock_workers_in_one_order
           or test_public_partitioned_seal_requires_deployment_before_any_topology_rows
-          or test_public_admission_cannot_promote_internal_local_discovery_graph)'
+          or test_public_admission_cannot_promote_internal_local_discovery_graph) and not postgres'
           -q --junitxml=native-physical-sqlite.xml
       - name: Build and run the stripped physical client wheel and source distribution
         if: matrix.database == 'postgres:17'
@@ -548,8 +601,24 @@ jobs:
         run: |
           uv run python - <<'PY'
           from pathlib import Path
+          import shlex
           import xml.etree.ElementTree as ET
 
+          import yaml
+
+          workflow = yaml.safe_load(Path(".github/workflows/python-tests.yaml").read_text())
+          required_modules = {}
+          for step in workflow["jobs"]["run-partitioned-stream-tests"]["steps"]:
+              command = step.get("run", "").strip()
+              if not command.startswith("uv run pytest "):
+                  continue
+              arguments = shlex.split(command)
+              report = next(arg.split("=", 1)[1] for arg in arguments if arg.startswith("--junitxml="))
+              required_modules[report] = {
+                  arg.split("::", 1)[0][:-3].replace("/", ".")
+                  for arg in arguments
+                  if arg.startswith("tests/") and arg.split("::", 1)[0].endswith(".py")
+              }
           paths = [Path("native-physical-contract.xml")]
           if "${{ matrix.database }}" == "postgres:17":
               paths.extend([Path("native-physical-server.xml"), Path("native-physical-package.xml"), Path("native-physical-runtime.xml")])
@@ -558,6 +627,15 @@ jobs:
           for path in paths:
               cases = ET.parse(path).findall(".//testcase")
               assert cases, f"Physical cases were not collected: {path}"
+              classnames = {case.get("classname", "") for case in cases}
+              missing_modules = {
+                  module for module in required_modules[path.name]
+                  if not any(name == module or name.startswith(module + ".") for name in classnames)
+              }
+              assert not missing_modules, f"Physical modules were silently deselected: {path}: {missing_modules}"
+              if path.name == "native-physical-sqlite.xml":
+                  names = {case.get("name", "").split("[", 1)[0] for case in cases}
+                  assert "test_sqlite_metadata_admission_refuses_without_mutation" in names, "SQLite admission refusal did not execute"
               identities = {(case.get("classname"), case.get("name")) for case in cases}
               assert len(identities) == len(cases), f"Physical cases were duplicated: {path}"
               assert not any(

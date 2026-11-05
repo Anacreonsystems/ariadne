@@ -111,6 +111,41 @@ async def clear_db(db, request):
                     # Physical assignments deliberately retain their Worker FK.
                     # Remove the test graph hierarchy before the special early
                     # pool deletion; submissions also retain the graph FK.
+                    # Explicit isolated-test purge keeps restrictive slot and
+                    # edge bindings out of the early Worker/partition cleanup.
+                    # One deferred receipt->input-reference FK permits this
+                    # whole-transaction purge; every payload pin remains strict.
+                    await session.execute(
+                        orm_models.StreamRecord.__table__.delete().where(
+                            orm_models.StreamRecord.record_kind == "REFERENCE"
+                        )
+                    )
+                    await session.execute(
+                        orm_models.StreamCompletion.__table__.delete().where(
+                            orm_models.StreamCompletion.consumer_kind == "DAG"
+                        )
+                    )
+                    await session.execute(
+                        orm_models.StreamRouteReceipt.__table__.delete()
+                    )
+                    await session.execute(
+                        orm_models.StreamConsumer.__table__.delete().where(
+                            orm_models.StreamConsumer.consumer_kind == "DAG"
+                        )
+                    )
+                    await session.execute(
+                        orm_models.StreamRecord.__table__.delete().where(
+                            orm_models.StreamRecord.graph_revision_id.is_not(None)
+                        )
+                    )
+                    await session.execute(
+                        orm_models.StreamPhysicalSlotAllocation.__table__.delete()
+                    )
+                    await session.execute(
+                        orm_models.StreamGraphEdgePartition.__table__.delete()
+                    )
+                    await session.execute(orm_models.StreamGraphEdge.__table__.delete())
+                    await session.execute(orm_models.StreamGraphPort.__table__.delete())
                     await session.execute(
                         orm_models.StreamPhysicalSubtask.__table__.delete()
                     )

@@ -57,7 +57,15 @@ from prefect.logging.loggers import get_logger
 from prefect.results import ResultRecord, should_persist_result
 from prefect.settings import PREFECT_LOGGING_LOG_PRINTS
 from prefect.states import State
-from prefect.streams import Stream, StreamCollection, StreamProtocolError
+from prefect.streams import (
+    SealedStreamGraph,
+    Stream,
+    StreamCollection,
+    StreamGraph,
+    StreamOperatorHandle,
+    StreamOutput,
+    StreamProtocolError,
+)
 from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.tasks import Task
 from prefect.utilities.annotations import allow_failure, opaque, quote
@@ -71,6 +79,47 @@ API_HEALTHCHECKS: dict[str, float] = {}
 UNTRACKABLE_TYPES: set[type[Any]] = {bool, type(None), type(...), type(NotImplemented)}
 _RUN_SCHEMA_TYPES: tuple[type[Any], ...] = (FlowRun, TaskRun)
 engine_logger: Logger = get_logger("engine")
+
+_STREAM_GRAPH_METADATA_TYPES: tuple[type[Any], ...] = (
+    StreamGraph,
+    StreamOperatorHandle,
+    StreamOutput,
+    SealedStreamGraph,
+)
+
+
+def refuse_stream_graph_dependencies(value: Any) -> None:
+    """Reject declaration metadata without collecting or starting its graph.
+
+    Known containers are traversed explicitly, including annotation tuples.
+    Arbitrary object attributes are not inspected and container cycles are safe.
+    """
+    pending: list[Any] = [value]
+    visited: set[int] = set()
+    while pending:
+        item = pending.pop()
+        if isinstance(item, _STREAM_GRAPH_METADATA_TYPES):
+            raise StreamProtocolError(
+                "StreamGraph metadata is not an executable finite Task dependency"
+            )
+        if isinstance(item, (list, tuple, dict, set, frozenset)):
+            container = cast(
+                list[Any]
+                | tuple[Any, ...]
+                | dict[Any, Any]
+                | set[Any]
+                | frozenset[Any],
+                item,
+            )
+            identity = id(container)
+            if identity in visited:
+                continue
+            visited.add(identity)
+            if isinstance(container, dict):
+                pending.extend(container.keys())
+                pending.extend(container.values())
+            else:
+                pending.extend(container)
 
 
 def _raise_on_run_schema_unless_opaque(obj: Any, context: dict[str, Any]) -> None:
@@ -1035,6 +1084,9 @@ def resolve_to_final_result(expr: Any, context: dict[str, Any]) -> Any:
     """
     state: Optional[State[Any]] = None
 
+    if isinstance(expr, _STREAM_GRAPH_METADATA_TYPES):
+        refuse_stream_graph_dependencies(expr)
+
     # Expressions inside quotes should not be modified
     if isinstance(context.get("annotation"), quote):
         raise StopVisiting()
@@ -1094,6 +1146,8 @@ def resolve_to_final_result(expr: Any, context: dict[str, Any]) -> Any:
         return state.data
 
     result: Any = state.result(raise_on_failure=False, _sync=True)  # pyright: ignore[reportCallIssue] _sync messes up type inference and can be removed once async_dispatch is removed
+
+    refuse_stream_graph_dependencies(result)
 
     if isinstance(result, (Stream, StreamCollection)):
         return resolve_to_final_result(result, context)

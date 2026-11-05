@@ -21,6 +21,7 @@ from prefect.server.database import PrefectDBInterface, orm_models
 from prefect.server.models import task_runs as task_run_models
 from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.models.stream_executions import require_execution
+from prefect.server.models.stream_route_legacy import guard_legacy_stream_prefix
 from prefect.server.models.stream_subtask_authority import (
     release_allocations,
     release_terminal_allocation,
@@ -189,6 +190,17 @@ class NativeStreamStore:
                 self.execution,
                 allowed_states=validation_states,
             )
+            graph = await session.scalar(
+                sa.select(self.db.StreamGraphRevision)
+                .where(self.db.StreamGraphRevision.flow_run_id == flow_run_id)
+                .with_for_update(read=True)
+                .execution_options(populate_existing=True)
+            )
+            if graph is not None and graph.profile == "partitioned-dag-v1":
+                raise NativeStreamError(
+                    "EXECUTION_PROFILE_NOT_READY",
+                    "Topology-only DAG data access is not executable",
+                )
             if (
                 require_manifest_sealed
                 and not allow_physical_cleanup
@@ -520,6 +532,7 @@ class NativeStreamStore:
 
     # Shared manifest projection; existing v1 callers retain their private name.
     submission_response = _submission_response
+    submission_material = _submission_material
 
     async def reserve_submission(
         self, request: StreamSubmissionReserveRequest
@@ -1762,6 +1775,9 @@ class NativeStreamStore:
     async def read_prefix(self, stream_id: UUID, limit: int) -> list[StreamEnvelope]:
         _attempt(limit)
         async with self._session() as session:
+            await guard_legacy_stream_prefix(
+                session, self.db, stream_id, self.execution
+            )
             stream = (await self._streams(session, [stream_id]))[stream_id]
             limits = StreamLimits.model_validate(stream.limits)
             if limit > limits.max_prefix_records:

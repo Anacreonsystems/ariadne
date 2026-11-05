@@ -1,0 +1,692 @@
+"""Pure sealed-route contracts with hostile raw inputs; no database or runtime."""
+
+import json
+import os
+import subprocess
+import sys
+import unittest
+from collections.abc import Iterator, Mapping
+from dataclasses import FrozenInstanceError, replace
+from enum import IntEnum, StrEnum
+from types import MappingProxyType
+from typing import Any, Literal
+from uuid import UUID
+
+from prefect._internal.stream_route_plan import (
+    RouteEdge,
+    RoutePlanningError,
+    RouteTarget,
+    canonical_route_json,
+    graph_routing_digest,
+    plan_route_targets,
+    route_outcome_digest,
+    route_semantic_digest,
+)
+
+Exchange = Literal["forward", "rebalance", "broadcast", "keyed"]
+
+
+class IntegerSubclass(int):
+    pass
+
+
+class StringSubclass(str):
+    pass
+
+
+class IntegerEnum(IntEnum):
+    ONE = 1
+
+
+class ExchangeEnum(StrEnum):
+    FORWARD = "forward"
+
+
+class UUIDSubclass(UUID):
+    pass
+
+
+class TargetSubclass(RouteTarget):
+    pass
+
+
+class EdgeSubclass(RouteEdge):
+    pass
+
+
+class ListSubclass(list[object]):
+    pass
+
+
+class DictSubclass(dict[str, object]):
+    pass
+
+
+class TupleSubclass(tuple[object, ...]):
+    pass
+
+
+class CallbackMapping(Mapping[str, object]):
+    def __init__(self) -> None:
+        self.callbacks: list[str] = []
+
+    def __getitem__(self, key: str) -> object:
+        self.callbacks.append("getitem")
+        raise AssertionError("A refused mapping must never be read")
+
+    def __iter__(self) -> Iterator[str]:
+        self.callbacks.append("iter")
+        return iter(())
+
+    def __len__(self) -> int:
+        self.callbacks.append("len")
+        return 0
+
+
+def edge(
+    number: int = 1,
+    exchange: Exchange = "forward",
+    producer_parallelism: int = 1,
+    target_parallelism: int = 1,
+    key_group_count: int | None = None,
+) -> RouteEdge:
+    identity = UUID(int=number)
+    return RouteEdge(
+        edge_id=identity,
+        exchange=exchange,
+        producer_parallelism=producer_parallelism,
+        target_parallelism=target_parallelism,
+        targets=tuple(
+            RouteTarget(
+                identity,
+                UUID(int=10_000 + number * 100 + index),
+                UUID(int=1_000_000 + number * 100 + index),
+                index,
+            )
+            for index in range(target_parallelism)
+        ),
+        key_group_count=key_group_count,
+    )
+
+
+def select(
+    edges: tuple[RouteEdge, ...],
+    producer_index: int = 0,
+    producer_sequence: int = 1,
+    *,
+    physical_subtask_count: int = 128,
+    key_present: bool = False,
+    key: Any = None,
+) -> tuple[RouteTarget, ...]:
+    return plan_route_targets(
+        edges,
+        producer_index,
+        producer_sequence,
+        physical_subtask_count=physical_subtask_count,
+        key_present=key_present,
+        key=key,
+    )
+
+
+class TestSealedRouteManifests(unittest.TestCase):
+    def test_targets_and_edges_are_frozen(self):
+        manifest = edge()
+        with self.assertRaises(FrozenInstanceError):
+            setattr(manifest.targets[0], "partition_index", 1)
+        with self.assertRaises(FrozenInstanceError):
+            setattr(manifest, "target_parallelism", 2)
+
+    def test_target_identities_require_exact_uuid_values(self):
+        target = edge().targets[0]
+        for field in ("edge_id", "edge_partition_id", "stream_id"):
+            for invalid in (
+                str(target.edge_id),
+                target.edge_id.int,
+                UUIDSubclass(int=1),
+                None,
+            ):
+                with self.subTest(field=field, kind=type(invalid).__name__):
+                    with self.assertRaises(RoutePlanningError):
+                        replace(target, **{field: invalid})
+
+    def test_target_index_requires_exact_bounded_integer(self):
+        for invalid in (
+            -1,
+            16,
+            True,
+            False,
+            1.0,
+            "0",
+            IntegerSubclass(0),
+            IntegerEnum.ONE,
+        ):
+            with self.subTest(kind=type(invalid).__name__):
+                with self.assertRaises(RoutePlanningError):
+                    replace(edge().targets[0], partition_index=invalid)
+        self.assertEqual(
+            edge(target_parallelism=16, exchange="broadcast")
+            .targets[-1]
+            .partition_index,
+            15,
+        )
+
+    def test_parallelism_is_validated_before_range_or_index_callbacks(self):
+        callbacks: list[str] = []
+
+        class IndexCallback:
+            def __index__(self) -> int:
+                callbacks.append("index")
+                return 1
+
+        for name in ("producer_parallelism", "target_parallelism"):
+            for invalid in (
+                None,
+                True,
+                1.0,
+                "1",
+                -1,
+                0,
+                17,
+                10**100,
+                IntegerSubclass(1),
+                IntegerEnum.ONE,
+                IndexCallback(),
+            ):
+                with self.subTest(field=name, kind=type(invalid).__name__):
+                    with self.assertRaises(RoutePlanningError):
+                        replace(edge(), **{name: invalid})
+        self.assertEqual(callbacks, [])
+
+    def test_exchange_requires_exact_supported_string(self):
+        for invalid in (
+            None,
+            [],
+            {},
+            1,
+            "unknown",
+            "FORWARD",
+            StringSubclass("forward"),
+            ExchangeEnum.FORWARD,
+        ):
+            with self.subTest(kind=type(invalid).__name__):
+                with self.assertRaises(RoutePlanningError):
+                    replace(edge(), exchange=invalid)
+
+    def test_routing_version_is_exact_one(self):
+        for invalid in (True, 1.0, "1", 0, 2, IntegerSubclass(1), IntegerEnum.ONE):
+            with self.subTest(kind=type(invalid).__name__):
+                with self.assertRaises(RoutePlanningError):
+                    replace(edge(), routing_version=invalid)
+
+    def test_manifest_uuid_targets_and_order_cannot_be_coerced(self):
+        original = edge(exchange="broadcast", target_parallelism=2)
+        invalid_targets = (
+            list(original.targets),
+            TupleSubclass(original.targets),
+            original.targets[:1],
+            original.targets[::-1],
+            (original.targets[0], original.targets[0]),
+            (original.targets[0], object()),
+            (original.targets[0], replace(original.targets[1], edge_id=UUID(int=90))),
+            (
+                original.targets[0],
+                replace(
+                    original.targets[1],
+                    edge_partition_id=original.targets[0].edge_partition_id,
+                ),
+            ),
+            (
+                original.targets[0],
+                replace(original.targets[1], stream_id=original.targets[0].stream_id),
+            ),
+        )
+        for targets in invalid_targets:
+            with self.subTest(kind=type(targets).__name__):
+                with self.assertRaises(RoutePlanningError):
+                    replace(original, targets=targets)
+        for identity in (str(original.edge_id), UUIDSubclass(int=1), 1):
+            with self.assertRaises(RoutePlanningError):
+                replace(original, edge_id=identity)
+
+    def test_sealed_shapes_refuse_subclasses(self):
+        target = edge().targets[0]
+        with self.assertRaises(RoutePlanningError):
+            TargetSubclass(
+                target.edge_id, target.edge_partition_id, target.stream_id, 0
+            )
+        manifest = edge()
+        with self.assertRaises(RoutePlanningError):
+            EdgeSubclass(manifest.edge_id, "forward", 1, 1, manifest.targets)
+
+    def test_forward_requires_equal_parallelism(self):
+        with self.assertRaises(RoutePlanningError):
+            edge(producer_parallelism=2, target_parallelism=3)
+
+    def test_key_group_count_is_exact_bounded_and_covers_targets(self):
+        manifest = edge(exchange="keyed", target_parallelism=3, key_group_count=16)
+        for invalid in (
+            None,
+            False,
+            True,
+            1.0,
+            "16",
+            0,
+            -1,
+            2,
+            2**31,
+            IntegerSubclass(16),
+            IntegerEnum.ONE,
+        ):
+            with self.subTest(kind=type(invalid).__name__):
+                with self.assertRaises(RoutePlanningError):
+                    replace(manifest, key_group_count=invalid)
+        self.assertEqual(
+            replace(manifest, key_group_count=2**31 - 1).key_group_count, 2**31 - 1
+        )
+        for kind in ("forward", "broadcast", "rebalance"):
+            with self.assertRaises(RoutePlanningError):
+                edge(exchange=kind, key_group_count=16)
+
+
+class TestRouteSelection(unittest.TestCase):
+    def test_forward_preserves_each_producer_index(self):
+        manifest = edge(producer_parallelism=4, target_parallelism=4)
+        for index in range(4):
+            for sequence in (1, 2, 101, 10**100):
+                self.assertEqual(
+                    select((manifest,), index, sequence), (manifest.targets[index],)
+                )
+
+    def test_rebalance_uses_original_producer_coordinate(self):
+        manifest = edge(
+            exchange="rebalance", producer_parallelism=2, target_parallelism=3
+        )
+        expected = ((0, 1, 2, 0, 1, 2), (1, 2, 0, 1, 2, 0))
+        for producer in range(2):
+            for sequence, target in enumerate(expected[producer], 1):
+                self.assertEqual(
+                    select((manifest,), producer, sequence), (manifest.targets[target],)
+                )
+        self.assertEqual(select((manifest,), 1, 5), select((manifest,), 1, 5))
+
+    def test_broadcast_emits_every_target_once_and_accepts_different_parallelism(self):
+        manifest = edge(
+            exchange="broadcast", producer_parallelism=2, target_parallelism=3
+        )
+        for producer in range(2):
+            self.assertEqual(select((manifest,), producer), manifest.targets)
+
+    def test_selection_is_sorted_by_uuid_bytes_not_argument_or_partition_order(self):
+        first = edge(number=1, exchange="broadcast", target_parallelism=2)
+        first = replace(
+            first,
+            targets=(
+                replace(first.targets[0], edge_partition_id=UUID(int=99)),
+                replace(first.targets[1], edge_partition_id=UUID(int=10)),
+            ),
+        )
+        second = edge(number=2, exchange="broadcast", target_parallelism=2)
+        self.assertEqual(
+            select((second, first)),
+            (first.targets[1], first.targets[0], *second.targets),
+        )
+
+    def test_keyed_independent_vectors_use_full_hash_and_group_ranges(self):
+        vectors = (
+            (None, 2, 3),
+            (False, 0, 3),
+            (True, 0, 0),
+            (0, 2, 0),
+            (-1, 2, 2),
+            ("a", 2, 0),
+            (b"a", 1, 1),
+            ("é", 1, 3),
+            ("é", 1, 0),
+        )
+        # Concrete target vectors are generated independently from fixed tagged
+        # bytes, then frozen below; no Python hash() or current task attempt.
+        for value, first_target, second_target in vectors:
+            for manifest, target in (
+                (
+                    edge(
+                        exchange="keyed",
+                        producer_parallelism=2,
+                        target_parallelism=3,
+                        key_group_count=16,
+                    ),
+                    first_target,
+                ),
+                (
+                    edge(
+                        exchange="keyed",
+                        producer_parallelism=2,
+                        target_parallelism=5,
+                        key_group_count=31,
+                    ),
+                    second_target,
+                ),
+            ):
+                with self.subTest(
+                    key_kind=type(value).__name__, groups=manifest.key_group_count
+                ):
+                    self.assertEqual(
+                        select((manifest,), 1, 719, key_present=True, key=value),
+                        (manifest.targets[target],),
+                    )
+
+    def test_one_key_is_reused_across_keyed_and_nonkeyed_outgoing_edges(self):
+        keyed = edge(1, "keyed", 2, 3, 16)
+        other_keyed = edge(2, "keyed", 2, 5, 31)
+        forward = edge(3, "forward", 2, 2)
+        broadcast = edge(4, "broadcast", 2, 2)
+        selected = select(
+            (broadcast, keyed, forward, other_keyed), 1, 9, key_present=True, key="a"
+        )
+        self.assertEqual(
+            selected,
+            (
+                *select((keyed,), 1, 9, key_present=True, key="a"),
+                *select((other_keyed,), 1, 9, key_present=True, key="a"),
+                forward.targets[1],
+                *broadcast.targets,
+            ),
+        )
+
+    def test_key_presence_is_required_exactly_for_keyed_outputs(self):
+        keyed = edge(exchange="keyed", key_group_count=16)
+        for kwargs in (
+            {},
+            {"key": "unused"},
+            {"key_present": 1},
+            {"key_present": "true"},
+        ):
+            with self.assertRaises(RoutePlanningError):
+                select((keyed,), **kwargs)
+        self.assertEqual(select((keyed,), key_present=True, key=None), keyed.targets)
+        for outgoing in ((), (edge(),)):
+            with self.assertRaises(RoutePlanningError):
+                select(outgoing, key_present=True, key=None)
+            with self.assertRaises(RoutePlanningError):
+                select(outgoing, key="unused")
+        self.assertEqual(select(()), ())
+
+    def test_key_codec_boundary_and_hostile_values(self):
+        keyed = edge(exchange="keyed", key_group_count=16)
+        for key in ("a" * 4091, b"a" * 4091, "é" * 2045 + "a"):
+            self.assertEqual(len(select((keyed,), key_present=True, key=key)), 1)
+        for invalid in (
+            "a" * 4092,
+            b"a" * 4092,
+            "é" * 2046,
+            "\ud800",
+            -(2**63) - 1,
+            2**63,
+            1.0,
+            [],
+            {},
+            IntegerSubclass(1),
+            StringSubclass("a"),
+            bytearray(b"a"),
+        ):
+            with self.subTest(kind=type(invalid).__name__):
+                with self.assertRaises(RoutePlanningError):
+                    select((keyed,), key_present=True, key=invalid)
+
+    def test_coordinates_are_exact_and_bounded(self):
+        defaults: dict[str, Any] = {
+            "producer_index": 0,
+            "producer_sequence": 1,
+            "physical_subtask_count": 2,
+            "key_present": False,
+        }
+        cases = {
+            "producer_index": (-1, 16, True, 0.0, "0", IntegerSubclass(0)),
+            "producer_sequence": (0, -1, True, 1.0, "1", IntegerEnum.ONE),
+            "physical_subtask_count": (0, 1, 129, True, 2.0, "2", IntegerSubclass(2)),
+            "key_present": (0, 1, None, "false"),
+        }
+        for field, values in cases.items():
+            for value in values:
+                with self.subTest(field=field, kind=type(value).__name__):
+                    with self.assertRaises(RoutePlanningError):
+                        select((edge(),), **{**defaults, field: value})
+        with self.assertRaises(RoutePlanningError):
+            select((edge(),), producer_index=1)
+
+    def test_outgoing_edges_are_exact_immutable_and_have_one_producer_parallelism(self):
+        for invalid in ([edge()], TupleSubclass((edge(),)), (object(),)):
+            with self.assertRaises(RoutePlanningError):
+                select(invalid)
+        with self.assertRaises(RoutePlanningError):
+            select((edge(), edge()))
+        with self.assertRaises(RoutePlanningError):
+            select((edge(), edge(2, "broadcast", 2, 1)))
+
+    def test_targets_cannot_alias_across_edges(self):
+        first, second = edge(), edge(2)
+        for field in ("edge_partition_id", "stream_id"):
+            aliased = replace(
+                second.targets[0], **{field: getattr(first.targets[0], field)}
+            )
+            with self.assertRaises(RoutePlanningError):
+                select((first, replace(second, targets=(aliased,))))
+
+    def test_full_manifest_bound_applies_even_if_rebalance_selects_only_one(self):
+        manifest = edge(
+            exchange="rebalance", producer_parallelism=2, target_parallelism=3
+        )
+        with self.assertRaises(RoutePlanningError):
+            select((manifest,), physical_subtask_count=4)
+        self.assertEqual(len(select((manifest,), physical_subtask_count=5)), 1)
+
+    def test_127_references_are_legal_at_n128_and_128_targets_are_refused(self):
+        outgoing = tuple(
+            edge(n, "broadcast", 1, 16 if n < 8 else 15) for n in range(1, 9)
+        )
+        selected = select(outgoing, physical_subtask_count=128)
+        self.assertEqual(len(selected), 127)
+        self.assertEqual(len({t.stream_id for t in selected}), 127)
+        with self.assertRaises(RoutePlanningError):
+            select(outgoing, physical_subtask_count=127)
+        overflowing = (*outgoing[:-1], edge(8, "broadcast", 1, 16))
+        with self.assertRaises(RoutePlanningError):
+            select(overflowing, physical_subtask_count=128)
+        with self.assertRaises(RoutePlanningError):
+            select(overflowing, physical_subtask_count=129)
+
+
+class TestRouteDigestMaterial(unittest.TestCase):
+    def test_canonical_json_keeps_utf8_and_sorted_names(self):
+        value = {"z": [None, True, 3, 1.5], "é": "e\u0301", "a": {"y": 2, "x": 1}}
+        self.assertEqual(
+            canonical_route_json(value),
+            b'{"a":{"x":1,"y":2},"z":[null,true,3,1.5],"\xc3\xa9":"e\xcc\x81"}',
+        )
+        shared: list[object] = [1]
+        self.assertEqual(canonical_route_json([shared, shared]), b"[[1],[1]]")
+
+    def test_canonical_json_refuses_coercions_and_subclasses(self):
+        invalid = (
+            {1: "a"},
+            {True: "a"},
+            {None: "a"},
+            {StringSubclass("a"): 1},
+            (1, 2),
+            {1, 2},
+            b"x",
+            object(),
+            StringSubclass("a"),
+            IntegerSubclass(1),
+            IntegerEnum.ONE,
+            ListSubclass([1]),
+            DictSubclass({"a": 1}),
+            MappingProxyType({"a": 1}),
+            float("nan"),
+            float("inf"),
+            -float("inf"),
+            "\ud800",
+            {"nested": ["\udfff"]},
+            {"\ud800": "bad-key"},
+        )
+        for value in invalid:
+            with self.subTest(kind=type(value).__name__):
+                with self.assertRaises(RoutePlanningError):
+                    canonical_route_json(value)
+
+    def test_cycles_are_refused_but_repeated_acyclic_values_are_allowed(self):
+        items: list[object] = []
+        items.append(items)
+        mapping: dict[str, object] = {}
+        mapping["self"] = mapping
+        for value in (items, mapping, {"nested": [mapping]}):
+            with self.assertRaises(RoutePlanningError):
+                canonical_route_json(value)
+            with self.assertRaises(RoutePlanningError):
+                route_semantic_digest({"nested": value})
+
+    def test_digest_entry_points_refuse_mapping_callbacks(self):
+        mapping = CallbackMapping()
+        for value in (
+            mapping,
+            MappingProxyType({"stable": 1}),
+            DictSubclass({"stable": 1}),
+        ):
+            for function in (route_semantic_digest, route_outcome_digest):
+                with self.subTest(
+                    function=function.__name__, kind=type(value).__name__
+                ):
+                    with self.assertRaises(RoutePlanningError):
+                        function(value)
+        self.assertEqual(mapping.callbacks, [])
+        with self.assertRaises(RoutePlanningError):
+            canonical_route_json(mapping)
+        self.assertEqual(mapping.callbacks, [])
+
+    def test_graph_digest_domain_and_spelling_are_frozen(self):
+        self.assertEqual(
+            graph_routing_digest("00" * 32),
+            "0fba2eae28a8c3458828434cbe50843cb1e7844dd351a013ea6087e066b58f95",
+        )
+        for invalid in (
+            "0" * 63,
+            "0" * 65,
+            "A" * 64,
+            "g" * 64,
+            "0" * 64 + "\n",
+            bytes(32),
+            None,
+            StringSubclass("0" * 64),
+        ):
+            with self.assertRaises(RoutePlanningError):
+                graph_routing_digest(invalid)
+
+    def test_stable_nested_lineage_has_a_frozen_semantic_digest(self):
+        material = {
+            "graph_digest": "0" * 64,
+            "lineage": [{"partition_id": "p0", "sequence": 200}],
+            "output": {"object_ref": "s3://public/doc-200", "sha256": "a" * 64},
+        }
+        self.assertEqual(
+            route_semantic_digest(material),
+            "bead0c3ab904b00fb9079bf1c24f56bf1fe4de0cb6aeb665ba003e6561ba9358",
+        )
+        changed = {**material, "lineage": [{"partition_id": "p0", "sequence": 201}]}
+        self.assertNotEqual(
+            route_semantic_digest(material), route_semantic_digest(changed)
+        )
+
+    def test_ephemeral_identity_is_refused_at_every_depth_without_echoing_values(self):
+        forbidden = (
+            "attempt",
+            "owner_id",
+            "owner_epoch",
+            "grant_id",
+            "run_count",
+            "delivery_id",
+            "worker_id",
+            "process_id",
+            "physical_epoch",
+            "assignment_epoch",
+            "flow_generation",
+            "holder_id",
+            "capability",
+            "event_key_id",
+            "child_process_id",
+            "process_start_ticks",
+            "lease_id",
+            "credential_version",
+            "task_run_run_count",
+        )
+        for name in forbidden:
+            for value in (
+                {name: "private-marker"},
+                {"lineage": [{"nested": {name: "private-marker"}}]},
+            ):
+                with self.subTest(field=name):
+                    with self.assertRaises(RoutePlanningError) as error:
+                        route_semantic_digest(value)
+                    self.assertNotIn("private-marker", str(error.exception))
+
+    def test_outcome_digest_excludes_only_its_own_top_level_field(self):
+        outcome = {
+            "status": "ACCEPTED",
+            "references": [{"stream_id": "s1", "sequence": 1}],
+            "worker_id": "w1",
+        }
+        expected = route_outcome_digest(outcome)
+        self.assertEqual(
+            expected, "1263077bb045257a291944157b2f81189fe491db6d8e3ee2dca8d50b9690051d"
+        )
+        self.assertEqual(
+            expected, route_outcome_digest({**outcome, "outcome_digest": "ignored"})
+        )
+        self.assertEqual(
+            expected, route_outcome_digest({**outcome, "outcome_digest": object()})
+        )
+        self.assertNotEqual(
+            expected, route_outcome_digest({**outcome, "worker_id": "w2"})
+        )
+        self.assertNotEqual(
+            route_outcome_digest({"nested": {"outcome_digest": "a"}}),
+            route_outcome_digest({"nested": {"outcome_digest": "b"}}),
+        )
+        self.assertNotIn("outcome_digest", outcome)
+
+    def test_digest_helpers_refuse_noncanonical_nested_json(self):
+        for invalid in (
+            {1: "coerced"},
+            ("tuple",),
+            float("nan"),
+            "\ud800",
+            IntegerSubclass(1),
+        ):
+            for function in (route_semantic_digest, route_outcome_digest):
+                with self.assertRaises(RoutePlanningError):
+                    function({"nested": invalid})
+
+    def test_routing_and_digests_do_not_depend_on_python_hash_seed(self):
+        program = """import json
+from uuid import UUID
+from prefect._internal.stream_route_plan import RouteEdge,RouteTarget,plan_route_targets,graph_routing_digest,route_semantic_digest
+edge=UUID(int=1)
+targets=tuple(RouteTarget(edge,UUID(int=10+i),UUID(int=100+i),i) for i in range(3))
+manifest=RouteEdge(edge,"keyed",2,3,targets,key_group_count=31)
+selected=plan_route_targets((manifest,),1,200,physical_subtask_count=5,key_present=True,key="é")
+print(json.dumps([selected[0].partition_index,graph_routing_digest("0"*64),route_semantic_digest({"stable":[200,"é"]})]))
+"""
+        results = []
+        for seed in ("1", "987654321"):
+            result = subprocess.run(
+                [sys.executable, "-c", program],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                env={**os.environ, "PYTHONHASHSEED": seed},
+            )
+            results.append(json.loads(result.stdout))
+        self.assertEqual(results[0], results[1])
+
+
+if __name__ == "__main__":
+    unittest.main()

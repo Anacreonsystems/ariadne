@@ -191,16 +191,22 @@ async def test_downgrade_refuses_graph_history_without_submissions(
     previous = "c95d1f8e3a42" if db.dialect.name == "postgresql" else "d06e2a9f4b53"
     async with _isolated_postgres_schema_changes(db, database_engine):
         await database_engine.dispose()
-        with pytest.raises(RuntimeError, match="Cannot downgrade graph-bound"):
-            await run_sync_in_worker_thread(alembic_downgrade, previous)
-        await database_engine.dispose()
-        async with db.session_context() as session:
-            assert (
-                await session.scalar(
-                    sa.select(sa.func.count()).select_from(db.StreamGraphRevision)
+        try:
+            with pytest.raises(RuntimeError, match="Cannot downgrade graph-bound"):
+                await run_sync_in_worker_thread(alembic_downgrade, previous)
+            await database_engine.dispose()
+            async with db.session_context() as session:
+                assert (
+                    await session.scalar(
+                        sa.select(sa.func.count()).select_from(db.StreamGraphRevision)
+                    )
+                    == 1
                 )
-                == 1
-            )
+        finally:
+            # Later additive heads may downgrade before this history guard fires.
+            # Restore the full current schema before fixture cleanup runs.
+            await run_sync_in_worker_thread(alembic_upgrade, "head")
+            await database_engine.dispose()
 
 
 @pytest.mark.parametrize(

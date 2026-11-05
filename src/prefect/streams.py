@@ -9,9 +9,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass, field
+from types import TracebackType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -26,12 +28,14 @@ from uuid import UUID
 from anyio.to_thread import run_sync
 from pydantic import JsonValue
 
+from prefect._internal.stream_routing import KeyEncodingError, encode_tagged_key_v1
 from prefect.exceptions import PrefectException
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from prefect.futures import PrefectFuture
+    from prefect.tasks import Task
 
 T = TypeVar("T")
 
@@ -50,26 +54,41 @@ class NativeStreamFlowConfig:
     """Declare native durable streaming before deployment enrollment.
 
     Use with `@flow(version="v1", retries=2, streaming=NativeStreamFlowConfig())`.
-    The bounded profile supports one finite preparation task, a linear stream
-    graph and a finite summary task on PostgreSQL 17 and Linux ProcessWorkers.
-    Task code owns idempotence of external effects and publishes references to
-    large objects. Process recovery preserves accepted records and task identity.
+    The bounded and fixed-P2 profiles execute on PostgreSQL 17 and Linux
+    ProcessWorkers. The bounded profile supports a finite preparation task,
+    linear streaming and a finite summary. The DAG profile currently supports
+    a metadata preview with declaration and explicit sealing. A usable DAG
+    execution lifecycle is not yet available; terminal Flow transitions are
+    refused with `DAG_NOT_STARTED`.
+    A DAG requires `partition_count=None` because StreamGraph operators declare
+    their own parallelism. Task code owns idempotence of external effects and
+    publishes references to large objects. Process recovery preserves accepted
+    records and task identity.
     """
 
     protocol_version: Literal[1] = 1
-    profile: Literal["bounded-linear-v1", "partitioned-fixed-v1"] = "bounded-linear-v1"
+    profile: Literal[
+        "bounded-linear-v1", "partitioned-fixed-v1", "partitioned-dag-v1"
+    ] = "bounded-linear-v1"
     resource_profile: Literal["bounded-default-v1"] = "bounded-default-v1"
-    partition_count: int = 1
+    partition_count: int | None = 1
 
     def __post_init__(self) -> None:
         if (
             type(self.protocol_version) is not int
             or self.protocol_version != 1
-            or self.profile not in {"bounded-linear-v1", "partitioned-fixed-v1"}
+            or self.profile
+            not in {"bounded-linear-v1", "partitioned-fixed-v1", "partitioned-dag-v1"}
             or self.resource_profile != "bounded-default-v1"
-            or type(self.partition_count) is not int
-            or self.partition_count
-            != (2 if self.profile == "partitioned-fixed-v1" else 1)
+            or (
+                self.partition_count is not None
+                if self.profile == "partitioned-dag-v1"
+                else (
+                    type(self.partition_count) is not int
+                    or self.partition_count
+                    != (2 if self.profile == "partitioned-fixed-v1" else 1)
+                )
+            )
         ):
             raise StreamProtocolError("Unsupported native Flow capability profile")
 
@@ -235,6 +254,253 @@ class StreamPartitionCall:
     @property
     def parameters(self) -> dict[str, JsonValue]:
         return json.loads(self._parameters)
+
+
+_JSON_VALUE_V1_SCHEMA_DIGEST = (
+    "d93f54187397ae62d4e1b98c56edab2a67a9d10422b028dfdea87ba6616a849c"
+)
+
+
+def _validate_graph_uid(value: object) -> None:
+    if type(value) is not str or re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", value) is None:
+        raise StreamProtocolError(
+            "Graph identities require 1..64 ASCII letters, digits, dots, underscores or hyphens"
+        )
+
+
+@dataclass(frozen=True)
+class StreamPort:
+    """One named logical port with the portable JSON value contract.
+
+    Port identities are scoped to an operator. The schema digest describes the
+    wire value/reference, independently of Python annotations and Task attempts.
+    """
+
+    uid: str
+    schema_id: Literal["json-value-v1"] = "json-value-v1"
+
+    def __post_init__(self) -> None:
+        _validate_graph_uid(self.uid)
+        if type(self.schema_id) is not str or self.schema_id != "json-value-v1":
+            raise StreamProtocolError("Only json-value-v1 graph ports are supported")
+
+    @property
+    def schema_digest(self) -> str:
+        return _JSON_VALUE_V1_SCHEMA_DIGEST
+
+    @property
+    def schema_version(self) -> Literal[1]:
+        return 1
+
+
+@dataclass(frozen=True)
+class StreamExchange:
+    """A sealed routing declaration; this descriptor does not route records."""
+
+    kind: Literal["forward", "rebalance", "broadcast", "keyed"]
+    routing_version: Literal[1] = 1
+    key_group_count: int | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.kind) is not str or self.kind not in {
+            "forward",
+            "rebalance",
+            "broadcast",
+            "keyed",
+        }:
+            raise StreamProtocolError("Unsupported graph exchange")
+        if type(self.routing_version) is not int or self.routing_version != 1:
+            raise StreamProtocolError("Only graph routing version 1 is supported")
+        if self.kind == "keyed":
+            if (
+                type(self.key_group_count) is not int
+                or not 1 <= self.key_group_count <= 2**31 - 1
+            ):
+                raise StreamProtocolError(
+                    "A keyed exchange requires an integer key-group count in 1..2^31-1"
+                )
+        elif self.key_group_count is not None:
+            raise StreamProtocolError("Only keyed exchanges declare key groups")
+
+
+@dataclass(frozen=True, eq=False, kw_only=True)
+class StreamOutput(Generic[T]):
+    """A graph-bound logical endpoint; it carries no physical stream authority."""
+
+    _graph_token: object = field(repr=False)
+    operator_uid: str
+    port: StreamPort
+
+    def __post_init__(self) -> None:
+        _validate_graph_uid(self.operator_uid)
+        if type(self.port) is not StreamPort:
+            raise StreamProtocolError("A graph endpoint requires one StreamPort")
+
+    @property
+    def graph_identity(self) -> object:
+        """Expose opaque local graph identity without execution authority."""
+        return self._graph_token
+
+
+@dataclass(frozen=True, eq=False, init=False)
+class StreamOperatorHandle(Generic[T]):
+    """The one logical output of an ordinary Task declared in a StreamGraph."""
+
+    operator_uid: str
+    _output: StreamOutput[T] = field(repr=False)
+
+    def __init__(
+        self, *, _graph_token: object, operator_uid: str, output_port: StreamPort
+    ) -> None:
+        endpoint: StreamOutput[T] = StreamOutput(
+            _graph_token=_graph_token, operator_uid=operator_uid, port=output_port
+        )
+        object.__setattr__(self, "operator_uid", operator_uid)
+        object.__setattr__(self, "_output", endpoint)
+
+    def output(self, port_uid: str) -> StreamOutput[T]:
+        """Read the declared endpoint without starting a Task or allocating data."""
+        if type(port_uid) is not str or port_uid != self._output.port.uid:
+            raise StreamProtocolError("The operator has no such output port")
+        return self._output
+
+
+@dataclass(frozen=True)
+class StreamInput:
+    """One named subscriber edge into a single-input ordinary Task."""
+
+    port: StreamPort
+    upstream: StreamOutput[Any]
+    edge_uid: str
+    subscriber_uid: str
+    exchange: StreamExchange
+
+    def __post_init__(self) -> None:
+        if type(self.port) is not StreamPort or type(self.upstream) is not StreamOutput:
+            raise StreamProtocolError("A graph input requires declared port endpoints")
+        if type(self.exchange) is not StreamExchange:
+            raise StreamProtocolError("A graph input requires one StreamExchange")
+        _validate_graph_uid(self.edge_uid)
+        _validate_graph_uid(self.subscriber_uid)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SealedStreamGraph:
+    """Immutable metadata identity of a graph sealed as one declaration.
+
+    This preview metadata handle provides no start, wait or implicit finite-task
+    dependency. Sealing alone does not let its DAG Flow complete: terminal Flow
+    transitions are refused with `DAG_NOT_STARTED`.
+    """
+
+    graph_revision_id: UUID
+    graph_digest: str
+
+    def __post_init__(self) -> None:
+        if type(self.graph_revision_id) is not UUID:
+            raise StreamProtocolError("A sealed graph requires its UUID identity")
+        if (
+            type(self.graph_digest) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", self.graph_digest) is None
+        ):
+            raise StreamProtocolError("A sealed graph requires a canonical digest")
+
+    @property
+    def profile(self) -> Literal["partitioned-dag-v1"]:
+        return "partitioned-dag-v1"
+
+
+class _StreamGraphAuthoring(Protocol):
+    def enter(self) -> None: ...
+
+    def exit(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None: ...
+
+    def add(
+        self,
+        task: Task[Any, Any],
+        *,
+        operator_uid: str,
+        partitions: tuple[StreamPartitionCall, ...],
+        input: StreamInput | None,
+        output: StreamPort,
+    ) -> StreamOperatorHandle[Any]: ...
+
+    def seal(self) -> SealedStreamGraph: ...
+
+
+class StreamGraph:
+    """Explicitly declare and seal a finite graph of ordinary stream Tasks.
+
+    This is a metadata preview, with no usable DAG execution lifecycle yet.
+    Construction, declaration and context exit perform no HTTP request. Call
+    `seal()` explicitly after the complete graph has been declared; terminal DAG
+    Flow transitions are refused with `DAG_NOT_STARTED`. The existing fixed-P2
+    `Task.submit_partitioned_stream` API keeps its separate contract.
+    """
+
+    def __init__(self) -> None:
+        # The authoring backend imports these public descriptors.
+        from prefect._internal.stream_dag import StreamGraphAuthoring
+
+        self._authoring: _StreamGraphAuthoring = StreamGraphAuthoring()
+
+    def __enter__(self) -> StreamGraph:
+        self._authoring.enter()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> Literal[False]:
+        self._authoring.exit(exc_type, exc, tb)
+        return False
+
+    def add(
+        self,
+        task: Task[Any, T],
+        *,
+        operator_uid: str,
+        partitions: tuple[StreamPartitionCall, ...],
+        output: StreamPort,
+        input: StreamInput | None = None,
+    ) -> StreamOperatorHandle[T]:
+        """Declare one Task locally, with at most one named logical input."""
+        return self._authoring.add(
+            task,
+            operator_uid=operator_uid,
+            partitions=partitions,
+            input=input,
+            output=output,
+        )
+
+    def seal(self) -> SealedStreamGraph:
+        """Seal the whole immutable declaration through one metadata request."""
+        return self._authoring.seal()
+
+
+@dataclass(frozen=True)
+class KeyedStreamOutput(Generic[T]):
+    """A new-profile output with a separate, explicit canonical routing key.
+
+    A null key is present. Omitting the key is invalid. The producing profile
+    validates whether a keyed output is allowed before accepting the turn.
+    """
+
+    value: T
+    key: None | bool | int | str | bytes
+
+    def __post_init__(self) -> None:
+        try:
+            encode_tagged_key_v1(self.key)
+        except KeyEncodingError as exc:
+            raise StreamProtocolError(str(exc)) from exc
 
 
 @dataclass(frozen=True)

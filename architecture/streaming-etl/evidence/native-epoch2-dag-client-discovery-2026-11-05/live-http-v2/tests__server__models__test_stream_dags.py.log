@@ -1,0 +1,402 @@
+"""DAG topology metadata tests; native execution remains explicitly fenced."""
+
+from collections import Counter
+from uuid import UUID, uuid4
+
+import pytest
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from prefect.server.database import PrefectDBInterface, orm_models
+from prefect.server.models import stream_dags as m
+from prefect.server.models import workers
+from prefect.server.models._stream_errors import NativeStreamError
+from prefect.server.models.stream_worker_capacity import physical_worker_occupancy
+from prefect.server.schemas import actions
+from prefect.server.schemas import stream_dags as s
+from prefect.server.schemas import stream_subtasks as physical
+from prefect.server.schemas.core import TaskRunPolicy
+
+pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
+
+
+def dag_request(
+    flow_run_id: UUID, *, source_p: int = 1, branch_p: int = 2
+) -> s.StreamDAGSealRequest:
+    common = dict(
+        task_version="dag-task-v1",
+        artifact_digest="11" * 32,
+        context_key="ctx",
+        task_policy=TaskRunPolicy(retries=2),
+    )
+    return s.StreamDAGSealRequest(
+        flow_run_id=flow_run_id,
+        operation_id=uuid4(),
+        flow_version="dag-flow-v1",
+        operators=[
+            s.StreamDAGOperatorSpec(
+                operator_uid="A",
+                role="SOURCE",
+                parallelism=source_p,
+                task_name="source",
+                task_key="source-key",
+                entrypoint="tests/fixtures/native_partitioned_stream_flow.py:source",
+                parameters=[{"split": i} for i in range(source_p)],
+                output_port=s.StreamPortSpec(uid="out"),
+                **common,
+            ),
+            s.StreamDAGOperatorSpec(
+                operator_uid="B",
+                role="OPERATOR",
+                parallelism=source_p,
+                task_name="branch-b",
+                task_key="branch-b-key",
+                entrypoint="tests/fixtures/native_partitioned_stream_flow.py:sign",
+                parameters=[{} for _ in range(source_p)],
+                input_port=s.StreamPortSpec(uid="in"),
+                output_port=s.StreamPortSpec(uid="out"),
+                input_key="upstream",
+                **common,
+            ),
+            s.StreamDAGOperatorSpec(
+                operator_uid="C",
+                role="OPERATOR",
+                parallelism=branch_p,
+                task_name="branch-c",
+                task_key="branch-c-key",
+                entrypoint="tests/fixtures/native_partitioned_stream_flow.py:sign",
+                parameters=[{} for _ in range(branch_p)],
+                input_port=s.StreamPortSpec(uid="in"),
+                output_port=s.StreamPortSpec(uid="out"),
+                input_key="upstream",
+                **common,
+            ),
+        ],
+        edges=[
+            s.StreamEdgeSpec(
+                edge_uid="A-B",
+                producer_operator_uid="A",
+                output_port_uid="out",
+                subscriber_uid="subscriber-B",
+                consumer_operator_uid="B",
+                input_port_uid="in",
+                exchange="forward",
+            ),
+            s.StreamEdgeSpec(
+                edge_uid="A-C",
+                producer_operator_uid="A",
+                output_port_uid="out",
+                subscriber_uid="subscriber-C",
+                consumer_operator_uid="C",
+                input_port_uid="in",
+                exchange="broadcast",
+            ),
+        ],
+    )
+
+
+async def test_seal_reuses_existing_stream_metadata_and_exact_read_plan(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+):
+    request = dag_request(flow_run.id)
+    async with db.session_context(begin_transaction=True) as session:
+        plan = await m.seal_dag_metadata(session, db, request)
+    assert plan.execution_ready is False
+    assert len(plan.subtasks) == 4
+    assert all(
+        row.assigned_worker_id is None
+        and not row.physical_slot_reserved
+        and not row.physical_slot_released
+        for row in plan.subtasks
+    )
+    assert plan.leaf_operator_uids == ["B", "C"]
+    async with db.session_context(begin_transaction=True) as session:
+        replay = await m.seal_dag_metadata(session, db, request)
+        read = await m.read_dag_plan(session, db, plan.id, metadata_only=True)
+        assert (
+            replay.model_dump(mode="json")
+            == read.model_dump(mode="json")
+            == plan.model_dump(mode="json")
+        )
+        counts = {}
+        for model in (
+            db.StreamGraphRevision,
+            db.StreamOperatorRun,
+            db.StreamGraphPort,
+            db.StreamGraphEdge,
+            db.StreamGraphEdgePartition,
+            db.TaskRun,
+            db.StreamSubmission,
+            db.StreamPartition,
+            db.StreamRecord,
+            db.StreamSubtaskGrant,
+            db.StreamPhysicalSlotAllocation,
+        ):
+            counts[model.__tablename__] = await session.scalar(
+                sa.select(sa.func.count()).select_from(model)
+            )
+        assert counts == {
+            "stream_graph_revision": 1,
+            "stream_operator_run": 3,
+            "stream_graph_port": 5,
+            "stream_graph_edge": 2,
+            "stream_graph_edge_partition": 3,
+            "task_run": 4,
+            "stream_submission": 4,
+            "stream_partition": 7,
+            "stream_record": 0,
+            "stream_subtask_grant": 0,
+            "stream_physical_slot_allocation": 0,
+        }
+
+
+async def metadata_workers(
+    session: AsyncSession, db: PrefectDBInterface, count: int
+) -> tuple[orm_models.WorkPool, list[tuple[UUID, physical.StreamWorkerPrincipal]]]:
+    pool = await workers.create_work_pool(
+        session=session,
+        work_pool=actions.WorkPoolCreate(name="dag-" + uuid4().hex, type="process"),
+    )
+    host_id, boot_id = uuid4(), uuid4()
+    result: list[tuple[UUID, physical.StreamWorkerPrincipal]] = []
+    for index in range(count):
+        name = "dag-worker-" + str(index)
+        await workers.worker_heartbeat(
+            session=session, work_pool_id=pool.id, worker_name=name
+        )
+        worker = await session.scalar(
+            sa.select(db.Worker).where(
+                db.Worker.work_pool_id == pool.id, db.Worker.name == name
+            )
+        )
+        assert worker is not None
+        principal = physical.StreamWorkerPrincipal(
+            work_pool_id=pool.id,
+            host_id=host_id,
+            boot_id=boot_id,
+            launcher_process_id=1000 + index,
+            launcher_start_ticks=2000 + index,
+        )
+        await m.register_dag_capability_metadata(session, db, worker.id, principal)
+        result.append((worker.id, principal))
+    return pool, sorted(result, key=lambda value: value[0])
+
+
+@pytest.mark.parametrize("source_p,branch_p,worker_count", [(1, 2, 2), (2, 2, 3)])
+async def test_metadata_region_admits_complete_n_and_exact_replay(
+    db: PrefectDBInterface,
+    flow_run: orm_models.FlowRun,
+    source_p: int,
+    branch_p: int,
+    worker_count: int,
+):
+    request = dag_request(flow_run.id, source_p=source_p, branch_p=branch_p)
+    async with db.session_context(begin_transaction=True) as session:
+        pool, worker_rows = await metadata_workers(session, db, worker_count)
+        plan = await m.seal_dag_metadata(session, db, request)
+        admission = s.StreamDAGAdmissionRequest(
+            operation_id=uuid4(), graph_digest=plan.graph_digest
+        )
+        admitted = await m.admit_dag_metadata(
+            session, db, plan.id, admission, work_pool_id=pool.id
+        )
+    expected = 2 * source_p + branch_p
+    assert admitted.state == "ADMITTED" and len(admitted.subtasks) == expected
+    assert all(
+        row.physical_slot_reserved and not row.physical_slot_released
+        for row in admitted.subtasks
+    )
+    assert Counter(row.assigned_worker_id for row in admitted.subtasks) == {
+        worker_id: 2 for worker_id, _ in worker_rows
+    }
+    async with db.session_context(begin_transaction=True) as session:
+        repeated = await m.admit_dag_metadata(
+            session, db, plan.id, admission, work_pool_id=pool.id
+        )
+        assert repeated.model_dump(mode="json") == admitted.model_dump(mode="json")
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count()).select_from(db.StreamPhysicalSlotAllocation)
+            )
+            == expected
+        )
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count()).select_from(db.StreamSubtaskAllocation)
+            )
+            == 0
+        )
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count()).select_from(db.StreamRecord)
+            )
+            == 0
+        )
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count()).select_from(db.StreamSubtaskGrant)
+            )
+            == 0
+        )
+        assert await physical_worker_occupancy(
+            session, db, [value[0] for value in worker_rows]
+        ) == {worker_id: 2 for worker_id, _ in worker_rows}
+
+
+async def test_n6_with_two_workers_refuses_without_partial_placement_or_tags(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+):
+    request = dag_request(flow_run.id, source_p=2, branch_p=2)
+    for operator in request.operators:
+        operator.tags = ["capacity"]
+    async with db.session_context(begin_transaction=True) as session:
+        pool, _ = await metadata_workers(session, db, 2)
+        limit = db.ConcurrencyLimitV2(
+            name="tag:capacity",
+            limit=6,
+            active=True,
+            active_slots=0,
+            slot_decay_per_second=0,
+        )
+        session.add(limit)
+        plan = await m.seal_dag_metadata(session, db, request)
+        with pytest.raises(NativeStreamError, match="complete DAG") as error:
+            await m.admit_dag_metadata(
+                session,
+                db,
+                plan.id,
+                s.StreamDAGAdmissionRequest(
+                    operation_id=uuid4(), graph_digest=plan.graph_digest
+                ),
+                work_pool_id=pool.id,
+            )
+        assert error.value.code == "REGION_CAPACITY"
+        read = await m.read_dag_plan(session, db, plan.id, metadata_only=True)
+        assert read.state == "SEALED" and read.placement_digest is None
+        assert all(
+            row.assigned_worker_id is None and not row.physical_slot_reserved
+            for row in read.subtasks
+        )
+        await session.refresh(limit)
+        assert limit.active_slots == 0
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count()).select_from(db.StreamPhysicalSlotAllocation)
+            )
+            == 0
+        )
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count()).select_from(db.StreamSubtaskAllocation)
+            )
+            == 0
+        )
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count()).select_from(db.StreamSubtaskGrant)
+            )
+            == 0
+        )
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count()).select_from(db.StreamRecord)
+            )
+            == 0
+        )
+
+
+async def test_tag_capacity_failure_rolls_back_complete_worker_reservation(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+):
+    request = dag_request(flow_run.id)
+    for operator in request.operators:
+        operator.tags = ["a", "b"]
+    async with db.session_context(begin_transaction=True) as session:
+        pool, _ = await metadata_workers(session, db, 2)
+        limits = [
+            db.ConcurrencyLimitV2(
+                name="tag:" + tag,
+                limit=bound,
+                active=True,
+                active_slots=0,
+                slot_decay_per_second=0,
+            )
+            for tag, bound in (("a", 4), ("b", 3))
+        ]
+        session.add_all(limits)
+        plan = await m.seal_dag_metadata(session, db, request)
+        with pytest.raises(NativeStreamError) as error:
+            await m.admit_dag_metadata(
+                session,
+                db,
+                plan.id,
+                s.StreamDAGAdmissionRequest(
+                    operation_id=uuid4(), graph_digest=plan.graph_digest
+                ),
+                work_pool_id=pool.id,
+            )
+        assert error.value.code == "REGION_CAPACITY"
+        for limit in limits:
+            await session.refresh(limit)
+            assert limit.active_slots == 0
+        assert (
+            await m.read_dag_plan(session, db, plan.id, metadata_only=True)
+        ).state == "SEALED"
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count()).select_from(db.StreamPhysicalSlotAllocation)
+            )
+            == 0
+        )
+        assert (
+            await session.scalar(
+                sa.select(sa.func.count()).select_from(db.StreamSubtaskAllocation)
+            )
+            == 0
+        )
+
+
+@pytest.mark.parametrize(
+    "corruption", ["extra-operator", "edge-binding", "manifest-code"]
+)
+async def test_read_plan_refuses_corrupted_immutable_metadata(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun, corruption: str
+):
+    async with db.session_context(begin_transaction=True) as session:
+        plan = await m.seal_dag_metadata(session, db, dag_request(flow_run.id))
+        if corruption == "extra-operator":
+            session.add(
+                db.StreamOperatorRun(
+                    graph_revision_id=plan.id,
+                    profile="partitioned-dag-v1",
+                    operator_uid="extra",
+                    role="OPERATOR",
+                    parallelism=1,
+                    specification={},
+                )
+            )
+        elif corruption == "edge-binding":
+            edge = await session.scalar(
+                sa.select(db.StreamGraphEdge).where(
+                    db.StreamGraphEdge.graph_revision_id == plan.id,
+                    db.StreamGraphEdge.edge_uid == "A-B",
+                )
+            )
+            assert edge is not None
+            alternate = next(
+                value for value in plan.operators if value.operator_uid == "C"
+            )
+            edge.producer_port_id = alternate.output_port.id
+        else:
+            manifest = await session.get(
+                db.StreamSubmission,
+                (
+                    await session.get(db.StreamPhysicalSubtask, plan.subtasks[0].id)
+                ).submission_id,
+            )
+            assert manifest is not None
+            manifest.task_version = "drifted-code"
+        await session.flush()
+        with pytest.raises(NativeStreamError) as error:
+            await m.read_dag_plan(session, db, plan.id, metadata_only=True)
+        assert error.value.code == "IDENTITY_CONFLICT"

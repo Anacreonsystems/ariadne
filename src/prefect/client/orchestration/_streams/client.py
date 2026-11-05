@@ -14,6 +14,8 @@ from prefect._internal.stream_execution import get_stream_subtask_execution
 from prefect.client.orchestration.base import HTTP_METHODS, BaseAsyncClient, BaseClient
 from prefect.client.orchestration.routes import ServerRoutes
 from prefect.client.schemas import native_deployments as native_schemas
+from prefect.client.schemas import stream_dags as dag_schemas
+from prefect.client.schemas import stream_routes as route_schemas
 from prefect.client.schemas import stream_subtasks as subtask_schemas
 from prefect.client.schemas import streams as schemas
 from prefect.client.schemas.objects import TaskRun
@@ -54,6 +56,45 @@ def _refusal(error: httpx.HTTPStatusError) -> StreamRequestError:
     return StreamRequestError(
         code, "Native stream API request failed", status_code=error.response.status_code
     )
+
+
+def _validate_dag_route_ack(
+    outcome: route_schemas.StreamDAGRouteOutcome,
+    request: route_schemas.StreamDAGSourceAppendRequest
+    | route_schemas.StreamDAGConsumerCompleteRequest,
+) -> route_schemas.StreamDAGRouteOutcome:
+    """Reject a valid-looking receipt for another graph, producer or input."""
+    matches = [
+        outcome.graph_revision_id == request.context.graph_revision_id,
+        outcome.routing_digest == request.context.routing_digest,
+    ]
+    if isinstance(request, route_schemas.StreamDAGSourceAppendRequest):
+        matches.extend(
+            [
+                outcome.producer_role == "SOURCE",
+                outcome.kind == "YIELD",
+                outcome.producer_stream_id == request.binding.stream_id,
+                outcome.producer_position == request.position,
+            ]
+        )
+    else:
+        matches.extend(
+            [
+                outcome.producer_role == "OPERATOR",
+                outcome.kind == request.kind,
+                outcome.producer_stream_id == request.binding.output_stream_id,
+                outcome.producer_position == request.token.sequence,
+                outcome.input_stream_id == request.binding.input_stream_id,
+                outcome.input_record_id == request.token.record_id,
+                outcome.input_sequence == request.token.sequence,
+                outcome.consumer_id == request.binding.consumer_id,
+            ]
+        )
+    if not all(matches):
+        raise StreamRequestError(
+            "IDENTITY_CONFLICT", "Routed receipt does not match its frozen request"
+        )
+    return outcome
 
 
 def _validate_subtask_bootstrap(
@@ -435,6 +476,143 @@ class StreamClient(BaseClient):
         return subtask_schemas.StreamGraphStartupStopResult.model_validate(
             response.json()
         )
+
+    def append_stream_dag_source(
+        self,
+        *,
+        context: dict[str, Any],
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        owner_id: UUID,
+        attempt: int,
+        owner_epoch: int,
+        position: int,
+        value: JsonValue,
+        output_key: dict[str, Any] | None = None,
+    ) -> route_schemas.StreamDAGRouteOutcome:
+        """Send a separately versioned DAG source intent; execution stays fenced."""
+        binding = schemas.SourceBinding(
+            flow_run_id=flow_run_id,
+            stream_id=stream_id,
+            task_run_id=task_run_id,
+            owner_id=owner_id,
+            attempt=attempt,
+            owner_epoch=owner_epoch,
+        )
+        intent = route_schemas.StreamDAGSourceAppendRequest.model_validate(
+            {
+                "context": context,
+                "binding": binding,
+                "position": position,
+                "value": value,
+                "output_key": output_key,
+            }
+        )
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/sources/append",
+            json=intent.model_dump(mode="json"),
+        )
+        return _validate_dag_route_ack(
+            route_schemas.StreamDAGRouteOutcome.model_validate(response.json()), intent
+        )
+
+    def complete_stream_dag_consumer(
+        self,
+        *,
+        context: dict[str, Any],
+        flow_run_id: UUID,
+        consumer_id: UUID,
+        input_stream_id: UUID,
+        output_stream_id: UUID,
+        owner_id: UUID,
+        attempt: int,
+        owner_epoch: int,
+        record_id: UUID,
+        sequence: int,
+        delivery_id: UUID,
+        kind: Literal["YIELD", "RETURN"],
+        value: JsonValue,
+        managed_state: dict[str, JsonValue],
+        output_key: dict[str, Any] | None = None,
+    ) -> route_schemas.StreamDAGRouteOutcome:
+        """Send one frozen DAG terminal intent without changing legacy bodies."""
+        binding = schemas.ConsumerBinding(
+            flow_run_id=flow_run_id,
+            consumer_id=consumer_id,
+            input_stream_id=input_stream_id,
+            output_stream_id=output_stream_id,
+            owner_id=owner_id,
+            attempt=attempt,
+            owner_epoch=owner_epoch,
+        )
+        token = schemas.DeliveryToken(
+            **binding.model_dump(),
+            record_id=record_id,
+            sequence=sequence,
+            delivery_id=delivery_id,
+        )
+        intent = route_schemas.StreamDAGConsumerCompleteRequest.model_validate(
+            {
+                "context": context,
+                "binding": binding,
+                "token": token,
+                "kind": kind,
+                "value": value,
+                "managed_state": managed_state,
+                "output_key": output_key,
+            }
+        )
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/consumers/complete",
+            json=intent.model_dump(mode="json"),
+        )
+        return _validate_dag_route_ack(
+            route_schemas.StreamDAGRouteOutcome.model_validate(response.json()), intent
+        )
+
+    def seal_stream_dag(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        flow_version: str,
+        operators: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+        deployment_id: UUID | None = None,
+        deployment_version: str | None = None,
+        working_directory: str | None = None,
+        profile: Literal["partitioned-dag-v1"] = "partitioned-dag-v1",
+        assignment_epoch: Literal[1] = 1,
+    ) -> dag_schemas.StreamDAGPlan:
+        """Seal one complete DAG metadata declaration without starting tasks."""
+        payload = dag_schemas.StreamDAGSealRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "flow_version": flow_version,
+                "operators": operators,
+                "edges": edges,
+                "deployment_id": deployment_id,
+                "deployment_version": deployment_version,
+                "working_directory": working_directory,
+                "profile": profile,
+                "assignment_epoch": assignment_epoch,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request("POST", "/streams/v2/dags/seal", json=payload)
+        return dag_schemas.StreamDAGPlan.model_validate(response.json())
+
+    def read_stream_dag(self, *, graph_revision_id: UUID) -> dag_schemas.StreamDAGPlan:
+        """Read sealed DAG metadata through its parent Flow execution authority."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v2/dags/{graph_id}",
+            path_params={"graph_id": graph_revision_id},
+        )
+        return dag_schemas.StreamDAGPlan.model_validate(response.json())
 
     def seal_stream_graph(
         self,
@@ -2131,6 +2309,147 @@ class StreamAsyncClient(BaseAsyncClient):
         return subtask_schemas.StreamGraphStartupStopResult.model_validate(
             response.json()
         )
+
+    async def append_stream_dag_source(
+        self,
+        *,
+        context: dict[str, Any],
+        flow_run_id: UUID,
+        stream_id: UUID,
+        task_run_id: UUID,
+        owner_id: UUID,
+        attempt: int,
+        owner_epoch: int,
+        position: int,
+        value: JsonValue,
+        output_key: dict[str, Any] | None = None,
+    ) -> route_schemas.StreamDAGRouteOutcome:
+        """Send a separately versioned DAG source intent; execution stays fenced."""
+        binding = schemas.SourceBinding(
+            flow_run_id=flow_run_id,
+            stream_id=stream_id,
+            task_run_id=task_run_id,
+            owner_id=owner_id,
+            attempt=attempt,
+            owner_epoch=owner_epoch,
+        )
+        intent = route_schemas.StreamDAGSourceAppendRequest.model_validate(
+            {
+                "context": context,
+                "binding": binding,
+                "position": position,
+                "value": value,
+                "output_key": output_key,
+            }
+        )
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/sources/append",
+            json=intent.model_dump(mode="json"),
+        )
+        return _validate_dag_route_ack(
+            route_schemas.StreamDAGRouteOutcome.model_validate(response.json()), intent
+        )
+
+    async def complete_stream_dag_consumer(
+        self,
+        *,
+        context: dict[str, Any],
+        flow_run_id: UUID,
+        consumer_id: UUID,
+        input_stream_id: UUID,
+        output_stream_id: UUID,
+        owner_id: UUID,
+        attempt: int,
+        owner_epoch: int,
+        record_id: UUID,
+        sequence: int,
+        delivery_id: UUID,
+        kind: Literal["YIELD", "RETURN"],
+        value: JsonValue,
+        managed_state: dict[str, JsonValue],
+        output_key: dict[str, Any] | None = None,
+    ) -> route_schemas.StreamDAGRouteOutcome:
+        """Send one frozen DAG terminal intent without changing legacy bodies."""
+        binding = schemas.ConsumerBinding(
+            flow_run_id=flow_run_id,
+            consumer_id=consumer_id,
+            input_stream_id=input_stream_id,
+            output_stream_id=output_stream_id,
+            owner_id=owner_id,
+            attempt=attempt,
+            owner_epoch=owner_epoch,
+        )
+        token = schemas.DeliveryToken(
+            **binding.model_dump(),
+            record_id=record_id,
+            sequence=sequence,
+            delivery_id=delivery_id,
+        )
+        intent = route_schemas.StreamDAGConsumerCompleteRequest.model_validate(
+            {
+                "context": context,
+                "binding": binding,
+                "token": token,
+                "kind": kind,
+                "value": value,
+                "managed_state": managed_state,
+                "output_key": output_key,
+            }
+        )
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/consumers/complete",
+            json=intent.model_dump(mode="json"),
+        )
+        return _validate_dag_route_ack(
+            route_schemas.StreamDAGRouteOutcome.model_validate(response.json()), intent
+        )
+
+    async def seal_stream_dag(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        flow_version: str,
+        operators: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+        deployment_id: UUID | None = None,
+        deployment_version: str | None = None,
+        working_directory: str | None = None,
+        profile: Literal["partitioned-dag-v1"] = "partitioned-dag-v1",
+        assignment_epoch: Literal[1] = 1,
+    ) -> dag_schemas.StreamDAGPlan:
+        """Seal one complete DAG metadata declaration without starting tasks."""
+        payload = dag_schemas.StreamDAGSealRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "flow_version": flow_version,
+                "operators": operators,
+                "edges": edges,
+                "deployment_id": deployment_id,
+                "deployment_version": deployment_version,
+                "working_directory": working_directory,
+                "profile": profile,
+                "assignment_epoch": assignment_epoch,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v2/dags/seal", json=payload
+        )
+        return dag_schemas.StreamDAGPlan.model_validate(response.json())
+
+    async def read_stream_dag(
+        self, *, graph_revision_id: UUID
+    ) -> dag_schemas.StreamDAGPlan:
+        """Read sealed DAG metadata through its parent Flow execution authority."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v2/dags/{graph_id}",
+            path_params={"graph_id": graph_revision_id},
+        )
+        return dag_schemas.StreamDAGPlan.model_validate(response.json())
 
     async def seal_stream_graph(
         self,

@@ -1,0 +1,120 @@
+{
+  "acceptance_boundary": {
+    "adr": "ADR-0043 remains progress until NI2-012 through NI2-014 real fan-out runtime and replacement gates complete.",
+    "sprint": "N2.2a earns its +6% only when NI2-010 and NI2-011 together satisfy the routed-edge exit.",
+    "task": "NI2-011 may become accepted after every mandatory model/API/migration/replay/compatibility gate passes on one frozen source cut."
+  },
+  "atomicity_and_replay": {
+    "horizon": "After receipt/payload horizon release, return a typed expiry; never allocate a replacement route.",
+    "lost_ack": "Authenticate the current caller first, then return the stored outcome for an identical accepted semantic digest. Never recompute an accepted route from current assignments or target counts. Mismatched payload/key/state/routing conflicts.",
+    "outcome_digest": "Bind the persisted edge IDs, target partition IDs, allocated edge sequences and reference record IDs.",
+    "paths": "Extend both source append and operator complete through one shared route helper inside their existing AsyncSession transaction.",
+    "same_transaction": [
+      "producer PAYLOAD",
+      "all selected REFERENCE rows",
+      "route receipt/outcome",
+      "managed state",
+      "input cursor/completion for operators"
+    ],
+    "semantic_digest": "Bind graph/routing digest, stable original input or source coordinate, kind/value/state, canonical key, producer partition/sequence and output ordinal. Exclude worker, PID, grant and run_count."
+  },
+  "authorization": {
+    "new_approval_required": false,
+    "source": "user approval of ADR-0042 through ADR-0048 at fae53c90aa3b44dbc45032833b4d193001e5c8bd"
+  },
+  "compatibility_and_fences": [
+    "Reuse StreamPartition, StreamRecord, StreamConsumer and StreamCompletion; do not create a second data plane or client mailbox.",
+    "Preserve bounded-linear-v1 and partitioned-fixed-v1 bytes and behavior.",
+    "Keep public DAG execution, old stream endpoints and terminal Flow lifecycle fenced until NI2-012.",
+    "SQLite supports paired migration and structural metadata checks only; route mutation is PostgreSQL 17 fail-closed.",
+    "Fan-in, joins, state materialization, cancellation/drain, online GC and cross-sink atomicity are out of NI2-011."
+  ],
+  "delivery_slices": [
+    {
+      "exit": "Paired ORM/migrations for direct PAYLOAD/REFERENCE identity, route receipt and stable subscriber cursor fields; legacy rows round-trip unchanged.",
+      "id": "NI2-011a"
+    },
+    {
+      "exit": "Pure deterministic routing planner and exact canonical key/semantic/outcome digests cover all four exchanges and bounds.",
+      "id": "NI2-011b"
+    },
+    {
+      "exit": "Shared transactional source-append/operator-complete helper atomically inserts payload, references, receipt, state and cursor, with lost-ACK replay.",
+      "id": "NI2-011c"
+    },
+    {
+      "exit": "Independent branch cursor/EOF/pin and concurrency tests prove no cross-branch acknowledgement, partial route or lock-order inversion.",
+      "id": "NI2-011d"
+    },
+    {
+      "exit": "Paired client DTO/key wrapper mirror and package/type/legacy regressions; runtime execution stays fenced pending NI2-012.",
+      "id": "NI2-011e"
+    }
+  ],
+  "dependencies": {
+    "NI2-006": "accepted fixed-P2 primitive",
+    "NI2-010": "accepted metadata-only DAG component; no usable lifecycle",
+    "adr": "ADR-0043 A43-03 and A43-09 remain open"
+  },
+  "eof": {
+    "empty_target": "Persist EOF for targets that received no records.",
+    "failure": "A failed contributor cannot manufacture COMPLETED. Permanent branch failure/drain and global failure policy remain NI2-012/ADR-0045 boundaries.",
+    "rule": "A target edge partition reaches EOF only after every sealed contributing producer partition is terminal and every accepted route is committed."
+  },
+  "goal": "Atomically materialize bounded forward, rebalance, broadcast and keyed deliveries as independent existing-partition records with exact retry receipts. This task does not enable public DAG execution.",
+  "locking": [
+    "Flow SHARE",
+    "execution authority SHARE",
+    "graph/routing revision SHARE and refreshed declaration",
+    "current subtask/grant SHARE when execution is later enabled",
+    "own TaskRun UPDATE",
+    "one UUID-sorted union of own input, producer output and every selected target StreamPartition UPDATE",
+    "own StreamConsumer UPDATE",
+    "completion, route receipt, PAYLOAD and REFERENCE rows"
+  ],
+  "mandatory_tests": [
+    "forward, rebalance, broadcast and keyed deterministic vectors at different target parallelism",
+    "same semantic request after lost ACK returns identical reference IDs/sequences/outcome digest",
+    "changed key, payload, managed state or routing digest conflicts without mutation",
+    "one target at capacity rolls back producer payload, every reference, receipt, cursor and state",
+    "two concurrent producers lock the same edge partitions without deadlock, duplicates or sequence holes",
+    "completing/reading branch B never advances branch C cursor or releases C pins",
+    "EOF waits for every sealed contributor and closes an empty target exactly once",
+    "reference resolver verifies original payload identity/digest and refuses chains/corrupt/missing payloads",
+    "legacy bounded-linear/fixed-P2 record decode and terminal paths remain byte/behavior compatible",
+    "SQLite and unsupported backend refuse route mutation before any write"
+  ],
+  "ownership": {
+    "architect": "ADR/task mapping, hostile review, fresh PostgreSQL/SQLite/concurrency replay verification and acceptance status",
+    "root": "CI selection, clean checkpoint, hosted evidence and integration Git only",
+    "runtime": "terminal key extraction and route-call integration only after paired wire freeze; no public start/wait in this task",
+    "sdk": "paired client schemas/methods, KeyedStreamOutput/SourceRecord wire contract and stripped package tests after server DTO freeze",
+    "server": "ORM, paired migrations, schemas, route planner/receipts, transactional store helper and server tests"
+  },
+  "profile": "partitioned-dag-v1",
+  "recorded_at": "2026-11-05",
+  "representation": {
+    "consumer": "Each target physical subtask keeps its own input StreamPartition and independent StreamConsumer cursor. Stable receipt/cursor identity is subscriber_uid + input_port + edge_partition, not attempt/run_count.",
+    "edge_partition": "StreamGraphEdgePartition.stream_id points to the existing server-owned StreamPartition. Edge partitions are multiproducer FIFO logs, are never claimed as producer partitions, and keep their own contiguous sequence.",
+    "payload": "Store the user value once as a PAYLOAD StreamRecord in the existing producer StreamPartition.",
+    "reference": "Store one direct REFERENCE StreamRecord in each selected existing edge StreamPartition. Add an explicit record discriminator and direct immutable payload-record FK/identity; refuse chains and raw-envelope delivery.",
+    "retention": "Reference rows and independent consumers conservatively pin their payload and route receipt. Online GC remains deferred; deletion must remove references before payloads."
+  },
+  "routing": {
+    "bounds": "Use sealed max operators=16, edges=32, P<=16 and total subtasks<=128. Resolve the full bounded target set before mutation; one full target or any encoded/record limit refusal rejects the entire turn.",
+    "broadcast": "Create one reference for every sealed target partition.",
+    "forward": "Require equal producer/target parallelism and route producer subtask i to target i.",
+    "keyed": "tagged-key-v1 bytes; full SHA-256 integer modulo persisted key_group_count; target = floor(group * target_parallelism / key_group_count).",
+    "rebalance": "target = (sealed_producer_subtask_index + original_producer_sequence - 1) modulo target_parallelism."
+  },
+  "schema": "native-epoch2-ni2-011-implementation-handoff-v1",
+  "status": "accepted_for_implementation",
+  "task_id": "NI2-011",
+  "wire_and_key_contract": {
+    "key": "One canonical output key is encoded by tagged-key-v1 and reused by every keyed outgoing edge. No server callback, business-payload reserved field or user function runs on the server.",
+    "operator": "A keyed operator yields KeyedStreamOutput(value, key).",
+    "plain_yield": "Plain YIELD remains valid for graphs with no outgoing keyed edge. If any selected outgoing edge is keyed, an absent/invalid key refuses the whole turn before acceptance.",
+    "return": "RETURN remains state-only and produces no route. YIELD(None) remains a real payload.",
+    "source": "A keyed source yields SourceRecord(position, KeyedStreamOutput(value, key)); the outer SourceRecord retains source position."
+  }
+}

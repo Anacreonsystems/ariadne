@@ -1,0 +1,74 @@
+{
+  "authority": "DataExecutionCredentials chooses Flow execution or exact scoped subtask credential; mixed credential headers are refused. Store Flow guard and require_fixed_physical_execution keep all public DAG DATA paths fenced pending NI2-012.",
+  "earned_percent_delta": 0,
+  "entrypoints": [
+    {
+      "current_replay": "After current authorization, producer stream+position resolves a prior value_digest; differing value conflicts.",
+      "http": "POST /streams/v1/sources/append",
+      "model": "NativeStreamStore.append",
+      "request": "StreamSourceAppendRequest(binding, position, value)",
+      "response": "StreamEnvelope",
+      "target": "Shared routing helper inside the existing AsyncSession transaction; immutable route receipt/outcome replay for DAG internally."
+    },
+    {
+      "current_replay": "After current authorization, consumer+input sequence resolves the existing completion and checks intent_digest.",
+      "http": "POST /streams/v1/consumers/complete",
+      "model": "NativeStreamStore.complete",
+      "request": "StreamConsumerCompleteRequest(binding, token, kind, value, managed_state)",
+      "response": "StreamCompletionResult(input_sequence, output_sequence)",
+      "target": "DAG semantic digest must not reuse the full legacy token digest because it includes owner/attempt/epoch; bind stable original coordinate, key/value/state/routing instead."
+    },
+    {
+      "current_behavior": "Delivers StreamRecord.value with own cursor/delivery token.",
+      "http": "POST /streams/v1/consumers/read",
+      "model": "NativeStreamStore.read",
+      "request": "StreamConsumerReadRequest(binding)",
+      "response": "StreamDelivery | None",
+      "target": "New internal reference resolution must verify direct original payload identity/digest and never deliver raw REFERENCE envelopes or chains."
+    },
+    {
+      "current_behavior": "Terminalize existing producer output.",
+      "http": "POST /streams/v1/sources/close and /sources/finish; POST /streams/v1/consumers/finish",
+      "target": "Legacy behavior preserved; internal DAG EOF must account for every sealed contributor and empty targets."
+    }
+  ],
+  "existing_controls": [
+    "tests/server/api/test_streams.py",
+    "tests/server/api/test_stream_dag_execution_fences.py",
+    "tests/server/models/test_streams.py"
+  ],
+  "handoff": {
+    "path": "architecture/streaming-etl/evidence/flink-architecture-2026-11-04/ni2-011-implementation-handoff-2026-11-05.json",
+    "sha256": "5a3c19f8c21d5165001de2730b466c1aa5e404a3e4a40fb00a859d895aad69f4"
+  },
+  "head": "d4607874b295a30d756823a44ffd7e5b19f77ced",
+  "observed_at": "2026-11-05T03:40:11.416045+00:00",
+  "proposed_test_lane": [
+    "Actual protected HTTP legacy source/operator exact replay, content/state conflict and immutable EOF remain compatible.",
+    "Actual protected HTTP DAG source append/operator complete/reads/finish stay typed EXECUTION_PROFILE_NOT_READY with no owner, cursor, route, record, completion or slot mutation.",
+    "Actual HTTP validation rejects malformed canonical keys without echoing secret input; exact new key DTO awaits paired wire freeze.",
+    "PostgreSQL internal routed helper acceptance proves exact lost-ACK references/sequences/outcome digest, conflict and capacity rollback; public DAG execution remains unavailable.",
+    "SQLite route mutation refuses UNSUPPORTED_BACKEND before writes; metadata/migrations remain separate structural scope.",
+    "Reference-resolver and cross-branch cursor/EOF/retention tests use the internal frozen server service seam rather than a public bypass."
+  ],
+  "repository_edits": false,
+  "schema": "ni2-011-api-http-readonly-map-v1",
+  "source_observation": {
+    "qualification": "Current shared WIP, not a frozen or tested cut.",
+    "sha256": {
+      "src/prefect/server/api/stream_subtask_dependencies.py": "d08be0e35276ee60ef384f0093cda65d29fb0b1be4f22b7ef490553abbd5e862",
+      "src/prefect/server/api/streams.py": "ec7754a9cd79ed350cda2f62a3bb458f0fd2691cb59cb57758224ae91bfbd5d9",
+      "src/prefect/server/models/stream_subtask_authority.py": "bf51aed23bf01ae71f1f4218f34318f1a1780bd52077dc708d5df3f2076656f5",
+      "src/prefect/server/models/streams.py": "61d4c32fad1c8ef988630fbf1877506b2b8e9fa2efe43fdc4af70300988983bd",
+      "src/prefect/server/schemas/streams.py": "669e4e30f9ec68061696130d6cfe67e7938e633c11a95d522e0a4068e793f49f"
+    }
+  },
+  "status": "read-only-preparation-awaiting-server-dto-model-freeze",
+  "tests_executed": false,
+  "waiting_for": [
+    "Paired server/client key and route DTO freeze",
+    "Internal routing helper function signatures and trusted model-only authority boundary",
+    "Frozen transaction/lock order and errors for conflict/capacity/expiry",
+    "Root confirmation of exclusive new test filename and CI selectors"
+  ]
+}

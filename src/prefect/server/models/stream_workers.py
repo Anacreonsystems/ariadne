@@ -12,11 +12,14 @@ from prefect.server.models import stream_subtasks as core
 from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.models.stream_subtask_authority import (
     WorkerStreamAuthorization,
+    require_fixed_physical_execution,
     require_physical_backend,
+)
+from prefect.server.models.stream_worker_capacity import (
+    renew_worker_capability_metadata,
 )
 from prefect.server.schemas import stream_subtasks as s
 from prefect.server.schemas.statuses import WorkerStatus
-from prefect.types import DateTime
 from prefect.types._datetime import now
 
 
@@ -50,55 +53,10 @@ async def _renew_capability(
     worker_id: UUID,
     principal: s.StreamWorkerPrincipal,
 ) -> None:
-    """Advertise this protocol only after projection reads, without Flow locks."""
-    worker = await session.scalar(
-        sa.select(db.Worker)
-        .where(db.Worker.id == worker_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
+    """Renew only fixed-P2; production DAG advertisement remains fenced."""
+    await renew_worker_capability_metadata(
+        session, db, worker_id, principal, protocol="partitioned-fixed-v1"
     )
-    if (
-        worker is None
-        or worker.work_pool_id != principal.work_pool_id
-        or worker.status != WorkerStatus.ONLINE
-    ):
-        raise NativeStreamError(
-            "WORKER_NOT_READY", "A registered online worker in this pool is required"
-        )
-    capability = await session.scalar(
-        sa.select(db.StreamWorkerCapability)
-        .where(db.StreamWorkerCapability.worker_id == worker_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    if capability is None or _capability_identity(capability) != _principal_identity(
-        principal
-    ):
-        occupied = await session.scalar(
-            sa.select(db.StreamPhysicalSubtask.id)
-            .where(
-                db.StreamPhysicalSubtask.assigned_worker_id == worker_id,
-                db.StreamPhysicalSubtask.physical_slot_released.is_(False),
-            )
-            .limit(1)
-        )
-        if occupied is not None:
-            raise NativeStreamError(
-                "WORKER_IDENTITY_IN_USE",
-                "Unreleased physical slots retain their exact worker identity",
-            )
-    if capability is None:
-        capability = db.StreamWorkerCapability(worker_id=worker_id)
-        session.add(capability)
-    capability.work_pool_id = principal.work_pool_id
-    capability.protocol = "partitioned-fixed-v1"
-    capability.protocol_version = 1
-    capability.host_id = principal.host_id
-    capability.boot_id = principal.boot_id
-    capability.launcher_process_id = principal.launcher_process_id
-    capability.launcher_start_ticks = principal.launcher_start_ticks
-    capability.last_renewed_at = cast(DateTime, now("UTC"))
-    await session.flush()
 
 
 async def poll_assignments(
@@ -279,6 +237,8 @@ async def _authorize_worker_subtask(
         .with_for_update(read=not graph_update)
         .execution_options(populate_existing=True)
     )
+    if graph is not None:
+        require_fixed_physical_execution(graph)
     if (
         authority is None
         or graph is None
@@ -315,7 +275,11 @@ async def _authorize_worker_subtask(
     worker = workers.get(worker_id)
     capability = await session.scalar(
         sa.select(db.StreamWorkerCapability)
-        .where(db.StreamWorkerCapability.worker_id == worker_id)
+        .where(
+            db.StreamWorkerCapability.worker_id == worker_id,
+            db.StreamWorkerCapability.protocol == "partitioned-fixed-v1",
+            db.StreamWorkerCapability.protocol_version == 1,
+        )
         .with_for_update(read=True)
         .execution_options(populate_existing=True)
     )
@@ -422,7 +386,9 @@ async def claim_subtask(
     )
     capability = await session.scalar(
         sa.select(db.StreamWorkerCapability).where(
-            db.StreamWorkerCapability.worker_id == worker_id
+            db.StreamWorkerCapability.worker_id == worker_id,
+            db.StreamWorkerCapability.protocol == "partitioned-fixed-v1",
+            db.StreamWorkerCapability.protocol_version == 1,
         )
     )
     if scope.current_grant is None and (

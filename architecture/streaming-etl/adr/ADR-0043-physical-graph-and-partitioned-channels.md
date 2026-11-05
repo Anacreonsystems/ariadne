@@ -324,3 +324,37 @@ open; A43-03, A43-06 and A43-10 retain the explicit partial boundaries in the
 criterion map until the branched DAG, routed exchanges and cross-host profiles
 run. This acceptance does not convert the linear slice into a general DAG
 claim.
+
+The [N2.1 publication closure](../evidence/native-epoch2-n2-1-publication-closure-2026-11-05.json)
+records the zero-delta PR 19 merge and its complete hosted successor. It is a
+publication receipt for the already accepted fixed-P2 slice; the linked
+[hosted archive](../evidence/native-epoch2-n2-1-hosted-ci-2026-11-05/index.json)
+retains the native PostgreSQL logs and strict result-count guards. This leaves the
+ADR in `progress` while the branched topology and routing criteria remain
+open.
+
+The [NI2-010 Principal acceptance](../evidence/native-epoch2-ni2-010-principal-acceptance-2026-11-05/acceptance.json)
+accepts the metadata-only DAG implementation without accepting this ADR.
+Protected seal/read supports a generic connected single-root graph with at
+least two operators, one edge, fixed per-operator parallelism and the bounded
+linear and fan-out fixtures. PostgreSQL region reservation shares the same
+physical worker capacity with fixed-P2 and loses atomically under a real
+two-session race. Task lifecycle, signed events, existing DATA APIs and
+terminal Flow proposals remain fail-closed for this profile.
+
+A43-02 is now supported by real topology publication and unsafe-topology
+refusal but stays partial until the process lifecycle runs the branched graph.
+A43-03 and A43-09 remain open because NI2-010 writes no routed DATA. The
+[NI2-011 handoff](../evidence/flink-architecture-2026-11-04/ni2-011-implementation-handoff-2026-11-05.json)
+freezes direct PAYLOAD/REFERENCE rows in the existing store, independent edge
+cursors, four versioned exchanges and exact lost-ACK replay as the next work.
+
+On 2026-11-05 the user directed: «Все вливайте, для полных
+тестов». This authorizes publishing and merging the current NI2-011
+implementation so the repository's complete checks can run. It is a testing
+and publication direction, not an acceptance result by itself. The subsequent
+[NI2-011 Principal acceptance](../evidence/native-epoch2-routed-server-2026-11-05/principal-v1/acceptance.json)
+closes the finite routed-storage task after independent PostgreSQL, SQLite,
+migration, planner and prefix-security gates. The DAG execution profile stays
+fenced, this ADR remains in `progress`, and A43-03 and A43-09 remain partial
+until native fan-out execution and recovery pass.

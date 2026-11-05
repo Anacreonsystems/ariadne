@@ -1,0 +1,11 @@
+from pathlib import Path
+import hashlib,json,shutil
+root=Path('/tmp/native-ni2-011-route-plan-v3');repo=Path('/workspace/ariadne');snap=root/'snapshot';(snap/'src/prefect/_internal').mkdir(parents=True);(snap/'tests').mkdir()
+owned=['src/prefect/_internal/stream_route_plan.py','tests/test_stream_route_plan.py'];dependencies=['src/prefect/_internal/stream_key_wire.py','src/prefect/_internal/stream_routing.py'];files=owned+dependencies
+observed={}
+for name in files:
+ src=repo/name;dst=snap/name;shutil.copyfile(src,dst);observed[name]={'sha256':hashlib.sha256(src.read_bytes()).hexdigest(),'bytes':src.stat().st_size}
+(snap/'src/prefect/__init__.py').write_text('');(snap/'src/prefect/_internal/__init__.py').write_text('')
+config=json.loads((repo/'pyrightconfig-ci.json').read_text());config.update({'include':files,'ignore':[],'extraPaths':['src'],'pythonVersion':'3.12','exclude':[]})
+(snap/'pyrightconfig-scoped.json').write_text(json.dumps(config,indent=2)+'\n');(root/'source-before.json').write_text(json.dumps({'owned':owned,'read_only_dependencies':dependencies,'source':observed},indent=2)+'\n')
+print(json.dumps(observed,indent=2))

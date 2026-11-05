@@ -1,0 +1,50 @@
+..s...F                                                                  [100%]
+=================================== FAILURES ===================================
+_______________ test_terminal_flow_refuses_process_registration ________________
+
+client = <httpx.AsyncClient object at 0x7f16b41e5b80>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7f16b41e6300>
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f16b72fc980>
+deployment = Deployment(id=316b34ac-23db-4c2c-af70-12d923fafbd6)
+
+    async def test_terminal_flow_refuses_process_registration(
+        client: AsyncClient,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        deployment: orm_models.Deployment,
+    ):
+        if db.dialect.name != "postgresql":
+            pytest.skip("PostgreSQL enrollment is covered by the PostgreSQL profile")
+        flow_run, worker, work_pool_id = await _native_flow_run(session, db, deployment)
+        plan = (await client.get(f"/streams/v1/deployments/{flow_run.id}/plan")).json()
+        body = _enrollment_body(
+            flow_run.id, worker.id, work_pool_id, plan["declaration_digest"]
+        )
+        enrolled = await client.post("/streams/v1/deployments/enroll", json=body)
+        assert enrolled.status_code == 200
+        headers = {
+            "X-Prefect-Stream-Execution-Generation": "1",
+            "X-Prefect-Stream-Execution-Holder": body["holder_id"],
+            "X-Prefect-Stream-Execution-Capability": body["holder_capability"],
+        }
+        cancelled = await client.post(
+            f"/flow_runs/{flow_run.id}/set_state",
+            json={"state": {"type": "CANCELLED", "name": "Cancelled"}},
+            headers=headers,
+        )
+>       assert cancelled.status_code == 201
+E       assert 409 == 201
+E        +  where 409 = <Response [409 Conflict]>.status_code
+
+tests/server/api/test_native_deployments.py:371: AssertionError
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+14:18:27.628 | INFO    | uvicorn.error - Shutting down
+14:18:27.733 | INFO    | uvicorn.error - Waiting for application shutdown.
+14:18:27.734 | INFO    | uvicorn.error - Application shutdown complete.
+14:18:27.735 | INFO    | uvicorn.error - Finished server process [28103]
+=========================== short test summary info ============================
+FAILED tests/server/api/test_native_deployments.py::test_terminal_flow_refuses_process_registration
+SKIPPED [1] tests/server/api/test_native_deployments.py:263: SQLite refusal is covered by the SQLite profile
+1 failed, 5 passed, 1 skipped in 11.20s

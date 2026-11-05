@@ -147,34 +147,21 @@ async def _authorized_stream_events(
             )
         ).all()
     }
-    if not authorities:
-        return events, set()
     # Locator reads acquire no ownership. Lock and refresh the complete prefix
     # before using a cached graph/subtask/grant for an event decision.
-    physical_locators = (
-        await session.execute(
-            sa.select(
-                db.StreamPhysicalSubtask.task_run_id,
-                db.StreamPhysicalSubtask.graph_revision_id,
-            ).where(db.StreamPhysicalSubtask.task_run_id.in_(task_ids))
-        )
-    ).all()
     physical_graphs = {
         row.id: row
         for row in (
             await session.scalars(
                 sa.select(db.StreamGraphRevision)
-                .where(
-                    db.StreamGraphRevision.id.in_(
-                        [row.graph_revision_id for row in physical_locators]
-                    )
-                )
+                .where(db.StreamGraphRevision.flow_run_id.in_(flow_ids))
                 .order_by(db.StreamGraphRevision.id)
                 .with_for_update(read=True)
                 .execution_options(populate_existing=True)
             )
         ).all()
     }
+    graphs_by_flow = {row.flow_run_id: row for row in physical_graphs.values()}
     physical_subtasks = {
         row.task_run_id: row
         for row in (
@@ -264,6 +251,10 @@ async def _authorized_stream_events(
             if active_manifest is not None
             else task_flow_ids.get(task_id, flow_id)
         )
+        graph = graphs_by_flow.get(authoritative_flow_id)
+        if graph is not None and graph.profile == "partitioned-dag-v1":
+            decisions[id(event)] = False
+            continue
         authority = authorities.get(authoritative_flow_id)
         if authority is None:
             decisions[id(event)] = True

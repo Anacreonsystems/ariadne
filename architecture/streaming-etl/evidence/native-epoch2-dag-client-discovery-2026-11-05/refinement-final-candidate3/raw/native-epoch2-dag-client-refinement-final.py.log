@@ -1,0 +1,31 @@
+from pathlib import Path
+import datetime,hashlib,json,os,shutil,subprocess,time
+ROOT=Path('/workspace/ariadne')
+OUT=Path('/tmp/native-epoch2-dag-client-refinement-final-v1')
+OWNED=['src/prefect/streams.py','src/prefect/client/schemas/stream_dags.py','src/prefect/client/schemas/native_deployments.py','src/prefect/client/orchestration/_streams/client.py','src/prefect/client/orchestration/routes.py','tests/client/test_stream_dags.py','tests/client/test_native_deployment_schemas.py','tests/test_stream_graph_contracts.py','tests/fixtures/native_physical_client_package_probe.py','tests/test_native_dag_client_http.py']
+def snapshot(label):
+ paths=list((ROOT/'src/prefect').rglob('*.py'))+list((ROOT/'tests').rglob('*.py'))+[ROOT/'pyproject.toml',ROOT/'pyrightconfig-ci.json']
+ values={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths) if '__pycache__' not in p.parts}
+ item={'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'files':values,'owned':{p:values[p] for p in OWNED},'file_map_sha256':hashlib.sha256(json.dumps(values,sort_keys=True,separators=(',',':')).encode()).hexdigest()}
+ (OUT/(label+'.json')).write_text(json.dumps(item,indent=2)+'\n');return item
+
+def run(label,command,dsn):
+ before=snapshot(label+'-before');environment=os.environ.copy();environment['PREFECT_SERVER_DATABASE_CONNECTION_URL']=dsn
+ start=time.monotonic()
+ with (OUT/(label+'.log')).open('wb') as output:process=subprocess.run(command,cwd=ROOT,env=environment,stdout=output,stderr=subprocess.STDOUT)
+ after=snapshot(label+'-after');changed=sorted(x for x in before['files'].keys()|after['files'].keys() if before['files'].get(x)!=after['files'].get(x))
+ item={'command':command,'exit_code':process.returncode,'seconds':round(time.monotonic()-start,6),'before':before['file_map_sha256'],'after':after['file_map_sha256'],'changed_paths':changed,'owned_stable':before['owned']==after['owned']}
+ (OUT/(label+'-execution.json')).write_text(json.dumps(item,indent=2)+'\n');print(json.dumps({'check':label,**item}),flush=True)
+ if process.returncode:raise SystemExit(process.returncode)
+
+if __name__=='__main__':
+ if OUT.exists():raise SystemExit('Refuse to overwrite prior final evidence')
+ OUT.mkdir()
+ for name in OWNED+['tests/server/api/test_stream_dags.py','tests/server/api/test_native_deployments.py','tests/server/api/test_stream_workers.py','tests/server/models/test_stream_dags.py','tests/fixtures/database.py']:
+  target=OUT/'source'/Path(name);target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/name,target)
+ pg='postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_sdk_dag'
+ prefix=['uv','run','--no-sync','pytest','-n0','-q']
+ run('contracts',prefix+['tests/client/test_stream_dags.py','tests/test_stream_graph_contracts.py','--tb=short','--junitxml',str(OUT/'contracts.xml')],pg)
+ run('postgres',prefix+['tests/test_native_dag_client_http.py','-k','postgres','--tb=short','--junitxml',str(OUT/'postgres.xml')],pg)
+ run('sqlite',prefix+['tests/test_native_dag_client_http.py','-k','sqlite','--tb=short','--junitxml',str(OUT/'sqlite.xml')],'sqlite+aiosqlite:///:memory:')
+ run('package',prefix+['tests/test_native_physical_client_package.py','--tb=short','--basetemp',str(OUT/'package-tmp'),'--junitxml',str(OUT/'package.xml')],pg)

@@ -150,3 +150,46 @@ never assigned and executed no steps during the five-minute queue window; the
 owned run was then cancelled and the comparison reported a missing
 observation. A queued or cancelled job is not a host, network or stop witness,
 and this closes the preflight series without A47-04 credit.
+
+The [local QEMU readiness record](../evidence/native-epoch2-qemu-readiness-2026-11-05/index.json)
+adds a proposed `local-qemu-tcg-v1` functional profile only. If later executed,
+two TCG guests with separate overlays, guest kernels and boot identities could
+exercise explicit HTTP artifact transfer and exact whole-VM pidfd stop/reap on
+this workspace. The profile starts at one vCPU and 1 GiB RAM per guest, limits
+new allocated `/tmp` bytes to 2 GiB, and stops before 14 GiB cgroup memory or
+the 30-minute probe bound. It forbids shared guest filesystems, TAP/TUN, host
+installation and timeout-as-stop evidence.
+
+The readiness check found no QEMU binary, KVM/TUN, sudo or verified package and
+image dependency closure. It downloaded no bodies and started no VM. Both
+proposed guests would share one physical machine, so even a successful future
+probe would establish independent guest-kernel and provider-stop mechanics,
+not physical-machine/zone independence, HA, throughput or A47-04 by itself.
+This proposal earns zero readiness credit.
+
+The successor [metadata-only package](../evidence/native-epoch2-qemu-readiness-2026-11-05/metadata-v1/artifact-index.json)
+verified the Debian signed package-index chain and the Ubuntu image-signing
+chain without downloading binary packages or the image body. Its current
+boot-only envelope supersedes the earlier resource proposal: two guests at
+512 MiB RAM and one vCPU each, a 1 GiB ceiling for newly allocated `/tmp`
+bytes, a 512 MiB QEMU overhead allowance, the same 14 GiB cgroup ceiling and
+2 GiB host reserve. The measured snapshot fits by only 196 MiB, so a fresh
+whole-envelope resource check is mandatory before allocation and again before
+guest two. The [principal review](../evidence/native-epoch2-qemu-readiness-2026-11-05/metadata-principal-review.json)
+records `PASS_METADATA_READINESS_SCOPED`; VM execution, image-body verification,
+guest identity, stop/reap and native recovery remain `NOT_RUN`. The profile
+therefore remains proposed and earns zero A47-04 or readiness credit.
+
+The bounded [boot discovery](../evidence/native-epoch2-qemu-readiness-2026-11-05/boot-discovery-v1/index.json)
+then verified the signed package and image bodies and started two real 512 MiB
+QEMU TCG guests. Both reached Linux and cloud-init and fetched their restricted
+NoCloud configuration, but the cgroup guard stopped the attempt at
+15,041,576,960 bytes, above the 14 GiB ceiling. The OOM-kill counter did not
+increase, and the controller stopped, waited for and rechecked both exact owned
+QEMU process identities; no owned QEMU process, bridge or listening port
+remained. The guests never produced the required guest HTTP readiness,
+30-second overlap or distinct salted boot/machine identity witnesses. The
+[Principal review](../evidence/native-epoch2-qemu-readiness-2026-11-05/boot-discovery-v1/principal-review.json)
+therefore records `UNPROVEN_RESOURCE_GUARD`, zero readiness credit and no retry
+from the same resource premise. This result closes no A47 criterion and remains
+a same-physical-host infrastructure observation rather than NI2-053 evidence.

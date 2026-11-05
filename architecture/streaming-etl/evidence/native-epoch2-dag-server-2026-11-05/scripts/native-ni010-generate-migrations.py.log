@@ -1,0 +1,94 @@
+from pathlib import Path
+import ast
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint
+from sqlalchemy.schema import CreateTable, CreateIndex
+from sqlalchemy.dialects import postgresql, sqlite
+from prefect.server.database import orm_models as m
+
+NEW_MODELS=(m.StreamGraphPort,m.StreamGraphEdge,m.StreamGraphEdgePartition,m.StreamPhysicalSlotAllocation)
+
+def constraints(cls, kind, columns=None):
+ values=[x for x in cls.__table__.constraints if isinstance(x,kind) and (columns is None or list(x.columns.keys())==columns)]
+ assert len(values)==1,(cls,kind,columns)
+ return values[0]
+
+def check_sql(cls,suffix):
+ return str(next(x.sqltext for x in cls.__table__.constraints if isinstance(x,CheckConstraint) and x.name.endswith('__'+suffix)))
+
+def ck(lines,table,suffix,sql):
+ full='ck_'+table+'__'+suffix
+ lines.extend([f'        batch.drop_constraint(op.f({full!r}), type_="check")',f'        batch.create_check_constraint(op.f({full!r}), {sql!r})'])
+
+def uq(lines,cls,cols,create=True):
+ table=cls.__tablename__;name='uq_'+table+'__'+'_'.join(cols)
+ if create:lines.append(f'        batch.create_unique_constraint(op.f({name!r}), {cols!r})')
+ else:lines.append(f'        batch.drop_constraint(op.f({name!r}), type_="unique")')
+
+def fk(lines,table,cols,remote_table,remote_cols,create=True,cascade=True):
+ name='fk_'+table+'__'+'_'.join(cols)+'__'+remote_table
+ if create:
+  tail=', ondelete="CASCADE"' if cascade else ''
+  lines.append(f'        batch.create_foreign_key(op.f({name!r}), {remote_table!r}, {cols!r}, {remote_cols!r}{tail})')
+ else:lines.append(f'        batch.drop_constraint(op.f({name!r}), type_="foreignkey")')
+
+for backend,dialect,revision,previous in [('postgresql',postgresql.dialect(),'d8a3f76b2c90','b48f2e6a7c31'),('sqlite',sqlite.dialect(),'e9b4a87c3d01','e59a3f7b8d42')]:
+ lines=['"""Add immutable DAG topology and physical region reservation metadata.', '', f'Revision ID: {revision}',f'Revises: {previous}','','Existing fixed-P2 metadata and all stream data remain in place. No record', 'routing or execution support is enabled by this migration.','"""','','import sqlalchemy as sa','from alembic import op','',f'revision = {revision!r}',f'down_revision = {previous!r}','branch_labels = None','depends_on = None','','','def upgrade():']
+ lines.append('    with op.batch_alter_table("stream_graph_revision") as batch:')
+ ck(lines,'stream_graph_revision','profile_valid',check_sql(m.StreamGraphRevision,'profile_valid'))
+ for cols in [['id','profile'],['id','flow_run_id'],['id','admission_operation_id','profile']]:uq(lines,m.StreamGraphRevision,cols)
+ lines.append('    with op.batch_alter_table("stream_operator_run") as batch:')
+ lines.append('        batch.add_column(sa.Column("profile", sa.String(), nullable=False, server_default="partitioned-fixed-v1"))')
+ fk(lines,'stream_operator_run',['graph_revision_id'],'stream_graph_revision',['id'],False)
+ fk(lines,'stream_operator_run',['graph_revision_id','profile'],'stream_graph_revision',['id','profile'])
+ uq(lines,m.StreamOperatorRun,['id','graph_revision_id','profile'])
+ ck(lines,'stream_operator_run','fixed_shape_valid',check_sql(m.StreamOperatorRun,'fixed_shape_valid'))
+ lines.append('    with op.batch_alter_table("stream_physical_subtask") as batch:')
+ lines.append('        batch.add_column(sa.Column("profile", sa.String(), nullable=False, server_default="partitioned-fixed-v1"))')
+ fk(lines,'stream_physical_subtask',['graph_revision_id'],'stream_graph_revision',['id'],False)
+ fk(lines,'stream_physical_subtask',['operator_run_id'],'stream_operator_run',['id'],False)
+ fk(lines,'stream_physical_subtask',['graph_revision_id','profile'],'stream_graph_revision',['id','profile'])
+ fk(lines,'stream_physical_subtask',['operator_run_id','graph_revision_id','profile'],'stream_operator_run',['id','graph_revision_id','profile'])
+ for cols in [['id','graph_revision_id','profile','subtask_index'],['id','graph_revision_id','assigned_worker_id']]:uq(lines,m.StreamPhysicalSubtask,cols)
+ ck(lines,'stream_physical_subtask','assignment_valid',check_sql(m.StreamPhysicalSubtask,'assignment_valid'))
+ lines.append('    with op.batch_alter_table("stream_worker_capability") as batch:')
+ uq(lines,m.StreamWorkerCapability,['worker_id'],False)
+ uq(lines,m.StreamWorkerCapability,['worker_id','protocol','protocol_version'])
+ ck(lines,'stream_worker_capability','protocol_valid',check_sql(m.StreamWorkerCapability,'protocol_valid'))
+ lines.append('    with op.batch_alter_table("native_stream_deployment_snapshot") as batch:')
+ ck(lines,'native_stream_deployment_snapshot','profile_valid',check_sql(m.NativeStreamDeploymentSnapshot,'profile_valid'))
+ for cls in NEW_MODELS:
+  sql=str(CreateTable(cls.__table__).compile(dialect=dialect)).strip()
+  lines.append('    op.execute('+repr(sql)+')')
+  for index in sorted(cls.__table__.indexes,key=lambda x:x.name):lines.append('    op.execute('+repr(str(CreateIndex(index).compile(dialect=dialect)))+')')
+ lines+=['','','def downgrade():']
+ queries=["SELECT COUNT(*) FROM stream_graph_revision WHERE profile = 'partitioned-dag-v1'","SELECT COUNT(*) FROM native_stream_deployment_snapshot WHERE profile = 'partitioned-dag-v1'"]+[f'SELECT COUNT(*) FROM {cls.__tablename__}' for cls in NEW_MODELS]
+ lines.append('    if any(op.get_bind().execute(sa.text(query)).scalar() for query in '+repr(queries)+'):')
+ lines.append('        raise RuntimeError("Cannot downgrade durable DAG topology history or deployment snapshots")')
+ for cls in reversed(NEW_MODELS):lines.append('    op.drop_table('+repr(cls.__tablename__)+')')
+ lines.append('    op.execute("DELETE FROM stream_worker_capability WHERE protocol = \'partitioned-dag-v1\'")')
+ lines.append('    with op.batch_alter_table("native_stream_deployment_snapshot") as batch:')
+ ck(lines,'native_stream_deployment_snapshot','profile_valid',"profile IN ('bounded-linear-v1', 'partitioned-fixed-v1')")
+ lines.append('    with op.batch_alter_table("stream_worker_capability") as batch:')
+ uq(lines,m.StreamWorkerCapability,['worker_id','protocol','protocol_version'],False)
+ uq(lines,m.StreamWorkerCapability,['worker_id'])
+ ck(lines,'stream_worker_capability','protocol_valid',"protocol = 'partitioned-fixed-v1' AND protocol_version = 1")
+ lines.append('    with op.batch_alter_table("stream_physical_subtask") as batch:')
+ fk(lines,'stream_physical_subtask',['graph_revision_id','profile'],'stream_graph_revision',['id','profile'],False)
+ fk(lines,'stream_physical_subtask',['operator_run_id','graph_revision_id','profile'],'stream_operator_run',['id','graph_revision_id','profile'],False)
+ for cols in [['id','graph_revision_id','profile','subtask_index'],['id','graph_revision_id','assigned_worker_id']]:uq(lines,m.StreamPhysicalSubtask,cols,False)
+ ck(lines,'stream_physical_subtask','assignment_valid','subtask_index BETWEEN 0 AND 1 AND assignment_epoch = 1')
+ fk(lines,'stream_physical_subtask',['graph_revision_id'],'stream_graph_revision',['id'])
+ fk(lines,'stream_physical_subtask',['operator_run_id'],'stream_operator_run',['id'])
+ lines.append('        batch.drop_column("profile")')
+ lines.append('    with op.batch_alter_table("stream_operator_run") as batch:')
+ fk(lines,'stream_operator_run',['graph_revision_id','profile'],'stream_graph_revision',['id','profile'],False)
+ uq(lines,m.StreamOperatorRun,['id','graph_revision_id','profile'],False)
+ ck(lines,'stream_operator_run','fixed_shape_valid',"role IN ('SOURCE', 'OPERATOR') AND parallelism = 2")
+ fk(lines,'stream_operator_run',['graph_revision_id'],'stream_graph_revision',['id'])
+ lines.append('        batch.drop_column("profile")')
+ lines.append('    with op.batch_alter_table("stream_graph_revision") as batch:')
+ for cols in [['id','profile'],['id','flow_run_id'],['id','admission_operation_id','profile']]:uq(lines,m.StreamGraphRevision,cols,False)
+ ck(lines,'stream_graph_revision','profile_valid',"profile = 'partitioned-fixed-v1' AND assignment_epoch = 1")
+ text='\n'.join(lines)+'\n';ast.parse(text)
+ path=Path('src/prefect/server/database/_migrations/versions')/backend/f'2026_11_05_000000_{revision}_add_stream_dag_topology.py';path.write_text(text)
+ print(path)

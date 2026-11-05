@@ -1,0 +1,24 @@
+"""Read-only source-origin observer for the isolated published-code diagnosis."""
+import importlib.abc
+import importlib.machinery
+import json
+import os
+import sys
+from pathlib import Path
+
+_owned = Path('/tmp/ariadne-p2-heartbeat-repro-22dc093').resolve()
+_sink = os.open('/tmp/native-p2-heartbeat-repro-22dc093-v2/import-audit/imports-' + str(os.getpid()) + '.jsonl', os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+os.write(_sink, (json.dumps({'kind': 'process', 'pid': os.getpid(), 'cwd': os.getcwd(), 'python': sys.executable}) + '\n').encode())
+
+class _SourceOriginObserver(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'prefect' or fullname.startswith('prefect.'):
+            spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+            origin = None if spec is None else spec.origin
+            if origin and origin not in {'built-in', 'frozen'}:
+                local = Path(origin).resolve().is_relative_to(_owned)
+                os.write(_sink, (json.dumps({'module': fullname, 'origin': origin, 'owned': local}) + '\n').encode())
+                if not local:
+                    raise ImportError('Reproducer attempted a Prefect import outside its owned detached source')
+        return None
+sys.meta_path.insert(0, _SourceOriginObserver())

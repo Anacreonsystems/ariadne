@@ -40,7 +40,9 @@ def test_native_deployment_wire_models_match(name: str):
     )
 
 
-@pytest.mark.parametrize("profile", ["bounded-linear-v1", "partitioned-fixed-v1"])
+@pytest.mark.parametrize(
+    "profile", ["bounded-linear-v1", "partitioned-fixed-v1", "partitioned-dag-v1"]
+)
 def test_declared_profiles_keep_the_same_secret_free_wire(profile: str):
     payload = {
         "profile": profile,

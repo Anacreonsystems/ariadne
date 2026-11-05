@@ -1,0 +1,37 @@
+..F................................                                      [100%]
+=================================== FAILURES ===================================
+_ test_postgres_corrupt_stored_reference_payload_id_refuses_replay_without_allocation _
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f9474f4ef30>
+flow_run = FlowRun(id=45ca837a-10ef-4f21-ae40-2a08058e4f22)
+
+    async def test_postgres_corrupt_stored_reference_payload_id_refuses_replay_without_allocation(
+        db: PrefectDBInterface, flow_run: orm_models.FlowRun
+    ):
+        region = await routing_region(db, flow_run)
+        binding = await claim_source(db, region)
+        request = source_request(region, binding, 1, {"value": 1})
+        original = await append(db, region, request)
+        async with db.session_context(begin_transaction=True) as session:
+            receipt = await session.get(db.StreamRouteReceipt, original.receipt_id)
+            assert receipt is not None
+            corrupted = {
+                **receipt.outcome,
+                "references": [dict(ref) for ref in receipt.outcome["references"]],
+            }
+            corrupted["references"][0]["payload_record_id"] = str(uuid4())
+            receipt.outcome = corrupted
+        before = await contents(db, region)
+        with pytest.raises(NativeStreamError) as refused:
+            await append(db, region, request)
+>       assert refused.value.code == "REFERENCE_IDENTITY_CONFLICT"
+E       AssertionError: assert 'IDENTITY_CONFLICT' == 'REFERENCE_IDENTITY_CONFLICT'
+E         
+E         - REFERENCE_IDENTITY_CONFLICT
+E         ? ----------
+E         + IDENTITY_CONFLICT
+
+tests/server/models/test_stream_routes.py:411: AssertionError
+=========================== short test summary info ============================
+FAILED tests/server/models/test_stream_routes.py::test_postgres_corrupt_stored_reference_payload_id_refuses_replay_without_allocation
+1 failed, 34 passed, 1 deselected in 46.13s

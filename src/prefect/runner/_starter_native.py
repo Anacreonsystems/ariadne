@@ -140,10 +140,36 @@ class NativeProcessStarter:
     async def _request(self, method: str, **kwargs: Any) -> Any:
         """Replay stable journal requests across a bounded transport outage."""
         deadline = time.monotonic() + 20.0
+        renewal_delay = 0.1
         while True:
             try:
+                if method == "renew_native_stream_launch":
+                    # Bound even the HTTP client's own retry loop. A late or
+                    # lost renewal reply is safe to repeat with this identity.
+                    remaining = max(0.0, deadline - time.monotonic())
+                    result: Any = None
+                    with anyio.move_on_after(remaining) as renewal_scope:
+                        result = await getattr(self.client, method)(**kwargs)
+                    if renewal_scope.cancel_called:
+                        raise httpx.ReadTimeout(
+                            "Native launch renewal budget exhausted"
+                        )
+                    return result
                 return await getattr(self.client, method)(**kwargs)
             except StreamRequestError as refusal:
+                if (
+                    method == "renew_native_stream_launch"
+                    and refusal.code == "HTTP_ERROR"
+                    and 500 <= refusal.status_code <= 599
+                ):
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise
+                    await anyio.sleep(min(renewal_delay, remaining))
+                    if time.monotonic() >= deadline:
+                        raise
+                    renewal_delay = min(renewal_delay * 2, 1.0)
+                    continue
                 if not (
                     method
                     in {"release_stream_flow", "retire_verified_native_stream_launch"}
@@ -154,8 +180,15 @@ class NativeProcessStarter:
                     raise
                 await anyio.sleep(0.1)
             except httpx.TransportError:
-                if time.monotonic() >= deadline:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
                     raise
+                if method == "renew_native_stream_launch":
+                    await anyio.sleep(min(renewal_delay, remaining))
+                    if time.monotonic() >= deadline:
+                        raise
+                    renewal_delay = min(renewal_delay * 2, 1.0)
+                    continue
                 await anyio.sleep(0.1)
 
     @staticmethod
@@ -354,13 +387,26 @@ class NativeProcessStarter:
                         process.kill()
                     return
                 if time.monotonic() - renewed_at >= 10.0:
-                    await self._request(
-                        "renew_native_stream_launch",
-                        flow_run_id=self.flow_run.id,
-                        generation=self.execution.generation,
-                        enrollment_operation_id=self.enrollment.operation_id,
-                    )
-                    renewed_at = time.monotonic()
+                    try:
+                        await self._request(
+                            "renew_native_stream_launch",
+                            flow_run_id=self.flow_run.id,
+                            generation=self.execution.generation,
+                            enrollment_operation_id=self.enrollment.operation_id,
+                        )
+                    except (StreamRequestError, httpx.TransportError) as error:
+                        if isinstance(error, StreamRequestError) and not (
+                            error.code == "HTTP_ERROR"
+                            and 500 <= error.status_code <= 599
+                        ):
+                            raise
+                        get_logger("runner.native").warning(
+                            "Native launch renewal is degraded for flow run %s; "
+                            "continuing to monitor its live coordinator",
+                            self.flow_run.id,
+                        )
+                    else:
+                        renewed_at = time.monotonic()
             except StreamRequestError as refusal:
                 if refusal.code == "RECOVERY_HORIZON_EXPIRED":
                     current = await self._request(
