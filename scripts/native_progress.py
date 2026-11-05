@@ -332,7 +332,7 @@ def pytest_sessionstart(session):
                 for name, query in SQL.items()
             },
             "observation_only": True,
-            "no_test_or_database_timeout_changes": True,
+            "observer_modifies_test_or_database_timeouts": False,
         },
     )
     import_map("imports-start.json")
