@@ -102,28 +102,36 @@ async def test_dag_history_without_submissions_refuses_destructive_downgrade(
     previous = "b48f2e6a7c31" if db.dialect.name == "postgresql" else "e59a3f7b8d42"
     async with _isolated_postgres_schema_changes(db, database_engine):
         await database_engine.dispose()
-        with pytest.raises(RuntimeError, match="Cannot downgrade durable DAG"):
-            await run_sync_in_worker_thread(alembic_downgrade, previous)
-        await database_engine.dispose()
-        async with database_engine.connect() as connection:
-            assert (
-                await connection.scalar(
-                    sa.text(
-                        "SELECT COUNT(*) FROM stream_graph_revision WHERE profile='partitioned-dag-v1'"
+        try:
+            with pytest.raises(RuntimeError, match="Cannot downgrade durable DAG"):
+                await run_sync_in_worker_thread(alembic_downgrade, previous)
+            await database_engine.dispose()
+            async with database_engine.connect() as connection:
+                assert (
+                    await connection.scalar(
+                        sa.text(
+                            "SELECT COUNT(*) FROM stream_graph_revision WHERE profile='partitioned-dag-v1'"
+                        )
                     )
+                    == 1
                 )
-                == 1
-            )
-            assert (
-                await connection.scalar(
-                    sa.text("SELECT COUNT(*) FROM stream_submission")
+                assert (
+                    await connection.scalar(
+                        sa.text("SELECT COUNT(*) FROM stream_submission")
+                    )
+                    == 0
                 )
-                == 0
-            )
-            names = await connection.run_sync(
-                lambda sync: sa.inspect(sync).get_table_names()
-            )
-            assert "stream_physical_slot_allocation" in names
+                names = await connection.run_sync(
+                    lambda sync: sa.inspect(sync).get_table_names()
+                )
+                assert "stream_physical_slot_allocation" in names
+        finally:
+            # Newer heads can commit their downgrade before this history guard.
+            # Restore the full schema before the next test's strict cleanup.
+            try:
+                await run_sync_in_worker_thread(alembic_upgrade, "head")
+            finally:
+                await database_engine.dispose()
 
 
 @pytest.mark.parametrize(
