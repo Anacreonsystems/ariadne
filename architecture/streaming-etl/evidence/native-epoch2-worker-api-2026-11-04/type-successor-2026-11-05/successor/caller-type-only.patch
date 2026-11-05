@@ -1,0 +1,148 @@
+--- a/src/prefect/server/models/stream_workers.py
++++ b/src/prefect/server/models/stream_workers.py
+@@ -1,7 +1,7 @@
+ """Trusted worker gates over the existing physical stream control store."""
+ 
+ from datetime import timedelta
+-from typing import Literal, cast
++from typing import Any, cast
+ from uuid import UUID
+ 
+ import sqlalchemy as sa
+@@ -173,6 +173,9 @@
+                 "PROTOCOL_ERROR", "Assigned graph has no placement witness"
+             )
+         specification = s.StreamOperatorSpec.model_validate(operator.specification)
++        partition_parameters = cast(
++            dict[str, Any], specification.parameters[subtask.subtask_index]
++        )
+         working_directory = graph.declaration.get("working_directory")
+         if not isinstance(working_directory, str):
+             raise NativeStreamError(
+@@ -197,7 +200,7 @@
+                 flow_run_id=graph.flow_run_id,
+                 graph_digest=graph.graph_digest,
+                 placement_digest=graph.placement_digest,
+-                assignment=await core._projection(session, db, subtask),
++                assignment=await core.subtask_projection(session, db, subtask),
+                 phase=phase,
+                 abort_operation_id=graph.abort_operation_id,
+                 current_grant=core.grant_projection(grant, subtask)
+@@ -208,7 +211,7 @@
+                     entrypoint=specification.entrypoint,
+                     task_key=specification.task_key,
+                     role=specification.role,
+-                    parameters=specification.parameters[subtask.subtask_index],
++                    parameters=partition_parameters,
+                     task_version=specification.task_version,
+                     artifact_digest=specification.artifact_digest,
+                     context_key=specification.context_key,
+@@ -222,7 +225,7 @@
+                 task_retriable=task.state.state_details.retriable
+                 if task.state is not None
+                 else None,
+-                output_state=cast(Literal["OPEN", "COMPLETED", "FAILED"], output.state),
++                output_state=output.state,
+                 output_attempt=output.attempt,
+             )
+         )
+--- a/src/prefect/server/api/stream_workers.py
++++ b/src/prefect/server/api/stream_workers.py
+@@ -8,8 +8,8 @@
+ 
+ from fastapi import Depends, HTTPException, Request, status
+ 
+-from prefect.server.api.native_deployments import _SecretRedactingRoute
+-from prefect.server.api.streams import _stream_http_error
++from prefect.server.api.native_deployments import SecretRedactingRoute
++from prefect.server.api.streams import stream_http_error
+ from prefect.server.database import PrefectDBInterface, provide_database_interface
+ from prefect.server.models import stream_workers as models
+ from prefect.server.models._stream_errors import NativeStreamError
+@@ -40,7 +40,7 @@
+ router: PrefectRouter = PrefectRouter(
+     prefix="/streams/v2/workers",
+     tags=["Streams"],
+-    route_class=_SecretRedactingRoute,
++    route_class=SecretRedactingRoute,
+     dependencies=[Depends(_trusted_worker)],
+ )
+ 
+@@ -53,7 +53,7 @@
+         async with db.session_context(begin_transaction=True) as session:
+             return await models.poll_assignments(session, db, worker_id, request)
+     except NativeStreamError as error:
+-        raise _stream_http_error(error) from error
++        raise stream_http_error(error) from error
+ 
+ 
+ @router.post("/{worker_id:uuid}/subtasks/{subtask_id:uuid}/claim")
+@@ -69,7 +69,7 @@
+                 session, db, worker_id, subtask_id, request
+             )
+     except NativeStreamError as error:
+-        raise _stream_http_error(error) from error
++        raise stream_http_error(error) from error
+ 
+ 
+ @router.post("/{worker_id:uuid}/subtasks/{subtask_id:uuid}/register")
+@@ -85,7 +85,7 @@
+                 session, db, worker_id, subtask_id, request
+             )
+     except NativeStreamError as error:
+-        raise _stream_http_error(error) from error
++        raise stream_http_error(error) from error
+ 
+ 
+ @router.post("/{worker_id:uuid}/subtasks/{subtask_id:uuid}/renew")
+@@ -101,7 +101,7 @@
+                 session, db, worker_id, subtask_id, request
+             )
+     except NativeStreamError as error:
+-        raise _stream_http_error(error) from error
++        raise stream_http_error(error) from error
+ 
+ 
+ @router.post("/{worker_id:uuid}/subtasks/{subtask_id:uuid}/replacements/authorize")
+@@ -117,7 +117,7 @@
+                 session, db, worker_id, subtask_id, request
+             )
+     except NativeStreamError as error:
+-        raise _stream_http_error(error) from error
++        raise stream_http_error(error) from error
+ 
+ 
+ @router.post("/{worker_id:uuid}/subtasks/{subtask_id:uuid}/replacements/confirm")
+@@ -133,7 +133,7 @@
+                 session, db, worker_id, subtask_id, request
+             )
+     except NativeStreamError as error:
+-        raise _stream_http_error(error) from error
++        raise stream_http_error(error) from error
+ 
+ 
+ @router.post("/{worker_id:uuid}/subtasks/{subtask_id:uuid}/replacements/retire")
+@@ -149,7 +149,7 @@
+                 session, db, worker_id, subtask_id, request
+             )
+     except NativeStreamError as error:
+-        raise _stream_http_error(error) from error
++        raise stream_http_error(error) from error
+ 
+ 
+ @router.post("/{worker_id:uuid}/subtasks/{subtask_id:uuid}/startup-stop")
+@@ -165,7 +165,7 @@
+                 session, db, worker_id, subtask_id, request
+             )
+     except NativeStreamError as error:
+-        raise _stream_http_error(error) from error
++        raise stream_http_error(error) from error
+ 
+ 
+ @router.post("/{worker_id:uuid}/graphs/{graph_id:uuid}/startup-abort")
+@@ -179,4 +179,4 @@
+         async with db.session_context(begin_transaction=True) as session:
+             return await models.abort_startup(session, db, worker_id, graph_id, request)
+     except NativeStreamError as error:
+-        raise _stream_http_error(error) from error
++        raise stream_http_error(error) from error

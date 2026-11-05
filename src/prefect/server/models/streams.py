@@ -21,8 +21,15 @@ from prefect.server.database import PrefectDBInterface, orm_models
 from prefect.server.models import task_runs as task_run_models
 from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.models.stream_executions import require_execution
+from prefect.server.models.stream_subtask_authority import (
+    release_allocations,
+    release_terminal_allocation,
+    require_parent_subtask,
+    require_subtask,
+)
 from prefect.server.schemas import core
 from prefect.server.schemas.states import TERMINAL_STATES, StateType
+from prefect.server.schemas.stream_subtasks import StreamSubtaskCredentials
 from prefect.server.schemas.streams import (
     ConsumerBinding,
     DeliveryToken,
@@ -105,10 +112,15 @@ class NativeStreamStore:
     def __init__(
         self,
         db: PrefectDBInterface,
-        execution: StreamExecutionCredentials | None = None,
+        execution: StreamExecutionCredentials | StreamSubtaskCredentials | None = None,
+        *,
+        session: AsyncSession | None = None,
+        graph_seal_id: UUID | None = None,
     ) -> None:
         self.db = db
         self.execution = execution
+        self._outer_session = session
+        self._graph_seal_id = graph_seal_id
 
     @asynccontextmanager
     async def _session(self) -> AsyncGenerator[AsyncSession, None]:
@@ -116,6 +128,9 @@ class NativeStreamStore:
             raise NativeStreamError(
                 "UNSUPPORTED_BACKEND", "Native streams require PostgreSQL 17"
             )
+        if self._outer_session is not None:
+            yield self._outer_session
+            return
         async with self.db.session_context(begin_transaction=True) as session:
             connection = await session.connection()
             version = connection.dialect.server_version_info
@@ -128,6 +143,8 @@ class NativeStreamStore:
     async def _peek(
         self, session: AsyncSession, stream_id: UUID
     ) -> orm_models.StreamPartition:
+        if isinstance(self.execution, StreamSubtaskCredentials):
+            await require_subtask(session, self.db, self.execution, stream_id=stream_id)
         stream = await session.get(self.db.StreamPartition, stream_id)
         if stream is None:
             raise NativeStreamError("NOT_FOUND", "Unknown stream")
@@ -141,9 +158,11 @@ class NativeStreamStore:
         update: bool = False,
         allowed_execution_states: Iterable[str] = ("ACTIVE",),
         require_manifest_sealed: bool = False,
+        allow_physical_cleanup: bool = False,
     ) -> orm_models.FlowRun:
         query = sa.select(self.db.FlowRun).where(self.db.FlowRun.id == flow_run_id)
         query = query.with_for_update() if update else query.with_for_update(read=True)
+        query = query.execution_options(populate_existing=True)
         flow = await session.scalar(query)
         if flow is None:
             raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
@@ -153,13 +172,37 @@ class NativeStreamStore:
             if require_manifest_sealed
             else execution_states
         )
-        authority = await require_execution(
-            session,
-            self.db,
-            flow_run_id,
-            self.execution,
-            allowed_states=validation_states,
-        )
+        if isinstance(self.execution, StreamSubtaskCredentials):
+            await require_subtask(
+                session, self.db, self.execution, flow_run_id=flow_run_id
+            )
+            authority = await session.scalar(
+                sa.select(self.db.StreamExecutionAuthority).where(
+                    self.db.StreamExecutionAuthority.flow_run_id == flow_run_id
+                )
+            )
+        else:
+            authority = await require_execution(
+                session,
+                self.db,
+                flow_run_id,
+                self.execution,
+                allowed_states=validation_states,
+            )
+            if (
+                require_manifest_sealed
+                and not allow_physical_cleanup
+                and await session.scalar(
+                    sa.select(self.db.StreamGraphRevision.id).where(
+                        self.db.StreamGraphRevision.flow_run_id == flow_run_id
+                    )
+                )
+                is not None
+            ):
+                raise NativeStreamError(
+                    "SUBTASK_AUTH_REQUIRED",
+                    "Physical data access requires an exact subtask grant",
+                )
         if (
             authority is not None
             and authority.state == "RELEASED"
@@ -204,6 +247,11 @@ class NativeStreamStore:
         self, session: AsyncSession, stream_ids: Iterable[UUID]
     ) -> dict[UUID, orm_models.StreamPartition]:
         ids = set(stream_ids)
+        if isinstance(self.execution, StreamSubtaskCredentials):
+            for stream_id in ids:
+                await require_subtask(
+                    session, self.db, self.execution, stream_id=stream_id
+                )
         rows = (
             await session.scalars(
                 sa.select(self.db.StreamPartition)
@@ -231,7 +279,14 @@ class NativeStreamStore:
         allow_failed: bool = False,
         metadata_lag: bool = False,
     ) -> orm_models.TaskRun:
-        await self._flow(session, flow_id, require_manifest_sealed=True)
+        await self._flow(
+            session,
+            flow_id,
+            require_manifest_sealed=True,
+            allow_physical_cleanup=allow_failed,
+        )
+        if isinstance(self.execution, StreamSubtaskCredentials):
+            await require_subtask(session, self.db, self.execution, task_run_id=task_id)
         task = await session.scalar(
             sa.select(self.db.TaskRun)
             .where(self.db.TaskRun.id == task_id)
@@ -463,6 +518,9 @@ class NativeStreamStore:
             created_at=manifest.created,
         )
 
+    # Shared manifest projection; existing v1 callers retain their private name.
+    submission_response = _submission_response
+
     async def reserve_submission(
         self, request: StreamSubmissionReserveRequest
     ) -> StreamSubmissionManifest:
@@ -483,6 +541,20 @@ class NativeStreamStore:
                 update=True,
                 allowed_execution_states=("CLAIMED", "ACTIVE", "RECOVERING"),
             )
+            if self._graph_seal_id is not None:
+                graph = await session.get(
+                    self.db.StreamGraphRevision, self._graph_seal_id
+                )
+                if (
+                    graph is None
+                    or graph.flow_run_id != request.flow_run_id
+                    or graph.profile != "partitioned-fixed-v1"
+                    or graph.state != "SEALED"
+                ):
+                    raise NativeStreamError(
+                        "UNSUPPORTED_TOPOLOGY",
+                        "Source relaxation requires this Flow's sealing fixed graph",
+                    )
             if (
                 flow.flow_version != request.flow_version
                 or flow.deployment_id != request.deployment_id
@@ -589,7 +661,7 @@ class NativeStreamStore:
                     "CAPACITY", "FlowRun submission metadata capacity is exhausted"
                 )
 
-            if request.role == "SOURCE":
+            if request.role == "SOURCE" and self._graph_seal_id is None:
                 source_root = await session.scalar(
                     sa.select(self.db.StreamSubmission.id).where(
                         self.db.StreamSubmission.flow_run_id == request.flow_run_id,
@@ -717,6 +789,7 @@ class NativeStreamStore:
             ).hexdigest()
             manifest = self.db.StreamSubmission(
                 flow_run_id=request.flow_run_id,
+                graph_revision_id=self._graph_seal_id,
                 submission_key=request.submission_key,
                 request_digest=request_digest,
                 manifest_digest=manifest_digest,
@@ -983,6 +1056,22 @@ class NativeStreamStore:
                 update=True,
                 allowed_execution_states=("CLAIMED", "ACTIVE"),
                 require_manifest_sealed=self.execution is not None,
+                allow_physical_cleanup=True,
+            )
+            if isinstance(self.execution, StreamSubtaskCredentials):
+                await require_subtask(
+                    session,
+                    self.db,
+                    self.execution,
+                    task_run_id=task_run_id,
+                    stream_id=stream_id,
+                )
+            if not isinstance(self.execution, StreamSubtaskCredentials):
+                await require_parent_subtask(session, self.db, flow_run_id, task_run_id)
+            await session.execute(
+                sa.select(self.db.TaskRun)
+                .where(self.db.TaskRun.id == task_run_id)
+                .with_for_update()
             )
             stream = await session.scalar(
                 sa.select(self.db.StreamPartition)
@@ -1040,6 +1129,13 @@ class NativeStreamStore:
                     "STALE_OWNER", "An admitted output cannot be rejected"
                 )
             _finish(stream, error)
+            physical = await session.scalar(
+                sa.select(self.db.StreamPhysicalSubtask).where(
+                    self.db.StreamPhysicalSubtask.task_run_id == task_run_id
+                )
+            )
+            if physical is not None:
+                await release_terminal_allocation(session, self.db, physical)
             result = StreamInfo.model_validate(stream)
         return result
 
@@ -1128,6 +1224,13 @@ class NativeStreamStore:
                     "STALE_OWNER", "An older attempt cannot fail a newer output owner"
                 )
             _finish(stream, error)
+            physical = await session.scalar(
+                sa.select(self.db.StreamPhysicalSubtask).where(
+                    self.db.StreamPhysicalSubtask.task_run_id == task_run_id
+                )
+            )
+            if physical is not None:
+                await release_terminal_allocation(session, self.db, physical)
             result = StreamInfo.model_validate(stream)
         return result
 
@@ -1645,7 +1748,16 @@ class NativeStreamStore:
 
     async def status(self, stream_id: UUID) -> StreamInfo:
         async with self._session() as session:
-            return StreamInfo.model_validate(await self._peek(session, stream_id))
+            stream = await self._peek(session, stream_id)
+            if isinstance(self.execution, StreamSubtaskCredentials):
+                stream = await session.scalar(
+                    sa.select(self.db.StreamPartition)
+                    .where(self.db.StreamPartition.id == stream_id)
+                    .with_for_update(read=True)
+                    .execution_options(populate_existing=True)
+                )
+                assert stream is not None
+            return StreamInfo.model_validate(stream)
 
     async def read_prefix(self, stream_id: UUID, limit: int) -> list[StreamEnvelope]:
         _attempt(limit)
@@ -1725,6 +1837,44 @@ class NativeStreamStore:
                 raise NativeStreamError(
                     "TERMINAL_CONFLICT", "Only a final FlowRun can release payloads"
                 )
+            graph = await session.scalar(
+                sa.select(self.db.StreamGraphRevision)
+                .where(self.db.StreamGraphRevision.flow_run_id == flow_run_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            physical_subtasks = []
+            if graph is not None:
+                if (
+                    graph.startup_completed_at is None
+                    and graph.abort_operation_id is None
+                ):
+                    raise NativeStreamError(
+                        "STARTUP_ABORT_REQUIRED",
+                        "Pre-activation graph requires its exact startup abort receipt before release",
+                    )
+                physical_subtasks = list(
+                    (
+                        await session.scalars(
+                            sa.select(self.db.StreamPhysicalSubtask)
+                            .where(
+                                self.db.StreamPhysicalSubtask.graph_revision_id
+                                == graph.id
+                            )
+                            .order_by(self.db.StreamPhysicalSubtask.id)
+                            .with_for_update()
+                        )
+                    ).all()
+                )
+            if any(
+                subtask.assigned_worker_id is not None
+                and not subtask.physical_slot_released
+                for subtask in physical_subtasks
+            ):
+                raise NativeStreamError(
+                    "PHYSICAL_STOP_REQUIRED",
+                    "Assigned physical processes require exact worker death receipts before release",
+                )
             bound_task_ids = set(
                 (
                     await session.scalars(
@@ -1757,6 +1907,20 @@ class NativeStreamStore:
                         "METADATA_NOT_READY",
                         "Bound TaskRun terminal metadata has not been recorded",
                     )
+            if graph is not None:
+                await release_allocations(
+                    session, self.db, [subtask.id for subtask in physical_subtasks]
+                )
+                graph.state = "RELEASED"
+                await session.execute(
+                    sa.update(self.db.StreamSubtaskGrant)
+                    .where(
+                        self.db.StreamSubtaskGrant.subtask_id.in_(
+                            [subtask.id for subtask in physical_subtasks]
+                        )
+                    )
+                    .values(state="RELEASED")
+                )
             deployment_snapshot = await session.scalar(
                 sa.select(self.db.NativeStreamDeploymentSnapshot)
                 .where(
@@ -1868,3 +2032,8 @@ class NativeStreamStore:
             for replacement in replacements:
                 replacement.state = "RELEASED"
         return count
+
+
+# Shared storage protocol helpers; preserve existing private callers.
+canonical_stream_payload = _canonical
+finish_stream_partition = _finish

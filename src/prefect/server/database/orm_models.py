@@ -841,6 +841,9 @@ class StreamSubmission(Base):
     flow_run_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("flow_run.id", ondelete="CASCADE"), index=True
     )
+    graph_revision_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        sa.ForeignKey("stream_graph_revision.id")
+    )
     submission_key: Mapped[str] = mapped_column(sa.String(128))
     request_digest: Mapped[str] = mapped_column(sa.String(64))
     manifest_digest: Mapped[str] = mapped_column(sa.String(64))
@@ -905,11 +908,294 @@ class StreamSubmission(Base):
             "uq_stream_submission__one_source_per_flow",
             "flow_run_id",
             unique=True,
-            postgresql_where=sa.text("role = 'SOURCE'"),
-            sqlite_where=sa.text("role = 'SOURCE'"),
+            postgresql_where=sa.text("role = 'SOURCE' AND graph_revision_id IS NULL"),
+            sqlite_where=sa.text("role = 'SOURCE' AND graph_revision_id IS NULL"),
         ),
         sa.Index("ix_stream_submission__flow_run_id_state", "flow_run_id", "state"),
     )
+
+
+class StreamGraphRevision(Base):
+    """Immutable fixed-P2 topology; records remain in StreamPartition."""
+
+    flow_run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("flow_run.id", ondelete="CASCADE"), unique=True
+    )
+    operation_id: Mapped[uuid.UUID]
+    profile: Mapped[str]
+    assignment_epoch: Mapped[int]
+    graph_digest: Mapped[str] = mapped_column(sa.String(64))
+    request_digest: Mapped[str] = mapped_column(sa.String(64))
+    declaration: Mapped[dict[str, Any]] = mapped_column(JSON)
+    state: Mapped[str]
+    admission_operation_id: Mapped[Optional[uuid.UUID]]
+    admission_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    startup_completed_at: Mapped[Optional[DateTime]]
+    activation_operation_id: Mapped[Optional[uuid.UUID]]
+    activation_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    abort_operation_id: Mapped[Optional[uuid.UUID]]
+    abort_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    abort_error: Mapped[Optional[str]] = mapped_column(sa.Text)
+    placement_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+
+    __table_args__: Any = (
+        sa.CheckConstraint(
+            "profile = 'partitioned-fixed-v1' AND assignment_epoch = 1",
+            name="profile_valid",
+        ),
+        sa.CheckConstraint(
+            "length(graph_digest) = 64 AND length(request_digest) = 64",
+            name="digests_valid",
+        ),
+        sa.CheckConstraint(
+            "state IN ('SEALED', 'ADMITTED', 'ABORTING', 'RELEASED')",
+            name="state_valid",
+        ),
+        sa.CheckConstraint(
+            "(admission_operation_id IS NULL AND admission_request_digest IS NULL) OR (admission_operation_id IS NOT NULL AND admission_request_digest IS NOT NULL AND length(admission_request_digest) = 64)",
+            name="admission_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(startup_completed_at IS NULL AND activation_operation_id IS NULL AND activation_request_digest IS NULL) OR (startup_completed_at IS NOT NULL AND activation_operation_id IS NOT NULL AND activation_request_digest IS NOT NULL AND length(activation_request_digest) = 64)",
+            name="activation_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(abort_operation_id IS NULL AND abort_request_digest IS NULL AND abort_error IS NULL) OR (abort_operation_id IS NOT NULL AND abort_request_digest IS NOT NULL AND length(abort_request_digest) = 64 AND abort_error IS NOT NULL AND length(abort_error) BETWEEN 1 AND 4096 AND startup_completed_at IS NULL AND state IN ('ABORTING', 'RELEASED'))",
+            name="abort_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(state = 'SEALED' AND admission_operation_id IS NULL AND startup_completed_at IS NULL AND abort_operation_id IS NULL) OR (state = 'ADMITTED' AND admission_operation_id IS NOT NULL AND abort_operation_id IS NULL) OR (state IN ('ABORTING', 'RELEASED') AND abort_operation_id IS NOT NULL AND startup_completed_at IS NULL) OR (state = 'RELEASED' AND abort_operation_id IS NULL AND startup_completed_at IS NOT NULL AND admission_operation_id IS NOT NULL)",
+            name="lifecycle_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "placement_digest IS NULL OR length(placement_digest) = 64",
+            name="placement_digest_valid",
+        ),
+    )
+
+
+class StreamOperatorRun(Base):
+    """Logical operator grouping, independent from physical TaskRun invocations."""
+
+    graph_revision_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("stream_graph_revision.id", ondelete="CASCADE")
+    )
+    operator_uid: Mapped[str] = mapped_column(sa.String(64))
+    role: Mapped[str]
+    parallelism: Mapped[int]
+    specification: Mapped[dict[str, Any]] = mapped_column(JSON)
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("graph_revision_id", "operator_uid"),
+        sa.CheckConstraint(
+            "role IN ('SOURCE', 'OPERATOR') AND parallelism = 2",
+            name="fixed_shape_valid",
+        ),
+    )
+
+
+class StreamPhysicalSubtask(Base):
+    """Stable physical invocation; replacement never creates another TaskRun."""
+
+    graph_revision_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("stream_graph_revision.id", ondelete="CASCADE"), index=True
+    )
+    operator_run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("stream_operator_run.id", ondelete="CASCADE")
+    )
+    subtask_index: Mapped[int]
+    assignment_epoch: Mapped[int]
+    task_run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("task_run.id"), unique=True
+    )
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("stream_submission.id"), unique=True
+    )
+    input_stream_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        sa.ForeignKey("stream_partition.id")
+    )
+    output_stream_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("stream_partition.id"), unique=True
+    )
+    current_grant_id: Mapped[Optional[uuid.UUID]]
+    physical_epoch: Mapped[int] = mapped_column(default=0, server_default="0")
+    assigned_worker_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        sa.ForeignKey("worker.id"), index=True
+    )
+    physical_slot_released: Mapped[bool] = mapped_column(
+        default=False, server_default=sa.false()
+    )
+    startup_stop_operation_id: Mapped[Optional[uuid.UUID]]
+    startup_stop_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    startup_stop_witness: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    startup_stop_unstarted: Mapped[bool] = mapped_column(
+        default=False, server_default=sa.false()
+    )
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("operator_run_id", "subtask_index"),
+        sa.CheckConstraint(
+            "subtask_index BETWEEN 0 AND 1 AND assignment_epoch = 1",
+            name="assignment_valid",
+        ),
+        sa.CheckConstraint(
+            "(physical_epoch = 0 AND current_grant_id IS NULL) OR (physical_epoch BETWEEN 1 AND 64 AND current_grant_id IS NOT NULL)",
+            name="grant_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(startup_stop_operation_id IS NULL AND startup_stop_request_digest IS NULL AND startup_stop_witness IS NULL AND startup_stop_unstarted = false) OR (startup_stop_operation_id IS NOT NULL AND startup_stop_request_digest IS NOT NULL AND length(startup_stop_request_digest) = 64 AND ((startup_stop_witness IS NOT NULL AND startup_stop_unstarted = false) OR (startup_stop_witness IS NULL AND startup_stop_unstarted = true)))",
+            name="startup_stop_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "assigned_worker_id IS NOT NULL OR physical_slot_released = false",
+            name="slot_assignment_valid",
+        ),
+    )
+
+
+class StreamSubtaskGrant(Base):
+    """One physical process authority; only digests of capabilities are stored."""
+
+    subtask_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("stream_physical_subtask.id", ondelete="CASCADE")
+    )
+    operation_id: Mapped[uuid.UUID]
+    request_digest: Mapped[str] = mapped_column(sa.String(64))
+    physical_epoch: Mapped[int]
+    holder_id: Mapped[uuid.UUID]
+    capability_digest: Mapped[str] = mapped_column(sa.String(64))
+    event_public_key: Mapped[str] = mapped_column(sa.String(64))
+    event_key_id: Mapped[str] = mapped_column(sa.String(64))
+    scope_digest: Mapped[str] = mapped_column(sa.String(64))
+    launcher_binding_kind: Mapped[str]
+    flow_generation: Mapped[int]
+    flow_holder_id: Mapped[uuid.UUID]
+    worker_id: Mapped[Optional[uuid.UUID]]
+    work_pool_id: Mapped[Optional[uuid.UUID]]
+    host_id: Mapped[uuid.UUID]
+    boot_id: Mapped[uuid.UUID]
+    launcher_process_id: Mapped[int]
+    launcher_start_ticks: Mapped[int] = mapped_column(sa.BigInteger)
+    child_process_id: Mapped[Optional[int]]
+    process_start_ticks: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    registration_operation_id: Mapped[Optional[uuid.UUID]]
+    state: Mapped[str]
+    last_renewed_at: Mapped[DateTime]
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("subtask_id", "physical_epoch"),
+        sa.UniqueConstraint("subtask_id", "operation_id"),
+        sa.CheckConstraint("physical_epoch BETWEEN 1 AND 64", name="epoch_bounded"),
+        sa.CheckConstraint(
+            "length(request_digest) = 64 AND length(capability_digest) = 64 AND length(event_public_key) = 64 AND length(event_key_id) = 64 AND length(scope_digest) = 64",
+            name="digests_valid",
+        ),
+        sa.CheckConstraint(
+            "state IN ('CLAIMED', 'REGISTERED', 'RETIRED', 'RELEASED')",
+            name="state_valid",
+        ),
+        sa.CheckConstraint(
+            "(child_process_id IS NULL AND process_start_ticks IS NULL AND registration_operation_id IS NULL) OR (child_process_id IS NOT NULL AND process_start_ticks IS NOT NULL AND child_process_id > 0 AND process_start_ticks > 0 AND registration_operation_id IS NOT NULL)",
+            name="process_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "state != 'REGISTERED' OR child_process_id IS NOT NULL",
+            name="registration_required",
+        ),
+        sa.CheckConstraint(
+            "state != 'CLAIMED' OR child_process_id IS NULL", name="unregistered_claim"
+        ),
+        sa.CheckConstraint(
+            "launcher_process_id > 0 AND launcher_start_ticks > 0 AND flow_generation BETWEEN 1 AND 64",
+            name="launcher_identity_valid",
+        ),
+        sa.CheckConstraint(
+            "(launcher_binding_kind IN ('DEPLOYMENT', 'ASSIGNED_WORKER') AND worker_id IS NOT NULL AND work_pool_id IS NOT NULL) OR (launcher_binding_kind = 'FLOW_AUTHORITY_LOCAL' AND worker_id IS NULL AND work_pool_id IS NULL)",
+            name="launcher_binding_valid",
+        ),
+    )
+
+
+class StreamSubtaskReplacement(Base):
+    """Bounded exact-replay local death proof and compare-and-swap journal."""
+
+    subtask_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("stream_physical_subtask.id", ondelete="CASCADE")
+    )
+    operation_id: Mapped[uuid.UUID]
+    expected_grant_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("stream_subtask_grant.id")
+    )
+    expected_physical_epoch: Mapped[int]
+    challenge_digest: Mapped[str] = mapped_column(sa.String(64))
+    request_digest: Mapped[str] = mapped_column(sa.String(64))
+    verification_not_before: Mapped[DateTime]
+    state: Mapped[str]
+    confirm_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    new_grant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        sa.ForeignKey("stream_subtask_grant.id")
+    )
+    death_witness: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    retirement_outcome: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+
+    __table_args__: Any = (
+        sa.UniqueConstraint("subtask_id", "operation_id"),
+        sa.UniqueConstraint("expected_grant_id"),
+        sa.CheckConstraint(
+            "expected_physical_epoch BETWEEN 1 AND 64", name="epoch_bounded"
+        ),
+        sa.CheckConstraint(
+            "length(challenge_digest) = 64 AND length(request_digest) = 64",
+            name="digests_valid",
+        ),
+        sa.CheckConstraint(
+            "(state = 'AUTHORIZED' AND confirm_digest IS NULL AND new_grant_id IS NULL AND death_witness IS NULL AND retirement_outcome IS NULL) OR (state = 'CONFIRMED' AND confirm_digest IS NOT NULL AND length(confirm_digest) = 64 AND new_grant_id IS NOT NULL AND death_witness IS NOT NULL AND retirement_outcome IS NULL) OR (state = 'RETIRED' AND confirm_digest IS NOT NULL AND length(confirm_digest) = 64 AND new_grant_id IS NULL AND death_witness IS NOT NULL AND retirement_outcome IS NOT NULL)",
+            name="confirmation_shape_valid",
+        ),
+    )
+
+
+class StreamWorkerCapability(Base):
+    """Bounded live protocol advertisement, never a process-death witness."""
+
+    worker_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("worker.id", ondelete="CASCADE"), unique=True
+    )
+    work_pool_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("work_pool.id", ondelete="CASCADE")
+    )
+    protocol: Mapped[str]
+    protocol_version: Mapped[int]
+    host_id: Mapped[uuid.UUID]
+    boot_id: Mapped[uuid.UUID]
+    launcher_process_id: Mapped[int] = mapped_column(sa.BigInteger)
+    launcher_start_ticks: Mapped[int] = mapped_column(sa.BigInteger)
+    last_renewed_at: Mapped[DateTime]
+
+    __table_args__: Any = (
+        sa.CheckConstraint(
+            "protocol = 'partitioned-fixed-v1' AND protocol_version = 1",
+            name="protocol_valid",
+        ),
+        sa.CheckConstraint(
+            "launcher_process_id > 0 AND launcher_start_ticks > 0",
+            name="process_identity_valid",
+        ),
+    )
+
+
+class StreamSubtaskAllocation(Base):
+    """DB-authoritative reservation against ordinary V2 concurrency counters."""
+
+    subtask_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("stream_physical_subtask.id", ondelete="CASCADE")
+    )
+    concurrency_limit_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("concurrency_limit_v2.id", ondelete="CASCADE")
+    )
+    released: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+
+    __table_args__: Any = (sa.UniqueConstraint("subtask_id", "concurrency_limit_id"),)
 
 
 class StreamFiniteSubmission(Base):
@@ -1191,7 +1477,10 @@ class NativeStreamDeploymentSnapshot(Base):
     __table_args__: Any = (
         sa.UniqueConstraint("flow_run_id"),
         sa.CheckConstraint("protocol_version = 1", name="protocol_version_valid"),
-        sa.CheckConstraint("profile = 'bounded-linear-v1'", name="profile_valid"),
+        sa.CheckConstraint(
+            "profile IN ('bounded-linear-v1', 'partitioned-fixed-v1')",
+            name="profile_valid",
+        ),
         sa.CheckConstraint(
             "resource_profile = 'bounded-default-v1'",
             name="resource_profile_valid",

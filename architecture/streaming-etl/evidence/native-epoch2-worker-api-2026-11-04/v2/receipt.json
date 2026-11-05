@@ -1,0 +1,155 @@
+{
+  "base_commit": "268d7177c7376eeb9848c2c6371810f1be5e0f22",
+  "commands": [
+    "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_worker_api uv run --no-sync pytest tests/server/api/test_stream_workers.py -k 'not sqlite' -q --junitxml=/tmp/native-epoch2-worker-api-pg-final-02.xml",
+    "PREFECT_SERVER_DATABASE_CONNECTION_URL=sqlite+aiosqlite:////tmp/native_epoch2_worker_api_sqlite.db uv run --no-sync pytest tests/server/api/test_stream_workers.py -k 'not (test_worker_poll_advertises_p2_without_assignments or test_worker_poll_wrong_pool_never_registers_capability or test_deployed_worker_poll_contains_only_own_assignments_and_parameters or test_worker_control_proof_rejects_sibling_session_and_weak_locks or test_startup_abort_and_competing_admission_lock_workers_in_one_order)' -q --junitxml=/tmp/native-epoch2-worker-api-sqlite-final-02.xml",
+    "uv tool run --from ruff==0.15.19 ruff check src/prefect/server/models/stream_workers.py src/prefect/server/api/stream_workers.py tests/server/api/test_stream_workers.py",
+    "uv tool run --from ruff==0.15.19 ruff format --check src/prefect/server/models/stream_workers.py src/prefect/server/api/stream_workers.py tests/server/api/test_stream_workers.py",
+    "uv run --no-sync pyright src/prefect/server/models/stream_workers.py src/prefect/server/api/stream_workers.py"
+  ],
+  "coverage": [
+    "Protected real server API plus real PostgreSQL17/SQLite migrations and worker heartbeat rows.",
+    "Zero-assignment capability advertisement, same-row renewal and no topology/Task/grant side effects.",
+    "Basic-only control boundary; child/bearer/missing/wrong credentials never authorize worker controls.",
+    "Strict bounded and secret-free validation; all nine SQLite controls refuse UNSUPPORTED_BACKEND before locator/write.",
+    "Real P2 deployment snapshot, enrollment, ordinary Flow Running, seal and explicit two-worker placement; each poll returns only own assignments/parameters and bounded task/output hints.",
+    "Cross-worker claim refusal; session/sibling/principal drift and insufficient prelocked graph/subtask lock strength rejected.",
+    "Real PostgreSQL interleaving: higher-ID worker requests startup abort while competing Flow admission holds lower-ID Worker UPDATE; server Worker SHARE wait is observed, admission refuses REGION_CAPACITY and rolls back, then abort releases four slots. No deadlock/partial contender admission."
+  ],
+  "earned_percent": 0,
+  "failure_history": [
+    "v1 first PG/SQLite attempts could not collect during a transient shared-core SyntaxError; raw logs retained in v1.",
+    "Interleaving observer01 timed out because pg_stat_activity snapshots were cached inside the observer transaction. Test-only pg_stat_clear_snapshot before each sample produced passing successor; product files remained unchanged."
+  ],
+  "files": {
+    "interleaving-observer-failed.log": {
+      "bytes": 21985,
+      "sha256": "83fa4a713b268daaa6269f864435d925049a134e02d3e00c1e5297e3944cc9b4"
+    },
+    "interleaving-observer-failed.xml": {
+      "bytes": 8702,
+      "sha256": "b147c5cdbfefd367b201643b927aa3c4cc5b0713c395b17d2907daab6ecf57e8"
+    },
+    "interleaving-successor.log": {
+      "bytes": 114,
+      "sha256": "35da3f59277f0be62558c56104913415635478047bb5dd7cff7e22e5afb25538"
+    },
+    "interleaving-successor.xml": {
+      "bytes": 400,
+      "sha256": "31987b8d5dc5a5f525baa8d4a8a2aec8fc655325737d7f8df60e548d139a2484"
+    },
+    "postgresql.log": {
+      "bytes": 114,
+      "sha256": "14705137f0f26d05cc19a49f4c09f84e771abd2fb53a984c5e0c77d88662f747"
+    },
+    "postgresql.xml": {
+      "bytes": 2150,
+      "sha256": "483026c96855721b0b925eccb5fafb2beddf4bae22ea6800e1c012c59e21dc4b"
+    },
+    "pyright.log": {
+      "bytes": 37,
+      "sha256": "6d88a1b220adb7a3d62092b6e38431f0b3fe8babe9864fab90e5849766260332"
+    },
+    "source.patch": {
+      "bytes": 54989,
+      "sha256": "473b01f878e02b5b733da8f2a0601b02c79b71f7194abe462885e2fd8e6062ad"
+    },
+    "source/src/prefect/server/api/stream_workers.py": {
+      "bytes": 6531,
+      "sha256": "44e56f03ac0a5ab60505dc726f4810b39de624fe042c5515ceefa93d06d7393b"
+    },
+    "source/src/prefect/server/models/stream_workers.py": {
+      "bytes": 20161,
+      "sha256": "88119be5dd0502b7c6b4d9bed669dc8f96b249efbd6bc1c046b102c13da86a2d"
+    },
+    "source/tests/server/api/test_stream_workers.py": {
+      "bytes": 26218,
+      "sha256": "0eece3dc3d98ec2623286c1eeaab9bcaa3ebff76da61611208ea8e705361da05"
+    },
+    "sqlite.log": {
+      "bytes": 114,
+      "sha256": "a088898e2b891225d73eaf1fb2f511fa806bae1c77530119671ece5b8793bd94"
+    },
+    "sqlite.xml": {
+      "bytes": 2765,
+      "sha256": "9ebc90e8ee76cdb1bb18cf4c1e2689bbe816ef97b9a86555047bc9b6a6390d4c"
+    }
+  },
+  "full_native_acceptance": false,
+  "limits": [
+    "This is server API/control metadata and database-lock proof, not execution of actual physical worker Tasks.",
+    "The broader shared implementation remained in development; these gates bind the three owned files and explicitly listed dependency snapshots only.",
+    "Whole native startup/process-loss/retirement, actual two-worker document processing and all ADR criteria require the separate frozen union gate and personal architect verification.",
+    "Read-only review identified failed-start cleanup dropping a child handle if kill/wait fails; worker owner and architect were notified. That worker-module correction lies outside this API component."
+  ],
+  "owned_source_stable": true,
+  "product_delta_from_v1": "NONE; only the API test file changed to add real PostgreSQL admission/startup-abort interleaving.",
+  "recorded_at_utc": "2026-11-04T23:39:03.955468+00:00",
+  "results": {
+    "interleaving_successor": {
+      "deselected": 21,
+      "passed": 1,
+      "seconds": 15.75
+    },
+    "postgresql17": {
+      "deselected_sqlite": 9,
+      "passed": 13,
+      "seconds": 17.91
+    },
+    "pyright_errors": 0,
+    "pyright_warnings": 0,
+    "ruff_check": "PASS",
+    "ruff_format_check": "PASS",
+    "ruff_version": "0.15.19",
+    "sqlite": {
+      "deselected_postgresql": 5,
+      "passed": 17,
+      "seconds": 15.8
+    }
+  },
+  "schema": "native-worker-api-component-v2",
+  "scope": "Implementation component evidence only; the independent architect owns acceptance.",
+  "shared_dependency_drift": [],
+  "source_after": {
+    "dependencies": {
+      "src/prefect/server/api/__init__.py": "3f26fb5ebd9e94dd1033d1a109ca98bfe7bc865833af0de5620bd6328815a2ad",
+      "src/prefect/server/api/server.py": "c6f093188925f46ba1c859fe86895683fce49adc2438fce146bc43b4a7109f9c",
+      "src/prefect/server/database/_migrations/versions/postgresql/2026_11_04_120000_b48f2e6a7c31_add_physical_stream_topology.py": "bd4fad99ebf79c0189fb4aca7d0f41ce4e602d178093c64795cb7192311eba7c",
+      "src/prefect/server/database/_migrations/versions/sqlite/2026_11_04_120000_e59a3f7b8d42_add_physical_stream_topology.py": "abce35e036b0f7c974350b0a88c4d37f90cc950bdab1914b46e16d177e783473",
+      "src/prefect/server/database/interface.py": "d1cea1f08c9e977c4e275a26d50aea8a5f509a23617094dac0b67d3c801f796e",
+      "src/prefect/server/database/orm_models.py": "42a380a530039d6f1178feb1c6fabc5ac6075831a781e03a73643abdcffe24f4",
+      "src/prefect/server/models/stream_subtask_authority.py": "3d35b347e7a9310b7af3a53f271ffdc55d8845d0b804aa13c46ade25bad700b5",
+      "src/prefect/server/models/stream_subtasks.py": "2bd3767ef3d0234cf9348e62497b2c84ceb836ac7dd8e3b9e29bc6350b2a6abd",
+      "src/prefect/server/schemas/stream_subtasks.py": "db5f0b3c6099265906849c514a21242090c0cd6064fa973d028b82aa6107b3b4"
+    },
+    "owned": {
+      "src/prefect/server/api/stream_workers.py": "44e56f03ac0a5ab60505dc726f4810b39de624fe042c5515ceefa93d06d7393b",
+      "src/prefect/server/models/stream_workers.py": "88119be5dd0502b7c6b4d9bed669dc8f96b249efbd6bc1c046b102c13da86a2d",
+      "tests/server/api/test_stream_workers.py": "0eece3dc3d98ec2623286c1eeaab9bcaa3ebff76da61611208ea8e705361da05"
+    }
+  },
+  "source_before": {
+    "base_commit": "268d7177c7376eeb9848c2c6371810f1be5e0f22",
+    "dependencies": {
+      "src/prefect/server/api/__init__.py": "3f26fb5ebd9e94dd1033d1a109ca98bfe7bc865833af0de5620bd6328815a2ad",
+      "src/prefect/server/api/server.py": "c6f093188925f46ba1c859fe86895683fce49adc2438fce146bc43b4a7109f9c",
+      "src/prefect/server/database/_migrations/versions/postgresql/2026_11_04_120000_b48f2e6a7c31_add_physical_stream_topology.py": "bd4fad99ebf79c0189fb4aca7d0f41ce4e602d178093c64795cb7192311eba7c",
+      "src/prefect/server/database/_migrations/versions/sqlite/2026_11_04_120000_e59a3f7b8d42_add_physical_stream_topology.py": "abce35e036b0f7c974350b0a88c4d37f90cc950bdab1914b46e16d177e783473",
+      "src/prefect/server/database/interface.py": "d1cea1f08c9e977c4e275a26d50aea8a5f509a23617094dac0b67d3c801f796e",
+      "src/prefect/server/database/orm_models.py": "42a380a530039d6f1178feb1c6fabc5ac6075831a781e03a73643abdcffe24f4",
+      "src/prefect/server/models/stream_subtask_authority.py": "3d35b347e7a9310b7af3a53f271ffdc55d8845d0b804aa13c46ade25bad700b5",
+      "src/prefect/server/models/stream_subtasks.py": "2bd3767ef3d0234cf9348e62497b2c84ceb836ac7dd8e3b9e29bc6350b2a6abd",
+      "src/prefect/server/schemas/stream_subtasks.py": "db5f0b3c6099265906849c514a21242090c0cd6064fa973d028b82aa6107b3b4"
+    },
+    "owned": {
+      "src/prefect/server/api/stream_workers.py": "44e56f03ac0a5ab60505dc726f4810b39de624fe042c5515ceefa93d06d7393b",
+      "src/prefect/server/models/stream_workers.py": "88119be5dd0502b7c6b4d9bed669dc8f96b249efbd6bc1c046b102c13da86a2d",
+      "tests/server/api/test_stream_workers.py": "0eece3dc3d98ec2623286c1eeaab9bcaa3ebff76da61611208ea8e705361da05"
+    }
+  },
+  "supersedes": {
+    "path": "/tmp/native-epoch2-worker-api-component-v1/receipt.json",
+    "preserve": "v1 source/results and pre-collection failures remain retained.",
+    "sha256": "ec121556835015fd8af4fa1b4b600e9d95c5e9bd7482747957a6f3f8d0a0038d"
+  }
+}

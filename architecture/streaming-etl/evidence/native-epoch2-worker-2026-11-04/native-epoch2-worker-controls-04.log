@@ -1,0 +1,234 @@
+.......FFFF.                                                             [100%]
+=================================== FAILURES ===================================
+_______ test_missing_optional_worker_endpoint_preserves_ordinary_client ________
+
+bootstrap_endpoint = ('http://127.0.0.1:35765/api', <queue.Queue object at 0x7f46f52024e0>)
+
+    async def test_missing_optional_worker_endpoint_preserves_ordinary_client(
+        bootstrap_endpoint: tuple[str, queue.Queue[tuple[str, str]]],
+    ):
+        async with PrefectClient(
+            bootstrap_endpoint[0], auth_string="owned-worker:transport-control"
+        ) as client:
+            worker = make_worker(client)
+            supervisor = NativeStreamSubtaskSupervisor(worker)
+            with fail_after(10):
+                await supervisor.run()
+            assert not supervisor.runs
+            path, scheme = bootstrap_endpoint[1].get_nowait()
+>           assert path == f"/api/streams/v2/workers/{worker.backend_id}/poll"
+E           AssertionError: assert '/api/csrf-to...-7539352ecfc3' == '/api/streams...19eb25d0/poll'
+E             
+E             - /api/streams/v2/workers/26260a93-e684-4a0b-9ff6-0e2019eb25d0/poll
+E             + /api/csrf-token?client=cc049f6e-0349-41e2-9d10-7539352ecfc3
+
+tests/workers/test_stream_subtasks.py:290: AssertionError
+----------------------------- Captured stderr call -----------------------------
+23:25:35.124 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:35765/api/
+23:25:35.142 | WARNING | prefect.workers.stream-subtask-control - Assigned stream subtask None did not advance: UNSUPPORTED_BACKEND
+------------------------------ Captured log call -------------------------------
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:35765/api/
+WARNING  prefect.workers.stream-subtask-control:_stream_subtasks.py:271 Assigned stream subtask None did not advance: UNSUPPORTED_BACKEND
+___ test_worker_auth_refusal_is_not_treated_as_an_old_optional_endpoint[401] ___
+  + Exception Group Traceback (most recent call last):
+  |   File "/workspace/ariadne/tests/workers/test_stream_subtasks.py", line 314, in test_worker_auth_refusal_is_not_treated_as_an_old_optional_endpoint
+  |     async with create_task_group() as group:
+  |                ^^^^^^^^^^^^^^^^^^^
+  |   File "/workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 815, in __aexit__
+  |     raise BaseExceptionGroup(
+  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/workspace/ariadne/tests/workers/test_stream_subtasks.py", line 319, in test_worker_auth_refusal_is_not_treated_as_an_old_optional_endpoint
+    |     assert path == f"/api/streams/v2/workers/{worker.backend_id}/poll"
+    | AssertionError: assert '/api/csrf-to...-ece5a90789ae' == '/api/streams...619685aa/poll'
+    |   
+    |   - /api/streams/v2/workers/512ca824-40d1-4618-b48c-0d8a619685aa/poll
+    |   + /api/csrf-token?client=62901a22-1f03-45b0-9959-ece5a90789ae
+    +------------------------------------
+----------------------------- Captured stderr call -----------------------------
+23:25:35.702 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:46099/api/
+23:25:35.714 | WARNING | prefect.workers.stream-subtask-control - Assigned stream subtask None did not advance: HTTP_ERROR
+------------------------------ Captured log call -------------------------------
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:46099/api/
+WARNING  prefect.workers.stream-subtask-control:_stream_subtasks.py:271 Assigned stream subtask None did not advance: HTTP_ERROR
+___ test_worker_auth_refusal_is_not_treated_as_an_old_optional_endpoint[403] ___
+  + Exception Group Traceback (most recent call last):
+  |   File "/workspace/ariadne/tests/workers/test_stream_subtasks.py", line 314, in test_worker_auth_refusal_is_not_treated_as_an_old_optional_endpoint
+  |     async with create_task_group() as group:
+  |                ^^^^^^^^^^^^^^^^^^^
+  |   File "/workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 815, in __aexit__
+  |     raise BaseExceptionGroup(
+  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/workspace/ariadne/tests/workers/test_stream_subtasks.py", line 319, in test_worker_auth_refusal_is_not_treated_as_an_old_optional_endpoint
+    |     assert path == f"/api/streams/v2/workers/{worker.backend_id}/poll"
+    | AssertionError: assert '/api/csrf-to...-14d0dac601f4' == '/api/streams...ffca105e/poll'
+    |   
+    |   - /api/streams/v2/workers/2f073f67-5e4f-4dc2-afb8-2de0ffca105e/poll
+    |   + /api/csrf-token?client=86942de2-f618-4bb9-a4a2-14d0dac601f4
+    +------------------------------------
+----------------------------- Captured stderr call -----------------------------
+23:25:36.275 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:36205/api/
+23:25:36.287 | WARNING | prefect.workers.stream-subtask-control - Assigned stream subtask None did not advance: HTTP_ERROR
+------------------------------ Captured log call -------------------------------
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:36205/api/
+WARNING  prefect.workers.stream-subtask-control:_stream_subtasks.py:271 Assigned stream subtask None did not advance: HTTP_ERROR
+____ test_same_child_code_preflight_precedes_any_grant_or_task_body[False] _____
+
+tmp_path = PosixPath('/tmp/pytest-of-agent/pytest-136/test_same_child_code_preflight0')
+bootstrap_endpoint = ('http://127.0.0.1:42385/api', <queue.Queue object at 0x7f46f4496e40>)
+wrong_artifact = False
+
+    @pytest.mark.parametrize("wrong_artifact", [False, True])
+    def test_same_child_code_preflight_precedes_any_grant_or_task_body(
+        tmp_path: Path,
+        bootstrap_endpoint: tuple[str, queue.Queue[tuple[str, str]]],
+        wrong_artifact: bool,
+    ):
+        identity = native_task_code_identity(partitioned_source.fn)
+        configuration = StreamWorkerTaskConfiguration(
+            entrypoint=str(
+                Path(__file__).resolve().parents[1]
+                / "fixtures/native_partitioned_stream_flow.py"
+            )
+            + ":partitioned_source",
+            task_key=identity.task_key,
+            role="SOURCE",
+            task_version=partitioned_source.version,
+            artifact_digest="00" * 32 if wrong_artifact else identity.artifact_digest,
+            context_key="ctx",
+            timeout_seconds=None,
+            task_policy=TaskRunPolicy(
+                retries=partitioned_source.retries,
+                retry_delay=partitioned_source.retry_delay_seconds,
+                retry_jitter_factor=partitioned_source.retry_jitter_factor,
+            ),
+            effective_tags=[],
+            input_key=None,
+            parameters={
+                "split": 0,
+                "count": 8,
+                "directory": str(tmp_path),
+                "fault": "none",
+            },
+        )
+        options = {
+            "api_url": bootstrap_endpoint[0],
+            "cwd": Path(__file__).resolve().parents[2],
+            "stream_output": False,
+            "preflight": {
+                "role": "SOURCE",
+                "configuration": configuration.model_dump(mode="json"),
+            },
+        }
+        if wrong_artifact:
+            with pytest.raises(StreamProtocolError, match="refused its code preflight"):
+                _SubtaskProcess.start(**options)
+        else:
+>           child = _SubtaskProcess.start(**options)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/workers/test_stream_subtasks.py:381: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+cls = <class 'prefect.workers._stream_subtasks._SubtaskProcess'>
+api_url = 'http://127.0.0.1:42385/api', cwd = PosixPath('/workspace/ariadne')
+stream_output = False
+preflight = {'role': 'SOURCE', 'configuration': {'entrypoint': '/workspace/ariadne/tests/fixtures/native_partitioned_stream_flow.p... 0, 'count': 8, 'directory': '/tmp/pytest-of-agent/pytest-136/test_same_child_code_preflight0', 'fault': 'none'}, ...}}
+preflight_timeout = 30.0
+
+    @classmethod
+    def start(
+        cls,
+        *,
+        api_url: str,
+        cwd: Path,
+        stream_output: bool = True,
+        preflight: dict[str, Any] | None = None,
+        preflight_timeout: float = PREFLIGHT_TIMEOUT_SECONDS,
+    ) -> _SubtaskProcess:
+        home = Path(tempfile.mkdtemp(prefix="prefect-worker-subtask-"))
+        descriptors: list[int] = []
+        process: subprocess.Popen[bytes] | None = None
+        scope: NativePidfdScope | None = None
+        transferred = False
+        retained: set[int] = set()
+        preflight_write = -1
+        ready_read = -1
+        try:
+            bootstrap_read, bootstrap_write = os.pipe()
+            descriptors.extend((bootstrap_read, bootstrap_write))
+            go_read, go_write = os.pipe()
+            descriptors.extend((go_read, go_write))
+            retained.update((bootstrap_write, go_write))
+            child_descriptors = [bootstrap_read, go_read]
+            arguments = [
+                sys.executable,
+                "-m",
+                "prefect._internal.stream_subtask_entrypoint",
+                str(bootstrap_read),
+                str(go_read),
+            ]
+            if preflight is not None:
+                preflight_read, preflight_write = os.pipe()
+                ready_read, ready_write = os.pipe()
+                descriptors.extend(
+                    (preflight_read, preflight_write, ready_read, ready_write)
+                )
+                child_descriptors.extend((preflight_read, ready_write))
+                arguments.extend((str(preflight_read), str(ready_write)))
+            process = subprocess.Popen(
+                arguments,
+                cwd=cwd,
+                env=subtask_environment(home, api_url),
+                pass_fds=tuple(child_descriptors),
+                stdin=subprocess.DEVNULL,
+                stdout=None if stream_output else subprocess.DEVNULL,
+                stderr=None if stream_output else subprocess.STDOUT,
+            )
+            scope = NativePidfdScope(process.pid)
+            _, _, ticks = linux_process_identity(process.pid)
+            for descriptor in child_descriptors:
+                os.close(descriptor)
+                descriptors.remove(descriptor)
+            if preflight is not None:
+                encoded = json.dumps(
+                    preflight,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                ).encode()
+                if not encoded or len(encoded) > PREFLIGHT_MAX_BYTES:
+                    raise StreamProtocolError(
+                        "Physical preflight exceeds its private transport"
+                    )
+                deadline = time.monotonic() + preflight_timeout
+                os.set_blocking(preflight_write, False)
+                offset = 0
+                while offset < len(encoded):
+                    remaining = max(0, deadline - time.monotonic())
+                    if not select.select([], [preflight_write], [], remaining)[1]:
+                        raise StreamProtocolError(
+                            "Physical preflight delivery timed out"
+                        )
+                    offset += os.write(preflight_write, encoded[offset:])
+                os.close(preflight_write)
+                descriptors.remove(preflight_write)
+                remaining = max(0, deadline - time.monotonic())
+                if not select.select([ready_read], [], [], remaining)[0]:
+                    raise StreamProtocolError("Physical preflight readiness timed out")
+                if os.read(ready_read, 1) != PREFLIGHT_READY:
+>                   raise StreamProtocolError(
+                        "Physical child refused its code preflight"
+                    )
+E                   prefect.streams.StreamProtocolError: Physical child refused its code preflight
+
+src/prefect/workers/_stream_subtasks.py:131: StreamProtocolError
+=========================== short test summary info ============================
+FAILED tests/workers/test_stream_subtasks.py::test_missing_optional_worker_endpoint_preserves_ordinary_client
+FAILED tests/workers/test_stream_subtasks.py::test_worker_auth_refusal_is_not_treated_as_an_old_optional_endpoint[401]
+FAILED tests/workers/test_stream_subtasks.py::test_worker_auth_refusal_is_not_treated_as_an_old_optional_endpoint[403]
+FAILED tests/workers/test_stream_subtasks.py::test_same_child_code_preflight_precedes_any_grant_or_task_body[False]
+4 failed, 8 passed in 18.15s

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import prefect.types._datetime
 from prefect._internal.stream_event_auth import (
     canonical_event_witness,
+    canonical_physical_event_witness,
     verify_task_event,
 )
 from prefect.logging import get_logger
@@ -27,8 +28,9 @@ from prefect.server.models._stream_receipts import (
     canonical_json_digest,
     finite_receipt_outcome_digest,
 )
+from prefect.server.models.stream_subtask_authority import release_terminal_allocation
 from prefect.server.schemas.core import TaskRun, TaskRunPolicy
-from prefect.server.schemas.states import State
+from prefect.server.schemas.states import TERMINAL_STATES, State
 from prefect.server.services.base import RunInEphemeralServers, Service
 from prefect.server.utilities.database import get_max_query_parameters
 from prefect.server.utilities.messaging import (
@@ -141,11 +143,72 @@ async def _authorized_stream_events(
                 .where(db.StreamExecutionAuthority.flow_run_id.in_(flow_ids))
                 .order_by(db.StreamExecutionAuthority.flow_run_id)
                 .with_for_update(read=True)
+                .execution_options(populate_existing=True)
             )
         ).all()
     }
     if not authorities:
         return events, set()
+    # Locator reads acquire no ownership. Lock and refresh the complete prefix
+    # before using a cached graph/subtask/grant for an event decision.
+    physical_locators = (
+        await session.execute(
+            sa.select(
+                db.StreamPhysicalSubtask.task_run_id,
+                db.StreamPhysicalSubtask.graph_revision_id,
+            ).where(db.StreamPhysicalSubtask.task_run_id.in_(task_ids))
+        )
+    ).all()
+    physical_graphs = {
+        row.id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamGraphRevision)
+                .where(
+                    db.StreamGraphRevision.id.in_(
+                        [row.graph_revision_id for row in physical_locators]
+                    )
+                )
+                .order_by(db.StreamGraphRevision.id)
+                .with_for_update(read=True)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    }
+    physical_subtasks = {
+        row.task_run_id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSubtask)
+                .where(db.StreamPhysicalSubtask.task_run_id.in_(task_ids))
+                .order_by(db.StreamPhysicalSubtask.id)
+                .with_for_update(read=True)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    }
+    physical_grants = {
+        row.id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamSubtaskGrant)
+                .where(
+                    db.StreamSubtaskGrant.id.in_(
+                        [
+                            subtask.current_grant_id
+                            for subtask in physical_subtasks.values()
+                            if subtask.current_grant_id is not None
+                        ]
+                    )
+                )
+                .order_by(db.StreamSubtaskGrant.id)
+                .with_for_update(read=True)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    }
+    for manifest in [*manifests.values(), *finite_manifests.values()]:
+        await session.refresh(manifest)
     locked_tasks = {
         row.id: row
         for row in (
@@ -154,6 +217,7 @@ async def _authorized_stream_events(
                 .where(db.TaskRun.id.in_(task_ids))
                 .order_by(db.TaskRun.id)
                 .with_for_update()
+                .execution_options(populate_existing=True)
             )
         ).all()
     }
@@ -213,6 +277,48 @@ async def _authorized_stream_events(
             manifest_digest = event.resource["prefect.stream-submission-digest"]
             key_id = event.resource["prefect.stream-event-key-id"]
             signature = event.resource["prefect.stream-event-signature"]
+            physical = physical_subtasks.get(task_id)
+            physical_grant = (
+                physical_grants.get(physical.current_grant_id)
+                if physical is not None
+                else None
+            )
+            current_generation = authority.generation
+            current_holder = authority.holder_id
+            current_key_id = authority.event_key_id
+            current_public_key = authority.holder_event_public_key
+            if physical is not None:
+                graph = physical_graphs.get(physical.graph_revision_id)
+                if (
+                    physical_grant is None
+                    or graph is None
+                    or graph.state != "ADMITTED"
+                    or graph.startup_completed_at is None
+                    or db.dialect.name != "postgresql"
+                    or physical_grant.state != "REGISTERED"
+                    or physical_grant.physical_epoch != physical.physical_epoch
+                    or physical.assignment_epoch != graph.assignment_epoch
+                    or physical_grant.flow_generation != authority.generation
+                    or physical_grant.flow_holder_id != authority.holder_id
+                ):
+                    raise ValueError("physical subtask is no longer current")
+                if (
+                    event.resource["prefect.stream-graph-revision"] != str(graph.id)
+                    or int(event.resource["prefect.stream-assignment-epoch"])
+                    != graph.assignment_epoch
+                    or event.resource["prefect.stream-subtask"] != str(physical.id)
+                    or event.resource["prefect.stream-subtask-grant"]
+                    != str(physical_grant.id)
+                    or int(event.resource["prefect.stream-physical-epoch"])
+                    != physical_grant.physical_epoch
+                    or event.resource["prefect.stream-scope-digest"]
+                    != physical_grant.scope_digest
+                ):
+                    raise ValueError("physical event scope drift")
+                current_generation = physical_grant.physical_epoch
+                current_holder = physical_grant.holder_id
+                current_key_id = physical_grant.event_key_id
+                current_public_key = physical_grant.event_public_key
             run_count = int(event.resource["prefect.run-count"])
             task_run_payload = event.payload["task_run"]
             validated_state = event.payload["validated_state"]
@@ -226,6 +332,27 @@ async def _authorized_stream_events(
                 raise ValueError("native event carries reserved State fields")
             state_type = validated_state.get("type")
             payload_run_count = task_run_payload.get("run_count")
+            details = validated_state.get("state_details")
+            non_retriable = (
+                isinstance(details, dict) and details.get("retriable") is False
+            )
+            if physical is not None and state_type in {"FAILED", "CRASHED"}:
+                physical_task = locked_tasks.get(task_id)
+                output = (
+                    outputs.get(manifest.stream_id) if manifest is not None else None
+                )
+                if (
+                    physical_task is None
+                    or type(payload_run_count) is not int
+                    or payload_run_count
+                    < (physical_task.empirical_policy.retries or 0) + 1
+                    and not non_retriable
+                    or output is None
+                    or output.state not in ("OPEN", "FAILED")
+                ):
+                    raise ValueError(
+                        "physical terminal failure requires exhausted policy and durable failed output"
+                    )
             flow_run_run_count = task_run_payload.get("flow_run_run_count")
             payload_tags = task_run_payload.get("tags")
             if not isinstance(payload_tags, list) or not all(
@@ -260,9 +387,9 @@ async def _authorized_stream_events(
                         authority.state == "TERMINAL" and state_type == "COMPLETED"
                     )
                 )
-                or generation != authority.generation
-                or holder_id != authority.holder_id
-                or key_id != authority.event_key_id
+                or generation != current_generation
+                or holder_id != current_holder
+                or key_id != current_key_id
                 or authority.prepared_generation != authority.generation
                 or not manifest_ready
                 or active_manifest is None
@@ -325,7 +452,7 @@ async def _authorized_stream_events(
                         raise ValueError(
                             "TaskRun completed before durable finite result receipt"
                         )
-            witness = canonical_event_witness(
+            witness_arguments = dict(
                 event_id=event.id,
                 event=event.event,
                 occurred=event.occurred,
@@ -338,8 +465,21 @@ async def _authorized_stream_events(
                 task_run=task_run_payload,
                 validated_state=validated_state,
             )
+            if physical is not None:
+                assert physical_grant is not None
+                witness = canonical_physical_event_witness(
+                    **witness_arguments,
+                    graph_revision_id=physical.graph_revision_id,
+                    assignment_epoch=physical.assignment_epoch,
+                    subtask_id=physical.id,
+                    grant_id=physical_grant.id,
+                    physical_epoch=physical_grant.physical_epoch,
+                    scope_digest=physical_grant.scope_digest,
+                )
+            else:
+                witness = canonical_event_witness(**witness_arguments)
             if not verify_task_event(
-                bytes.fromhex(authority.holder_event_public_key), witness, signature
+                bytes.fromhex(current_public_key), witness, signature
             ):
                 raise ValueError("invalid execution event signature")
             candidates.setdefault(task_id, []).append((event, run_count, state_type))
@@ -360,10 +500,24 @@ async def _authorized_stream_events(
         current_run_count = task.run_count
         retry_limit = task.empirical_policy.retries or 0
         maximum_run_count = retry_limit + 1
+        terminal_event_id = (
+            task.state_id if task.state_type in TERMINAL_STATES else None
+        )
+        terminal_state_type = (
+            task.state_type.value if task.state_type in TERMINAL_STATES else None
+        )
         for event, run_count, state_type in sorted(
             task_events, key=lambda item: (item[1], item[0].occurred, item[0].id)
         ):
-            if run_count > maximum_run_count or run_count < current_run_count:
+            if task_id in physical_subtasks and terminal_event_id is not None:
+                decisions[id(event)] = (
+                    event.id == terminal_event_id
+                    and state_type == terminal_state_type
+                    and run_count == current_run_count
+                )
+                if decisions[id(event)] and task.state_type in TERMINAL_STATES:
+                    decisions[id(event)] = _exact_terminal_replay(task, event)
+            elif run_count > maximum_run_count or run_count < current_run_count:
                 decisions[id(event)] = False
             elif run_count == current_run_count:
                 decisions[id(event)] = True
@@ -372,6 +526,13 @@ async def _authorized_stream_events(
                 decisions[id(event)] = True
             else:
                 decisions[id(event)] = False
+            if (
+                task_id in physical_subtasks
+                and decisions[id(event)]
+                and state_type in {state.value for state in TERMINAL_STATES}
+            ):
+                terminal_event_id = event.id
+                terminal_state_type = state_type
             if not decisions[id(event)]:
                 logger.warning(
                     "Discarding stale native TaskRun attempt event %s for task %s",
@@ -628,6 +789,30 @@ def task_run_from_event(event: ReceivedEvent) -> TaskRun:
     )
 
 
+def _exact_terminal_replay(task: Any, event: ReceivedEvent) -> bool:
+    """A retained event ID cannot authorize different signed terminal bytes."""
+    try:
+        proposed, attributes = db_recordable_task_run_from_event(event)
+        if (
+            task.state is None
+            or proposed.state is None
+            or proposed.state.model_dump(mode="json")
+            != task.state.as_state().model_dump(mode="json")
+        ):
+            return False
+        for key, value in attributes.items():
+            current = getattr(task, key)
+            if hasattr(value, "model_dump"):
+                value = value.model_dump(mode="json")
+            if hasattr(current, "model_dump"):
+                current = current.model_dump(mode="json")
+            if current != value:
+                return False
+        return True
+    except (KeyError, ValueError, TypeError):
+        return False
+
+
 def db_recordable_task_run_from_event(
     event: ReceivedEvent,
 ) -> tuple[TaskRun, dict[str, Any]]:
@@ -724,6 +909,8 @@ async def _record_bulk_task_run_events_in_session(
     db: PrefectDBInterface,
     session: AsyncSession,
     native_task_ids: set[UUID],
+    *,
+    commit: bool = True,
 ) -> None:
     now = prefect.types._datetime.now("UTC")
 
@@ -962,7 +1149,20 @@ async def _record_bulk_task_run_events_in_session(
 
     # Insert all task run states - we only coalesce task run updates, not states
     await _insert_task_run_states(session, [tr.task_run for tr in all_task_runs])
-    await session.commit()
+    terminal_physical = (
+        await session.scalars(
+            sa.select(db.StreamPhysicalSubtask)
+            .join(db.TaskRun, db.TaskRun.id == db.StreamPhysicalSubtask.task_run_id)
+            .where(
+                db.TaskRun.id.in_(native_task_ids),
+                db.TaskRun.state_type.in_(TERMINAL_STATES),
+            )
+        )
+    ).all()
+    for subtask in terminal_physical:
+        await release_terminal_allocation(session, db, subtask)
+    if commit:
+        await session.commit()
 
 
 class RetryableEvent(BaseModel):
@@ -1140,3 +1340,8 @@ class TaskRunRecorder(RunInEphemeralServers, Service):
             self.consumer_task = None
             self.metrics_task = None
         logger.debug("TaskRunRecorder stopped")
+
+
+# Shared transaction-aware recorder boundary for physical HTTP task events.
+authorized_stream_events = _authorized_stream_events
+record_bulk_task_run_events_in_session = _record_bulk_task_run_events_in_session

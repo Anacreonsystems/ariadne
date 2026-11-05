@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Query, status
 
 from prefect.server.api.stream_execution_dependencies import ExecutionCredentials
+from prefect.server.api.stream_subtask_dependencies import DataExecutionCredentials
 from prefect.server.database import PrefectDBInterface, provide_database_interface
 from prefect.server.models.finite_submissions import NativeFiniteStore
 from prefect.server.models.stream_executions import (
@@ -72,6 +73,8 @@ router: PrefectRouter = PrefectRouter(prefix="/streams/v1", tags=["Streams"])
 
 def _stream_http_error(error: NativeStreamError) -> HTTPException:
     statuses = {
+        "SUBTASK_AUTH_INVALID": status.HTTP_401_UNAUTHORIZED,
+        "SUBTASK_SCOPE_DENIED": status.HTTP_403_FORBIDDEN,
         "NOT_FOUND": status.HTTP_404_NOT_FOUND,
         "REPLAY_HORIZON_EXPIRED": status.HTTP_410_GONE,
         "RECOVERY_HORIZON_EXPIRED": status.HTTP_410_GONE,
@@ -257,7 +260,7 @@ async def reserve_output(
 async def reject_output(
     request: StreamOutputRejectRequest,
     db: Database,
-    execution: ExecutionCredentials,
+    execution: DataExecutionCredentials,
 ) -> StreamInfo:
     return await _call(
         NativeStreamStore(db, execution).reject_reserved_output(
@@ -273,7 +276,7 @@ async def reject_output(
 async def fail_output(
     request: StreamOutputFailRequest,
     db: Database,
-    execution: ExecutionCredentials,
+    execution: DataExecutionCredentials,
 ) -> StreamInfo:
     return await _call(
         NativeStreamStore(db, execution).fail_task_output(
@@ -290,7 +293,7 @@ async def fail_output(
 async def open_consumer(
     request: StreamConsumerOpenRequest,
     db: Database,
-    execution: ExecutionCredentials,
+    execution: DataExecutionCredentials,
 ) -> ConsumerBinding:
     return await _call(
         NativeStreamStore(db, execution).open_consumer(
@@ -309,7 +312,7 @@ async def open_consumer(
 async def read_consumer(
     request: StreamConsumerReadRequest,
     db: Database,
-    execution: ExecutionCredentials,
+    execution: DataExecutionCredentials,
 ) -> StreamDelivery | None:
     return await _call(NativeStreamStore(db, execution).read(request.binding))
 
@@ -318,7 +321,7 @@ async def read_consumer(
 async def complete_consumer(
     request: StreamConsumerCompleteRequest,
     db: Database,
-    execution: ExecutionCredentials,
+    execution: DataExecutionCredentials,
 ) -> StreamCompletionResult:
     return await _call(
         NativeStreamStore(db, execution).complete(
@@ -335,7 +338,7 @@ async def complete_consumer(
 async def finish_consumer(
     request: StreamConsumerFinishRequest,
     db: Database,
-    execution: ExecutionCredentials,
+    execution: DataExecutionCredentials,
 ) -> None:
     await _call(
         NativeStreamStore(db, execution).finish_consumer(request.binding, request.error)
@@ -346,7 +349,7 @@ async def finish_consumer(
 async def claim_source(
     request: StreamSourceClaimRequest,
     db: Database,
-    execution: ExecutionCredentials,
+    execution: DataExecutionCredentials,
 ) -> SourceBinding:
     return await _call(
         NativeStreamStore(db, execution).claim_source(
@@ -380,7 +383,7 @@ async def reserve_source(
 async def reject_source(
     request: StreamSourceRejectRequest,
     db: Database,
-    execution: ExecutionCredentials,
+    execution: DataExecutionCredentials,
 ) -> StreamInfo:
     return await _call(
         NativeStreamStore(db, execution).reject_reserved_source(
@@ -396,7 +399,7 @@ async def reject_source(
 async def fail_source(
     request: StreamSourceFailRequest,
     db: Database,
-    execution: ExecutionCredentials,
+    execution: DataExecutionCredentials,
 ) -> StreamInfo:
     return await _call(
         NativeStreamStore(db, execution).fail_task_source(
@@ -413,7 +416,7 @@ async def fail_source(
 async def open_source(
     request: StreamSourceOpenRequest,
     db: Database,
-    execution: ExecutionCredentials,
+    execution: DataExecutionCredentials,
 ) -> SourceAdmission:
     return await _call(
         NativeStreamStore(db, execution).open_source(
@@ -432,7 +435,7 @@ async def open_source(
 async def append_source(
     request: StreamSourceAppendRequest,
     db: Database,
-    execution: ExecutionCredentials,
+    execution: DataExecutionCredentials,
 ) -> StreamEnvelope:
     return await _call(
         NativeStreamStore(db, execution).append(
@@ -445,7 +448,7 @@ async def append_source(
 async def finish_source(
     request: StreamSourceFinishRequest,
     db: Database,
-    execution: ExecutionCredentials,
+    execution: DataExecutionCredentials,
 ) -> None:
     await _call(
         NativeStreamStore(db, execution).finish_source(request.binding, request.error)
@@ -456,7 +459,7 @@ async def finish_source(
 async def close_source(
     request: StreamSourceCloseRequest,
     db: Database,
-    execution: ExecutionCredentials,
+    execution: DataExecutionCredentials,
 ) -> None:
     await _call(
         NativeStreamStore(db, execution).close_source(
@@ -481,8 +484,9 @@ async def release_streams(
 async def read_stream(
     stream_id: UUID,
     db: Database,
+    execution: DataExecutionCredentials,
 ) -> StreamInfo:
-    return await _call(NativeStreamStore(db).status(stream_id))
+    return await _call(NativeStreamStore(db, execution).status(stream_id))
 
 
 @router.get("/{stream_id:uuid}/prefix")
@@ -490,5 +494,10 @@ async def read_stream_prefix(
     stream_id: UUID,
     limit: Annotated[int, Query(ge=1)],
     db: Database,
+    execution: DataExecutionCredentials,
 ) -> list[StreamEnvelope]:
-    return await _call(NativeStreamStore(db).read_prefix(stream_id, limit))
+    return await _call(NativeStreamStore(db, execution).read_prefix(stream_id, limit))
+
+
+# Shared typed HTTP translation for the physical v2 routes.
+stream_http_error = _stream_http_error

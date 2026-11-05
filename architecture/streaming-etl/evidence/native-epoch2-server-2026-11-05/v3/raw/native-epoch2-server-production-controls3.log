@@ -1,0 +1,126 @@
+....F
+=================================== FAILURES ===================================
+______ test_whole_flow_legacy_recovery_cannot_take_over_assigned_children ______
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f7228cfdfa0>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7f722151aa50>
+worker_api = <httpx.AsyncClient object at 0x7f7221531370>
+deployment = Deployment(id=a7a8cb48-1730-4153-a82c-3d364de20de1)
+
+    async def test_whole_flow_legacy_recovery_cannot_take_over_assigned_children(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        worker_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+    ):
+        await _require_postgres_17(db)
+        plan, workers, headers = await deployed_graph(db, session, worker_api, deployment)
+        grant_ids = await register_region(worker_api, plan, workers)
+        worker_id, identity = workers[0]
+        async with db.session_context(begin_transaction=True) as change:
+            launch = await change.scalar(
+                sa.select(db.NativeStreamLaunchIdentity).where(
+                    db.NativeStreamLaunchIdentity.flow_run_id == plan.flow_run_id
+                )
+            )
+            assert launch is not None
+            launch.last_renewed_at = now("UTC") - timedelta(seconds=121)
+            enrollment_id = launch.enrollment_operation_id
+            child_pid = launch.child_process_id
+            child_ticks = launch.process_start_ticks
+        candidates = await worker_api.get(
+            "/streams/v1/deployments/replacements/candidates",
+            params={
+                "worker_id": str(worker_id),
+                "work_pool_id": str(identity.work_pool_id),
+                "host_id": str(identity.host_id),
+            },
+        )
+        assert candidates.status_code == 200, candidates.text
+        assert candidates.json() == []
+        operation_id = uuid4()
+        challenge = uuid4().hex + uuid4().hex
+        witness = {
+            "kind": "IDENTITY_GONE",
+            "observed_at": now("UTC").isoformat(),
+            "host_id": str(identity.host_id),
+            "boot_id": str(identity.boot_id),
+            "child_process_id": child_pid,
+            "process_start_ticks": child_ticks,
+        }
+        authorization = {
+            "flow_run_id": str(plan.flow_run_id),
+            "operation_id": str(operation_id),
+            "expected_generation": 1,
+            "enrollment_operation_id": str(enrollment_id),
+            "worker_id": str(worker_id),
+            "work_pool_id": str(identity.work_pool_id),
+            "host_id": str(identity.host_id),
+            "identity_kind": "CHILD",
+            "challenge_capability": challenge,
+        }
+        confirmation = {
+            "flow_run_id": str(plan.flow_run_id),
+            "operation_id": str(operation_id),
+            "challenge_capability": challenge,
+            "launcher_instance_id": str(uuid4()),
+            "launcher_host_id": str(identity.host_id),
+            "launcher_boot_id": str(identity.boot_id),
+            "launcher_process_id": identity.launcher_process_id,
+            "launcher_start_ticks": identity.launcher_start_ticks,
+            "new_holder_id": str(uuid4()),
+            "new_holder_capability": uuid4().hex + uuid4().hex,
+            "new_holder_event_public_key": PUBLIC,
+            "new_supervisor_id": str(uuid4()),
+            "new_supervisor_capability": uuid4().hex + uuid4().hex,
+            "death_witness": witness,
+        }
+        retirement = {
+            "flow_run_id": str(plan.flow_run_id),
+            "operation_id": str(operation_id),
+            "expected_generation": 1,
+            "enrollment_operation_id": str(enrollment_id),
+            "challenge_capability": challenge,
+            "death_witness": witness,
+            "error": "P2 cannot use bounded whole-Flow retirement",
+        }
+        for path, request in (
+            ("authorize", authorization),
+            ("confirm-death", confirmation),
+            ("retire-verified", retirement),
+        ):
+            result = await worker_api.post(
+                f"/streams/v1/deployments/replacements/{path}",
+                json=request,
+                headers=headers,
+            )
+>           assert result.status_code == 409, result.text
+E           AssertionError: {"detail":{"code":"UNSUPPORTED_PROFILE","message":"Partitioned physical children cannot use bounded whole-Flow recovery","retryable":false}}
+E           assert 422 == 409
+E            +  where 422 = <Response [422 Unprocessable Entity]>.status_code
+
+tests/server/api/test_stream_subtask_controls.py:306: AssertionError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.307 seconds
+00:09:45.289 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.307 seconds
+00:09:45.300 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-8622dadd443f41bfad51fb97a1f97419 because it does not have a base job template
+00:09:45.313 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1a90a-4661-7bbc-8710-174a2275c535 for resource: prefect.work-pool.663cd67a-ce1f-48f1-9b0a-ab8e4909d5e0
+00:09:45.339 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1a90a-4677-7940-ace6-0bb94d939dbd for resource: prefect.work-pool.663cd67a-ce1f-48f1-9b0a-ab8e4909d5e0
+00:09:45.438 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-8622dadd443f41bfad51fb97a1f97419 because it does not have a base job template
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.307 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-8622dadd443f41bfad51fb97a1f97419 because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1a90a-4661-7bbc-8710-174a2275c535 for resource: prefect.work-pool.663cd67a-ce1f-48f1-9b0a-ab8e4909d5e0
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1a90a-4677-7940-ace6-0bb94d939dbd for resource: prefect.work-pool.663cd67a-ce1f-48f1-9b0a-ab8e4909d5e0
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-8622dadd443f41bfad51fb97a1f97419 because it does not have a base job template
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+00:09:46.412 | INFO    | uvicorn.error - Shutting down
+00:09:46.514 | INFO    | uvicorn.error - Waiting for application shutdown.
+00:09:46.515 | INFO    | uvicorn.error - Application shutdown complete.
+00:09:46.516 | INFO    | uvicorn.error - Finished server process [161148]
+=========================== short test summary info ============================
+FAILED tests/server/api/test_stream_subtask_controls.py::test_whole_flow_legacy_recovery_cannot_take_over_assigned_children
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 4 passed in 15.46s

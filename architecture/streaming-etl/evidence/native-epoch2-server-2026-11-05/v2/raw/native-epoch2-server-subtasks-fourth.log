@@ -1,0 +1,127 @@
+.....F
+=================================== FAILURES ===================================
+_____ test_verified_child_replacement_keeps_task_id_history_and_allocation _____
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f7d0edc1940>
+flow_run = FlowRun(id=9a65787d-738e-44e2-8bfd-ab24688b3745)
+
+    async def test_verified_child_replacement_keeps_task_id_history_and_allocation(
+        db, flow_run
+    ):
+        _, plan, credentials = await prepare(db, flow_run, tags=("shared",))
+        async with db.session_context(begin_transaction=True) as session:
+            limit = db.ConcurrencyLimitV2(name="tag:shared", limit=4, active=True)
+            session.add(limit)
+            await session.flush()
+            limit_id = limit.id
+        _, plan = await admit(db, plan, credentials)
+        subtask, claim, grant, scoped = await claim_registered(db, plan, credentials)
+        await record_bulk_task_run_events(
+            [task_event(plan, subtask, grant, tags=("shared",)).receive()]
+        )
+        authorize = s.StreamSubtaskReplacementAuthorizeRequest(
+            operation_id=uuid4(),
+            expected_grant_id=grant.id,
+            expected_physical_epoch=1,
+            host_id=grant.host_id,
+            challenge_capability="dd" * 32,
+        )
+        async with db.session_context(begin_transaction=True) as session:
+            authorization = await m.authorize_replacement(
+                session, db, subtask.id, authorize, credentials
+            )
+        confirm = s.StreamSubtaskReplacementConfirmRequest(
+            operation_id=authorization.operation_id,
+            challenge_capability=authorize.challenge_capability,
+            death_witness={
+                "kind": "WAITPID",
+                "observed_at": now("UTC"),
+                "host_id": grant.host_id,
+                "boot_id": grant.boot_id,
+                "child_process_id": grant.child_process_id,
+                "process_start_ticks": grant.process_start_ticks,
+                "exit_code": -9,
+            },
+            new_holder_id=uuid4(),
+            new_capability="ee" * 32,
+            new_event_public_key=PUBLIC,
+            host_id=grant.host_id,
+            boot_id=grant.boot_id,
+        )
+        async with db.session_context(begin_transaction=True) as session:
+            replacement = await m.confirm_replacement(
+                session, db, subtask.id, confirm, credentials
+            )
+            assert replacement.physical_epoch == 2
+            task = await session.get(db.TaskRun, subtask.manifest.task_run_id)
+            assert task.run_count == 1
+            assert task.state.name == "AwaitingRetry"
+            assert (await session.get(db.ConcurrencyLimitV2, limit_id)).active_slots == 4
+        async with db.session_context(begin_transaction=True) as session:
+            assert (
+                await m.confirm_replacement(session, db, subtask.id, confirm, credentials)
+                == replacement
+            )
+            history = (
+                await session.scalars(
+                    sa.select(db.TaskRunState)
+                    .where(db.TaskRunState.task_run_id == subtask.manifest.task_run_id)
+                    .order_by(db.TaskRunState.timestamp)
+                )
+            ).all()
+            assert [state.name for state in history] == [
+                "Pending",
+                "Running",
+                "AwaitingRetry",
+            ]
+        with pytest.raises(NativeStreamError, match="no longer current"):
+            async with db.session_context(begin_transaction=True) as session:
+                await require_subtask(session, db, scoped)
+        async with db.session_context(begin_transaction=True) as session:
+            await m.register_subtask(
+                session,
+                db,
+                subtask.id,
+                s.StreamSubtaskRegistrationRequest(
+                    operation_id=uuid4(),
+                    grant_id=replacement.id,
+                    child_process_id=201,
+                    process_start_ticks=2001,
+                ),
+                credentials,
+            )
+        await record_bulk_task_run_events(
+            [
+                task_event(
+                    plan, subtask, replacement, run_count=2, tags=("shared",)
+                ).receive()
+            ]
+        )
+        async with db.session_context() as session:
+            task = await session.get(db.TaskRun, subtask.manifest.task_run_id)
+>           assert task.run_count == 2 and task.state.is_running()
+                                           ^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'TaskRunState' object has no attribute 'is_running'
+
+tests/server/models/test_stream_subtasks.py:491: AttributeError
+----------------------------- Captured stderr call -----------------------------
+22:00:17.655 | DEBUG   | prefect.server.services.task_run_recorder - Partitioned 1 task runs into 1 upsert statement(s)
+22:00:17.666 | DEBUG   | prefect.server.services.task_run_recorder - Recorded 1 task run state change(s)
+22:00:17.806 | DEBUG   | prefect.server.services.task_run_recorder - Partitioned 1 task runs into 1 upsert statement(s)
+22:00:17.812 | DEBUG   | prefect.server.services.task_run_recorder - Recorded 1 task run state change(s)
+------------------------------ Captured log call -------------------------------
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:954 Partitioned 1 task runs into 1 upsert statement(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:700 Recorded 1 task run state change(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:954 Partitioned 1 task runs into 1 upsert statement(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:700 Recorded 1 task run state change(s)
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+22:00:17.962 | INFO    | uvicorn.error - Shutting down
+22:00:18.063 | INFO    | uvicorn.error - Waiting for application shutdown.
+22:00:18.065 | INFO    | uvicorn.error - Application shutdown complete.
+22:00:18.065 | INFO    | uvicorn.error - Finished server process [137671]
+=========================== short test summary info ============================
+FAILED tests/server/models/test_stream_subtasks.py::test_verified_child_replacement_keeps_task_id_history_and_allocation
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 5 passed in 9.70s

@@ -80,7 +80,9 @@ from prefect.results import (
 from prefect.settings.context import get_current_settings
 from prefect.states import Pending, Scheduled, State
 from prefect.streams import (
+    PartitionedStream,
     Stream,
+    StreamPartitionCall,
     StreamProtocolError,
     StreamSourceConfig,
     StreamTaskConfig,
@@ -1273,6 +1275,16 @@ class Task(Generic[P, R]):
         the result is wrapped in a Prefect State which provides error handling.
         """
         if get_stream_execution() is not None:
+            context = FlowRunContext.get()
+            if (
+                context is not None
+                and context.flow is not None
+                and context.flow.streaming is not None
+                and context.flow.streaming.profile == "partitioned-fixed-v1"
+            ):
+                raise StreamProtocolError(
+                    "Finite tasks are outside the fixed-P2 graph profile"
+                )
             from prefect._internal.stream_finite import call_finite_task
 
             return call_finite_task(self, args, kwargs, return_state, wait_for)
@@ -1636,6 +1648,26 @@ class Task(Generic[P, R]):
 
             return submit_reconstructed_stream(self, args, kwargs, wait_for)
         return self._submit_stream(args, kwargs, wait_for)
+
+    def submit_partitioned_stream(
+        self,
+        *,
+        operator_uid: str,
+        partitions: tuple[StreamPartitionCall, StreamPartitionCall],
+        upstream: PartitionedStream[Any] | None = None,
+    ) -> PartitionedStream[R]:
+        """Declare one fixed-P2 source or its same-index operator.
+
+        Requires a native `partitioned-fixed-v1` Flow. Each source descriptor
+        explicitly identifies a different user-owned split. The two physical
+        streams have independent order and recovery; no global merge is implied.
+        Declare both logical tasks before accessing the physical handles.
+        """
+        from prefect._internal.stream_partitioned import submit_partitioned_stream
+
+        return submit_partitioned_stream(
+            self, operator_uid=operator_uid, partitions=partitions, upstream=upstream
+        )
 
     @overload
     def map(

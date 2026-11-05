@@ -1,0 +1,856 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="9" skipped="0" tests="10" time="27.560" timestamp="2026-11-05T00:33:09.887952+00:00" hostname="f8abb611283c"><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[hooks]" time="25.239"><failure message="AssertionError: Changed source crossed the metadata boundary">mutation = 'hooks'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7f518f15bb00&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(
+                id=execution.flow_run_id,
+                run_count=1,
+                deployment_id=uuid4(),
+                deployment_version="v1",
+            ),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:351: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+src/prefect/_internal/stream_partitioned.py:340: in seal
+    self.plan = self.request(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ('seal_stream_graph',)
+kwargs = {'flow_run_id': UUID('1ead131c-9c50-484b-930a-b5dcc0765014'), 'operation_id': UUID('0eab77ec-b9d3-5f60-9556-5c4a1ef6785a'), 'flow_version': 'v1', 'deployment_id': UUID('7181efeb-c2ab-4ab3-b1d6-3af1c94a6127'), ...}
+
+    def refuse_metadata(*args: Any, **kwargs: Any):
+        calls.append((args, kwargs))
+&gt;       raise AssertionError("Changed source crossed the metadata boundary")
+E       AssertionError: Changed source crossed the metadata boundary
+
+tests/test_stream_partitioned_runtime.py:314: AssertionError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[context]" time="0.053"><failure message="AssertionError: Changed source crossed the metadata boundary">mutation = 'context'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7f518f2af1d0&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(
+                id=execution.flow_run_id,
+                run_count=1,
+                deployment_id=uuid4(),
+                deployment_version="v1",
+            ),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:351: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+src/prefect/_internal/stream_partitioned.py:340: in seal
+    self.plan = self.request(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ('seal_stream_graph',)
+kwargs = {'flow_run_id': UUID('ca75f724-7197-4d89-a33f-f1f66157c11b'), 'operation_id': UUID('5f046751-6406-5596-8918-66c56adeca49'), 'flow_version': 'v1', 'deployment_id': UUID('368e7325-902d-432e-b7b2-b784ad14f0f4'), ...}
+
+    def refuse_metadata(*args: Any, **kwargs: Any):
+        calls.append((args, kwargs))
+&gt;       raise AssertionError("Changed source crossed the metadata boundary")
+E       AssertionError: Changed source crossed the metadata boundary
+
+tests/test_stream_partitioned_runtime.py:314: AssertionError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[version]" time="0.072"><failure message="AssertionError: Changed source crossed the metadata boundary">mutation = 'version'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7f518f184110&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(
+                id=execution.flow_run_id,
+                run_count=1,
+                deployment_id=uuid4(),
+                deployment_version="v1",
+            ),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:351: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+src/prefect/_internal/stream_partitioned.py:340: in seal
+    self.plan = self.request(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ('seal_stream_graph',)
+kwargs = {'flow_run_id': UUID('96c0d92c-a7db-4161-b385-96900de1db45'), 'operation_id': UUID('98887a69-f4a4-5a16-b800-ad045933ed27'), 'flow_version': 'v1', 'deployment_id': UUID('6a11b1f0-6d89-4a2a-ada5-b64b896923be'), ...}
+
+    def refuse_metadata(*args: Any, **kwargs: Any):
+        calls.append((args, kwargs))
+&gt;       raise AssertionError("Changed source crossed the metadata boundary")
+E       AssertionError: Changed source crossed the metadata boundary
+
+tests/test_stream_partitioned_runtime.py:314: AssertionError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[tags]" time="0.055"><failure message="AssertionError: Changed source crossed the metadata boundary">mutation = 'tags'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7f518f185af0&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(
+                id=execution.flow_run_id,
+                run_count=1,
+                deployment_id=uuid4(),
+                deployment_version="v1",
+            ),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:351: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+src/prefect/_internal/stream_partitioned.py:340: in seal
+    self.plan = self.request(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ('seal_stream_graph',)
+kwargs = {'flow_run_id': UUID('176ea0e2-708c-45e4-b3d4-143f54c1fb84'), 'operation_id': UUID('151c0003-3721-595a-876a-49273f4a9c55'), 'flow_version': 'v1', 'deployment_id': UUID('5c309907-b91f-4da9-b289-63d2839bc322'), ...}
+
+    def refuse_metadata(*args: Any, **kwargs: Any):
+        calls.append((args, kwargs))
+&gt;       raise AssertionError("Changed source crossed the metadata boundary")
+E       AssertionError: Changed source crossed the metadata boundary
+
+tests/test_stream_partitioned_runtime.py:314: AssertionError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[retries]" time="0.147"><failure message="AssertionError: Changed source crossed the metadata boundary">mutation = 'retries'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7f518f159af0&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(
+                id=execution.flow_run_id,
+                run_count=1,
+                deployment_id=uuid4(),
+                deployment_version="v1",
+            ),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:351: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+src/prefect/_internal/stream_partitioned.py:340: in seal
+    self.plan = self.request(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ('seal_stream_graph',)
+kwargs = {'flow_run_id': UUID('a763944a-a8fd-4eee-9879-625266cc8695'), 'operation_id': UUID('e739c9ee-5d1e-557b-a325-f414fa46c928'), 'flow_version': 'v1', 'deployment_id': UUID('d81aba08-473b-4e55-b137-917ea28e45f6'), ...}
+
+    def refuse_metadata(*args: Any, **kwargs: Any):
+        calls.append((args, kwargs))
+&gt;       raise AssertionError("Changed source crossed the metadata boundary")
+E       AssertionError: Changed source crossed the metadata boundary
+
+tests/test_stream_partitioned_runtime.py:314: AssertionError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[timeout]" time="0.057"><failure message="AssertionError: Changed source crossed the metadata boundary">mutation = 'timeout'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7f518eee2480&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(
+                id=execution.flow_run_id,
+                run_count=1,
+                deployment_id=uuid4(),
+                deployment_version="v1",
+            ),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:351: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+src/prefect/_internal/stream_partitioned.py:340: in seal
+    self.plan = self.request(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ('seal_stream_graph',)
+kwargs = {'flow_run_id': UUID('4d70192d-3837-4579-bc30-cf8e6f81879b'), 'operation_id': UUID('7237092f-9884-5d85-a2da-257efb62e88e'), 'flow_version': 'v1', 'deployment_id': UUID('4163a8a2-a9e4-4614-88b5-118244e3e84a'), ...}
+
+    def refuse_metadata(*args: Any, **kwargs: Any):
+        calls.append((args, kwargs))
+&gt;       raise AssertionError("Changed source crossed the metadata boundary")
+E       AssertionError: Changed source crossed the metadata boundary
+
+tests/test_stream_partitioned_runtime.py:314: AssertionError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[name]" time="0.053"><failure message="AssertionError: Changed source crossed the metadata boundary">mutation = 'name'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7f518f159af0&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(
+                id=execution.flow_run_id,
+                run_count=1,
+                deployment_id=uuid4(),
+                deployment_version="v1",
+            ),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:351: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+src/prefect/_internal/stream_partitioned.py:340: in seal
+    self.plan = self.request(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ('seal_stream_graph',)
+kwargs = {'flow_run_id': UUID('8a57c29e-4690-4c63-83cd-10633f3c491e'), 'operation_id': UUID('a395fcc5-dc7d-5ce7-8cee-efe3da4fcb6a'), 'flow_version': 'v1', 'deployment_id': UUID('a4eb894f-8d05-485b-af47-69664e9abd7f'), ...}
+
+    def refuse_metadata(*args: Any, **kwargs: Any):
+        calls.append((args, kwargs))
+&gt;       raise AssertionError("Changed source crossed the metadata boundary")
+E       AssertionError: Changed source crossed the metadata boundary
+
+tests/test_stream_partitioned_runtime.py:314: AssertionError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[code]" time="0.053"><failure message="AssertionError: Changed source crossed the metadata boundary">mutation = 'code'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7f518f1875f0&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(
+                id=execution.flow_run_id,
+                run_count=1,
+                deployment_id=uuid4(),
+                deployment_version="v1",
+            ),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:351: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+src/prefect/_internal/stream_partitioned.py:340: in seal
+    self.plan = self.request(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ('seal_stream_graph',)
+kwargs = {'flow_run_id': UUID('f6589102-2639-428b-ba5f-ba867a467adb'), 'operation_id': UUID('a2050544-3b49-5b08-9af4-d2aaf2869d5f'), 'flow_version': 'v1', 'deployment_id': UUID('1395a88a-3fe3-4e10-b179-cab0f830851b'), ...}
+
+    def refuse_metadata(*args: Any, **kwargs: Any):
+        calls.append((args, kwargs))
+&gt;       raise AssertionError("Changed source crossed the metadata boundary")
+E       AssertionError: Changed source crossed the metadata boundary
+
+tests/test_stream_partitioned_runtime.py:314: AssertionError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[binding]" time="0.051"><failure message="AssertionError: Changed source crossed the metadata boundary">mutation = 'binding'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7f518eee0b60&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(
+                id=execution.flow_run_id,
+                run_count=1,
+                deployment_id=uuid4(),
+                deployment_version="v1",
+            ),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:351: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+src/prefect/_internal/stream_partitioned.py:340: in seal
+    self.plan = self.request(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ('seal_stream_graph',)
+kwargs = {'flow_run_id': UUID('db57d62d-7354-43db-84ea-52ab500cf862'), 'operation_id': UUID('a8aaf475-426d-504a-8c5d-dace7b07f9a9'), 'flow_version': 'v1', 'deployment_id': UUID('e8411bff-f7a0-4244-bb76-3fc2ed7a0053'), ...}
+
+    def refuse_metadata(*args: Any, **kwargs: Any):
+        calls.append((args, kwargs))
+&gt;       raise AssertionError("Changed source crossed the metadata boundary")
+E       AssertionError: Changed source crossed the metadata boundary
+
+tests/test_stream_partitioned_runtime.py:314: AssertionError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_ambient_tags_change_preserves_declared_source_tags" time="1.340" /></testsuite></testsuites>

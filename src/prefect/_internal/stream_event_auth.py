@@ -73,6 +73,70 @@ def canonical_event_witness(
     ).encode("utf-8")
 
 
+def canonical_physical_event_witness(
+    *,
+    event_id: UUID,
+    event: str,
+    occurred: datetime,
+    flow_run_id: UUID,
+    task_run_id: UUID,
+    generation: int,
+    holder_id: UUID,
+    manifest_digest: str,
+    run_count: int,
+    task_run: dict[str, Any],
+    validated_state: dict[str, Any],
+    graph_revision_id: UUID,
+    assignment_epoch: int,
+    subtask_id: UUID,
+    grant_id: UUID,
+    physical_epoch: int,
+    scope_digest: str,
+) -> bytes:
+    """Bind an ordinary TaskRun event to one sealed physical assignment."""
+    if type(assignment_epoch) is not int or assignment_epoch < 1:
+        raise ValueError("An event requires a positive assignment epoch")
+    if (
+        type(physical_epoch) is not int
+        or not 1 <= physical_epoch <= 64
+        or physical_epoch != generation
+    ):
+        raise ValueError("An event requires its exact physical generation")
+    if not _HEX_DIGEST.fullmatch(scope_digest):
+        raise ValueError("An event requires a canonical physical scope digest")
+    witness = json.loads(
+        canonical_event_witness(
+            event_id=event_id,
+            event=event,
+            occurred=occurred,
+            flow_run_id=flow_run_id,
+            task_run_id=task_run_id,
+            generation=generation,
+            holder_id=holder_id,
+            manifest_digest=manifest_digest,
+            run_count=run_count,
+            task_run=task_run,
+            validated_state=validated_state,
+        )
+    )
+    witness.update(
+        schema="prefect-stream-physical-task-event-v1",
+        graph_revision_id=str(graph_revision_id),
+        assignment_epoch=assignment_epoch,
+        subtask_id=str(subtask_id),
+        grant_id=str(grant_id),
+        physical_epoch=physical_epoch,
+        scope_digest=scope_digest,
+    )
+    return json.dumps(
+        witness,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
 def event_key_id(public_key: bytes) -> str:
     """Return the public identity of one raw Ed25519 key."""
     if len(public_key) != 32:

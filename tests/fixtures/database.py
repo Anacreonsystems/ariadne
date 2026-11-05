@@ -108,6 +108,20 @@ async def clear_db(db, request):
             try:
                 async with db.session_context(begin_transaction=True) as session:
                     await session.execute(orm_models.Agent.__table__.delete())
+                    # Physical assignments deliberately retain their Worker FK.
+                    # Remove the test graph hierarchy before the special early
+                    # pool deletion; submissions also retain the graph FK.
+                    await session.execute(
+                        orm_models.StreamPhysicalSubtask.__table__.delete()
+                    )
+                    await session.execute(
+                        orm_models.StreamSubmission.__table__.delete().where(
+                            orm_models.StreamSubmission.graph_revision_id.is_not(None)
+                        )
+                    )
+                    await session.execute(
+                        orm_models.StreamGraphRevision.__table__.delete()
+                    )
                     await session.execute(orm_models.WorkPool.__table__.delete())
 
                     for table in reversed(orm_models.Base.metadata.sorted_tables):

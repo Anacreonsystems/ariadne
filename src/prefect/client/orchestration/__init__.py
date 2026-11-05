@@ -140,6 +140,7 @@ from prefect.settings import (
 from prefect.types._datetime import now
 
 from prefect._internal.urls import strip_auth_from_url
+from prefect._internal.stream_execution import get_stream_subtask_execution
 from prefect._internal.version_checking import (
     _api_version_check_key,
     _cache_api_version_check,
@@ -332,6 +333,31 @@ class PrefectClient(
         server_type: Optional[ServerType] = None,
     ) -> None:
         httpx_settings = httpx_settings.copy() if httpx_settings else {}
+        physical_execution = get_stream_subtask_execution()
+        if physical_execution is not None:
+            if (
+                not isinstance(api, str)
+                or api.rstrip("/") != physical_execution.api_url
+            ):
+                raise ValueError("Physical clients require their exact launching API")
+            auth_string = api_key = None
+            httpx_settings["auth"] = None
+            httpx_settings["cookies"] = {}
+            httpx_settings["trust_env"] = False
+            httpx_settings["headers"] = {
+                name: value
+                for name, value in httpx_settings.get("headers", {}).items()
+                if name.lower()
+                not in {
+                    "authorization",
+                    "proxy-authorization",
+                    "cookie",
+                    "prefect-csrf-token",
+                    "prefect-csrf-client",
+                    "x-prefect-subtask-grant",
+                }
+                and not name.lower().startswith("x-prefect-stream-execution-")
+            }
         httpx_settings.setdefault("headers", {})
 
         tls_verify = httpx_settings.get("verify")
@@ -453,7 +479,8 @@ class PrefectClient(
             httpx_settings.setdefault("follow_redirects", True)
 
         enable_csrf_support = (
-            self.server_type != ServerType.CLOUD
+            physical_execution is None
+            and self.server_type != ServerType.CLOUD
             and PREFECT_CLIENT_CSRF_SUPPORT_ENABLED.value()
         )
 
@@ -1115,6 +1142,10 @@ class PrefectClient(
 
     async def raise_for_api_version_mismatch_once(self) -> None:
         """Run API version compatibility check once per process/API/client version."""
+        if get_stream_subtask_execution() is not None:
+            # The scoped bootstrap validates the versioned physical protocol;
+            # a child grant has no authority to read the general admin API.
+            return
         # Cloud is always compatible as a server
         if self.server_type == ServerType.CLOUD:
             return
@@ -1280,6 +1311,31 @@ class SyncPrefectClient(
         server_type: Optional[ServerType] = None,
     ) -> None:
         httpx_settings = httpx_settings.copy() if httpx_settings else {}
+        physical_execution = get_stream_subtask_execution()
+        if physical_execution is not None:
+            if (
+                not isinstance(api, str)
+                or api.rstrip("/") != physical_execution.api_url
+            ):
+                raise ValueError("Physical clients require their exact launching API")
+            auth_string = api_key = None
+            httpx_settings["auth"] = None
+            httpx_settings["cookies"] = {}
+            httpx_settings["trust_env"] = False
+            httpx_settings["headers"] = {
+                name: value
+                for name, value in httpx_settings.get("headers", {}).items()
+                if name.lower()
+                not in {
+                    "authorization",
+                    "proxy-authorization",
+                    "cookie",
+                    "prefect-csrf-token",
+                    "prefect-csrf-client",
+                    "x-prefect-subtask-grant",
+                }
+                and not name.lower().startswith("x-prefect-stream-execution-")
+            }
         httpx_settings.setdefault("headers", {})
 
         tls_verify = httpx_settings.get("verify")
@@ -1381,7 +1437,8 @@ class SyncPrefectClient(
             httpx_settings.setdefault("follow_redirects", True)
 
         enable_csrf_support = (
-            self.server_type != ServerType.CLOUD
+            physical_execution is None
+            and self.server_type != ServerType.CLOUD
             and PREFECT_CLIENT_CSRF_SUPPORT_ENABLED.value()
         )
 
@@ -1507,6 +1564,10 @@ class SyncPrefectClient(
 
     def raise_for_api_version_mismatch_once(self) -> None:
         """Run API version compatibility check once per process/API/client version."""
+        if get_stream_subtask_execution() is not None:
+            # The scoped bootstrap validates the versioned physical protocol;
+            # a child grant has no authority to read the general admin API.
+            return
         # Cloud is always compatible as a server
         if self.server_type == ServerType.CLOUD:
             return

@@ -53,6 +53,22 @@ def linux_process_identity(pid: int) -> tuple[UUID, UUID, int]:
     return host, boot, int(fields[19])
 
 
+def create_native_stream_credentials() -> tuple[UUID, str, bytes, str]:
+    """Create one holder identity, opaque capability and Ed25519 signing pair."""
+    private = Ed25519PrivateKey.generate()
+    private_bytes = private.private_bytes(
+        serialization.Encoding.Raw,
+        serialization.PrivateFormat.Raw,
+        serialization.NoEncryption(),
+    )
+    public = (
+        private.public_key()
+        .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        .hex()
+    )
+    return uuid4(), secrets.token_hex(32), private_bytes, public
+
+
 class NativeProcessStarter:
     """Register a blocked child before one-use private bootstrap delivery."""
 
@@ -144,18 +160,7 @@ class NativeProcessStarter:
 
     @staticmethod
     def _credentials() -> tuple[UUID, str, bytes, str]:
-        private = Ed25519PrivateKey.generate()
-        private_bytes = private.private_bytes(
-            serialization.Encoding.Raw,
-            serialization.PrivateFormat.Raw,
-            serialization.NoEncryption(),
-        )
-        public = (
-            private.public_key()
-            .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-            .hex()
-        )
-        return uuid4(), secrets.token_hex(32), private_bytes, public
+        return create_native_stream_credentials()
 
     def _bind_execution(self, holder: UUID, capability: str, private: bytes) -> None:
         self.execution = StreamExecutionContext(
@@ -176,7 +181,7 @@ class NativeProcessStarter:
         )
         if plan.work_pool_id != self.work_pool_id:
             raise StreamProtocolError("Native deployment belongs to another work pool")
-        holder, capability, private, public = self._credentials()
+        holder, capability, private, public = create_native_stream_credentials()
         self.enrollment = await self._request(
             "enroll_native_stream_deployment",
             flow_run_id=self.flow_run.id,
@@ -293,7 +298,7 @@ class NativeProcessStarter:
             )
         ):
             return await retire()
-        holder, capability, private, public = self._credentials()
+        holder, capability, private, public = create_native_stream_credentials()
         launcher = uuid4()
         supervisor, supervisor_capability = uuid4(), secrets.token_hex(32)
         launcher_host, launcher_boot, launcher_ticks = linux_process_identity(

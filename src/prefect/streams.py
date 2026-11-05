@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
@@ -16,10 +19,12 @@ from typing import (
     Literal,
     Protocol,
     TypeVar,
+    cast,
 )
 from uuid import UUID
 
 from anyio.to_thread import run_sync
+from pydantic import JsonValue
 
 from prefect.exceptions import PrefectException
 
@@ -52,15 +57,19 @@ class NativeStreamFlowConfig:
     """
 
     protocol_version: Literal[1] = 1
-    profile: Literal["bounded-linear-v1"] = "bounded-linear-v1"
+    profile: Literal["bounded-linear-v1", "partitioned-fixed-v1"] = "bounded-linear-v1"
     resource_profile: Literal["bounded-default-v1"] = "bounded-default-v1"
+    partition_count: int = 1
 
     def __post_init__(self) -> None:
         if (
             type(self.protocol_version) is not int
             or self.protocol_version != 1
-            or self.profile != "bounded-linear-v1"
+            or self.profile not in {"bounded-linear-v1", "partitioned-fixed-v1"}
             or self.resource_profile != "bounded-default-v1"
+            or type(self.partition_count) is not int
+            or self.partition_count
+            != (2 if self.profile == "partitioned-fixed-v1" else 1)
         ):
             raise StreamProtocolError("Unsupported native Flow capability profile")
 
@@ -179,18 +188,98 @@ class SourceRecord(Generic[T]):
             raise StreamProtocolError("A source position must be a positive integer")
 
 
+@dataclass(frozen=True, init=False)
+class StreamPartitionCall:
+    """One explicit JSON parameter snapshot for a physical partition.
+
+    Source calls must identify two distinct user-owned splits. The runtime does
+    not infer a split or duplicate a full-source scan. Values returned by
+    `parameters` are copies; callers cannot mutate a sealed declaration.
+    """
+
+    _parameters: bytes = field(repr=False)
+
+    def __init__(self, *, parameters: dict[str, JsonValue]) -> None:
+        def validate(value: Any) -> None:
+            if value is None or type(value) in (bool, int, float, str):
+                return
+            if type(value) is list:
+                for item in value:
+                    validate(item)
+                return
+            if type(value) is dict and all(type(key) is str for key in value):
+                for item in value.values():
+                    validate(item)
+                return
+            raise StreamProtocolError("Partition parameters require strict JSON values")
+
+        if type(parameters) is not dict:
+            raise StreamProtocolError("Partition parameters require a JSON dictionary")
+        try:
+            validate(parameters)
+            encoded = json.dumps(
+                parameters,
+                sort_keys=True,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+            raise StreamProtocolError(
+                "Partition parameters require finite JSON"
+            ) from exc
+        if len(encoded) > 64 * 1024:
+            raise StreamProtocolError("Partition parameter snapshot exceeds 64 KiB")
+        object.__setattr__(self, "_parameters", encoded)
+
+    @property
+    def parameters(self) -> dict[str, JsonValue]:
+        return json.loads(self._parameters)
+
+
+@dataclass(frozen=True)
+class _PartitionMetadata:
+    index: int = 0
+    count: int = 1
+    operator_uid: str | None = None
+    assignment_epoch: int | None = None
+
+
+class _PartitionContext:
+    _partition: _PartitionMetadata
+
+    @property
+    def partition_index(self) -> int:
+        return self._partition.index
+
+    @property
+    def partition_count(self) -> int:
+        return self._partition.count
+
+    @property
+    def operator_uid(self) -> str | None:
+        return self._partition.operator_uid
+
+    @property
+    def assignment_epoch(self) -> int | None:
+        return self._partition.assignment_epoch
+
+
 @dataclass
-class SourceContext:
+class SourceContext(_PartitionContext):
     """Injected source metadata; only platform acceptance advances position."""
 
     task_run_id: UUID
     stream_id: str
     attempt: int
     accepted_source_position: int
+    _partition: _PartitionMetadata = field(
+        default_factory=_PartitionMetadata, repr=False
+    )
 
 
 @dataclass
-class StreamContext:
+class StreamContext(_PartitionContext):
     """Per-input context; managed state is saved with terminal acceptance."""
 
     task_run_id: UUID
@@ -198,6 +287,9 @@ class StreamContext:
     input_sequence: int
     attempt: int
     managed_state: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    _partition: _PartitionMetadata = field(
+        default_factory=_PartitionMetadata, repr=False
+    )
 
 
 @dataclass(frozen=True)
@@ -317,6 +409,63 @@ class Stream(Generic[T]):
 
         seal_declared_graph()
         return self.completion.result(timeout=timeout)
+
+
+class PartitionedStream(Generic[T]):
+    """Two physical streams without an implied global order or collection.
+
+    A source declaration is pending until its one operator is declared. Physical
+    identities are bound once from the sealed server graph, never guessed.
+    """
+
+    def __init__(self, *, _ready: threading.Event | None = None) -> None:
+        self._partitions: tuple[Stream[T], Stream[T]] | None = None
+        self._binding_lock = threading.Lock()
+        self._shared_readiness = _ready is not None
+        self._ready = threading.Event() if _ready is None else _ready
+
+    def _bind(self, partitions: object) -> None:
+        with self._binding_lock:
+            if self._partitions is not None:
+                raise StreamProtocolError(
+                    "Physical stream identities are already bound"
+                )
+            if (
+                type(partitions) is not tuple
+                or len(partitions) != 2
+                or any(not isinstance(partition, Stream) for partition in partitions)
+            ):
+                raise StreamProtocolError(
+                    "A partitioned stream requires exactly two streams"
+                )
+            self._partitions = cast(tuple[Stream[T], Stream[T]], partitions)
+            if not self._shared_readiness:
+                self._ready.set()
+
+    @property
+    def partitions(self) -> tuple[Stream[T], Stream[T]]:
+        if self._partitions is None or not self._ready.is_set():
+            raise StreamProtocolError(
+                "The partitioned graph requires its operator declaration"
+            )
+        return self._partitions
+
+    def wait(self, timeout: float | None = None) -> tuple[Any, Any]:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        results = []
+        failures: list[Exception] = []
+        for partition in self.partitions:
+            remaining = (
+                None if deadline is None else max(0, deadline - time.monotonic())
+            )
+            try:
+                results.append(partition.wait(timeout=remaining))
+            except Exception as exc:
+                failures.append(exc)
+                results.append(None)
+        if failures:
+            raise failures[0]
+        return results[0], results[1]
 
 
 class StreamCollection(Generic[T]):

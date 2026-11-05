@@ -6,6 +6,7 @@ import threading
 import time
 import weakref
 from collections.abc import Awaitable, Callable, Generator
+from datetime import timedelta
 from functools import partial
 from logging import Logger
 from typing import (
@@ -26,7 +27,10 @@ from typing_extensions import TypeIs
 import prefect
 import prefect.exceptions
 from prefect._internal.concurrency.cancellation import get_deadline
-from prefect._internal.stream_execution import stream_task_event_resource
+from prefect._internal.stream_execution import (
+    get_stream_subtask_execution,
+    stream_task_event_resource,
+)
 from prefect.client.schemas import FlowRunResult, OrchestrationResult, TaskRun
 from prefect.client.schemas.objects import (
     FlowRun,
@@ -887,12 +891,13 @@ async def check_api_reachable(client: "PrefectClient", fail_message: str) -> Non
     API_HEALTHCHECKS[api_url] = get_deadline(60 * 10)
 
 
-def emit_task_run_state_change_event(
+def build_task_run_state_change_event(
     task_run: TaskRun,
     initial_state: Optional[State[Any]],
     validated_state: State[Any],
     follows: Optional[Event] = None,
-) -> Optional[Event]:
+) -> Event:
+    """Build the ordinary signed TaskRun event without choosing a transport."""
     state_message_truncation_length = 100_000
 
     if _is_result_record(validated_state.data) and should_persist_result():
@@ -971,19 +976,54 @@ def emit_task_run_state_change_event(
         "prefect.orchestration": "client",
     }
     resource = stream_task_event_resource(task_run, validated_state, payload, resource)
-    return emit_event(
-        id=validated_state.id,
-        occurred=validated_state.timestamp,
-        event=f"prefect.task-run.{validated_state.name}",
-        payload=payload,
-        resource=resource,
-        related=[
+    related = [
+        {"prefect.resource.id": f"prefect.tag.{tag}", "prefect.resource.role": "tag"}
+        for tag in sorted(task_run.tags)
+    ]
+    if get_stream_subtask_execution() is not None:
+        # Ordinary EventsWorker supplies this relation from the Flow context.
+        # Physical Tasks intentionally have no such context or worker transport.
+        related.append(
             {
-                "prefect.resource.id": f"prefect.tag.{tag}",
-                "prefect.resource.role": "tag",
+                "prefect.resource.id": f"prefect.flow-run.{task_run.flow_run_id}",
+                "prefect.resource.role": "flow-run",
             }
-            for tag in sorted(task_run.tags)
-        ],
+        )
+    return Event.model_validate(
+        {
+            "id": validated_state.id,
+            "occurred": validated_state.timestamp,
+            "event": f"prefect.task-run.{validated_state.name}",
+            "payload": payload,
+            "resource": resource,
+            "related": related,
+            "follows": (
+                follows.id
+                if follows is not None
+                and abs(validated_state.timestamp - follows.occurred)
+                < timedelta(minutes=5)
+                else None
+            ),
+        }
+    )
+
+
+def emit_task_run_state_change_event(
+    task_run: TaskRun,
+    initial_state: Optional[State[Any]],
+    validated_state: State[Any],
+    follows: Optional[Event] = None,
+) -> Optional[Event]:
+    event = build_task_run_state_change_event(
+        task_run, initial_state, validated_state, follows
+    )
+    return emit_event(
+        id=event.id,
+        occurred=event.occurred,
+        event=event.event,
+        payload=event.payload,
+        resource=dict(event.resource),
+        related=[dict(resource) for resource in event.related],
         follows=follows,
     )
 

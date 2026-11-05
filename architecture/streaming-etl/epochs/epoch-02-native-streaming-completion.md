@@ -39,7 +39,7 @@ the agreed durable-yield protocol and Prefect lifecycle authority.
 | Capability | Native today | Direction / required proof |
 | --- | --- | --- |
 | Finite linear per-record streaming | Accepted within `bounded-linear-v1` | Preserve [epoch 1 evidence](../evidence/native-epoch1-final-acceptance-2026-11-04.json). |
-| Separate physical operator processes / partitions | Not implemented | [ADR-0043](../adr/ADR-0043-physical-graph-and-partitioned-channels.md): stable logical operator, TaskRun per physical subtask, independent owners and resource admission. |
+| Separate physical operator processes / partitions | Accepted for the finite fixed-P2 N2.1 slice | [ADR-0043](../adr/ADR-0043-physical-graph-and-partitioned-channels.md): stable logical operator, TaskRun per physical subtask, independent owners and resource admission; branched DAG routing remains open. |
 | Fan-out, named inputs, correlated join | Historical prototype evidence only | [ADR-0043](../adr/ADR-0043-physical-graph-and-partitioned-channels.md) / [ADR-0044](../adr/ADR-0044-multi-input-turns-and-state-materialization.md): real native DAG and business-key match oracle. |
 | Journaled state with derived snapshots | Narrow standalone experiment in this cycle | [ADR-0044](../adr/ADR-0044-multi-input-turns-and-state-materialization.md): no accepted-body replay; then native integration. |
 | Continuous split sources / event time / timers | Not implemented | [ADR-0045](../adr/ADR-0045-continuous-sources-event-time-and-timers.md). |
@@ -57,9 +57,10 @@ the agreed durable-yield protocol and Prefect lifecycle authority.
    real process termination. This tests a theory, not native product completion.
 5. Review the resulting documents and validate their graph.
 
-The current cycle earns **zero new native capability completion**. Overall
-original-objective progress is not inferred from seven ADR files or a passing
-model. Keep the foundation's historical percentage and the new scope separate.
+Architecture documents and the standalone model earned no capability by
+themselves. The later fixed-P2 implementation and independent N2.1 gate now
+earn 15%; keep the foundation's historical percentage and the new scope
+separate.
 
 ## First proposed native vertical slice
 
@@ -155,12 +156,12 @@ The milestone percentages below measure the **new epoch-2 profile problem**,
 separately from epoch 1's accepted bounded foundation. The
 [sprint board](../sprint_board.md) divides them into 24 short sub-sprints with
 concrete exits. Planned shares total 100%; earned native readiness is currently
-**0%**.
+**15%**.
 
 | Sprint | State | Cumulative target | Share | Tasks | Native exit |
 | --- | --- | ---: | ---: | --- | --- |
-| N2.1 — Fixed physical execution | `progress` | 15% | +15% | NI2-001…006 | Immutable P2 plan, ordinary TaskRun per physical subtask, strict subtask grant, existing PostgreSQL data-plane reuse, separate source/operator processes, input 200/201 recovery, constant metadata at 500/5000, SQLite refusal and independent Principal gate. |
-| N2.2 — Branched DAG and exchanges | `planned` | 27% | +12% | NI2-010…014 | Versioned forward/rebalance/broadcast/keyed exchanges, fan-out, independent subscribers and exact route replay pass real SDK/API/PostgreSQL faults. |
+| N2.1 — Fixed physical execution | `done` | 15% | +15% | NI2-001…006 | Immutable P2 plan, ordinary TaskRun per physical subtask, strict subtask grant, existing PostgreSQL data-plane reuse, separate source/operator processes, input 200/201 recovery, constant metadata at 500/5000, SQLite refusal and independent Principal gate. |
+| N2.2 — Branched DAG and exchanges | `progress` | 27% | +12% | NI2-010…014 | Versioned forward/rebalance/broadcast/keyed exchanges, fan-out, independent subscribers and exact route replay pass real SDK/API/PostgreSQL faults. |
 | N2.3 — Multi-input state and join | `planned` | 42% | +15% | NI2-020…025 | Journaled turn state, mailbox order, OUTPUT/NO_OUTPUT compatibility, correlated join and complete barrier cuts pass native process faults without accepted-body replay. |
 | N2.4 — Continuous source/event time | `planned` | 55% | +13% | NI2-030…035 | Split enumerator/readers, ordered controls, drain, watermarks, idleness and timers pass real continuous native gates. |
 | N2.5 — Pressure and online retention | `planned` | 67% | +12% | NI2-040…045 | Full-turn reservations, fair credits, branch pressure, online segment/object GC and bounded PostgreSQL storage plateau pass. |
@@ -169,9 +170,9 @@ concrete exits. Planned shares total 100%; earned native readiness is currently
 | N2.8 — Full profile acceptance | `planned` | 100% | +10% | NI2-070…075 | Source → fan-out → keyed join → sink, continuous pressure, recovery, rescale, load/resource limits, regressions, packaging/UI and independent evidence graph all pass on frozen source. |
 
 No intermediate task earns a fraction of its sprint. A share moves to earned
-only when that sprint's exit, every mapped ADR criterion, and independent
-source-bound verification pass. Historical or standalone prototype evidence is
-never substituted for a native gate.
+only when that sprint's declared exit and independent source-bound verification
+pass. Partial ADR criteria remain explicitly open for later sprints; historical
+or standalone prototype evidence is never substituted for a native gate.
 
 The [first host preflight](../evidence/native-epoch2-host-preflight-2026-11-04/run-41928669274/receipt.json)
 is retained as an `UNPROVEN` infrastructure observation: its two ARC jobs did
@@ -180,6 +181,11 @@ cross-host, network or verified-stop acceptance. The fixed-P2 implementation
 must first satisfy the separate [two-worker placement agreement](../evidence/flink-architecture-2026-11-04/ni2-006-two-worker-placement-agreement-2026-11-04.json)
 on two real registered workers; that same-host gate still does not close
 ADR-0047.
+The bounded [ARC/static follow-up](../evidence/native-epoch2-host-preflight-2026-11-04/run-41931304288/receipt.json)
+also remained `UNPROVEN`: the static job was never assigned and executed no
+steps, so cancellation after the queue observation provides no second-host
+evidence. No further infrastructure probes are planned without a product
+criterion that needs a new observation.
 
 The [first physical CI discovery](../evidence/native-epoch2-physical-ci-2026-11-04/discovery.json)
 is also retained without readiness credit. Its initial SQLite run exposed an
@@ -196,7 +202,82 @@ retains the 46-file WIP source/test inventory before the placement refactor. It
 was not executed as one frozen suite and does not retroactively bind the earlier
 8/500-document discovery runs or satisfy any acceptance criterion.
 
+The first [two-worker eight-document observation](../evidence/native-epoch2-two-worker-discovery-2026-11-04/first-eight-documents/receipt.json)
+completed four physical Task processes on two registered ProcessWorkers, but
+its combined source snapshot was captured after the run and shared files were
+still under implementation. It is a real milestone observation, not the N2.1
+gate: both input-200 coordinates, 500/5000, named failure/security controls and
+the independent frozen matrix remain required, with zero earned percentage.
+The separate [preflight-order successor](../evidence/flink-architecture-2026-11-04/ni2-006-preflight-order-successor-2026-11-04.json)
+records the final claim/import/register barrier without rewriting the earlier
+agreement or treating application import as a hostile-code sandbox.
+
+The [worker API component archive](../evidence/native-epoch2-worker-api-2026-11-04/index.json)
+and [paired SDK archive](../evidence/native-epoch2-sdk-contract-2026-11-04/index.json)
+retain their failure histories and current PostgreSQL/SQLite/client successors.
+They remain component evidence because the participating runtime, worker and
+server union has not yet been frozen and rerun. The
+[500-record request inventory](../evidence/native-epoch2-control-overhead-2026-11-04/baseline-500-loss/counts.json)
+is likewise an observation of functional control traffic, not a throughput or
+industrial-readiness result. None of these records changes the 0% earned value.
+Its [two-case successor comparison](../evidence/native-epoch2-control-overhead-2026-11-04/fixture-successor-comparison.json)
+also remains discovery-only because its recorded 55-file inventory omitted
+participating fixture/control files; the complete source union must be frozen
+and rerun independently.
+The [worker component archive](../evidence/native-epoch2-worker-2026-11-04/index.json)
+likewise retains the supervisor race and exact failed-start cleanup successors,
+including the independent component rerun. It does not replace the final
+two-worker process matrix and earns no percentage by itself.
+The [server component archive](../evidence/native-epoch2-server-2026-11-05/index.json)
+retains the paired PostgreSQL/SQLite, migration, legacy-profile and scoped-type
+successors with their original failures. It remains component-only and adds no
+earned percentage before the whole-union gate.
+The [startup-cleanup HTTP adjunct](../evidence/native-epoch2-startup-cleanup-http-2026-11-05/index.json)
+adds a real PostgreSQL/TCP/Popen control for the formerly unsafe unknown-wait
+path. It is retained as component evidence and does not change readiness.
+The [compatibility discovery archive](../evidence/native-epoch2-compatibility-discovery-2026-11-05/index.json)
+preserves the strict-type correction and complete ordinary/finite source-bound
+successors. It is regression evidence on the live candidate, not the final
+owned-checkout acceptance, so earned readiness stays 0%.
+The [runtime component archive](../evidence/native-epoch2-runtime-2026-11-05/index.json)
+preserves the pre-seal mutation failure and successor, two-worker discovery
+cuts and their source qualifications. It does not replace the final frozen
+5000-document and full-matrix runs.
+The [product checkpoint receipt](../evidence/native-epoch2-product-checkpoint-2026-11-05/receipt.json)
+binds the committed implementation and the isolated checkout used by the
+Principal. It is a publication/source boundary only; the 13-case process
+matrix and complete frozen profiles remain the acceptance authority.
+The [checkpoint documentation graph](../evidence/flink-architecture-2026-11-04/ni2-006-product-checkpoint-graph-2026-11-05.json)
+binds these append-only status and evidence links with zero earned readiness.
+
 The [ADR graph](../adr/README.md), [reference comparison](../research/flink-2.3-architecture.md)
 and [Principal discussion](../evidence/flink-architecture-2026-11-04/principal-discussion.json)
 provide navigation into the design. Each new ADR stays `planning` or `progress`
 until its own implemented scope and every acceptance criterion have evidence.
+
+## N2.1 scoped acceptance — 2026-11-05
+
+The [Principal N2.1 acceptance](../evidence/native-epoch2-n2-1-principal-acceptance-2026-11-05.json)
+closes NI2-001…006 and earns the first 15% share. Its independent frozen matrix
+passes all thirteen fixed-P2 cases: sync/async, both input-200 recovery cuts,
+500 and 5000 records, authority/import/startup failures and delayed process
+retirement. The [native13 archive](../evidence/native-epoch2-final-native13-2026-11-05/index.json)
+binds the unchanged 2,232-file input map and the copied generated build module.
+
+Complementary PostgreSQL17 and SQLite controls, PostgreSQL14 backend refusal,
+paired migration successors, SDK/package/type regressions and exact startup
+cleanup are mapped by hash in the acceptance record. The
+[source-relevance bridge](../evidence/native-epoch2-n2-1-source-relevance-2026-11-05.json)
+keeps two later test-oracle corrections separate from the frozen product run;
+production and DDL bytes did not change. Hosted successor status is tracked as
+publication evidence and does not rewrite the independent local results.
+The [hosted parent failure archive](../evidence/native-epoch2-ci-parent-1e0ac8d-2026-11-05/index.json)
+retains the actual PostgreSQL14 and legacy SQLite job logs that triggered the
+two test-only corrections.
+
+This is the fixed finite P2 execution primitive only. ADR-0043 remains
+`progress`: branched DAG sealing, independent branch cursors and immutable
+multi-exchange routing stay open in N2.2, while the later ADRs retain their
+original planning gates.
+The [N2.1 documentation graph](../evidence/native-epoch2-n2-1-graph-2026-11-05.json)
+validates the resulting statuses and local evidence links.

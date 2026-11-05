@@ -1,0 +1,54 @@
+from pathlib import Path
+import ast
+
+def save(name: str, transform):
+ p=Path(name);old=p.read_text();new=transform(old);assert new!=old,name;ast.parse(new,filename=name);p.write_text(new)
+
+save('src/prefect/server/api/native_deployments.py',lambda x:x.replace('\n\nrouter: PrefectRouter = PrefectRouter(', '\n\n# Shared route validation boundary; retain the private spelling for legacy callers.\nSecretRedactingRoute = _SecretRedactingRoute\n\n\nrouter: PrefectRouter = PrefectRouter(',1))
+save('src/prefect/server/api/streams.py',lambda x:x+'\n\n# Shared typed HTTP translation for the physical v2 routes.\nstream_http_error = _stream_http_error\n')
+save('src/prefect/server/models/streams.py',lambda x:x.replace('    async def reserve_submission(\n','    # Shared manifest projection; existing v1 callers retain their private name.\n    submission_response = _submission_response\n\n    async def reserve_submission(\n',1)+'\n\n# Shared storage protocol helpers; preserve existing private callers.\ncanonical_stream_payload = _canonical\nfinish_stream_partition = _finish\n')
+save('src/prefect/server/services/task_run_recorder.py',lambda x:x+'\n\n# Shared transaction-aware recorder boundary for physical HTTP task events.\nauthorized_stream_events = _authorized_stream_events\nrecord_bulk_task_run_events_in_session = _record_bulk_task_run_events_in_session\n')
+save('src/prefect/server/schemas/streams.py',lambda x:x+'\n\n# Shared strict JSON validator for the immutable physical graph wire.\nvalidate_strict_finite_json = _strict_finite_json\n')
+save('src/prefect/server/schemas/stream_subtasks.py',lambda x:x.replace('_strict_finite_json','validate_strict_finite_json'))
+def core(x):
+ x=x.replace('from datetime import timedelta\n','from datetime import timedelta\nfrom typing import Literal, cast\n')
+ x=x.replace('from prefect.server.models.streams import NativeStreamStore, _canonical, _finish','from prefect.server.models.streams import (\n    NativeStreamStore,\n    canonical_stream_payload,\n    finish_stream_partition,\n)')
+ x=x.replace('from prefect.types._datetime import now','from prefect.types._datetime import DateTime, now')
+ x=x.replace('_canonical(', 'canonical_stream_payload(').replace('_finish(', 'finish_stream_partition(').replace('NativeStreamStore._submission_response(', 'NativeStreamStore.submission_response(')
+ start=x.index('        occupied = dict(');end=x.index('        if any(occupied.get(',start)
+ x=x[:start]+'''        occupied_rows = (
+            await session.execute(
+                sa.select(db.StreamPhysicalSubtask.assigned_worker_id, sa.func.count())
+                .where(
+                    db.StreamPhysicalSubtask.assigned_worker_id.in_(selected),
+                    db.StreamPhysicalSubtask.physical_slot_released.is_(False),
+                )
+                .group_by(db.StreamPhysicalSubtask.assigned_worker_id)
+            )
+        ).all()
+        occupied: dict[UUID, int] = {
+            worker_id: count
+            for worker_id, count in occupied_rows
+            if worker_id is not None
+        }
+'''+x[end:]
+ x=x.replace('assignment_epoch=subtask.assignment_epoch,','assignment_epoch=cast(Literal[1], subtask.assignment_epoch),')
+ x=x.replace('profile=graph.profile,','profile=cast(Literal["partitioned-fixed-v1"], graph.profile),')
+ x=x.replace('assignment_epoch=graph.assignment_epoch,','assignment_epoch=cast(Literal[1], graph.assignment_epoch),')
+ x=x.replace('        state=graph.state,\n','        state=cast(Literal["SEALED", "ADMITTED", "ABORTING", "RELEASED"], graph.state),\n')
+ x=x.replace('grant = by_grant.get(item.current_grant_id)','grant = by_grant.get(item.current_grant_id) if item.current_grant_id is not None else None')
+ for lhs in ('authority.manifest_sealed_at','graph.startup_completed_at','grant.last_renewed_at'):
+  x=x.replace(lhs+' = now("UTC")',lhs+' = cast(DateTime, now("UTC"))')
+ x=x.replace('launcher_binding_kind=grant.launcher_binding_kind,','launcher_binding_kind=cast(Literal["DEPLOYMENT", "FLOW_AUTHORITY_LOCAL", "ASSIGNED_WORKER"], grant.launcher_binding_kind),')
+ x=x.replace('launcher_binding_kind=old.launcher_binding_kind,','launcher_binding_kind=cast(Literal["DEPLOYMENT", "FLOW_AUTHORITY_LOCAL", "ASSIGNED_WORKER"], old.launcher_binding_kind),')
+ x=x.replace('        state=grant.state,\n','        state=cast(Literal["CLAIMED", "REGISTERED", "RETIRED", "RELEASED"], grant.state),\n')
+ x=x.replace('        state=operation.state,\n','        state=cast(Literal["AUTHORIZED", "CONFIRMED", "RETIRED"], operation.state),\n')
+ x=x.replace('outcome = s.StreamSubtaskVerifiedRetirement(\n        **material, outcome_digest=outcome_digest\n    )','outcome = s.StreamSubtaskVerifiedRetirement.model_validate(\n        material | {"outcome_digest": outcome_digest}\n    )')
+ return x
+save('src/prefect/server/models/stream_subtasks.py',core)
+def api(x):
+ x=x.replace('from typing import Annotated','from typing import Annotated, cast').replace('from prefect.types._datetime import now','from prefect.types._datetime import DateTime, now')
+ for a,b in [('_SecretRedactingRoute','SecretRedactingRoute'),('_stream_http_error','stream_http_error'),('_canonical','canonical_stream_payload'),('_authorized_stream_events','authorized_stream_events'),('_record_bulk_task_run_events_in_session','record_bulk_task_run_events_in_session')]:x=x.replace(a,b)
+ x=x.replace('grant.last_renewed_at = now("UTC")','grant.last_renewed_at = cast(DateTime, now("UTC"))')
+ return x
+save('src/prefect/server/api/stream_subtasks.py',api)

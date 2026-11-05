@@ -1,0 +1,135 @@
+{
+  "schema": "native-physical-sdk-pre-user-code-audit-v2",
+  "observed_at": "2026-11-04T22:44:46.315298+00:00",
+  "base_commit": "9c444a3aa944d4ffa78afd5fe130db141c0c657b",
+  "scope": "SDK_CONTRACT_ONLY_NO_NATIVE_ACCEPTANCE",
+  "source": {
+    "src/prefect/_internal/stream_event_auth.py": "3cfc0c04f1585adbbf88d8947119a824380358b452b86b1c770ca7dc73abf567",
+    "src/prefect/_internal/stream_execution.py": "9c395332e424221d016630eabbc91c9fbff1df6f16f3f506010a5152f244812a",
+    "src/prefect/client/base.py": "78ef0da02d5934da8b661364c1b867f82db361b9df6883a214f29aee860a1eec",
+    "src/prefect/client/orchestration/__init__.py": "d81e794ecc191e3f48e23fb1751cce2ed27fa5a0a501ecf0218682f53902003a",
+    "src/prefect/client/orchestration/_streams/client.py": "4da882772c7a9bf3ab09b5ac1f01d80cbceaa0449ec8cd57a164bed401126348",
+    "src/prefect/client/orchestration/routes.py": "de56c31ddad5f4b11d77fbaf6fc8e1d6e21839c719eda11e51bee6f6c95d4e5f",
+    "src/prefect/client/schemas/stream_subtasks.py": "fc08848b5c2c3d21bb0032dd850d1395884c1f03eba2f73e2932d47089dac83a",
+    "src/prefect/client/schemas/native_deployments.py": "ef985e56ecfb628afe43d5c6b680b69fbfec24ed4bfff09beda17384d702db69",
+    "tests/client/test_stream_subtasks.py": "6adfee18f0eb6f06e584c47836853b56b92d7b1ba78e711dfc025f1c5e95f7d1",
+    "tests/client/test_native_deployment_schemas.py": "2134a51fb89e4d3c9447e572bbdb30bd736467b3b627d687f74eddc59faa0fd7"
+  },
+  "allowed_child_get": [
+    "own subtask bootstrap",
+    "own subtask task-run",
+    "assigned input/output stream status and prefix"
+  ],
+  "allowed_child_post": [
+    "own subtask events",
+    "own subtask lease renew/release",
+    "v1 sources claim/open/append/finish/close/fail/reject",
+    "v1 consumers open/read/complete/finish",
+    "v1 outputs fail/reject"
+  ],
+  "default_policy": "Deny every other Prefect HTTP route and method before transport. Require exact credential-free API origin/base path and exact own subtask/assigned stream path. Server additionally checks every data request body and current grant fence.",
+  "automatic_calls": [
+    {
+      "component": "SyncClientContext/AsyncClientContext entry",
+      "ordinary": "GET /admin/version via raise_for_api_version_mismatch_once",
+      "physical": "SDK guard skips this general API call; strict versioned bootstrap is the compatibility boundary",
+      "owner": "SDK",
+      "proof": "new transport test enters real ClientContext with version checks enabled; only scoped bootstrap reaches MockTransport"
+    },
+    {
+      "component": "task engine ResultStore.update_for_task",
+      "ordinary": "GET /admin/storage even when task persist_result=False",
+      "physical": "SDK denies before transport; legacy result helper catches ValueError and falls back locally. Runtime must explicitly provide physical local/null ResultStore and avoid this attempted query.",
+      "owner": "runtime agent",
+      "proof": "source audit results.py and task_engine.py; runtime process acceptance pending"
+    },
+    {
+      "component": "TaskRun registration and reads",
+      "ordinary": "POST /task_runs/; GET /task_runs/{id}",
+      "physical": "deny ordinary routes; existing TaskRun supplied from own scoped bootstrap/task-run",
+      "owner": "runtime agent",
+      "proof": "SDK own task-run method and offscope transport tests"
+    },
+    {
+      "component": "custom TaskRun name",
+      "ordinary": "local TaskRun.name + telemetry mutation before event; no direct TaskRun PATCH",
+      "physical": "retain local mutation and persist through exact signed own-TaskRun HTTP event",
+      "owner": "runtime agent",
+      "proof": "actual task_engine.py _set_custom_task_run_name audit; prior PATCH hypothesis explicitly corrected"
+    },
+    {
+      "component": "TaskRun telemetry",
+      "ordinary": "TaskRun labels travel through events; explicit update_flow_run_labels only applies to FlowRun",
+      "physical": "no general FlowRun endpoint allowed",
+      "owner": "runtime agent",
+      "proof": "telemetry/run_telemetry.py start_span/async_start_span source audit"
+    },
+    {
+      "component": "TaskRun state events",
+      "ordinary": "general events WebSocket/client sink",
+      "physical": "physical canonical witness + six physical resource labels; send ordinary Event through own scoped HTTP events endpoint; reconcile response using existing TaskRun lifecycle",
+      "owner": "SDK witness implemented; runtime transport integration pending",
+      "proof": "signature verification and mutation negatives, paired HTTP method contracts"
+    },
+    {
+      "component": "logging",
+      "ordinary": "APILogHandler POST /logs and client initialization",
+      "physical": "general log API denied. Runtime must disable API logging in physical child and send stdout/stderr through trusted parent; no silent Basic or API-key fallback.",
+      "owner": "runtime agent",
+      "proof": "logging/handlers.py source audit; physical transport deny-by-default"
+    },
+    {
+      "component": "task/tag concurrency",
+      "ordinary": "general concurrency acquire/renew/release",
+      "physical": "general endpoints denied. Runtime consumes pre-admitted own TaskRun reservation and uses scoped own-subtask renew/release only.",
+      "owner": "runtime agent",
+      "proof": "SDK paired lease methods and header tests; actual lease admission/recovery native acceptance pending"
+    }
+  ],
+  "forbidden_child_surfaces": [
+    "ordinary FlowRun/TaskRun writes or arbitrary reads",
+    "general logs/events/WebSocket endpoints",
+    "general admin/version/storage",
+    "general concurrency APIs",
+    "graph seal/read/admit",
+    "subtask claim/register/renew/replacement",
+    "stream create/reserve/submission/finite/control/release",
+    "other subtask or unrelated stream status/prefix",
+    "cross-origin or off-allowlist redirects"
+  ],
+  "credential_boundary": [
+    "No parent flow context may coexist with a physical context",
+    "Dataclass is frozen, secrets omitted from repr and pickle/cloudpickle prohibited",
+    "Clear Basic/Bearer/custom httpx auth/cookies/flow headers; force auth=None per send; disable inherited proxies and CSRF token calls",
+    "Child process launcher must strip API/server Basic/API-key/parent Flow credentials and isolate persisted profile/secret-provider sources; SDK alone is not a hostile-Python sandbox",
+    "FD bootstrap/runtime must verify actual PID/startticks before constructing context; scoped bootstrap then must match registered grant/context PID/startticks, graph, assignment, holder, event key, scope, TaskRun and stream identities"
+  ],
+  "evidence": {
+    "client_contract_v1": "/tmp/native-epoch2-sdk-subtask-contract-v1.log",
+    "client_contract_v2": "/tmp/native-epoch2-sdk-subtask-contract-v2.log",
+    "client_contract_v3": "/tmp/native-epoch2-sdk-subtask-contract-v3.log",
+    "client_contract_v4": "/tmp/native-epoch2-sdk-subtask-contract-v4.log",
+    "v4_result": "326 passed in 27.27s",
+    "pyright_v2": "/tmp/native-epoch2-sdk-subtask-types-v2.log",
+    "client_contract_final": "/tmp/native-epoch2-sdk-subtask-contract-v14.log",
+    "final_result": "424 passed in43.53s;Ruff0.15.19PASS;Pyright0errors"
+  },
+  "limits": "This is a source/MockTransport SDK contract audit. Actual OS identity, PostgreSQL, worker placement, native subprocess and process-fault acceptance remain with the runtime/server implementation and independent architect.",
+  "supersedes": {
+    "path": "/tmp/native-epoch2-sdk-pre-user-code-audit-v1.json",
+    "sha256": "1c879f2e69d16b2ebc73e18886db08c2a5fd8685cf23e01987b4fc6d3c1a1416",
+    "reason": "Final scoped reject routes and frozen task metadata added; earlier source audit remains retained."
+  },
+  "parent_only_controls": [
+    "graph seal/read/admit/activate/abort",
+    "subtask claim/register/renew/replacement authorize/confirm/verified retire"
+  ],
+  "final_config_batch": [
+    "context_key",
+    "task_version",
+    "artifact_digest",
+    "timeout_seconds",
+    "task_policy",
+    "effective_tags"
+  ]
+}

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="7.043" timestamp="2026-11-04T23:37:50.756456+00:00" hostname="f8abb611283c"><testcase classname="tests.workers.test_stream_subtasks" name="test_concurrent_identity_acknowledgements_create_one_subtask_owner" time="6.825"><failure message="assert 2 == 1&#10; +  where 2 = &lt;tests.workers.test_stream_subtasks.test_concurrent_identity_acknowledgements_create_one_subtask_owner.&lt;locals&gt;.DelayedIdentityChannel object at 0x7f8ce7061910&gt;.identity_requests">bootstrap_endpoint = ('http://127.0.0.1:36229/api', &lt;queue.Queue object at 0x7f8cd1e84fe0&gt;)
+
+    async def test_concurrent_identity_acknowledgements_create_one_subtask_owner(
+        bootstrap_endpoint: tuple[str, queue.Queue[tuple[str, str]]],
+    ):
+        async with PrefectClient(
+            bootstrap_endpoint[0], auth_string="owned-worker:transport-control"
+        ) as client:
+            worker = ProcessWorker(work_pool_name="owned-concurrent-startup")
+            worker._client = client
+            worker._work_pool = WorkPool(
+                name="owned-concurrent-startup",
+                type="process",
+                default_queue_id=uuid4(),
+                base_job_template={
+                    "prefect_native_streaming": {
+                        "schema_version": 1,
+                        "profile": "bounded-linear-v1",
+                    }
+                },
+            )
+            worker._has_successfully_synced = True
+            release_identity = Event()
+            both_started = Event()
+            worker_id = uuid4()
+            started = 0
+            owners: list[NativeStreamSubtaskSupervisor] = []
+    
+            class DelayedIdentityChannel(WorkPoolWorkerChannel):
+                def __init__(self) -&gt; None:
+                    self.identity_requests = 0
+    
+                async def ensure_worker_identity(self) -&gt; UUID:
+                    self.identity_requests += 1
+                    await release_identity.wait()
+                    worker.backend_id = worker_id
+                    return worker_id
+    
+            channel = DelayedIdentityChannel()
+            worker._worker_channel = channel
+    
+            async def ensure() -&gt; None:
+                nonlocal started
+                started += 1
+                if started == 2:
+                    both_started.set()
+                await worker._ensure_stream_subtask_supervisor()
+                owners.append(worker._stream_subtask_supervisor)
+    
+            # Hold only the external identity acknowledgement. The manager, async
+            # task group and optional endpoint request all execute normally.
+            with fail_after(10):
+                async with create_task_group() as group:
+                    worker._runs_task_group = group
+                    group.start_soon(ensure)
+                    group.start_soon(ensure)
+                    await both_started.wait()
+                    release_identity.set()
+&gt;           assert channel.identity_requests == 1
+E           assert 2 == 1
+E            +  where 2 = &lt;tests.workers.test_stream_subtasks.test_concurrent_identity_acknowledgements_create_one_subtask_owner.&lt;locals&gt;.DelayedIdentityChannel object at 0x7f8ce7061910&gt;.identity_requests
+
+tests/workers/test_stream_subtasks.py:459: AssertionError</failure></testcase></testsuite></testsuites>

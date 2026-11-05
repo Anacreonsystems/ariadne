@@ -4,9 +4,9 @@ Current product cycle: [Native integration epoch 2](epochs/epoch-02-native-strea
 approved implementation of [ADR-0042](adr/ADR-0042-flink-informed-native-streaming-architecture.md)–[ADR-0048](adr/ADR-0048-rescaling-compatibility-and-native-acceptance.md)
 at version `fae53c90aa3b44dbc45032833b4d193001e5c8bd`. ADR-0042–ADR-0044 are
 `progress`; ADR-0045–ADR-0048 are approved and remain `planning` until their
-implementation sprints start. **Zero new native capability completion** is
-earned. Task states show activity, while readiness moves only at independently
-verified sprint gates.
+implementation sprints start. The fixed-P2 N2.1 gate earns **15% native
+capability completion**. Task states show activity, while readiness moves only
+at independently verified sprint gates.
 
 Historical product cycle: [Native integration epoch 1](epochs/epoch-01-native-prefect.md),
 `accepted`, **100% earned native foundation readiness** for the selected scope. The
@@ -18,10 +18,10 @@ against the actual runtime and storage.
 
 | Sprint | State | Planned cumulative target | Share | Tasks | Exit |
 | --- | --- | ---: | ---: | --- | --- |
-| N2.1a — Topology and wire | `progress` | 5% | +5% | NI2-001, NI2-002 | Paired topology migrations and immutable plan/subtask DTOs pass real PostgreSQL/SQLite/API controls; no data-plane or runtime claim. |
-| N2.1b — Scoped authority and store | `progress` | 10% | +5% | NI2-003, NI2-004 | Strict subtask-only authentication, existing-store fences, whole-region admission and canonical keys pass cross-resource negatives; codec alone earns 0%. |
-| N2.1c — Physical runtime gate | `progress` | 15% | +5% | NI2-005, NI2-006 | Four ordinary physical TaskRuns run in separate processes, recover 200/201 and keep metadata constant at 500/5000 under the complete real gate. |
-| N2.2a — DAG and routes | `planned` | 21% | +6% | NI2-010, NI2-011 | Typed acyclic graph and four append-materialized exchanges preserve independent edge identities. |
+| N2.1a — Topology and wire | `done` | 5% | +5% | NI2-001, NI2-002 | Paired topology migrations and immutable plan/subtask DTOs pass real PostgreSQL/SQLite/API controls; no data-plane or runtime claim. |
+| N2.1b — Scoped authority and store | `done` | 10% | +5% | NI2-003, NI2-004 | Strict subtask-only authentication, existing-store fences, whole-region admission and canonical keys pass cross-resource negatives; codec alone earns 0%. |
+| N2.1c — Physical runtime gate | `done` | 15% | +5% | NI2-005, NI2-006 | Four ordinary physical TaskRuns run in separate processes, recover 200/201 and keep metadata constant at 500/5000 under the complete real gate. |
+| N2.2a — DAG and routes | `progress` | 21% | +6% | NI2-010, NI2-011 | Typed acyclic graph and four append-materialized exchanges preserve independent edge identities. |
 | N2.2b — Fan-out runtime gate | `planned` | 27% | +6% | NI2-012…014 | Real fan-out SDK/process execution survives retry and branch replacement without route or cursor drift. |
 | N2.3a — State and mailbox | `planned` | 32% | +5% | NI2-020, NI2-021 | Journaled state and deterministic multi-input apply order recover without accepted-body replay. |
 | N2.3b — Join, outcomes and cuts | `planned` | 37% | +5% | NI2-022…024 | OUTPUT/NO_OUTPUT, bounded correlated join and complete barrier cuts compose atomically. |
@@ -45,8 +45,9 @@ against the actual runtime and storage.
 
 The shares total 100% of the new profile problem and are separate from epoch
 1's historical 100% bounded-foundation measure. Current epoch-2 earned target:
-**0%**. The standalone materialization experiment and documentation approval do
-not earn a sprint share.
+**15%**. The [scoped N2.1 Principal acceptance](evidence/native-epoch2-n2-1-principal-acceptance-2026-11-05.json)
+earns the fixed-P2 share. The standalone materialization experiment and
+documentation approval do not earn a sprint share.
 
 ## Native epoch 1 board
 

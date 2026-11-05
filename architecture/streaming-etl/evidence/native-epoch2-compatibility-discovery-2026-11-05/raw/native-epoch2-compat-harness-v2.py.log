@@ -1,0 +1,69 @@
+from __future__ import annotations
+import datetime
+import hashlib
+import importlib.metadata
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+ROOT = Path('/workspace/ariadne')
+OUT = Path('/tmp/native-epoch2-compat-v2')
+OUT.mkdir(exist_ok=True)
+
+def sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+def snapshot(label: str) -> dict:
+    files = set()
+    for folder in ['src', 'tests']:
+        files.update(p for p in (ROOT / folder).rglob('*.py') if '__pycache__' not in p.parts)
+    for item in ['pyproject.toml', 'uv.lock', 'pyrightconfig-ci.json', 'client/pyproject.toml', '.github/workflows/static-analysis.yaml', '.github/workflows/python-tests.yaml', 'scripts/check_pyright_report.py']:
+        files.add(ROOT / item)
+    hashes = {str(p.relative_to(ROOT)): sha(p.read_bytes()) for p in sorted(files)}
+    patch = subprocess.check_output(['git', 'diff', '--binary', 'HEAD', '--', 'src', 'tests', 'pyproject.toml', 'uv.lock', 'client/pyproject.toml', 'pyrightconfig-ci.json', '.github/workflows/static-analysis.yaml', '.github/workflows/python-tests.yaml', 'scripts/check_pyright_report.py'], cwd=ROOT)
+    (OUT / f'{label}.patch.log').write_bytes(patch)
+    result = {
+        'captured_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        'base_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+        'files': hashes,
+        'file_map_sha256': sha(json.dumps(hashes, sort_keys=True, separators=(',', ':')).encode()),
+        'tracked_diff_sha256': sha(patch),
+        'note': 'Shared unfrozen source. Untracked product/test files are included in hashes; the Git diff alone is not a complete source snapshot.'
+    }
+    (OUT / f'{label}.json').write_text(json.dumps(result, indent=2) + '\n')
+    return result
+
+def run(label: str, cmd: list[str], env: dict | None = None) -> dict:
+    snapshot(f'{label}-before')
+    start = time.monotonic()
+    with (OUT / f'{label}.log').open('wb') as log, (OUT / f'{label}-stderr.log').open('wb') as errors:
+        process = subprocess.run(cmd, cwd=ROOT, env=env, stdout=log, stderr=errors)
+    result = {'command': cmd, 'exit_code': process.returncode, 'elapsed_seconds': round(time.monotonic()-start, 6)}
+    snapshot(f'{label}-after')
+    (OUT / f'{label}-execution.json').write_text(json.dumps(result, indent=2) + '\n')
+    print(json.dumps({'check': label, **result}), flush=True)
+    return result
+
+if __name__ == '__main__':
+    metadata = {'python': sys.version, 'packages': {name: importlib.metadata.version(name) for name in ['pyright','pytest','pytest-xdist','pytest-asyncio','asyncpg','ipython','mkdocs']}, 'scope':'NI2-006 compatibility discovery; no native acceptance or readiness credit', 'database_base':'native_epoch2_compat', 'database_backend':'PostgreSQL17 existing local service', 'baseline_package_receipt':'architecture/streaming-etl/evidence/native-epoch2-client-package-successor-2026-11-04/receipt.json'}
+    (OUT / 'environment.json').write_text(json.dumps(metadata, indent=2) + '\n')
+    mode = sys.argv[1]
+    if mode == 'types':
+        a = run('pyright-ci', ['uv','run','--no-sync','pyright','-p','pyrightconfig-ci.json','--level','error','--outputjson'])
+        (OUT/'pyright-report.json').write_bytes((OUT/'pyright-ci.log').read_bytes())
+        run('pyright-report-check', ['uv','run','--no-sync','python','scripts/check_pyright_report.py',str(OUT/'pyright-report.json'),'--pyright-status',str(a['exit_code'])])
+        run('pyright-public', ['uv','run','--no-sync','pyright','--ignoreexternal','--verifytypes','prefect','--outputjson'])
+    elif mode == 'finite':
+        env = os.environ.copy()
+        env['PREFECT_SERVER_DATABASE_CONNECTION_URL'] = 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_compat'
+        env['ARIADNE_NATIVE_STREAM_TEST_DSN'] = 'postgresql://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_compat'
+        run('finite-core', ['uv','run','--no-sync','pytest','-n3','-q','tests/test_task_engine.py','tests/test_tasks.py','tests/test_stream_tasks.py','tests/test_stream_sources.py','--tb=short','--junitxml',str(OUT/'finite-core.xml'),'--basetemp',str(OUT/'pytest')], env)
+    elif mode == 'sdk':
+        run('sdk-contracts', ['uv','run','--no-sync','pytest','-n0','-q','tests/client/test_stream_subtasks.py','tests/client/test_stream_worker_subtasks.py','tests/client/test_stream_storage_native.py','tests/client/test_native_deployment_schemas.py','--tb=short','--junitxml',str(OUT/'sdk-contracts.xml'),'--basetemp',str(OUT/'sdk-pytest')])
+    elif mode == 'snapshot':
+        snapshot('prepared')
+    else:
+        raise SystemExit('Unknown mode')

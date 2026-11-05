@@ -143,3 +143,10 @@ The run therefore proves neither two hosts nor private peer reachability,
 portable artifacts or verified remote stop. It earns no A47-04 or native
 readiness credit; a timeout, queue separation or distinct runner ID is not a
 death/host witness.
+
+The bounded [ARC/static follow-up](../evidence/native-epoch2-host-preflight-2026-11-04/run-41931304288/receipt.json)
+also remains `UNPROVEN`. The ARC observation completed, but the static job was
+never assigned and executed no steps during the five-minute queue window; the
+owned run was then cancelled and the comparison reported a missing
+observation. A queued or cancelled job is not a host, network or stop witness,
+and this closes the preflight series without A47-04 credit.

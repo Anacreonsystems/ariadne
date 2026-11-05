@@ -8,6 +8,7 @@ from starlette.responses import JSONResponse, Response
 
 from prefect import settings
 from prefect.server import models
+from prefect.server.api._stream_subtask_routes import subtask_route_allowed
 from prefect.server.database import provide_database_interface
 
 NextMiddlewareFunction = Callable[[Request], Awaitable[Response]]
@@ -39,8 +40,18 @@ class CsrfMiddleware(BaseHTTPMiddleware):
             "DELETE",
         }
 
+        scope = request.scope
+        path = scope["path"].removeprefix(scope.get("root_path", ""))
+        api_mount = settings.PREFECT_SERVER_API_BASE_PATH.value() or "/api"
+        if path.startswith(api_mount.rstrip("/") + "/"):
+            path = path[len(api_mount.rstrip("/")) :]
+        scoped_physical_request = request.headers.get("authorization", "").startswith(
+            "PrefectSubtask "
+        ) and subtask_route_allowed(request.method, path)
+
         if (
-            settings.PREFECT_SERVER_CSRF_PROTECTION_ENABLED.value()
+            not scoped_physical_request
+            and settings.PREFECT_SERVER_CSRF_PROTECTION_ENABLED.value()
             and request_needs_csrf_protection
         ):
             incoming_token = request.headers.get("Prefect-Csrf-Token")

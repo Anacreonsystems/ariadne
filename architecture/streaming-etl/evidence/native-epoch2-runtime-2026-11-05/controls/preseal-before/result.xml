@@ -1,0 +1,1054 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="10" skipped="0" tests="10" time="7.238" timestamp="2026-11-05T00:32:43.069707+00:00" hostname="f8abb611283c"><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[hooks]" time="5.164"><failure message="AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'">mutation = 'hooks'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7fe219e638f0&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(id=execution.flow_run_id, run_count=1, deployment_id=uuid4()),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:346: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect._internal.stream_partitioned.PartitionedStreamReconstruction object at 0x7fe219e62090&gt;
+
+    def seal(self) -&gt; None:
+        with self.lock:
+            if self.phase == "READY":
+                return
+            if self.phase != "OPEN" or len(self.specifications) != 2:
+                raise StreamProtocolError(
+                    "The partitioned graph requires its operator declaration"
+                )
+            if self.flow_run.deployment_id is None:
+                raise StreamProtocolError(
+                    "The fixed-P2 profile requires its enrolled deployment and two workers"
+                )
+            try:
+                self.admission_attempted = True
+                self.plan = self.request(
+                    "seal_stream_graph",
+                    flow_run_id=self.flow_run.id,
+                    operation_id=uuid5(NAMESPACE_URL, f"fixed-p2/{self.flow_run.id}"),
+                    flow_version=self.flow.version,
+                    deployment_id=self.flow_run.deployment_id,
+&gt;                   deployment_version=self.flow_run.deployment_version,
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    working_directory=str(Path.cwd().resolve()),
+                    operators=self.specifications,
+                )
+E               AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'
+
+src/prefect/_internal/stream_partitioned.py:346: AttributeError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[context]" time="0.055"><failure message="AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'">mutation = 'context'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7fe21a020110&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(id=execution.flow_run_id, run_count=1, deployment_id=uuid4()),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:346: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect._internal.stream_partitioned.PartitionedStreamReconstruction object at 0x7fe21a023620&gt;
+
+    def seal(self) -&gt; None:
+        with self.lock:
+            if self.phase == "READY":
+                return
+            if self.phase != "OPEN" or len(self.specifications) != 2:
+                raise StreamProtocolError(
+                    "The partitioned graph requires its operator declaration"
+                )
+            if self.flow_run.deployment_id is None:
+                raise StreamProtocolError(
+                    "The fixed-P2 profile requires its enrolled deployment and two workers"
+                )
+            try:
+                self.admission_attempted = True
+                self.plan = self.request(
+                    "seal_stream_graph",
+                    flow_run_id=self.flow_run.id,
+                    operation_id=uuid5(NAMESPACE_URL, f"fixed-p2/{self.flow_run.id}"),
+                    flow_version=self.flow.version,
+                    deployment_id=self.flow_run.deployment_id,
+&gt;                   deployment_version=self.flow_run.deployment_version,
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    working_directory=str(Path.cwd().resolve()),
+                    operators=self.specifications,
+                )
+E               AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'
+
+src/prefect/_internal/stream_partitioned.py:346: AttributeError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[version]" time="0.048"><failure message="AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'">mutation = 'version'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7fe219e8ccb0&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(id=execution.flow_run_id, run_count=1, deployment_id=uuid4()),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:346: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect._internal.stream_partitioned.PartitionedStreamReconstruction object at 0x7fe21a04be30&gt;
+
+    def seal(self) -&gt; None:
+        with self.lock:
+            if self.phase == "READY":
+                return
+            if self.phase != "OPEN" or len(self.specifications) != 2:
+                raise StreamProtocolError(
+                    "The partitioned graph requires its operator declaration"
+                )
+            if self.flow_run.deployment_id is None:
+                raise StreamProtocolError(
+                    "The fixed-P2 profile requires its enrolled deployment and two workers"
+                )
+            try:
+                self.admission_attempted = True
+                self.plan = self.request(
+                    "seal_stream_graph",
+                    flow_run_id=self.flow_run.id,
+                    operation_id=uuid5(NAMESPACE_URL, f"fixed-p2/{self.flow_run.id}"),
+                    flow_version=self.flow.version,
+                    deployment_id=self.flow_run.deployment_id,
+&gt;                   deployment_version=self.flow_run.deployment_version,
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    working_directory=str(Path.cwd().resolve()),
+                    operators=self.specifications,
+                )
+E               AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'
+
+src/prefect/_internal/stream_partitioned.py:346: AttributeError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[tags]" time="0.049"><failure message="AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'">mutation = 'tags'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7fe21a60eba0&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(id=execution.flow_run_id, run_count=1, deployment_id=uuid4()),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:346: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect._internal.stream_partitioned.PartitionedStreamReconstruction object at 0x7fe21a0206e0&gt;
+
+    def seal(self) -&gt; None:
+        with self.lock:
+            if self.phase == "READY":
+                return
+            if self.phase != "OPEN" or len(self.specifications) != 2:
+                raise StreamProtocolError(
+                    "The partitioned graph requires its operator declaration"
+                )
+            if self.flow_run.deployment_id is None:
+                raise StreamProtocolError(
+                    "The fixed-P2 profile requires its enrolled deployment and two workers"
+                )
+            try:
+                self.admission_attempted = True
+                self.plan = self.request(
+                    "seal_stream_graph",
+                    flow_run_id=self.flow_run.id,
+                    operation_id=uuid5(NAMESPACE_URL, f"fixed-p2/{self.flow_run.id}"),
+                    flow_version=self.flow.version,
+                    deployment_id=self.flow_run.deployment_id,
+&gt;                   deployment_version=self.flow_run.deployment_version,
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    working_directory=str(Path.cwd().resolve()),
+                    operators=self.specifications,
+                )
+E               AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'
+
+src/prefect/_internal/stream_partitioned.py:346: AttributeError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[retries]" time="0.050"><failure message="AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'">mutation = 'retries'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7fe219e8dd90&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(id=execution.flow_run_id, run_count=1, deployment_id=uuid4()),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:346: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect._internal.stream_partitioned.PartitionedStreamReconstruction object at 0x7fe219e8ca70&gt;
+
+    def seal(self) -&gt; None:
+        with self.lock:
+            if self.phase == "READY":
+                return
+            if self.phase != "OPEN" or len(self.specifications) != 2:
+                raise StreamProtocolError(
+                    "The partitioned graph requires its operator declaration"
+                )
+            if self.flow_run.deployment_id is None:
+                raise StreamProtocolError(
+                    "The fixed-P2 profile requires its enrolled deployment and two workers"
+                )
+            try:
+                self.admission_attempted = True
+                self.plan = self.request(
+                    "seal_stream_graph",
+                    flow_run_id=self.flow_run.id,
+                    operation_id=uuid5(NAMESPACE_URL, f"fixed-p2/{self.flow_run.id}"),
+                    flow_version=self.flow.version,
+                    deployment_id=self.flow_run.deployment_id,
+&gt;                   deployment_version=self.flow_run.deployment_version,
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    working_directory=str(Path.cwd().resolve()),
+                    operators=self.specifications,
+                )
+E               AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'
+
+src/prefect/_internal/stream_partitioned.py:346: AttributeError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[timeout]" time="0.055"><failure message="AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'">mutation = 'timeout'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7fe219ebaea0&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(id=execution.flow_run_id, run_count=1, deployment_id=uuid4()),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:346: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect._internal.stream_partitioned.PartitionedStreamReconstruction object at 0x7fe219ebb260&gt;
+
+    def seal(self) -&gt; None:
+        with self.lock:
+            if self.phase == "READY":
+                return
+            if self.phase != "OPEN" or len(self.specifications) != 2:
+                raise StreamProtocolError(
+                    "The partitioned graph requires its operator declaration"
+                )
+            if self.flow_run.deployment_id is None:
+                raise StreamProtocolError(
+                    "The fixed-P2 profile requires its enrolled deployment and two workers"
+                )
+            try:
+                self.admission_attempted = True
+                self.plan = self.request(
+                    "seal_stream_graph",
+                    flow_run_id=self.flow_run.id,
+                    operation_id=uuid5(NAMESPACE_URL, f"fixed-p2/{self.flow_run.id}"),
+                    flow_version=self.flow.version,
+                    deployment_id=self.flow_run.deployment_id,
+&gt;                   deployment_version=self.flow_run.deployment_version,
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    working_directory=str(Path.cwd().resolve()),
+                    operators=self.specifications,
+                )
+E               AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'
+
+src/prefect/_internal/stream_partitioned.py:346: AttributeError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[name]" time="0.049"><failure message="AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'">mutation = 'name'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7fe219eb9c70&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(id=execution.flow_run_id, run_count=1, deployment_id=uuid4()),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:346: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect._internal.stream_partitioned.PartitionedStreamReconstruction object at 0x7fe219ee0350&gt;
+
+    def seal(self) -&gt; None:
+        with self.lock:
+            if self.phase == "READY":
+                return
+            if self.phase != "OPEN" or len(self.specifications) != 2:
+                raise StreamProtocolError(
+                    "The partitioned graph requires its operator declaration"
+                )
+            if self.flow_run.deployment_id is None:
+                raise StreamProtocolError(
+                    "The fixed-P2 profile requires its enrolled deployment and two workers"
+                )
+            try:
+                self.admission_attempted = True
+                self.plan = self.request(
+                    "seal_stream_graph",
+                    flow_run_id=self.flow_run.id,
+                    operation_id=uuid5(NAMESPACE_URL, f"fixed-p2/{self.flow_run.id}"),
+                    flow_version=self.flow.version,
+                    deployment_id=self.flow_run.deployment_id,
+&gt;                   deployment_version=self.flow_run.deployment_version,
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    working_directory=str(Path.cwd().resolve()),
+                    operators=self.specifications,
+                )
+E               AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'
+
+src/prefect/_internal/stream_partitioned.py:346: AttributeError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[code]" time="0.054"><failure message="AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'">mutation = 'code'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7fe219ee0290&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(id=execution.flow_run_id, run_count=1, deployment_id=uuid4()),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:346: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect._internal.stream_partitioned.PartitionedStreamReconstruction object at 0x7fe219ee1130&gt;
+
+    def seal(self) -&gt; None:
+        with self.lock:
+            if self.phase == "READY":
+                return
+            if self.phase != "OPEN" or len(self.specifications) != 2:
+                raise StreamProtocolError(
+                    "The partitioned graph requires its operator declaration"
+                )
+            if self.flow_run.deployment_id is None:
+                raise StreamProtocolError(
+                    "The fixed-P2 profile requires its enrolled deployment and two workers"
+                )
+            try:
+                self.admission_attempted = True
+                self.plan = self.request(
+                    "seal_stream_graph",
+                    flow_run_id=self.flow_run.id,
+                    operation_id=uuid5(NAMESPACE_URL, f"fixed-p2/{self.flow_run.id}"),
+                    flow_version=self.flow.version,
+                    deployment_id=self.flow_run.deployment_id,
+&gt;                   deployment_version=self.flow_run.deployment_version,
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    working_directory=str(Path.cwd().resolve()),
+                    operators=self.specifications,
+                )
+E               AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'
+
+src/prefect/_internal/stream_partitioned.py:346: AttributeError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_source_definition_drift_between_declarations_never_calls_metadata[binding]" time="0.048"><failure message="AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'">mutation = 'binding'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7fe21b6322d0&gt;
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "hooks",
+            "context",
+            "version",
+            "tags",
+            "retries",
+            "timeout",
+            "name",
+            "code",
+            "binding",
+        ],
+    )
+    def test_source_definition_drift_between_declarations_never_calls_metadata(
+        mutation: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(id=execution.flow_run_id, run_count=1, deployment_id=uuid4()),
+            SimpleNamespace(version="v1"),
+        )
+        calls = []
+    
+        def refuse_metadata(*args: Any, **kwargs: Any):
+            calls.append((args, kwargs))
+            raise AssertionError("Changed source crossed the metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", refuse_metadata)
+        source = graph.declare(
+            split_source,
+            operator_uid="source.documents",
+            partitions=(
+                StreamPartitionCall(parameters={"split": "left"}),
+                StreamPartitionCall(parameters={"split": "right"}),
+            ),
+            upstream=None,
+        )
+        if mutation == "code":
+            code = split_source.fn.__code__
+            monkeypatch.setattr(
+                split_source.fn,
+                "__code__",
+                code.replace(co_consts=(*code.co_consts, "drift")),
+            )
+        elif mutation == "binding":
+            monkeypatch.setattr(
+                sys.modules[split_source.fn.__module__],
+                "split_source",
+                split_source.with_options(name="different-binding"),
+            )
+        else:
+            option, value = {
+                "hooks": ("on_completion_hooks", [lambda *args: None]),
+                "context": ("stream", StreamSourceConfig(context="different")),
+                "version": ("version", "changed-version"),
+                "tags": ("tags", {"different-tag"}),
+                "retries": ("retries", 3),
+                "timeout": ("timeout_seconds", 3.0),
+                "name": ("name", "different-name"),
+            }[mutation]
+            monkeypatch.setattr(split_source, option, value)
+        with pytest.raises(StreamProtocolError):
+&gt;           graph.declare(
+                split_operator,
+                operator_uid="operator.sign",
+                partitions=(StreamPartitionCall(parameters={}),) * 2,
+                upstream=source,
+            )
+
+tests/test_stream_partitioned_runtime.py:346: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect._internal.stream_partitioned.PartitionedStreamReconstruction object at 0x7fe21a60eba0&gt;
+
+    def seal(self) -&gt; None:
+        with self.lock:
+            if self.phase == "READY":
+                return
+            if self.phase != "OPEN" or len(self.specifications) != 2:
+                raise StreamProtocolError(
+                    "The partitioned graph requires its operator declaration"
+                )
+            if self.flow_run.deployment_id is None:
+                raise StreamProtocolError(
+                    "The fixed-P2 profile requires its enrolled deployment and two workers"
+                )
+            try:
+                self.admission_attempted = True
+                self.plan = self.request(
+                    "seal_stream_graph",
+                    flow_run_id=self.flow_run.id,
+                    operation_id=uuid5(NAMESPACE_URL, f"fixed-p2/{self.flow_run.id}"),
+                    flow_version=self.flow.version,
+                    deployment_id=self.flow_run.deployment_id,
+&gt;                   deployment_version=self.flow_run.deployment_version,
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    working_directory=str(Path.cwd().resolve()),
+                    operators=self.specifications,
+                )
+E               AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'
+
+src/prefect/_internal/stream_partitioned.py:346: AttributeError</failure></testcase><testcase classname="tests.test_stream_partitioned_runtime" name="test_ambient_tags_change_preserves_declared_source_tags" time="1.287"><failure message="AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7fe21a37e390&gt;
+
+    def test_ambient_tags_change_preserves_declared_source_tags(
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(id=execution.flow_run_id, run_count=1, deployment_id=uuid4()),
+            SimpleNamespace(version="v1"),
+        )
+        captured = []
+    
+        def observe_seal(method: str, **kwargs: Any):
+            captured.append((method, kwargs))
+            raise RuntimeError("Observed the first real metadata boundary")
+    
+        monkeypatch.setattr(graph, "request", observe_seal)
+        with TagsContext(current_tags={"source-context"}):
+            source = graph.declare(
+                split_source,
+                operator_uid="source.documents",
+                partitions=(
+                    StreamPartitionCall(parameters={"split": "left"}),
+                    StreamPartitionCall(parameters={"split": "right"}),
+                ),
+                upstream=None,
+            )
+        with TagsContext(current_tags={"operator-context"}):
+            with pytest.raises(RuntimeError, match="first real metadata boundary"):
+&gt;               graph.declare(
+                    split_operator,
+                    operator_uid="operator.sign",
+                    partitions=(StreamPartitionCall(parameters={}),) * 2,
+                    upstream=source,
+                )
+
+tests/test_stream_partitioned_runtime.py:385: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_partitioned.py:259: in declare
+    self.seal()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;prefect._internal.stream_partitioned.PartitionedStreamReconstruction object at 0x7fe21a37c350&gt;
+
+    def seal(self) -&gt; None:
+        with self.lock:
+            if self.phase == "READY":
+                return
+            if self.phase != "OPEN" or len(self.specifications) != 2:
+                raise StreamProtocolError(
+                    "The partitioned graph requires its operator declaration"
+                )
+            if self.flow_run.deployment_id is None:
+                raise StreamProtocolError(
+                    "The fixed-P2 profile requires its enrolled deployment and two workers"
+                )
+            try:
+                self.admission_attempted = True
+                self.plan = self.request(
+                    "seal_stream_graph",
+                    flow_run_id=self.flow_run.id,
+                    operation_id=uuid5(NAMESPACE_URL, f"fixed-p2/{self.flow_run.id}"),
+                    flow_version=self.flow.version,
+                    deployment_id=self.flow_run.deployment_id,
+&gt;                   deployment_version=self.flow_run.deployment_version,
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    working_directory=str(Path.cwd().resolve()),
+                    operators=self.specifications,
+                )
+E               AttributeError: 'types.SimpleNamespace' object has no attribute 'deployment_version'
+
+src/prefect/_internal/stream_partitioned.py:346: AttributeError</failure></testcase></testsuite></testsuites>

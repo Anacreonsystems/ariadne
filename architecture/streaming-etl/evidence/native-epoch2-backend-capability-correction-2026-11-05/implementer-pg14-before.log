@@ -1,0 +1,78 @@
+F
+=================================== FAILURES ===================================
+________ test_capability_is_not_echoed_from_validation_or_off_allowlist ________
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fdc50531760>
+physical_api = <httpx.AsyncClient object at 0x7fdc4e96fbf0>
+
+    async def test_capability_is_not_echoed_from_validation_or_off_allowlist(
+        db: PrefectDBInterface, physical_api: httpx.AsyncClient
+    ):
+        secret = "ab" * 32
+        basic = "Basic " + base64.b64encode(b"native-physical:test").decode()
+        body = {"operation_id": str(uuid4()), "capability": secret, "unexpected": secret}
+        response = await physical_api.post(
+            f"/streams/v2/subtasks/{uuid4()}/claim",
+            json=body,
+            headers={"Authorization": basic},
+        )
+        assert response.status_code == 422
+        assert secret not in response.text
+        scoped = s.StreamSubtaskCredentials(grant_id=uuid4(), capability=secret)
+        wrong_resource = await physical_api.get(
+            f"/streams/v1/{uuid4()}", headers=headers(scoped)
+        )
+>       assert wrong_resource.status_code in (
+            (401, 404) if db.dialect.name == "postgresql" else (422,)
+        )
+E       assert 422 in (401, 404)
+E        +  where 422 = <Response [422 Unprocessable Entity]>.status_code
+
+tests/server/api/test_stream_subtasks.py:170: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://native_backend:native_backend@127.0.0.1:55438/native_backend_gate'
+Connecting to postgres at 'postgres://native_backend:native_backend@127.0.0.1:55438/postgres'
+Creating test postgres database 'native_backend_gate_tests_master'
+Using test database connection URL 'postgresql+asyncpg://native_backend:native_backend@127.0.0.1:55438/native_backend_gate_tests_master'
+Running hosted API server on port 57775
+---------------------------- Captured stderr setup -----------------------------
+01:24:33.219 | INFO    | uvicorn.error - Started server process [179586]
+01:24:33.225 | INFO    | uvicorn.error - Waiting for application startup.
+01:24:33.347 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+01:24:33.353 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+01:24:33.354 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+01:24:33.354 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+01:24:33.354 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+01:24:33.354 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+01:24:33.354 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+01:24:33.354 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+01:24:33.355 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+01:24:33.355 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+01:24:33.355 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+01:24:33.355 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+01:24:33.355 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+01:24:33.355 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+01:24:33.356 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+01:24:33.356 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+01:24:33.356 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+01:24:33.358 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+01:24:33.359 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+01:24:33.361 | INFO    | uvicorn.error - Application startup complete.
+01:24:33.362 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 57775) (Press CTRL+C to quit)
+01:24:33.446 | INFO    | uvicorn.access - 127.0.0.1:46136 - "GET /api/health HTTP/1.1" 200
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.340 seconds
+01:24:34.060 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.340 seconds
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.340 seconds
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+01:24:34.168 | INFO    | uvicorn.error - Shutting down
+01:24:34.270 | INFO    | uvicorn.error - Waiting for application shutdown.
+01:24:34.271 | INFO    | uvicorn.error - Application shutdown complete.
+01:24:34.272 | INFO    | uvicorn.error - Finished server process [179586]
+=========================== short test summary info ============================
+FAILED tests/server/api/test_stream_subtasks.py::test_capability_is_not_echoed_from_validation_or_off_allowlist
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 7.14s

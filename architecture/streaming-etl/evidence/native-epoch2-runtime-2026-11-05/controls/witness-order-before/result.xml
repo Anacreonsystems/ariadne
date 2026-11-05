@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="12.833" timestamp="2026-11-05T00:36:29.366640+00:00" hostname="f8abb611283c"><testcase classname="tests.test_stream_partitioned_runtime" name="test_witness_failure_leaves_no_partial_local_declaration" time="12.511"><failure message="AssertionError: assert {'source.docu...7fd60c3c04a0&gt;} == {}&#10;  &#10;  Left contains 1 more item:&#10;  {'source.documents': &lt;prefect.tasks.Task object at 0x7fd60c3c04a0&gt;}&#10;  Use -v to get more diff">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7fd60aa67140&gt;
+
+    def test_witness_failure_leaves_no_partial_local_declaration(
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        execution = physical_context()
+        graph = PartitionedStreamReconstruction(
+            execution,
+            SimpleNamespace(id=execution.flow_run_id, run_count=1),
+            SimpleNamespace(version="v1"),
+        )
+    
+        def refuse_witness(task: Any) -&gt; bytes:
+            raise StreamProtocolError("Definition changed during validation")
+    
+        monkeypatch.setattr(
+            "prefect._internal.stream_partitioned._direct_task_witness", refuse_witness
+        )
+        with pytest.raises(StreamProtocolError, match="changed during validation"):
+            graph.declare(
+                split_source,
+                operator_uid="source.documents",
+                partitions=(
+                    StreamPartitionCall(parameters={"split": "left"}),
+                    StreamPartitionCall(parameters={"split": "right"}),
+                ),
+                upstream=None,
+            )
+&gt;       assert graph.entries == {}
+E       AssertionError: assert {'source.docu...7fd60c3c04a0&gt;} == {}
+E         
+E         Left contains 1 more item:
+E         {'source.documents': &lt;prefect.tasks.Task object at 0x7fd60c3c04a0&gt;}
+E         Use -v to get more diff
+
+tests/test_stream_partitioned_runtime.py:308: AssertionError</failure></testcase></testsuite></testsuites>

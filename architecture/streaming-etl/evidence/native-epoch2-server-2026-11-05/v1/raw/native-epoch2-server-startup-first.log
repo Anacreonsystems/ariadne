@@ -1,0 +1,443 @@
+E
+==================================== ERRORS ====================================
+_ ERROR at setup of test_immutable_p2_graph_reuses_four_ordinary_tasks_and_partitions _
+
+self = <sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_cursor object at 0x7f0027303e80>
+operation = 'ALTER TABLE native_stream_deployment_snapshot DROP CONSTRAINT ck_native_stream_deployment_snapshot__ck_native_stream__83ef'
+parameters = ()
+
+    async def _prepare_and_execute(self, operation, parameters):
+        adapt_connection = self._adapt_connection
+    
+        async with adapt_connection._execute_mutex:
+            if not adapt_connection._started:
+                await adapt_connection._start_transaction()
+    
+            if parameters is None:
+                parameters = ()
+    
+            try:
+                prepared_stmt, attributes = await adapt_connection._prepare(
+                    operation, self._invalidate_schema_cache_asof
+                )
+    
+                if attributes:
+                    self.description = [
+                        (
+                            attr.name,
+                            attr.type.oid,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        for attr in attributes
+                    ]
+                else:
+                    self.description = None
+    
+                if self.server_side:
+                    self._cursor = await prepared_stmt.cursor(*parameters)
+                    self.rowcount = -1
+                else:
+>                   self._rows = deque(await prepared_stmt.fetch(*parameters))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:550: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   ???
+E   asyncpg.exceptions.UndefinedObjectError: constraint "ck_native_stream_deployment_snapshot__ck_native_stream__83ef" of relation "native_stream_deployment_snapshot" does not exist
+
+asyncpg/protocol/protocol.pyx:205: UndefinedObjectError
+
+The above exception was the direct cause of the following exception:
+
+self = <sqlalchemy.engine.base.Connection object at 0x7f003c535220>
+dialect = <sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x7f003c534fb0>
+context = <sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x7f00271ba150>
+statement = <sqlalchemy.dialects.postgresql.base.PGDDLCompiler object at 0x7f00271ba000>
+parameters = [()]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -> CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+>                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1967: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <AdaptedConnection <asyncpg.connection.Connection object at 0x7f003c51a120>>
+error = UndefinedObjectError('constraint "ck_native_stream_deployment_snapshot__ck_native_stream__83ef" of relation "native_stream_deployment_snapshot" does not exist')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+>                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.ProgrammingError: <class 'asyncpg.exceptions.UndefinedObjectError'>: constraint "ck_native_stream_deployment_snapshot__ck_native_stream__83ef" of relation "native_stream_deployment_snapshot" does not exist
+
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: ProgrammingError
+
+The above exception was the direct cause of the following exception:
+
+database_engine = <sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x7f0028756fd0>
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f003c4f9e80>
+
+    @pytest.fixture(scope="session", autouse=True)
+    async def setup_db(database_engine, db):
+        """Create all database objects prior to running tests, and drop them when tests are done."""
+        try:
+            # build the database
+>           await db.create_db()
+
+tests/fixtures/database.py:86: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/server/database/interface.py:77: in create_db
+    await self.run_migrations_upgrade()
+src/prefect/server/database/interface.py:115: in run_migrations_upgrade
+    await run_sync_in_worker_thread(alembic_upgrade)
+src/prefect/utilities/asyncutils/__init__.py:233: in run_sync_in_worker_thread
+    result = await anyio.to_thread.run_sync(
+.venv/lib/python3.12/site-packages/anyio/to_thread.py:65: in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:2641: in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:1033: in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/utilities/asyncutils/__init__.py:243: in call_with_mark
+    return call()
+           ^^^^^^
+src/prefect/server/database/alembic_commands.py:36: in wrapper
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+src/prefect/server/database/alembic_commands.py:72: in alembic_upgrade
+    alembic.command.upgrade(alembic_config(), revision, sql=dry_run)
+.venv/lib/python3.12/site-packages/alembic/command.py:490: in upgrade
+    script.run_env()
+.venv/lib/python3.12/site-packages/alembic/script/base.py:556: in run_env
+    util.load_python_file(self.dir, "env.py")
+.venv/lib/python3.12/site-packages/alembic/util/pyfiles.py:116: in load_python_file
+    module = load_module_py(module_id, path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/alembic/util/pyfiles.py:136: in load_module_py
+    spec.loader.exec_module(module)  # type: ignore
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/database/_migrations/env.py:242: in <module>
+    run_async_from_worker_thread(apply_migrations)
+src/prefect/utilities/asyncutils/__init__.py:254: in run_async_from_worker_thread
+    return anyio.from_thread.run(call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/anyio/from_thread.py:90: in run
+    return token.backend_class.run_async_from_thread(
+.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:2688: in run_async_from_thread
+    return f.result()
+           ^^^^^^^^^^
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+src/prefect/server/database/_migrations/env.py:224: in apply_migrations
+    await connection.run_sync(do_run_migrations)
+.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/engine.py:888: in run_sync
+    return await greenlet_spawn(
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:203: in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+src/prefect/server/database/_migrations/env.py:161: in do_run_migrations
+    context.run_migrations()
+.venv/lib/python3.12/site-packages/alembic/runtime/environment.py:969: in run_migrations
+    self.get_context().run_migrations(**kw)
+.venv/lib/python3.12/site-packages/alembic/runtime/migration.py:626: in run_migrations
+    step.migration_fn(**kw)
+src/prefect/server/database/_migrations/versions/postgresql/2026_11_04_120000_b48f2e6a7c31_add_physical_stream_topology.py:203: in upgrade
+    op.drop_constraint(
+.venv/lib/python3.12/site-packages/alembic/operations/ops.py:235: in drop_constraint
+    return operations.invoke(op)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/alembic/operations/base.py:452: in invoke
+    return fn(self, operation)
+           ^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/alembic/operations/toimpl.py:235: in drop_constraint
+    operations.impl.drop_constraint(
+.venv/lib/python3.12/site-packages/alembic/ddl/impl.py:426: in drop_constraint
+    self._exec(schema.DropConstraint(const, **kw))
+.venv/lib/python3.12/site-packages/alembic/ddl/impl.py:256: in _exec
+    return conn.execute(construct, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1419: in execute
+    return meth(
+.venv/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:187: in _execute_on_connection
+    return connection._execute_ddl(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1530: in _execute_ddl
+    ret = self._execute_context(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1846: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1986: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2363: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <AdaptedConnection <asyncpg.connection.Connection object at 0x7f003c51a120>>
+error = UndefinedObjectError('constraint "ck_native_stream_deployment_snapshot__ck_native_stream__83ef" of relation "native_stream_deployment_snapshot" does not exist')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+>                   raise translated_error from error
+E                   sqlalchemy.exc.ProgrammingError: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.UndefinedObjectError'>: constraint "ck_native_stream_deployment_snapshot__ck_native_stream__83ef" of relation "native_stream_deployment_snapshot" does not exist
+E                   [SQL: ALTER TABLE native_stream_deployment_snapshot DROP CONSTRAINT ck_native_stream_deployment_snapshot__ck_native_stream__83ef]
+E                   (Background on this error at: https://sqlalche.me/e/20/f405)
+
+.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: ProgrammingError
+
+The above exception was the direct cause of the following exception:
+
+self = <Coroutine test_immutable_p2_graph_reuses_four_ordinary_tasks_and_partitions>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+        # When loop factories are configured, resolve the loop factory
+        # fixture early so that a factory variant change cascades cache
+        # invalidation before any async fixture checks its cache.
+        hook_caller = self.config.hook.pytest_asyncio_loop_factories
+        if hook_caller.get_hookimpls():
+            _ = self._request.getfixturevalue(_asyncio_loop_factory.__name__)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:558: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:944: in pytest_fixture_setup
+    hook_result = yield
+                  ^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:407: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:403: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+database_engine = <sqlalchemy.ext.asyncio.engine.AsyncEngine object at 0x7f0028756fd0>
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f003c4f9e80>
+
+    @pytest.fixture(scope="session", autouse=True)
+    async def setup_db(database_engine, db):
+        """Create all database objects prior to running tests, and drop them when tests are done."""
+        try:
+            # build the database
+            await db.create_db()
+            yield
+    
+        except Exception as exc:
+            # Re-raise with a message containing the url
+>           raise RuntimeError(
+                f"Failed to set up the database at {database_engine.url!r}"
+            ) from exc
+E           RuntimeError: Failed to set up the database at postgresql+asyncpg://native_recovery:***@127.0.0.1:55436/native_epoch2_server_tests_master
+
+tests/fixtures/database.py:91: RuntimeError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_server'
+Connecting to postgres at 'postgres://native_recovery:native_recovery@127.0.0.1:55436/postgres'
+Creating test postgres database 'native_epoch2_server_tests_master'
+Using test database connection URL 'postgresql+asyncpg://native_recovery:native_recovery@127.0.0.1:55436/native_epoch2_server_tests_master'
+=========================== short test summary info ============================
+ERROR tests/server/models/test_stream_subtasks.py::test_immutable_p2_graph_reuses_four_ordinary_tasks_and_partitions
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 error in 2.61s

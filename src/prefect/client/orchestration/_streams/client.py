@@ -6,10 +6,18 @@ from uuid import UUID
 import httpx
 from pydantic import JsonValue, TypeAdapter
 
+from prefect._internal.stream_event_auth import (
+    canonical_physical_event_witness,
+    verify_task_event,
+)
+from prefect._internal.stream_execution import get_stream_subtask_execution
 from prefect.client.orchestration.base import HTTP_METHODS, BaseAsyncClient, BaseClient
 from prefect.client.orchestration.routes import ServerRoutes
 from prefect.client.schemas import native_deployments as native_schemas
+from prefect.client.schemas import stream_subtasks as subtask_schemas
 from prefect.client.schemas import streams as schemas
+from prefect.client.schemas.objects import TaskRun
+from prefect.events.schemas.events import Event
 from prefect.exceptions import PrefectException
 
 
@@ -48,6 +56,123 @@ def _refusal(error: httpx.HTTPStatusError) -> StreamRequestError:
     )
 
 
+def _validate_subtask_bootstrap(
+    bootstrap: subtask_schemas.StreamSubtaskBootstrap, subtask_id: UUID
+) -> subtask_schemas.StreamSubtaskBootstrap:
+    """Check the reply against its sealed assignment and process-local grant."""
+    grant, assignment, task = bootstrap.grant, bootstrap.assignment, bootstrap.task_run
+    manifest = assignment.manifest
+    expected = (
+        grant.subtask_id == assignment.id == subtask_id,
+        grant.graph_revision_id == assignment.graph_revision_id,
+        grant.assignment_epoch == assignment.assignment_epoch,
+        grant.id == assignment.current_grant_id,
+        grant.physical_epoch == assignment.physical_epoch,
+        grant.state == "REGISTERED",
+        bootstrap.flow_run_id == manifest.flow_run_id == task.flow_run_id,
+        task.id == manifest.task_run_id,
+        task.dynamic_key == manifest.dynamic_key,
+        assignment.input_stream_id != manifest.stream_id,
+        (manifest.role == "SOURCE") == (assignment.input_stream_id is None),
+        (manifest.role == "SOURCE") == (bootstrap.input_key is None),
+    )
+    execution = get_stream_subtask_execution()
+    if execution is not None:
+        expected += (
+            bootstrap.flow_run_id == execution.flow_run_id,
+            grant.graph_revision_id == execution.graph_revision_id,
+            grant.assignment_epoch == execution.assignment_epoch,
+            grant.subtask_id == execution.subtask_id,
+            grant.id == execution.grant_id,
+            grant.physical_epoch == execution.physical_epoch,
+            grant.holder_id == execution.holder_id,
+            grant.event_key_id == execution.event_key_id,
+            grant.child_process_id == execution.child_process_id,
+            grant.process_start_ticks == execution.process_start_ticks,
+            grant.scope_digest == execution.scope_digest,
+            manifest.manifest_digest == execution.manifest_digest,
+            task.id == execution.task_run_id,
+            assignment.input_stream_id == execution.input_stream_id,
+            manifest.stream_id == execution.output_stream_id,
+        )
+    if not all(expected):
+        raise StreamRequestError(
+            "IDENTITY_CONFLICT", "Physical bootstrap does not match its sealed grant"
+        )
+    return bootstrap
+
+
+def _subtask_event_payload(event: dict[str, Any], subtask_id: UUID) -> dict[str, Any]:
+    """Transport only an exact own-TaskRun signature under a physical context."""
+    parsed = Event.model_validate(event)
+    execution = get_stream_subtask_execution()
+    if execution is not None:
+        expected = {
+            "prefect.resource.id": f"prefect.task-run.{execution.task_run_id}",
+            "prefect.stream-graph-revision": str(execution.graph_revision_id),
+            "prefect.stream-assignment-epoch": str(execution.assignment_epoch),
+            "prefect.stream-subtask": str(execution.subtask_id),
+            "prefect.stream-subtask-grant": str(execution.grant_id),
+            "prefect.stream-physical-epoch": str(execution.physical_epoch),
+            "prefect.stream-scope-digest": execution.scope_digest,
+            "prefect.stream-execution-generation": str(execution.physical_epoch),
+            "prefect.stream-execution-holder": str(execution.holder_id),
+            "prefect.stream-submission-digest": execution.manifest_digest,
+            "prefect.stream-event-key-id": execution.event_key_id,
+        }
+        if subtask_id != execution.subtask_id or any(
+            parsed.resource.get(name) != value for name, value in expected.items()
+        ):
+            raise StreamRequestError(
+                "IDENTITY_CONFLICT", "Physical event identity differs"
+            )
+        try:
+            task_run = parsed.payload["task_run"]
+            witness = canonical_physical_event_witness(
+                event_id=parsed.id,
+                event=parsed.event,
+                occurred=parsed.occurred,
+                flow_run_id=execution.flow_run_id,
+                task_run_id=execution.task_run_id,
+                generation=execution.physical_epoch,
+                holder_id=execution.holder_id,
+                manifest_digest=execution.manifest_digest,
+                run_count=task_run["run_count"],
+                task_run=task_run,
+                validated_state=parsed.payload["validated_state"],
+                graph_revision_id=execution.graph_revision_id,
+                assignment_epoch=execution.assignment_epoch,
+                subtask_id=execution.subtask_id,
+                grant_id=execution.grant_id,
+                physical_epoch=execution.physical_epoch,
+                scope_digest=execution.scope_digest,
+            )
+            valid = verify_task_event(
+                execution.event_public_key,
+                witness,
+                parsed.resource.get("prefect.stream-event-signature"),
+            )
+        except (KeyError, TypeError, ValueError):
+            valid = False
+        if not valid:
+            raise StreamRequestError(
+                "PROTOCOL_ERROR", "Physical event signature is invalid"
+            )
+    return parsed.model_dump(mode="json")
+
+
+def _subtask_event_result(
+    response: httpx.Response, payload: dict[str, Any]
+) -> subtask_schemas.StreamSubtaskEventResult:
+    result = subtask_schemas.StreamSubtaskEventResult.model_validate(response.json())
+    execution = get_stream_subtask_execution()
+    if str(result.event_id) != payload["id"] or (
+        execution is not None and result.task_run_id != execution.task_run_id
+    ):
+        raise StreamRequestError("IDENTITY_CONFLICT", "Physical event receipt differs")
+    return result
+
+
 class StreamClient(BaseClient):
     """Native data-plane methods; credentials belong to the owning client."""
 
@@ -58,6 +183,604 @@ class StreamClient(BaseClient):
             return self.request(method, path, **kwargs)
         except httpx.HTTPStatusError as error:
             raise _refusal(error) from error
+
+    def poll_worker_stream_subtasks(
+        self,
+        *,
+        worker_id: UUID,
+        principal: dict[str, Any],
+        active_subtask_ids: list[UUID] | None = None,
+        limit: int = 64,
+    ) -> list[subtask_schemas.StreamWorkerAssignment]:
+        """Poll persisted placements through the trusted worker's Basic authority."""
+        payload = subtask_schemas.StreamWorkerPollRequest.model_validate(
+            {
+                "principal": principal,
+                "active_subtask_ids": active_subtask_ids
+                if active_subtask_ids is not None
+                else [],
+                "limit": limit,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/poll",
+            path_params={"worker_id": worker_id},
+            json=payload,
+        )
+        return TypeAdapter(
+            list[subtask_schemas.StreamWorkerAssignment]
+        ).validate_python(response.json())
+
+    def claim_worker_stream_subtask(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        holder_id: UUID,
+        capability: str,
+        event_public_key: str,
+        work_pool_id: UUID,
+        host_id: UUID,
+        boot_id: UUID,
+        launcher_process_id: int,
+        launcher_start_ticks: int,
+        assignment_epoch: Literal[1] = 1,
+        expected_physical_epoch: Literal[0] = 0,
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Claim exactly this worker's assigned subtask, without a Flow capability."""
+        payload = subtask_schemas.StreamSubtaskClaimRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "assignment_epoch": assignment_epoch,
+                "expected_physical_epoch": expected_physical_epoch,
+                "holder_id": holder_id,
+                "capability": capability,
+                "event_public_key": event_public_key,
+                "launcher_binding_kind": "ASSIGNED_WORKER",
+                "worker_id": worker_id,
+                "work_pool_id": work_pool_id,
+                "host_id": host_id,
+                "boot_id": boot_id,
+                "launcher_process_id": launcher_process_id,
+                "launcher_start_ticks": launcher_start_ticks,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/claim",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    def register_worker_stream_subtask_process(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        registration: dict[str, Any],
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Send the typed own-assignment control request as a trusted worker."""
+        payload = subtask_schemas.StreamWorkerRegistrationRequest.model_validate(
+            {"principal": principal, "registration": registration}
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/register",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    def renew_worker_stream_subtask(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        grant_id: UUID,
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Send the typed own-assignment control request as a trusted worker."""
+        payload = subtask_schemas.StreamWorkerRenewRequest.model_validate(
+            {"principal": principal, "grant_id": grant_id}
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/renew",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    def authorize_worker_stream_subtask_replacement(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        replacement: dict[str, Any],
+    ) -> subtask_schemas.StreamSubtaskReplacementAuthorization:
+        """Send the typed own-assignment control request as a trusted worker."""
+        payload = (
+            subtask_schemas.StreamWorkerReplacementAuthorizeRequest.model_validate(
+                {"principal": principal, "replacement": replacement}
+            ).model_dump(mode="json")
+        )
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/replacements/authorize",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskReplacementAuthorization.model_validate(
+            response.json()
+        )
+
+    def confirm_worker_stream_subtask_replacement(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        replacement: dict[str, Any],
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Send the typed own-assignment control request as a trusted worker."""
+        payload = subtask_schemas.StreamWorkerReplacementConfirmRequest.model_validate(
+            {"principal": principal, "replacement": replacement}
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/replacements/confirm",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    def retire_verified_worker_stream_subtask(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        retirement: dict[str, Any],
+    ) -> subtask_schemas.StreamSubtaskVerifiedRetirement:
+        """Send the typed own-assignment control request as a trusted worker."""
+        payload = subtask_schemas.StreamWorkerVerifiedRetireRequest.model_validate(
+            {"principal": principal, "retirement": retirement}
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/replacements/retire",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskVerifiedRetirement.model_validate(
+            response.json()
+        )
+
+    def acknowledge_worker_stream_subtask_startup_stop(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        stop: dict[str, Any],
+    ) -> subtask_schemas.StreamGraphStartupStopResult:
+        """Send the typed own-assignment control request as a trusted worker."""
+        payload = subtask_schemas.StreamWorkerStartupStopRequest.model_validate(
+            {"principal": principal, "stop": stop}
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/startup-stop",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamGraphStartupStopResult.model_validate(
+            response.json()
+        )
+
+    def abort_worker_stream_graph_startup(
+        self,
+        *,
+        worker_id: UUID,
+        graph_revision_id: UUID,
+        principal: dict[str, Any],
+    ) -> subtask_schemas.StreamGraphPlan:
+        """Request the versioned startup abort; worker stop receipts release slots."""
+        payload = subtask_schemas.StreamWorkerStartupAbortRequest.model_validate(
+            {"principal": principal}
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/graphs/{graph_id}/startup-abort",
+            path_params={"worker_id": worker_id, "graph_id": graph_revision_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamGraphPlan.model_validate(response.json())
+
+    def acknowledge_stream_subtask_startup_stop(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        abort_operation_id: UUID,
+        grant_id: UUID,
+        expected_physical_epoch: int,
+        death_witness: dict[str, Any] | None = None,
+        unstarted: bool = False,
+    ) -> subtask_schemas.StreamGraphStartupStopResult:
+        """Record one exact preactivation stop through the parent Flow authority."""
+        payload = subtask_schemas.StreamGraphStartupStopRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "abort_operation_id": abort_operation_id,
+                "grant_id": grant_id,
+                "expected_physical_epoch": expected_physical_epoch,
+                "death_witness": death_witness,
+                "unstarted": unstarted,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/startup-stop",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamGraphStartupStopResult.model_validate(
+            response.json()
+        )
+
+    def seal_stream_graph(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        flow_version: str,
+        operators: list[dict[str, Any]],
+        deployment_id: UUID | None = None,
+        deployment_version: str | None = None,
+        working_directory: str | None = None,
+        profile: Literal["partitioned-fixed-v1"] = "partitioned-fixed-v1",
+        assignment_epoch: Literal[1] = 1,
+    ) -> subtask_schemas.StreamGraphPlan:
+        """Seal the immutable finite P2 graph before any physical task starts."""
+        payload = subtask_schemas.StreamGraphSealRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "flow_version": flow_version,
+                "operators": operators,
+                "deployment_id": deployment_id,
+                "deployment_version": deployment_version,
+                "working_directory": working_directory,
+                "profile": profile,
+                "assignment_epoch": assignment_epoch,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request("POST", "/streams/v2/graphs/seal", json=payload)
+        return subtask_schemas.StreamGraphPlan.model_validate(response.json())
+
+    def read_stream_graph(
+        self, *, graph_revision_id: UUID
+    ) -> subtask_schemas.StreamGraphPlan:
+        """Read a graph through its parent execution authority."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v2/graphs/{graph_id}",
+            path_params={"graph_id": graph_revision_id},
+        )
+        return subtask_schemas.StreamGraphPlan.model_validate(response.json())
+
+    def admit_stream_region(
+        self, *, graph_revision_id: UUID, operation_id: UUID, graph_digest: str
+    ) -> subtask_schemas.StreamGraphPlan:
+        """Reserve the complete runnable region before source admission."""
+        payload = subtask_schemas.StreamRegionAdmissionRequest(
+            operation_id=operation_id, graph_digest=graph_digest
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/graphs/{graph_id}/admit",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamGraphPlan.model_validate(response.json())
+
+    def activate_stream_graph(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        grant_ids: list[UUID],
+    ) -> subtask_schemas.StreamGraphPlan:
+        """Activate the exact four registered grants before releasing child user code."""
+        payload = subtask_schemas.StreamGraphActivateRequest(
+            operation_id=operation_id, graph_digest=graph_digest, grant_ids=grant_ids
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/graphs/{graph_id}/activate",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamGraphPlan.model_validate(response.json())
+
+    def abort_stream_graph(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        error: str,
+    ) -> subtask_schemas.StreamGraphPlan:
+        """Compensate a preactivation failure through its retained graph identity."""
+        payload = subtask_schemas.StreamGraphAbortRequest(
+            operation_id=operation_id, graph_digest=graph_digest, error=error
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/graphs/{graph_id}/abort",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamGraphPlan.model_validate(response.json())
+
+    def claim_stream_subtask(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        holder_id: UUID,
+        capability: str,
+        event_public_key: str,
+        launcher_binding_kind: Literal[
+            "DEPLOYMENT", "FLOW_AUTHORITY_LOCAL", "ASSIGNED_WORKER"
+        ],
+        host_id: UUID,
+        boot_id: UUID,
+        launcher_process_id: int,
+        launcher_start_ticks: int,
+        worker_id: UUID | None = None,
+        work_pool_id: UUID | None = None,
+        assignment_epoch: Literal[1] = 1,
+        expected_physical_epoch: Literal[0] = 0,
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Bind caller-generated child credentials without returning the secret."""
+        payload = subtask_schemas.StreamSubtaskClaimRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "assignment_epoch": assignment_epoch,
+                "expected_physical_epoch": expected_physical_epoch,
+                "holder_id": holder_id,
+                "capability": capability,
+                "event_public_key": event_public_key,
+                "launcher_binding_kind": launcher_binding_kind,
+                "worker_id": worker_id,
+                "work_pool_id": work_pool_id,
+                "host_id": host_id,
+                "boot_id": boot_id,
+                "launcher_process_id": launcher_process_id,
+                "launcher_start_ticks": launcher_start_ticks,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/claim",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    def register_stream_subtask_process(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        grant_id: UUID,
+        child_process_id: int,
+        process_start_ticks: int,
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Register an exact child before delivering its capability bootstrap."""
+        payload = subtask_schemas.StreamSubtaskRegistrationRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "grant_id": grant_id,
+                "child_process_id": child_process_id,
+                "process_start_ticks": process_start_ticks,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/register",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    def renew_stream_subtask(
+        self, *, subtask_id: UUID, grant_id: UUID
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Renew parent supervision without asserting kernel process liveness."""
+        payload = subtask_schemas.StreamSubtaskRenewRequest(
+            grant_id=grant_id
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/renew",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    def authorize_stream_subtask_replacement(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        expected_grant_id: UUID,
+        expected_physical_epoch: int,
+        host_id: UUID,
+        challenge_capability: str,
+    ) -> subtask_schemas.StreamSubtaskReplacementAuthorization:
+        """Authorize verification for one exact physical attempt."""
+        payload = (
+            subtask_schemas.StreamSubtaskReplacementAuthorizeRequest.model_validate(
+                {
+                    "operation_id": operation_id,
+                    "expected_grant_id": expected_grant_id,
+                    "expected_physical_epoch": expected_physical_epoch,
+                    "host_id": host_id,
+                    "challenge_capability": challenge_capability,
+                }
+            ).model_dump(mode="json")
+        )
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/replacements/authorize",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskReplacementAuthorization.model_validate(
+            response.json()
+        )
+
+    def confirm_stream_subtask_replacement(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        challenge_capability: str,
+        death_witness: dict[str, Any],
+        new_holder_id: UUID,
+        new_capability: str,
+        new_event_public_key: str,
+        host_id: UUID,
+        boot_id: UUID,
+        new_child_process_id: int,
+        new_process_start_ticks: int,
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Fence one dead physical attempt while retaining its TaskRun identity."""
+        payload = subtask_schemas.StreamSubtaskReplacementConfirmRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "challenge_capability": challenge_capability,
+                "death_witness": death_witness,
+                "new_holder_id": new_holder_id,
+                "new_capability": new_capability,
+                "new_event_public_key": new_event_public_key,
+                "host_id": host_id,
+                "boot_id": boot_id,
+                "new_child_process_id": new_child_process_id,
+                "new_process_start_ticks": new_process_start_ticks,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/replacements/confirm",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    def retire_verified_stream_subtask(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        challenge_capability: str,
+        death_witness: dict[str, Any],
+        error: str,
+        reason: Literal[
+            "TERMINAL_RECONCILIATION", "REPLACEMENT_PREFLIGHT_FAILED"
+        ] = "TERMINAL_RECONCILIATION",
+    ) -> subtask_schemas.StreamSubtaskVerifiedRetirement:
+        """Reconcile a verified terminal attempt without rerunning accepted work."""
+        payload = subtask_schemas.StreamSubtaskVerifiedRetireRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "challenge_capability": challenge_capability,
+                "death_witness": death_witness,
+                "error": error,
+                "reason": reason,
+            }
+        ).model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/replacements/retire",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        result = subtask_schemas.StreamSubtaskVerifiedRetirement.model_validate(
+            response.json()
+        )
+        if result.operation_id != operation_id or result.subtask_id != subtask_id:
+            raise StreamRequestError(
+                "IDENTITY_CONFLICT", "Physical retirement receipt differs"
+            )
+        return result
+
+    def read_stream_subtask_bootstrap(
+        self, *, subtask_id: UUID
+    ) -> subtask_schemas.StreamSubtaskBootstrap:
+        """Read only this grant's immutable assignment and ordinary TaskRun."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v2/subtasks/{subtask_id}/bootstrap",
+            path_params={"subtask_id": subtask_id},
+        )
+        return _validate_subtask_bootstrap(
+            subtask_schemas.StreamSubtaskBootstrap.model_validate(response.json()),
+            subtask_id,
+        )
+
+    def read_stream_subtask_task_run(self, *, subtask_id: UUID) -> TaskRun:
+        """Read this physical TaskRun without access to ordinary run APIs."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v2/subtasks/{subtask_id}/task-run",
+            path_params={"subtask_id": subtask_id},
+        )
+        return TaskRun.model_validate(response.json())
+
+    def emit_stream_subtask_event(
+        self, *, subtask_id: UUID, event: dict[str, Any]
+    ) -> subtask_schemas.StreamSubtaskEventResult:
+        """Deliver an ordinary signed TaskRun event through scoped HTTP."""
+        payload = _subtask_event_payload(event, subtask_id)
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/events",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return _subtask_event_result(response, payload)
+
+    def renew_stream_subtask_lease(self, *, subtask_id: UUID) -> None:
+        """Renew this subtask's pre-admitted task/tag lease."""
+        self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/lease/renew",
+            path_params={"subtask_id": subtask_id},
+            json={},
+        )
+
+    def release_stream_subtask_lease(self, *, subtask_id: UUID) -> None:
+        """Release this subtask's lease after its accepted terminal state."""
+        self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/lease/release",
+            path_params={"subtask_id": subtask_id},
+            json={},
+        )
 
     def reserve_stream_finite_submission(
         self,
@@ -1156,6 +1879,606 @@ class StreamAsyncClient(BaseAsyncClient):
             return await self.request(method, path, **kwargs)
         except httpx.HTTPStatusError as error:
             raise _refusal(error) from error
+
+    async def poll_worker_stream_subtasks(
+        self,
+        *,
+        worker_id: UUID,
+        principal: dict[str, Any],
+        active_subtask_ids: list[UUID] | None = None,
+        limit: int = 64,
+    ) -> list[subtask_schemas.StreamWorkerAssignment]:
+        """Poll persisted placements through the trusted worker's Basic authority."""
+        payload = subtask_schemas.StreamWorkerPollRequest.model_validate(
+            {
+                "principal": principal,
+                "active_subtask_ids": active_subtask_ids
+                if active_subtask_ids is not None
+                else [],
+                "limit": limit,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/poll",
+            path_params={"worker_id": worker_id},
+            json=payload,
+        )
+        return TypeAdapter(
+            list[subtask_schemas.StreamWorkerAssignment]
+        ).validate_python(response.json())
+
+    async def claim_worker_stream_subtask(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        holder_id: UUID,
+        capability: str,
+        event_public_key: str,
+        work_pool_id: UUID,
+        host_id: UUID,
+        boot_id: UUID,
+        launcher_process_id: int,
+        launcher_start_ticks: int,
+        assignment_epoch: Literal[1] = 1,
+        expected_physical_epoch: Literal[0] = 0,
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Claim exactly this worker's assigned subtask, without a Flow capability."""
+        payload = subtask_schemas.StreamSubtaskClaimRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "assignment_epoch": assignment_epoch,
+                "expected_physical_epoch": expected_physical_epoch,
+                "holder_id": holder_id,
+                "capability": capability,
+                "event_public_key": event_public_key,
+                "launcher_binding_kind": "ASSIGNED_WORKER",
+                "worker_id": worker_id,
+                "work_pool_id": work_pool_id,
+                "host_id": host_id,
+                "boot_id": boot_id,
+                "launcher_process_id": launcher_process_id,
+                "launcher_start_ticks": launcher_start_ticks,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/claim",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    async def register_worker_stream_subtask_process(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        registration: dict[str, Any],
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Send the typed own-assignment control request as a trusted worker."""
+        payload = subtask_schemas.StreamWorkerRegistrationRequest.model_validate(
+            {"principal": principal, "registration": registration}
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/register",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    async def renew_worker_stream_subtask(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        grant_id: UUID,
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Send the typed own-assignment control request as a trusted worker."""
+        payload = subtask_schemas.StreamWorkerRenewRequest.model_validate(
+            {"principal": principal, "grant_id": grant_id}
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/renew",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    async def authorize_worker_stream_subtask_replacement(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        replacement: dict[str, Any],
+    ) -> subtask_schemas.StreamSubtaskReplacementAuthorization:
+        """Send the typed own-assignment control request as a trusted worker."""
+        payload = (
+            subtask_schemas.StreamWorkerReplacementAuthorizeRequest.model_validate(
+                {"principal": principal, "replacement": replacement}
+            ).model_dump(mode="json")
+        )
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/replacements/authorize",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskReplacementAuthorization.model_validate(
+            response.json()
+        )
+
+    async def confirm_worker_stream_subtask_replacement(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        replacement: dict[str, Any],
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Send the typed own-assignment control request as a trusted worker."""
+        payload = subtask_schemas.StreamWorkerReplacementConfirmRequest.model_validate(
+            {"principal": principal, "replacement": replacement}
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/replacements/confirm",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    async def retire_verified_worker_stream_subtask(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        retirement: dict[str, Any],
+    ) -> subtask_schemas.StreamSubtaskVerifiedRetirement:
+        """Send the typed own-assignment control request as a trusted worker."""
+        payload = subtask_schemas.StreamWorkerVerifiedRetireRequest.model_validate(
+            {"principal": principal, "retirement": retirement}
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/replacements/retire",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskVerifiedRetirement.model_validate(
+            response.json()
+        )
+
+    async def acknowledge_worker_stream_subtask_startup_stop(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        stop: dict[str, Any],
+    ) -> subtask_schemas.StreamGraphStartupStopResult:
+        """Send the typed own-assignment control request as a trusted worker."""
+        payload = subtask_schemas.StreamWorkerStartupStopRequest.model_validate(
+            {"principal": principal, "stop": stop}
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/startup-stop",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamGraphStartupStopResult.model_validate(
+            response.json()
+        )
+
+    async def abort_worker_stream_graph_startup(
+        self,
+        *,
+        worker_id: UUID,
+        graph_revision_id: UUID,
+        principal: dict[str, Any],
+    ) -> subtask_schemas.StreamGraphPlan:
+        """Request the versioned startup abort; worker stop receipts release slots."""
+        payload = subtask_schemas.StreamWorkerStartupAbortRequest.model_validate(
+            {"principal": principal}
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/workers/{worker_id}/graphs/{graph_id}/startup-abort",
+            path_params={"worker_id": worker_id, "graph_id": graph_revision_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamGraphPlan.model_validate(response.json())
+
+    async def acknowledge_stream_subtask_startup_stop(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        abort_operation_id: UUID,
+        grant_id: UUID,
+        expected_physical_epoch: int,
+        death_witness: dict[str, Any] | None = None,
+        unstarted: bool = False,
+    ) -> subtask_schemas.StreamGraphStartupStopResult:
+        """Record one exact preactivation stop through the parent Flow authority."""
+        payload = subtask_schemas.StreamGraphStartupStopRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "abort_operation_id": abort_operation_id,
+                "grant_id": grant_id,
+                "expected_physical_epoch": expected_physical_epoch,
+                "death_witness": death_witness,
+                "unstarted": unstarted,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/startup-stop",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamGraphStartupStopResult.model_validate(
+            response.json()
+        )
+
+    async def seal_stream_graph(
+        self,
+        *,
+        flow_run_id: UUID,
+        operation_id: UUID,
+        flow_version: str,
+        operators: list[dict[str, Any]],
+        deployment_id: UUID | None = None,
+        deployment_version: str | None = None,
+        working_directory: str | None = None,
+        profile: Literal["partitioned-fixed-v1"] = "partitioned-fixed-v1",
+        assignment_epoch: Literal[1] = 1,
+    ) -> subtask_schemas.StreamGraphPlan:
+        """Seal the immutable finite P2 graph before any physical task starts."""
+        payload = subtask_schemas.StreamGraphSealRequest.model_validate(
+            {
+                "flow_run_id": flow_run_id,
+                "operation_id": operation_id,
+                "flow_version": flow_version,
+                "operators": operators,
+                "deployment_id": deployment_id,
+                "deployment_version": deployment_version,
+                "working_directory": working_directory,
+                "profile": profile,
+                "assignment_epoch": assignment_epoch,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST", "/streams/v2/graphs/seal", json=payload
+        )
+        return subtask_schemas.StreamGraphPlan.model_validate(response.json())
+
+    async def read_stream_graph(
+        self, *, graph_revision_id: UUID
+    ) -> subtask_schemas.StreamGraphPlan:
+        """Read a graph through its parent execution authority."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v2/graphs/{graph_id}",
+            path_params={"graph_id": graph_revision_id},
+        )
+        return subtask_schemas.StreamGraphPlan.model_validate(response.json())
+
+    async def admit_stream_region(
+        self, *, graph_revision_id: UUID, operation_id: UUID, graph_digest: str
+    ) -> subtask_schemas.StreamGraphPlan:
+        """Reserve the complete runnable region before source admission."""
+        payload = subtask_schemas.StreamRegionAdmissionRequest(
+            operation_id=operation_id, graph_digest=graph_digest
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/graphs/{graph_id}/admit",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamGraphPlan.model_validate(response.json())
+
+    async def activate_stream_graph(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        grant_ids: list[UUID],
+    ) -> subtask_schemas.StreamGraphPlan:
+        """Activate the exact four registered grants before releasing child user code."""
+        payload = subtask_schemas.StreamGraphActivateRequest(
+            operation_id=operation_id, graph_digest=graph_digest, grant_ids=grant_ids
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/graphs/{graph_id}/activate",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamGraphPlan.model_validate(response.json())
+
+    async def abort_stream_graph(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        error: str,
+    ) -> subtask_schemas.StreamGraphPlan:
+        """Compensate a preactivation failure through its retained graph identity."""
+        payload = subtask_schemas.StreamGraphAbortRequest(
+            operation_id=operation_id, graph_digest=graph_digest, error=error
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/graphs/{graph_id}/abort",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamGraphPlan.model_validate(response.json())
+
+    async def claim_stream_subtask(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        holder_id: UUID,
+        capability: str,
+        event_public_key: str,
+        launcher_binding_kind: Literal[
+            "DEPLOYMENT", "FLOW_AUTHORITY_LOCAL", "ASSIGNED_WORKER"
+        ],
+        host_id: UUID,
+        boot_id: UUID,
+        launcher_process_id: int,
+        launcher_start_ticks: int,
+        worker_id: UUID | None = None,
+        work_pool_id: UUID | None = None,
+        assignment_epoch: Literal[1] = 1,
+        expected_physical_epoch: Literal[0] = 0,
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Bind caller-generated child credentials without returning the secret."""
+        payload = subtask_schemas.StreamSubtaskClaimRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "assignment_epoch": assignment_epoch,
+                "expected_physical_epoch": expected_physical_epoch,
+                "holder_id": holder_id,
+                "capability": capability,
+                "event_public_key": event_public_key,
+                "launcher_binding_kind": launcher_binding_kind,
+                "worker_id": worker_id,
+                "work_pool_id": work_pool_id,
+                "host_id": host_id,
+                "boot_id": boot_id,
+                "launcher_process_id": launcher_process_id,
+                "launcher_start_ticks": launcher_start_ticks,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/claim",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    async def register_stream_subtask_process(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        grant_id: UUID,
+        child_process_id: int,
+        process_start_ticks: int,
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Register an exact child before delivering its capability bootstrap."""
+        payload = subtask_schemas.StreamSubtaskRegistrationRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "grant_id": grant_id,
+                "child_process_id": child_process_id,
+                "process_start_ticks": process_start_ticks,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/register",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    async def renew_stream_subtask(
+        self, *, subtask_id: UUID, grant_id: UUID
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Renew parent supervision without asserting kernel process liveness."""
+        payload = subtask_schemas.StreamSubtaskRenewRequest(
+            grant_id=grant_id
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/renew",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    async def authorize_stream_subtask_replacement(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        expected_grant_id: UUID,
+        expected_physical_epoch: int,
+        host_id: UUID,
+        challenge_capability: str,
+    ) -> subtask_schemas.StreamSubtaskReplacementAuthorization:
+        """Authorize verification for one exact physical attempt."""
+        payload = (
+            subtask_schemas.StreamSubtaskReplacementAuthorizeRequest.model_validate(
+                {
+                    "operation_id": operation_id,
+                    "expected_grant_id": expected_grant_id,
+                    "expected_physical_epoch": expected_physical_epoch,
+                    "host_id": host_id,
+                    "challenge_capability": challenge_capability,
+                }
+            ).model_dump(mode="json")
+        )
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/replacements/authorize",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskReplacementAuthorization.model_validate(
+            response.json()
+        )
+
+    async def confirm_stream_subtask_replacement(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        challenge_capability: str,
+        death_witness: dict[str, Any],
+        new_holder_id: UUID,
+        new_capability: str,
+        new_event_public_key: str,
+        host_id: UUID,
+        boot_id: UUID,
+        new_child_process_id: int,
+        new_process_start_ticks: int,
+    ) -> subtask_schemas.StreamSubtaskGrant:
+        """Fence one dead physical attempt while retaining its TaskRun identity."""
+        payload = subtask_schemas.StreamSubtaskReplacementConfirmRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "challenge_capability": challenge_capability,
+                "death_witness": death_witness,
+                "new_holder_id": new_holder_id,
+                "new_capability": new_capability,
+                "new_event_public_key": new_event_public_key,
+                "host_id": host_id,
+                "boot_id": boot_id,
+                "new_child_process_id": new_child_process_id,
+                "new_process_start_ticks": new_process_start_ticks,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/replacements/confirm",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return subtask_schemas.StreamSubtaskGrant.model_validate(response.json())
+
+    async def retire_verified_stream_subtask(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        challenge_capability: str,
+        death_witness: dict[str, Any],
+        error: str,
+        reason: Literal[
+            "TERMINAL_RECONCILIATION", "REPLACEMENT_PREFLIGHT_FAILED"
+        ] = "TERMINAL_RECONCILIATION",
+    ) -> subtask_schemas.StreamSubtaskVerifiedRetirement:
+        """Reconcile a verified terminal attempt without rerunning accepted work."""
+        payload = subtask_schemas.StreamSubtaskVerifiedRetireRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "challenge_capability": challenge_capability,
+                "death_witness": death_witness,
+                "error": error,
+                "reason": reason,
+            }
+        ).model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/replacements/retire",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        result = subtask_schemas.StreamSubtaskVerifiedRetirement.model_validate(
+            response.json()
+        )
+        if result.operation_id != operation_id or result.subtask_id != subtask_id:
+            raise StreamRequestError(
+                "IDENTITY_CONFLICT", "Physical retirement receipt differs"
+            )
+        return result
+
+    async def read_stream_subtask_bootstrap(
+        self, *, subtask_id: UUID
+    ) -> subtask_schemas.StreamSubtaskBootstrap:
+        """Read only this grant's immutable assignment and ordinary TaskRun."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v2/subtasks/{subtask_id}/bootstrap",
+            path_params={"subtask_id": subtask_id},
+        )
+        return _validate_subtask_bootstrap(
+            subtask_schemas.StreamSubtaskBootstrap.model_validate(response.json()),
+            subtask_id,
+        )
+
+    async def read_stream_subtask_task_run(self, *, subtask_id: UUID) -> TaskRun:
+        """Read this physical TaskRun without access to ordinary run APIs."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v2/subtasks/{subtask_id}/task-run",
+            path_params={"subtask_id": subtask_id},
+        )
+        return TaskRun.model_validate(response.json())
+
+    async def emit_stream_subtask_event(
+        self, *, subtask_id: UUID, event: dict[str, Any]
+    ) -> subtask_schemas.StreamSubtaskEventResult:
+        """Deliver an ordinary signed TaskRun event through scoped HTTP."""
+        payload = _subtask_event_payload(event, subtask_id)
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/events",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        return _subtask_event_result(response, payload)
+
+    async def renew_stream_subtask_lease(self, *, subtask_id: UUID) -> None:
+        """Renew this subtask's pre-admitted task/tag lease."""
+        await self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/lease/renew",
+            path_params={"subtask_id": subtask_id},
+            json={},
+        )
+
+    async def release_stream_subtask_lease(self, *, subtask_id: UUID) -> None:
+        """Release this subtask's lease after its accepted terminal state."""
+        await self._stream_request(
+            "POST",
+            "/streams/v2/subtasks/{subtask_id}/lease/release",
+            path_params={"subtask_id": subtask_id},
+            json={},
+        )
 
     async def reserve_stream_finite_submission(
         self,

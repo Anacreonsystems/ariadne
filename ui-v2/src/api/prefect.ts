@@ -1339,6 +1339,448 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/streams/v2/graphs/seal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Seal Graph */
+        post: operations["seal_graph_streams_v2_graphs_seal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/graphs/{graph_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Graph */
+        get: operations["read_graph_streams_v2_graphs__graph_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/graphs/{graph_id}/admit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admit Region */
+        post: operations["admit_region_streams_v2_graphs__graph_id__admit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/graphs/{graph_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate Graph */
+        post: operations["activate_graph_streams_v2_graphs__graph_id__activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/graphs/{graph_id}/abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Abort Graph */
+        post: operations["abort_graph_streams_v2_graphs__graph_id__abort_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/subtasks/{subtask_id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Subtask */
+        post: operations["claim_subtask_streams_v2_subtasks__subtask_id__claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/subtasks/{subtask_id}/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register Subtask */
+        post: operations["register_subtask_streams_v2_subtasks__subtask_id__register_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/subtasks/{subtask_id}/renew": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Renew Subtask */
+        post: operations["renew_subtask_streams_v2_subtasks__subtask_id__renew_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/subtasks/{subtask_id}/replacements/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Authorize Replacement */
+        post: operations["authorize_replacement_streams_v2_subtasks__subtask_id__replacements_authorize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/subtasks/{subtask_id}/replacements/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Replacement */
+        post: operations["confirm_replacement_streams_v2_subtasks__subtask_id__replacements_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/subtasks/{subtask_id}/bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Bootstrap */
+        get: operations["bootstrap_streams_v2_subtasks__subtask_id__bootstrap_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/subtasks/{subtask_id}/task-run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Task Run */
+        get: operations["read_task_run_streams_v2_subtasks__subtask_id__task_run_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/subtasks/{subtask_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Task Event */
+        post: operations["task_event_streams_v2_subtasks__subtask_id__events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/subtasks/{subtask_id}/lease/renew": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Renew Lease */
+        post: operations["renew_lease_streams_v2_subtasks__subtask_id__lease_renew_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/subtasks/{subtask_id}/lease/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Release Lease */
+        post: operations["release_lease_streams_v2_subtasks__subtask_id__lease_release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/subtasks/{subtask_id}/replacements/retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retire Verified Subtask */
+        post: operations["retire_verified_subtask_streams_v2_subtasks__subtask_id__replacements_retire_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/subtasks/{subtask_id}/startup-stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Acknowledge Startup Stop */
+        post: operations["acknowledge_startup_stop_streams_v2_subtasks__subtask_id__startup_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/workers/{worker_id}/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Poll Assignments */
+        post: operations["poll_assignments_streams_v2_workers__worker_id__poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim Subtask */
+        post: operations["claim_subtask_streams_v2_workers__worker_id__subtasks__subtask_id__claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register Subtask */
+        post: operations["register_subtask_streams_v2_workers__worker_id__subtasks__subtask_id__register_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/renew": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Renew Subtask */
+        post: operations["renew_subtask_streams_v2_workers__worker_id__subtasks__subtask_id__renew_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/replacements/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Authorize Replacement */
+        post: operations["authorize_replacement_streams_v2_workers__worker_id__subtasks__subtask_id__replacements_authorize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/replacements/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Replacement */
+        post: operations["confirm_replacement_streams_v2_workers__worker_id__subtasks__subtask_id__replacements_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/replacements/retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retire Verified Subtask */
+        post: operations["retire_verified_subtask_streams_v2_workers__worker_id__subtasks__subtask_id__replacements_retire_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/workers/{worker_id}/subtasks/{subtask_id}/startup-stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Startup Stop */
+        post: operations["record_startup_stop_streams_v2_workers__worker_id__subtasks__subtask_id__startup_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/workers/{worker_id}/graphs/{graph_id}/startup-abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Abort Startup */
+        post: operations["abort_startup_streams_v2_workers__worker_id__graphs__graph_id__startup_abort_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/streams/v1/deployments/enroll": {
         parameters: {
             query?: never;
@@ -9721,9 +10163,9 @@ export interface components {
             protocol_version: 1;
             /**
              * Profile
-             * @constant
+             * @enum {string}
              */
-            profile: "bounded-linear-v1";
+            profile: "bounded-linear-v1" | "partitioned-fixed-v1";
             /** Flow Version */
             flow_version: string;
             /** Flow Code Digest */
@@ -13114,6 +13556,168 @@ export interface components {
                 [key: string]: boolean | number | string;
             };
         };
+        /** StreamGraphAbortRequest */
+        StreamGraphAbortRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /** Error */
+            error: string;
+        };
+        /** StreamGraphActivateRequest */
+        StreamGraphActivateRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /** Grant Ids */
+            grant_ids: string[];
+        };
+        /** StreamGraphPlan */
+        StreamGraphPlan: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Profile
+             * @constant
+             */
+            profile: "partitioned-fixed-v1";
+            /**
+             * Assignment Epoch
+             * @constant
+             */
+            assignment_epoch: 1;
+            /** Graph Digest */
+            graph_digest: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "SEALED" | "ADMITTED" | "ABORTING" | "RELEASED";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Startup Completed At */
+            startup_completed_at?: string | null;
+            /** Placement Digest */
+            placement_digest?: string | null;
+            /** Subtasks */
+            subtasks: components["schemas"]["StreamSubtaskProjection"][];
+        };
+        /** StreamGraphSealRequest */
+        StreamGraphSealRequest: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Profile
+             * @default partitioned-fixed-v1
+             * @constant
+             */
+            profile: "partitioned-fixed-v1";
+            /**
+             * Assignment Epoch
+             * @default 1
+             * @constant
+             */
+            assignment_epoch: 1;
+            /** Flow Version */
+            flow_version: string;
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Deployment Version */
+            deployment_version?: string | null;
+            /** Working Directory */
+            working_directory?: string | null;
+            /** Operators */
+            operators: components["schemas"]["StreamOperatorSpec"][];
+        };
+        /** StreamGraphStartupStopRequest */
+        StreamGraphStartupStopRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Abort Operation Id
+             * Format: uuid
+             */
+            abort_operation_id: string;
+            /**
+             * Grant Id
+             * Format: uuid
+             */
+            grant_id: string;
+            /** Expected Physical Epoch */
+            expected_physical_epoch: number;
+            death_witness?: components["schemas"]["NativeStreamProcessDeathWitness"] | null;
+            /**
+             * Unstarted
+             * @default false
+             */
+            unstarted: boolean;
+        };
+        /** StreamGraphStartupStopResult */
+        StreamGraphStartupStopResult: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /**
+             * Subtask Id
+             * Format: uuid
+             */
+            subtask_id: string;
+            /**
+             * Grant Id
+             * Format: uuid
+             */
+            grant_id: string;
+            /** Physical Epoch */
+            physical_epoch: number;
+            /**
+             * State
+             * @default STOPPED
+             * @constant
+             */
+            state: "STOPPED";
+            /**
+             * Graph State
+             * @enum {string}
+             */
+            graph_state: "ABORTING" | "RELEASED";
+        };
         /** StreamInfo */
         StreamInfo: {
             /**
@@ -13231,6 +13835,48 @@ export interface components {
             submission_key: string;
             /** Manifest Digest */
             manifest_digest: string;
+        };
+        /** StreamOperatorSpec */
+        StreamOperatorSpec: {
+            /** Operator Uid */
+            operator_uid: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "SOURCE" | "OPERATOR";
+            /**
+             * Parallelism
+             * @default 2
+             * @constant
+             */
+            parallelism: 2;
+            /** Task Name */
+            task_name: string;
+            /** Task Key */
+            task_key: string;
+            /** Task Version */
+            task_version: string;
+            /** Artifact Digest */
+            artifact_digest: string;
+            /** Entrypoint */
+            entrypoint: string;
+            /** Context Key */
+            context_key: string;
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            }[];
+            /** Input Key */
+            input_key?: string | null;
+            /** Upstream Operator Uid */
+            upstream_operator_uid?: string | null;
+            task_policy?: components["schemas"]["TaskRunPolicy"];
+            /** Timeout Seconds */
+            timeout_seconds?: number | null;
+            /** Tags */
+            tags?: string[];
+            limits?: components["schemas"]["StreamLimits"];
         };
         /** StreamOutputFailRequest */
         StreamOutputFailRequest: {
@@ -13364,6 +14010,16 @@ export interface components {
             finite_items?: components["schemas"]["StreamFiniteRecoveryItem"][] | null;
             /** Outcome Digest */
             outcome_digest: string;
+        };
+        /** StreamRegionAdmissionRequest */
+        StreamRegionAdmissionRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Graph Digest */
+            graph_digest: string;
         };
         /** StreamReleaseRequest */
         StreamReleaseRequest: {
@@ -13626,6 +14282,428 @@ export interface components {
                 [key: string]: boolean | number | string;
             };
         };
+        /** StreamSubtaskBootstrap */
+        StreamSubtaskBootstrap: {
+            grant: components["schemas"]["StreamSubtaskGrant"];
+            assignment: components["schemas"]["StreamSubtaskProjection"];
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Flow Run Run Count */
+            flow_run_run_count: number;
+            /** Entrypoint */
+            entrypoint: string;
+            /** Context Key */
+            context_key: string;
+            /** Task Version */
+            task_version: string;
+            /** Artifact Digest */
+            artifact_digest: string;
+            /** Timeout Seconds */
+            timeout_seconds?: number | null;
+            task_policy: components["schemas"]["TaskRunPolicy"];
+            /** Effective Tags */
+            effective_tags: string[];
+            /** Parameters */
+            parameters: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Input Key */
+            input_key: string | null;
+            task_run: components["schemas"]["TaskRun"];
+            /** Reserved Tag Names */
+            reserved_tag_names: string[];
+        };
+        /** StreamSubtaskClaimRequest */
+        StreamSubtaskClaimRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /**
+             * Assignment Epoch
+             * @default 1
+             * @constant
+             */
+            assignment_epoch: 1;
+            /**
+             * Expected Physical Epoch
+             * @default 0
+             * @constant
+             */
+            expected_physical_epoch: 0;
+            /**
+             * Holder Id
+             * Format: uuid
+             */
+            holder_id: string;
+            /** Capability */
+            capability: string;
+            /** Event Public Key */
+            event_public_key: string;
+            /**
+             * Launcher Binding Kind
+             * @enum {string}
+             */
+            launcher_binding_kind: "DEPLOYMENT" | "FLOW_AUTHORITY_LOCAL" | "ASSIGNED_WORKER";
+            /** Worker Id */
+            worker_id?: string | null;
+            /** Work Pool Id */
+            work_pool_id?: string | null;
+            /**
+             * Host Id
+             * Format: uuid
+             */
+            host_id: string;
+            /**
+             * Boot Id
+             * Format: uuid
+             */
+            boot_id: string;
+            /** Launcher Process Id */
+            launcher_process_id: number;
+            /** Launcher Start Ticks */
+            launcher_start_ticks: number;
+        };
+        /** StreamSubtaskEventResult */
+        StreamSubtaskEventResult: {
+            /**
+             * Event Id
+             * Format: uuid
+             */
+            event_id: string;
+            /** Accepted */
+            accepted: boolean;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /** Run Count */
+            run_count: number;
+            state_type: components["schemas"]["StateType"];
+        };
+        /** StreamSubtaskGrant */
+        StreamSubtaskGrant: {
+            /**
+             * Credential Version
+             * @default prefect-subtask-v1
+             * @constant
+             */
+            credential_version: "prefect-subtask-v1";
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Subtask Id
+             * Format: uuid
+             */
+            subtask_id: string;
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /**
+             * Assignment Epoch
+             * @constant
+             */
+            assignment_epoch: 1;
+            /** Physical Epoch */
+            physical_epoch: number;
+            /**
+             * Holder Id
+             * Format: uuid
+             */
+            holder_id: string;
+            /**
+             * Launcher Binding Kind
+             * @enum {string}
+             */
+            launcher_binding_kind: "DEPLOYMENT" | "FLOW_AUTHORITY_LOCAL" | "ASSIGNED_WORKER";
+            /** Worker Id */
+            worker_id?: string | null;
+            /** Work Pool Id */
+            work_pool_id?: string | null;
+            /** Launcher Process Id */
+            launcher_process_id: number;
+            /** Launcher Start Ticks */
+            launcher_start_ticks: number;
+            /** Event Key Id */
+            event_key_id: string;
+            /** Scope Digest */
+            scope_digest: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "CLAIMED" | "REGISTERED" | "RETIRED" | "RELEASED";
+            /**
+             * Host Id
+             * Format: uuid
+             */
+            host_id: string;
+            /**
+             * Boot Id
+             * Format: uuid
+             */
+            boot_id: string;
+            /** Child Process Id */
+            child_process_id: number | null;
+            /** Process Start Ticks */
+            process_start_ticks: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Last Renewed At
+             * Format: date-time
+             */
+            last_renewed_at: string;
+        };
+        /** StreamSubtaskProjection */
+        StreamSubtaskProjection: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /**
+             * Operator Run Id
+             * Format: uuid
+             */
+            operator_run_id: string;
+            /** Operator Uid */
+            operator_uid: string;
+            /** Subtask Index */
+            subtask_index: number;
+            /**
+             * Assignment Epoch
+             * @constant
+             */
+            assignment_epoch: 1;
+            /** Input Stream Id */
+            input_stream_id: string | null;
+            manifest: components["schemas"]["StreamSubmissionManifest"];
+            /** Current Grant Id */
+            current_grant_id: string | null;
+            /** Physical Epoch */
+            physical_epoch: number;
+            /** Assigned Worker Id */
+            assigned_worker_id?: string | null;
+            /**
+             * Physical Slot Released
+             * @default false
+             */
+            physical_slot_released: boolean;
+        };
+        /** StreamSubtaskRegistrationRequest */
+        StreamSubtaskRegistrationRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Grant Id
+             * Format: uuid
+             */
+            grant_id: string;
+            /** Child Process Id */
+            child_process_id: number;
+            /** Process Start Ticks */
+            process_start_ticks: number;
+        };
+        /** StreamSubtaskRenewRequest */
+        StreamSubtaskRenewRequest: {
+            /**
+             * Grant Id
+             * Format: uuid
+             */
+            grant_id: string;
+        };
+        /** StreamSubtaskReplacementAuthorization */
+        StreamSubtaskReplacementAuthorization: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Subtask Id
+             * Format: uuid
+             */
+            subtask_id: string;
+            /**
+             * Expected Grant Id
+             * Format: uuid
+             */
+            expected_grant_id: string;
+            /** Expected Physical Epoch */
+            expected_physical_epoch: number;
+            /**
+             * Verification Not Before
+             * Format: date-time
+             */
+            verification_not_before: string;
+            /**
+             * Host Id
+             * Format: uuid
+             */
+            host_id: string;
+            /**
+             * Boot Id
+             * Format: uuid
+             */
+            boot_id: string;
+            /** Child Process Id */
+            child_process_id: number;
+            /** Process Start Ticks */
+            process_start_ticks: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "AUTHORIZED" | "CONFIRMED" | "RETIRED";
+        };
+        /** StreamSubtaskReplacementAuthorizeRequest */
+        StreamSubtaskReplacementAuthorizeRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Expected Grant Id
+             * Format: uuid
+             */
+            expected_grant_id: string;
+            /** Expected Physical Epoch */
+            expected_physical_epoch: number;
+            /**
+             * Host Id
+             * Format: uuid
+             */
+            host_id: string;
+            /** Challenge Capability */
+            challenge_capability: string;
+        };
+        /** StreamSubtaskReplacementConfirmRequest */
+        StreamSubtaskReplacementConfirmRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Challenge Capability */
+            challenge_capability: string;
+            death_witness: components["schemas"]["NativeStreamProcessDeathWitness"];
+            /**
+             * New Holder Id
+             * Format: uuid
+             */
+            new_holder_id: string;
+            /** New Capability */
+            new_capability: string;
+            /** New Event Public Key */
+            new_event_public_key: string;
+            /** New Child Process Id */
+            new_child_process_id: number;
+            /** New Process Start Ticks */
+            new_process_start_ticks: number;
+            /**
+             * Host Id
+             * Format: uuid
+             */
+            host_id: string;
+            /**
+             * Boot Id
+             * Format: uuid
+             */
+            boot_id: string;
+        };
+        /** StreamSubtaskVerifiedRetireRequest */
+        StreamSubtaskVerifiedRetireRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Challenge Capability */
+            challenge_capability: string;
+            death_witness: components["schemas"]["NativeStreamProcessDeathWitness"];
+            /** Error */
+            error: string;
+            /**
+             * Reason
+             * @default TERMINAL_RECONCILIATION
+             * @enum {string}
+             */
+            reason: "TERMINAL_RECONCILIATION" | "REPLACEMENT_PREFLIGHT_FAILED";
+        };
+        /** StreamSubtaskVerifiedRetirement */
+        StreamSubtaskVerifiedRetirement: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Subtask Id
+             * Format: uuid
+             */
+            subtask_id: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /**
+             * Grant Id
+             * Format: uuid
+             */
+            grant_id: string;
+            /** Physical Epoch */
+            physical_epoch: number;
+            /**
+             * State
+             * @default RETIRED
+             * @constant
+             */
+            state: "RETIRED";
+            /**
+             * Task State
+             * @enum {string}
+             */
+            task_state: "COMPLETED" | "FAILED";
+            /**
+             * Outcome Kind
+             * @enum {string}
+             */
+            outcome_kind: "COMPLETED_RECONCILED" | "FAILED_RECONCILED" | "RETRY_EXHAUSTED" | "ATTEMPT_LIMIT" | "NONRETRIABLE_FAILURE" | "REPLACEMENT_PREFLIGHT_FAILED";
+            /**
+             * Allocation Released
+             * @default true
+             * @constant
+             */
+            allocation_released: true;
+            /** Outcome Digest */
+            outcome_digest: string;
+        };
         /** StreamUnsealedAbortItem */
         StreamUnsealedAbortItem: {
             /** Submission Key */
@@ -13681,6 +14759,157 @@ export interface components {
             items: components["schemas"]["StreamUnsealedAbortItem"][];
             /** Outcome Digest */
             outcome_digest: string;
+        };
+        /** StreamWorkerAssignment */
+        StreamWorkerAssignment: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /** Placement Digest */
+            placement_digest: string;
+            assignment: components["schemas"]["StreamSubtaskProjection"];
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "WAITING" | "ACTIVE" | "ABORTING" | "RELEASED";
+            /** Abort Operation Id */
+            abort_operation_id: string | null;
+            current_grant: components["schemas"]["StreamSubtaskGrant"] | null;
+            /** Working Directory */
+            working_directory: string;
+            task_configuration: components["schemas"]["StreamWorkerTaskConfiguration"];
+            task_state: components["schemas"]["StateType"];
+            /** Task Run Count */
+            task_run_count: number;
+            /** Task Retriable */
+            task_retriable: boolean | null;
+            /**
+             * Output State
+             * @enum {string}
+             */
+            output_state: "OPEN" | "COMPLETED" | "FAILED";
+            /** Output Attempt */
+            output_attempt: number;
+        };
+        /** StreamWorkerPollRequest */
+        StreamWorkerPollRequest: {
+            /**
+             * Protocol
+             * @default partitioned-fixed-v1
+             * @constant
+             */
+            protocol: "partitioned-fixed-v1";
+            /**
+             * Protocol Version
+             * @default 1
+             * @constant
+             */
+            protocol_version: 1;
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+            /** Active Subtask Ids */
+            active_subtask_ids?: string[];
+            /**
+             * Limit
+             * @default 64
+             */
+            limit: number;
+        };
+        /**
+         * StreamWorkerPrincipal
+         * @description Trusted Basic-auth worker's actual local supervisor identity.
+         */
+        StreamWorkerPrincipal: {
+            /**
+             * Work Pool Id
+             * Format: uuid
+             */
+            work_pool_id: string;
+            /**
+             * Host Id
+             * Format: uuid
+             */
+            host_id: string;
+            /**
+             * Boot Id
+             * Format: uuid
+             */
+            boot_id: string;
+            /** Launcher Process Id */
+            launcher_process_id: number;
+            /** Launcher Start Ticks */
+            launcher_start_ticks: number;
+        };
+        /** StreamWorkerRegistrationRequest */
+        StreamWorkerRegistrationRequest: {
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+            registration: components["schemas"]["StreamSubtaskRegistrationRequest"];
+        };
+        /** StreamWorkerRenewRequest */
+        StreamWorkerRenewRequest: {
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+            /**
+             * Grant Id
+             * Format: uuid
+             */
+            grant_id: string;
+        };
+        /** StreamWorkerReplacementAuthorizeRequest */
+        StreamWorkerReplacementAuthorizeRequest: {
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+            replacement: components["schemas"]["StreamSubtaskReplacementAuthorizeRequest"];
+        };
+        /** StreamWorkerReplacementConfirmRequest */
+        StreamWorkerReplacementConfirmRequest: {
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+            replacement: components["schemas"]["StreamSubtaskReplacementConfirmRequest"];
+        };
+        /** StreamWorkerStartupAbortRequest */
+        StreamWorkerStartupAbortRequest: {
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+        };
+        /** StreamWorkerStartupStopRequest */
+        StreamWorkerStartupStopRequest: {
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+            stop: components["schemas"]["StreamGraphStartupStopRequest"];
+        };
+        /** StreamWorkerTaskConfiguration */
+        StreamWorkerTaskConfiguration: {
+            /** Entrypoint */
+            entrypoint: string;
+            /** Task Key */
+            task_key: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "SOURCE" | "OPERATOR";
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Task Version */
+            task_version: string;
+            /** Artifact Digest */
+            artifact_digest: string;
+            /** Context Key */
+            context_key: string;
+            /** Timeout Seconds */
+            timeout_seconds: number | null;
+            task_policy: components["schemas"]["TaskRunPolicy"];
+            /** Effective Tags */
+            effective_tags: string[];
+            /** Input Key */
+            input_key: string | null;
+        };
+        /** StreamWorkerVerifiedRetireRequest */
+        StreamWorkerVerifiedRetireRequest: {
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+            retirement: components["schemas"]["StreamSubtaskVerifiedRetireRequest"];
         };
         /**
          * SuspendFlowRun
@@ -18224,6 +19453,9 @@ export interface operations {
             query?: never;
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path: {
                 stream_id: string;
@@ -18259,6 +19491,9 @@ export interface operations {
             };
             header?: {
                 "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
             };
             path: {
                 stream_id: string;
@@ -18274,6 +19509,986 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StreamEnvelope"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    seal_graph_streams_v2_graphs_seal_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamGraphSealRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamGraphPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_graph_streams_v2_graphs__graph_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamGraphPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admit_region_streams_v2_graphs__graph_id__admit_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamRegionAdmissionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamGraphPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_graph_streams_v2_graphs__graph_id__activate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamGraphActivateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamGraphPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    abort_graph_streams_v2_graphs__graph_id__abort_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamGraphAbortRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamGraphPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_subtask_streams_v2_subtasks__subtask_id__claim_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSubtaskClaimRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskGrant"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_subtask_streams_v2_subtasks__subtask_id__register_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSubtaskRegistrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskGrant"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    renew_subtask_streams_v2_subtasks__subtask_id__renew_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSubtaskRenewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskGrant"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    authorize_replacement_streams_v2_subtasks__subtask_id__replacements_authorize_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSubtaskReplacementAuthorizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskReplacementAuthorization"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_replacement_streams_v2_subtasks__subtask_id__replacements_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSubtaskReplacementConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskGrant"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bootstrap_streams_v2_subtasks__subtask_id__bootstrap_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskBootstrap"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_task_run_streams_v2_subtasks__subtask_id__task_run_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskRun"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    task_event_streams_v2_subtasks__subtask_id__events_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Event"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskEventResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    renew_lease_streams_v2_subtasks__subtask_id__lease_renew_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    release_lease_streams_v2_subtasks__subtask_id__lease_release_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retire_verified_subtask_streams_v2_subtasks__subtask_id__replacements_retire_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSubtaskVerifiedRetireRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskVerifiedRetirement"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    acknowledge_startup_stop_streams_v2_subtasks__subtask_id__startup_stop_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamGraphStartupStopRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamGraphStartupStopResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    poll_assignments_streams_v2_workers__worker_id__poll_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamWorkerPollRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamWorkerAssignment"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    claim_subtask_streams_v2_workers__worker_id__subtasks__subtask_id__claim_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamSubtaskClaimRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskGrant"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_subtask_streams_v2_workers__worker_id__subtasks__subtask_id__register_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamWorkerRegistrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskGrant"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    renew_subtask_streams_v2_workers__worker_id__subtasks__subtask_id__renew_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamWorkerRenewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskGrant"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    authorize_replacement_streams_v2_workers__worker_id__subtasks__subtask_id__replacements_authorize_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamWorkerReplacementAuthorizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskReplacementAuthorization"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_replacement_streams_v2_workers__worker_id__subtasks__subtask_id__replacements_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamWorkerReplacementConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskGrant"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retire_verified_subtask_streams_v2_workers__worker_id__subtasks__subtask_id__replacements_retire_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamWorkerVerifiedRetireRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamSubtaskVerifiedRetirement"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_startup_stop_streams_v2_workers__worker_id__subtasks__subtask_id__startup_stop_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamWorkerStartupStopRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamGraphStartupStopResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    abort_startup_streams_v2_workers__worker_id__graphs__graph_id__startup_abort_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamWorkerStartupAbortRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamGraphPlan"];
                 };
             };
             /** @description Validation Error */
