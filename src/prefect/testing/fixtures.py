@@ -5,6 +5,7 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from datetime import timedelta
 from typing import Any, AsyncGenerator, Callable, Generator, List, Optional, Union
@@ -150,19 +151,55 @@ async def hosted_api_server(
                 # Wait for the server we started to be ready. A successful response
                 # from another test server on the same port is not sufficient.
                 response = None
+                readiness_started = time.monotonic()
+                attempts = 0
+                last_probe_outcome = None
+                last_status = None
+                owned_header_match = None
+                error_type = None
+
+                def readiness_diagnostic() -> str:
+                    return json.dumps(
+                        {
+                            "owned_pid": process.pid,
+                            "returncode": process.returncode,
+                            "elapsed_seconds": round(
+                                time.monotonic() - readiness_started, 3
+                            ),
+                            "attempts": attempts,
+                            "last_probe_outcome": last_probe_outcome,
+                            "last_status": last_status,
+                            "owned_header_match": owned_header_match,
+                            "error_type": error_type,
+                            "cancel_scope_cancel_called": cancel_scope.cancel_called,
+                        },
+                        sort_keys=True,
+                    )
+
                 async with httpx.AsyncClient() as client:
-                    with anyio.move_on_after(20):
+                    with anyio.move_on_after(20) as cancel_scope:
                         while True:
                             if process.returncode is not None:
                                 raise RuntimeError(
                                     "Hosted test Prefect API process exited before "
-                                    f"readiness with code {process.returncode}."
+                                    f"readiness with code {process.returncode}. "
+                                    + readiness_diagnostic()
                                 )
+                            attempts += 1
+                            last_probe_outcome = "REQUEST_IN_PROGRESS"
+                            error_type = None
                             try:
                                 response = await client.get(api_url + "/health")
-                            except httpx.ConnectError:
-                                pass
+                            except httpx.ConnectError as error:
+                                last_probe_outcome = "CONNECT_ERROR"
+                                error_type = type(error).__name__
                             else:
+                                last_probe_outcome = "RESPONSE"
+                                last_status = response.status_code
+                                owned_header_match = (
+                                    response.headers.get("X-Prefect-Test-Server-ID")
+                                    == server_id
+                                )
                                 if (
                                     response.status_code == 200
                                     and response.headers.get("X-Prefect-Test-Server-ID")
@@ -174,7 +211,7 @@ async def hosted_api_server(
                     if process.returncode is not None:
                         raise RuntimeError(
                             "Hosted test Prefect API process exited before readiness "
-                            f"with code {process.returncode}."
+                            f"with code {process.returncode}. " + readiness_diagnostic()
                         )
                     if (
                         response is None
@@ -183,7 +220,7 @@ async def hosted_api_server(
                     ):
                         raise RuntimeError(
                             "Timed out while attempting to connect to the owned "
-                            "hosted test Prefect API."
+                            "hosted test Prefect API. " + readiness_diagnostic()
                         )
 
                 yield api_url

@@ -14,6 +14,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from tests.fixtures import database as fixture_database
 from tests.server.database.test_migrations import _isolated_postgres_schema_changes
 from tests.server.models.test_stream_dags import dag_request
 
@@ -26,7 +27,7 @@ from prefect._internal.stream_route_plan import (
 from prefect.server.database import PrefectDBInterface, orm_models
 from prefect.server.database.alembic_commands import alembic_downgrade, alembic_upgrade
 from prefect.server.models import flow_runs, stream_dags
-from prefect.server.schemas import core, states
+from prefect.server.schemas import core, filters, states
 from prefect.server.schemas import stream_dags as topology
 from prefect.server.schemas.stream_routes import StreamDAGRouteOutcome
 from prefect.utilities.asyncutils import run_sync_in_worker_thread
@@ -1025,3 +1026,72 @@ async def test_downgrade_refuses_routed_and_retained_horizon_history_and_restore
             await run_sync_in_worker_thread(alembic_upgrade, "head")
             await database_engine.dispose()
     assert await data_snapshot(db) == baseline
+
+
+async def test_retained_routed_fixture_can_precede_module_cleanup(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+):
+    """A committed predecessor for ordinary module-scoped cleanup regressions."""
+    await ddl_chain(db, flow_run.id)
+    snapshot = await data_snapshot(db)
+    assert len(snapshot["stream_route_receipt"]) == 4
+    assert (
+        sum(row["record_kind"] == "REFERENCE" for row in snapshot["stream_record"]) == 3
+    )
+    assert len(snapshot["stream_completion"]) == 3
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+async def test_database_fixture_purge_handles_retained_routed_history(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun, rollback: bool
+):
+    chain = await ddl_chain(db, flow_run.id)
+    baseline = await data_snapshot(db)
+    assert len(baseline["stream_route_receipt"]) == 4
+    assert (
+        sum(row["record_kind"] == "REFERENCE" for row in baseline["stream_record"]) == 3
+    )
+    run_filter = filters.FlowRunFilter(id={"any_": [flow_run.id]})
+    async with db.session_context() as session:
+        assert (
+            await flow_runs.count_flow_runs(session=session, flow_run_filter=run_filter)
+            == 1
+        )
+
+    # This immediate FK must still reject the old unsafe deletion order.
+    with pytest.raises(IntegrityError) as refusal:
+        async with db.session_context(begin_transaction=True) as session:
+            await session.execute(
+                sa.delete(db.StreamRouteReceipt).where(
+                    db.StreamRouteReceipt.id == chain.receipts["A"]
+                )
+            )
+    assert_fk(refusal.value, db, "fk_stream_record__route_receipt_payload")
+    assert await data_snapshot(db) == baseline
+
+    class RollBackCallerTransaction(Exception):
+        pass
+
+    try:
+        async with db.session_context(begin_transaction=True) as session:
+            await fixture_database._clear_database_tables(session)
+            for table in db.Base.metadata.sorted_tables:
+                assert (
+                    await session.scalar(sa.select(sa.func.count()).select_from(table))
+                    == 0
+                )
+            assert (
+                await flow_runs.count_flow_runs(
+                    session=session, flow_run_filter=run_filter
+                )
+                == 0
+            )
+            if rollback:
+                raise RollBackCallerTransaction
+    except RollBackCallerTransaction:
+        assert rollback
+
+    if rollback:
+        assert await data_snapshot(db) == baseline
+    else:
+        assert all(not rows for rows in (await data_snapshot(db)).values())

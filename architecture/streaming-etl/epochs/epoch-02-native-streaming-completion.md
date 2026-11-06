@@ -1401,3 +1401,130 @@ TaskRun projection/P2 cleanup retained/JOIN reverted; all historical candidate
 code/tests/slower measurements/profiles/failures and prior V1…V6 appendices
 remain exact. No approved ADR42–48 body/AC/history or closed index was rewritten.
 Conflict scan incomplete; grill-me/spec-first variants excluded.
+
+
+## N2.2 published candidate and one hosted DAG500 sync diagnostic — 2026-11-06
+
+The [compact closed publication/run bundle](../evidence/native-epoch2-dag-volume5000-2026-11-06/published-dag500-sync-status-v1/index.json)
+records normal configured commit/push hooks0 and publication **b0328b395ff997c6ed50f2c73e3eb650af8c48c2**
+on native-stream-storage/PR25 draft. Descendant **95fb3e73de66bccfc141fbb9fda22b64cf42e131**
+adds only two hostedPG17 selection lines for four projection regressions; test
+bodies/budgets/dependencies/lock/archives/docs and diagnostic499d/a25 are unchanged.
+The old V7 `NOT RUN ON CI` statements remain exact as-of history.
+
+One manually dispatched [hosted DAG500 sync run42206832141, attempt1/job127855515745](https://github.com/Anacreonsystems/ariadne/actions/runs/42206832141/job/127855515745)
+finished SUCCESS on runner `anacreon-runners-runner-kjwvb` at **2026-11-06 14:19:00
+Europe/Moscow (11:19:00 UTC)**. It executed **b0328**, not later95fb. The exact
+numeric-safe terminal summary records **1 PASS/676.29s** and separate observer
+validation **SUCCESS/130 samples/123 complete**. No second dispatch/rerun/cancel
+or test-budget change is inferred. CPU/PG/health/artifact diagnosis awaits its
+own closed owner handoff; this summary bundle did not download/replay artifacts
+or establish zero observer errors, throughput/resource cause, complete PID/DB
+closure or a performance result. Snapshot/cleanup-absence limits remain.
+
+This is one hosted500 diagnostic, not fullmatrix/heavy5000/NI2-012…014 acceptance,
+95fb Unit/Static outcome or closure of the historical18124 DAG5000 failures.
+Latest95fb automatic checks are a separate evidence stream; no newer check state
+or green matrix is inferred from this b0328 run. NI2-012…014 OPEN/BLOCKED, NI2-020
+implementation blocked, earned**15%**, planned27% unearned. All prior evidence/
+source versions, approved ADR42–48 bodies/AC/history and closed indices remain
+unchanged; conflict scan incomplete, grill-me/spec-first variants excluded.
+
+
+## N2.2 95fb CI status, scoped purge correction and readiness diagnostic controls — 2026-11-06
+
+The [finite correction/control packet](../evidence/native-epoch2-dag-volume5000-2026-11-06/95fb-ci-correction-controls-v1/index.json)
+keeps actual95fb Unit failures separate from the earlier single b0328 hosted500
+PASS and from the current tested-but-unpublished candidate. At **14:56:48 Moscow
+(11:56:48 UTC)** the closed94job snapshot was76success/4knownFAIL/1skip/1active/
+12queued; at **15:10:06 Moscow (12:10:06 UTC)** it was79success/4sameFAIL/1skip/
+1active/9queued, native7success/2sameFAIL/1active/9queued. No new failure or green
+matrix is inferred. Root's triage distinguishes hostedAPI20s readiness failures
+(physicalSQLite/syncnormal; cause ambiguous), rebalance64 nonterminal partial
+observation, and canonical fixtureFK failure. Static's10minute job-timeout
+annotation is separate; patchc43f8614/workflow6405101 changes only that job10→20,
+not functional/API/watchdog budgets, test commands, hookSKIP or requirements.
+The packet preserves source proofs and compact indices, not original failed-job
+rawlogs or fullsnapshot replays.
+
+Exact test patch**04019041** extracts existing canonical purge ordering for
+fixture/filter setup+teardown/history callers; local utilityDBBase tables are
+excluded and production ORM/FKs unchanged. AuthorPG17 baseline **RED1PASS/
+1ERROR11.10s/exit1** with named restrictiveFK remains intact. AuthorSQLiteGREEN
+is4PASS; [Principal personally executed PG17GREEN](../evidence/native-epoch2-dag-volume5000-2026-11-06/95fb-ci-correction-controls-v1/inputs/native-95fb-purge-principal-verification-v1/personal-pg17-review-v1.json)
+is**4PASS/0SKIP14.00s** (JUnit14.35), source1604 no drift/import1201 no mismatch/
+provision1original0/ownedprocesses gone/freshretainedDB0sessions. Successful
+negative tests catch/assert FK refusal and caller rollback/commit semantics;
+printed-log `expected_restrictive_FK_observed=false` is not a failed caught-FK
+assertion. The pre-review comparator-name assertion remains preparation-only.
+This is scoped regression evidence, not fullmodule/hosted acceptance.
+
+Startup diagnostics preserve proposal1a0bbbcf/bc723627 and actual tested module/
+tests**3a32ff38/a44a6f2d** distinctly. Only allowlisted failure metadata is added;
+**20s**,200+owned-header predicate, URL/proxy rules and owned cleanup remain.
+Author actual6PASS used driver**84d6d46b**, but inherited assets.json lists old
+unused**23b46e97**: **it does not prebind executed84d**. The disclosed harness
+driver-binding limit is separate from actual module/source/import/closure
+checks; author functionalPASS is retained with that qualification.
+[Principal independent personal controls](../evidence/native-epoch2-dag-volume5000-2026-11-06/95fb-ci-correction-controls-v1/inputs/native-95fb-readiness-principal-checks-v1/closed-personal-review-v1/review.json)
+correctly prebound driver**93c3209f** and passed**6/43.09s/tool0** on the same
+tested sources,1604 drift0/import3244 mismatch0/provision1original0/eight owned
+identities gone/ECHILD/freshretainedDB0sessions. Actual owned503 was20.021s/
+189attempts/header-match=true/cancel=true, child460168 cleanup exit−15. Real
+foreign-listener refusal/two owned APIs are distinct from three transport/timing
+metadata doubles. This verifies diagnostics/control behavior; the hosted startup
+and rebalance underlying causes remain**UNKNOWN**, with no startup fix claim.
+
+The earlier compact b0328 CPU/PG-review-pending note remains history; the now
+[closed independent numeric verdict](../evidence/native-epoch2-dag-volume5000-2026-11-06/95fb-ci-correction-controls-v1/inputs/native-hosted-DAG500-principal-b0328-v1/numeric-verdict-v1.json)
+and [local comparison](../evidence/native-epoch2-dag-volume5000-2026-11-06/95fb-ci-correction-controls-v1/inputs/native-hosted-DAG500-principal-b0328-v1/local-CI-route-comparison-v1.json)
+are preserved as two smallJSONs plus source-index references, without copying
+all artifact/history. Observed API535.63CPU/653.633pairedwall is a partial
+samePID/start window. PG lock rows/edges/ClientRead are samples, not wait
+durations/incidents or proven request/OSPID critical-path attribution. Two
+bootstrap observer errors remain; never observer0errors. Matching DATA route
+counts do not equal matching overall work/background mix; access-log lifetime
+and CPU windows differ. No debugbuild/WAL/cache/lock-removal remedy, resource
+causality or5000 forecast follows. Any next profiling is a separate**plan-only/
+NOT RUN**, without evidence credit; prior executed historical profiles remain.
+
+Prior V7 and compact four-input b0328→95fb status, all failed/passed/version
+histories and approved ADR42–48 bodies/AC remain exact. No candidate hostedCI
+result/fullmatrix/heavy5000/NI2-012…014 acceptance; tasks OPEN/BLOCKED, NI2-020
+implementation blocked, earned**15%**, planned27% unearned. Conflict scan remains
+incomplete; all grill-me/spec-first variants excluded.
+
+
+## N2.2 post-hook import source bridge and exact lint policy — 2026-11-06
+
+The [tiny closed post-hook supplement](../evidence/native-epoch2-dag-volume5000-2026-11-06/95fb-posthook-source-bridge-v1/index.json)
+preserves the failed first normal commit (exit1/1.283s/HEAD95fb). NormalRuffI001
+reordered imports only in filters/history/testing-fixtures tests. Author and
+independent Principal compare final bytes to actual preformat tested captures:
+**same import multiset/all other moduleAST identical**. The seven original
+tested captures/receipts remain exact; three sorted final files are bridged by
+source analysis, **not relabeled as newly executed**. No runtime/DB rerun.
+
+The preserved machine numeric verdict triggered codespell; exact patch43d0707
+adds only its one full path as the third existing codespell skip. Pyproject9fe69183
+is otherwise raw/parsed-TOML identical to61b6; sealed verdict ee3ae1ad/archives
+and uv.lock305a remain unchanged. No global ignore/hookSKIP/dependency or
+functional-budget change. Pyproject is a policy-only eighth source path, not a
+newly tested runtime change; final publication must capture the new source1601
+digest, not claim all old inventory bytes unchanged. Normal retry/publication
+outcomes remain separate. Priorf628/V7/compact history and all qualifications
+remain intact;15%earned/NI2-012…014OPEN/BLOCKED/NI2-020blocked/27unearned.
+
+
+## N2.2 final compact lint-policy qualification — 2026-11-06
+
+The [compact final lint supplement](../evidence/native-epoch2-dag-volume5000-2026-11-06/95fb-final-lint-policy-v1/index.json)
+retains second normal-commit failure: exit1/1.281s/HEAD95fb/no mutations. Three
+immutable captures of existing lint configuration triggered it; none was edited.
+Root authorized only their three exact additional skip paths. Compact JSON and
+independent Principal review bind pyproject9fe→63942325, all other raw/parsedTOML
+identical, seven code paths/uv.lock305a/prior archive bytes unchanged. The earlier
+third-skip note remains historical; this is a further policy-only extension.
+No new rawconfig/patchcontext/source copy, recursive capture or runtime/DB test;
+normal retry/publication outcomes remain separate. f628/3981/tested captures/
+history remain exact;15%earned/NI2-012…014OPEN/BLOCKED/NI2-020blocked/27unearned.

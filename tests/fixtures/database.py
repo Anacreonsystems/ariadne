@@ -93,6 +93,65 @@ async def setup_db(database_engine, db):
         ) from exc
 
 
+async def _clear_database_tables(session: AsyncSession) -> None:
+    """Purge isolated test rows in restrictive-FK order, in the caller transaction."""
+    await session.execute(orm_models.Agent.__table__.delete())
+    # Physical assignments deliberately retain their Worker FK.
+    # Remove the test graph hierarchy before the special early
+    # pool deletion; submissions also retain the graph FK.
+    # Explicit isolated-test purge keeps restrictive slot and
+    # edge bindings out of the early Worker/partition cleanup.
+    # One deferred receipt->input-reference FK permits this
+    # whole-transaction purge; every payload pin remains strict.
+    await session.execute(
+        orm_models.StreamRecord.__table__.delete().where(
+            orm_models.StreamRecord.record_kind == "REFERENCE"
+        )
+    )
+    await session.execute(
+        orm_models.StreamCompletion.__table__.delete().where(
+            orm_models.StreamCompletion.consumer_kind == "DAG"
+        )
+    )
+    await session.execute(orm_models.StreamRouteReceipt.__table__.delete())
+    await session.execute(
+        orm_models.StreamConsumer.__table__.delete().where(
+            orm_models.StreamConsumer.consumer_kind == "DAG"
+        )
+    )
+    await session.execute(
+        orm_models.StreamRecord.__table__.delete().where(
+            orm_models.StreamRecord.graph_revision_id.is_not(None)
+        )
+    )
+    # Launch identity points to grants (never the reverse), so
+    # isolated-test history is purged before the graph hierarchy.
+    await session.execute(orm_models.StreamDAGControlTarget.__table__.delete())
+    await session.execute(
+        orm_models.StreamGraphRevision.__table__.update().values(
+            current_control_operation_id=None,
+            terminal_operation_id=None,
+        )
+    )
+    await session.execute(orm_models.StreamDAGLaunchAttempt.__table__.delete())
+    await session.execute(orm_models.StreamDAGLifecycleOperation.__table__.delete())
+    await session.execute(orm_models.StreamPhysicalSlotAllocation.__table__.delete())
+    await session.execute(orm_models.StreamGraphEdgePartition.__table__.delete())
+    await session.execute(orm_models.StreamGraphEdge.__table__.delete())
+    await session.execute(orm_models.StreamGraphPort.__table__.delete())
+    await session.execute(orm_models.StreamPhysicalSubtask.__table__.delete())
+    await session.execute(
+        orm_models.StreamSubmission.__table__.delete().where(
+            orm_models.StreamSubmission.graph_revision_id.is_not(None)
+        )
+    )
+    await session.execute(orm_models.StreamGraphRevision.__table__.delete())
+    await session.execute(orm_models.WorkPool.__table__.delete())
+
+    for table in reversed(orm_models.Base.metadata.sorted_tables):
+        await session.execute(table.delete())
+
+
 @pytest.fixture(autouse=True)
 async def clear_db(db, request):
     """
@@ -107,77 +166,7 @@ async def clear_db(db, request):
         for attempt in range(max_retries):
             try:
                 async with db.session_context(begin_transaction=True) as session:
-                    await session.execute(orm_models.Agent.__table__.delete())
-                    # Physical assignments deliberately retain their Worker FK.
-                    # Remove the test graph hierarchy before the special early
-                    # pool deletion; submissions also retain the graph FK.
-                    # Explicit isolated-test purge keeps restrictive slot and
-                    # edge bindings out of the early Worker/partition cleanup.
-                    # One deferred receipt->input-reference FK permits this
-                    # whole-transaction purge; every payload pin remains strict.
-                    await session.execute(
-                        orm_models.StreamRecord.__table__.delete().where(
-                            orm_models.StreamRecord.record_kind == "REFERENCE"
-                        )
-                    )
-                    await session.execute(
-                        orm_models.StreamCompletion.__table__.delete().where(
-                            orm_models.StreamCompletion.consumer_kind == "DAG"
-                        )
-                    )
-                    await session.execute(
-                        orm_models.StreamRouteReceipt.__table__.delete()
-                    )
-                    await session.execute(
-                        orm_models.StreamConsumer.__table__.delete().where(
-                            orm_models.StreamConsumer.consumer_kind == "DAG"
-                        )
-                    )
-                    await session.execute(
-                        orm_models.StreamRecord.__table__.delete().where(
-                            orm_models.StreamRecord.graph_revision_id.is_not(None)
-                        )
-                    )
-                    # Launch identity points to grants (never the reverse), so
-                    # isolated-test history is purged before the graph hierarchy.
-                    await session.execute(
-                        orm_models.StreamDAGControlTarget.__table__.delete()
-                    )
-                    await session.execute(
-                        orm_models.StreamGraphRevision.__table__.update().values(
-                            current_control_operation_id=None,
-                            terminal_operation_id=None,
-                        )
-                    )
-                    await session.execute(
-                        orm_models.StreamDAGLaunchAttempt.__table__.delete()
-                    )
-                    await session.execute(
-                        orm_models.StreamDAGLifecycleOperation.__table__.delete()
-                    )
-                    await session.execute(
-                        orm_models.StreamPhysicalSlotAllocation.__table__.delete()
-                    )
-                    await session.execute(
-                        orm_models.StreamGraphEdgePartition.__table__.delete()
-                    )
-                    await session.execute(orm_models.StreamGraphEdge.__table__.delete())
-                    await session.execute(orm_models.StreamGraphPort.__table__.delete())
-                    await session.execute(
-                        orm_models.StreamPhysicalSubtask.__table__.delete()
-                    )
-                    await session.execute(
-                        orm_models.StreamSubmission.__table__.delete().where(
-                            orm_models.StreamSubmission.graph_revision_id.is_not(None)
-                        )
-                    )
-                    await session.execute(
-                        orm_models.StreamGraphRevision.__table__.delete()
-                    )
-                    await session.execute(orm_models.WorkPool.__table__.delete())
-
-                    for table in reversed(orm_models.Base.metadata.sorted_tables):
-                        await session.execute(table.delete())
+                    await _clear_database_tables(session)
                     break
             except (InterfaceError, DBAPIError):
                 if attempt < max_retries - 1:

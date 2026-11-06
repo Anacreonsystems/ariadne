@@ -1,0 +1,34 @@
+--- proven-purge-runner23b46e97
++++ readiness-only-personal-runner
+@@ -5,7 +5,7 @@
+ import xml.etree.ElementTree as ET
+ import support as s
+ B=Path(__file__).resolve().parent;R=s.ROOT
+-backend,mode=sys.argv[1:];assert backend in {'pg17','sqlite'} and mode in {'red','green'}
++backend,mode=sys.argv[1:];assert backend=='pg17' and mode=='readiness'
+ assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=R,text=True).strip()=='95fb3e73de66bccfc141fbb9fda22b64cf42e131'
+ trial=B/(backend+'-'+mode+'-'+uuid4().hex[:8]);trial.mkdir(mode=0o700)
+ for n in ('audit','startup','temp'):(trial/n).mkdir()
+@@ -26,13 +26,10 @@
+ else:
+  (trial/'retained.sqlite').touch(exist_ok=False);uri='sqlite+aiosqlite:///'+str(trial/'retained.sqlite');creation={'database':database,'backend':'sqlite','created_fresh':True,'existing_database_reused':False}
+ write('database-creation.json',creation)
+-seed='tests/server/database/test_stream_route_migrations.py::test_retained_routed_fixture_can_precede_module_cleanup'
+-failed='tests/server/models/test_filters.py::TestCountFlowRunModels::test_python_client_filter[kwargs28-12]'
+-nodes=[seed,failed]
+-if mode=='green':nodes += ['tests/server/database/test_stream_route_migrations.py::test_database_fixture_purge_handles_retained_routed_history[False]','tests/server/database/test_stream_route_migrations.py::test_database_fixture_purge_handles_retained_routed_history[True]']
++nodes=['tests/testing/test_fixtures.py::TestHostedApiReadinessDiagnostic::test_owned_unready_listener_times_out_with_safe_diagnostic', 'tests/testing/test_fixtures.py::TestHostedApiServerOwnership::test_rejects_healthy_foreign_listener', 'tests/testing/test_fixtures.py::TestHostedApiServerOwnership::test_concurrent_servers_own_distinct_reserved_ports', 'tests/testing/test_fixtures.py::TestHostedApiReadinessDiagnostic::test_failure_diagnostic_redacts_probe_details[connect_after_response]', 'tests/testing/test_fixtures.py::TestHostedApiReadinessDiagnostic::test_failure_diagnostic_redacts_probe_details[unowned]', 'tests/testing/test_fixtures.py::TestHostedApiReadinessDiagnostic::test_failure_diagnostic_redacts_probe_details[request_in_progress]']
+ env=os.environ.copy();env.pop('PREFECT_API_DATABASE_CONNECTION_URL',None);env.update({'PREFECT_SERVER_DATABASE_CONNECTION_URL':uri,'PURGE_TRIAL':str(trial),'PURGE_DBNAME':database,'PURGE_NODES':json.dumps(nodes),'PYTHONPATH':os.pathsep.join((str(trial/'startup'),str(B),str(R/'src'),str(R))),'PATH':'/workspace/ariadne/.venv/bin'+os.pathsep+env.get('PATH',''),'UV_PROJECT_ENVIRONMENT':'/workspace/ariadne/.venv','UV_NO_SYNC':'1','PYTHONPYCACHEPREFIX':str(trial/'pycache'),'TMPDIR':str(trial/'temp')})
+ cmd=['uv','run','--no-sync','--offline','python','-m','pytest',*nodes,'-n0','-q','-o','addopts=','-p','provision','--junitxml='+str(trial/'pytest.private.xml'),'--basetemp='+str(trial/'pytest')]
+-write('command.json',{'argv':cmd,'cwd':str(R),'backend':backend,'mode':mode,'head':'95fb3e73de66bccfc141fbb9fda22b64cf42e131','source_bound_files':len(before),'retained_DB':True,'source_variant':'old3callerfiles+newseedtest' if mode=='red' else 'reviewed04019041fourfilecandidate','additional_timeouts':False,'no_drop_terminate':True})
++write('command.json',{'argv':cmd,'cwd':str(R),'backend':backend,'mode':mode,'head':'95fb3e73de66bccfc141fbb9fda22b64cf42e131','source_bound_files':len(before),'retained_DB':True,'source_variant':'old3callerfiles+newseedtest' if mode=='red' else 'reviewed_readiness_metadata_and_real_ownership_controls','additional_timeouts':False,'no_drop_terminate':True})
+ ids={};started=time.monotonic()
+ with (trial/'pytest.private.log').open('wb') as log:
+  p=subprocess.Popen(cmd,cwd=R,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True);pgid=p.pid;st=s.proc_state(p.pid);ids[p.pid]=st['start_ticks'];write('process.json',{'pid':p.pid,'start_ticks':st['start_ticks'],'runner_pid':os.getpid(),'runner_start_ticks':subreaper['runner_start_ticks']});print(json.dumps({'RUNNING':str(trial),'pytest_pid':p.pid,'start_ticks':st['start_ticks'],'backend':backend,'mode':mode}),flush=True)
+@@ -60,5 +57,5 @@
+ for private,public in (('pytest.private.log','pytest.log'),('pytest.private.xml','pytest.xml')):capture('sanitize',lambda private=private,public=public:(trial/public).write_text(s.sanitize((trial/private).read_text(errors='replace'),config or {'admin_dsn':'[unused-SQLite-admin-DSN]'},uri)))
+ closed=not remaining and reaping and reaping['waitpid_echild_success'] and (backend=='sqlite' or closure and closure['sessions']==[])
+ text=(trial/'pytest.private.log').read_text(errors='replace');red_fk=('fk_stream_record__route_receipt_payload' in text) if backend=='pg17' else ('FOREIGN KEY constraint failed' in text)
+-result={'status':'EXPECTED_RED_CONFIRMED' if mode=='red' and code==1 and red_fk and summary['pass']==1 and summary['error']>=1 else 'GREEN_PASS' if mode=='green' and code==0 and summary=={'pass':4,'error':0,'failure':0,'skip':0,'node_count':4} else 'FAIL_OR_INCONCLUSIVE','runtime_STOPPED':bool(closed),'backend':backend,'mode':mode,'pytest_exit':code,'actual_exit_first':True,'summary':summary,'expected_restrictive_FK_observed':red_fk,'source_drift':drift,'imports':{'rows':rows,'mismatches':mismatches},'reaping':reaping,'remaining_same_identity_PIDs':remaining,'database':closure,'provisioning_proof':proof,'harness_errors':errors,'assets_unchanged':assets=={n:s.sha(B/n) for n in assets}}
++result={'status':'EXPECTED_RED_CONFIRMED' if mode=='red' and code==1 and red_fk and summary['pass']==1 and summary['error']>=1 else 'GREEN_PASS' if mode=='readiness' and code==0 and summary=={'pass':6,'error':0,'failure':0,'skip':0,'node_count':6} else 'FAIL_OR_INCONCLUSIVE','runtime_STOPPED':bool(closed),'backend':backend,'mode':mode,'pytest_exit':code,'actual_exit_first':True,'summary':summary,'expected_restrictive_FK_observed':red_fk,'source_drift':drift,'imports':{'rows':rows,'mismatches':mismatches},'reaping':reaping,'remaining_same_identity_PIDs':remaining,'database':closure,'provisioning_proof':proof,'harness_errors':errors,'assets_unchanged':assets=={n:s.sha(B/n) for n in assets}}
+ write('receipt.json',result);print(json.dumps({'CLOSED':str(trial),'status':result['status'],'runtime_STOPPED':closed,'pytest_exit':code,'summary':summary,'source_drift':drift,'harness_errors':errors}),flush=True)

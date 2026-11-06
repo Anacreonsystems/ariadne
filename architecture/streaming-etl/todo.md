@@ -1371,3 +1371,60 @@ windows retain [scope/causality limits](epochs/epoch-02-native-streaming-complet
 New diagnostic CI **NOT RUN**; old18124CI17PASS/2DAG5kFAIL remains not green.
 NI2-012…014OPEN/BLOCKED/NI2-020blocked/15%earned/27unearned; no native5k/CI/perf
 acceptance or automatic nextcase. V6 and all prior histories remain unchanged.
+
+
+## N2.2 published candidate and one hosted DAG500 sync diagnostic — 2026-11-06
+
+[Closed publication/run summary](evidence/native-epoch2-dag-volume5000-2026-11-06/published-dag500-sync-status-v1/index.json):
+b0328 published with normal configured hooks0; descendant95fb only adds two
+hostedPG17 selection lines, docs/test bodies/budgets unchanged. One manual
+run42206832141/attempt1/job127855515745 on **b0328** finished SUCCESS at
+14:19:00 Europe/Moscow (11:19:00 UTC): **1 PASS676.29s**, separate observer
+SUCCESS/130 samples123 complete. CPU/PG/fullartifact diagnosis remains pending;
+no health/lifecycle/performance/CI-cause replay claim. [Scope/source trail](epochs/epoch-02-native-streaming-completion.md#n22-published-candidate-and-one-hosted-dag500-sync-diagnostic--2026-11-06)
+keeps earlier NOTRUN history and separate95fb Unit/Static checks. No fullmatrix/
+heavy5k/NI2-012…014 acceptance: OPEN/BLOCKED/NI2-020blocked/15%earned/27unearned.
+
+
+## N2.2 95fb CI status, scoped purge correction and readiness diagnostic controls — 2026-11-06
+
+[Closed finite correction/control packet](evidence/native-epoch2-dag-volume5000-2026-11-06/95fb-ci-correction-controls-v1/index.json):
+95fb Unit at15:10:06Moscow (12:10:06UTC) has79success/4sameFAIL/1skip/1active/
+9queued; native7success/2sameFAIL/1active/9queued, not green.14:56 snapshot remains
+historical.04019041 preserves authorPGRED1PASS1ERROR11.10, authorSQLite4PASS and
+PrincipalPERSONALPG4PASS14.00 (JUnit14.35), test-fixture purge only/prodFKs unchanged.
+Staticc43f8614 changes only job10→20minutes, no functional budget/hook bypass.
+
+Readiness actual3a32/a44a adds safe failure metadata while retaining20s/200+owned
+header/URL/proxy/cleanup. Author6PASS executed84d, **inherited assets23b does not
+prebind84d**; actual module/import/source proofs are distinct. Independent
+Principal93c correctly prebound/personal6PASS43.09, realowned50320.021s189attempts/
+header-match/cancel/child−15, source/import/ownedclosure valid. This verifies
+diagnostics, not startup cause/fix; hosted startup/rebalance cause UNKNOWN.
+Compact b0328 CPU/PG verdict/local comparison is descriptive, two observer
+bootstrap errors retained/noCPUcriticalpath or remedy claim; next profiling
+plan-only NOT RUN. [Detailed scope and provenance](epochs/epoch-02-native-streaming-completion.md#n22-95fb-ci-status-scoped-purge-correction-and-readiness-diagnostic-controls--2026-11-06)
+preserves V7/compact72line history. No candidateCI/fullmatrix/heavy5k acceptance;
+NI2-012…014OPEN/BLOCKED/NI2-020blocked/15%earned/27unearned.
+
+
+## N2.2 post-hook import source bridge and exact lint policy — 2026-11-06
+
+[Tiny post-hook supplement](evidence/native-epoch2-dag-volume5000-2026-11-06/95fb-posthook-source-bridge-v1/index.json)
+retains failed first normal commit and independently bridges only three Ruff
+import reorders: same import multiset/all otherAST versus actual tested
+preformat captures. Seven tested captures stay exact; sorted final bytes are
+not claimed executed. Exact third-path codespell skip/pyproject9fe is lint
+policy only; sealed numeric verdict/archives/uv.lock unchanged, no hookSKIP.
+[Scope](epochs/epoch-02-native-streaming-completion.md#n22-post-hook-import-source-bridge-and-exact-lint-policy--2026-11-06)
+keeps final8paths separate from runtime evidence; no new tests/DB/credit.
+Priorf628/V7/compact history remains; NI2-012…014OPEN/BLOCKED/15%earned/27unearned.
+
+
+## N2.2 final compact lint-policy qualification — 2026-11-06
+
+[Final compact lint supplement](evidence/native-epoch2-dag-volume5000-2026-11-06/95fb-final-lint-policy-v1/index.json)
+retains failed retry2/no mutations and only three additional exact archive skip
+paths, pyproject9fe→63942325. Independent raw/parsedTOML/lock/code/archive proof;
+no rawconfig/context recursion, new tests or runtime credit. Earlier third-skip
+note/f628/3981 histories stay exact; NI014blocked/15%earned/27unearned.
