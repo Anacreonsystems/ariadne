@@ -806,3 +806,68 @@ therefore do not establish SQL wait, API/DB latency, query counts, CI/b4 cause,
 5000 forecasts or throughput/SLO performance. Both phases retain clean recorded
 health and owned-process/database closure. This diagnostic observation earns
 no new credit; epoch-2 readiness remains **15%**.
+
+
+## N2.2 async5000, observed-count comparison and worker logging correction — 2026-11-06
+
+The [closed d906 async5000 package](../evidence/native-epoch2-dag-volume5000-2026-11-06/async-v1/index.json)
+records one actual native SDK/TCP/PostgreSQL17/OS case: **1 PASS / 2225.473s**,
+with original test bytes and 3960/4080/4200 budgets. Source inputs 1–5000 and all three
+branches have exactly 5000 calls/effects; four TaskRuns/four births/seven channels,
+graph/coordinator release, physical closure and clean wider health are recorded.
+The Principal independently audited files, not another native5k execution:
+1968 progress records, 15000 calls/effect hashes, 1600 source bindings and 3866 import
+records reconcile with no drift/mismatch; 11 captured PID/start identities closed.
+
+The [same-profile async500↔async5000 comparison](../evidence/native-epoch2-dag-volume5000-2026-11-06/async500-comparison-v1/index.json)
+now finds **13 observable metadata cardinality/role comparisons MATCH** at d906.
+The independent file-only receipt binds hosted async500 PASS / 520.326s and local
+async5000: four TaskRuns/subtasks/grants/launches/child PIDs, seven channels,
+three consumers, A1/B1/C2 roles, epoch/run_count 1, four physical-slot flags and two
+workers. Within-case identities are stable; IDs need not equal across runs.
+Former pending entries stay historical. Sanitized CI metadata and its qualified
+nonsecret authority_state restoration preserve source hashes. Its zero 5xx report
+is an original collector aggregate, not independent HTTP replay; retry count is
+unavailable. No CI operator/allocation/assignment SQL or external KV metrics,
+throughput/SLO conclusion or forecast is inferred.
+
+The [scoped A43-04/05/07 mapping](../evidence/native-epoch2-dag-volume5000-2026-11-06/async-v1/findings-and-criterion-map.json)
+keeps limits explicit: 26 read-only PG captures start at 692/690/694 and stop
+preterminal at 4888/4881/4894, not a retroactive500 checkpoint or final allocation
+release SQL capture. [Cleanup attribution](../evidence/native-epoch2-dag-volume5000-2026-11-06/async-v1/qualifications/cleanup-attribution-v1/index.json)
+proves two fresh scoped names absent afterward and zero sessions at the driver
+check. Earlier conftest termination/DROP/CREATE was uninstrumented; driver deletion
+of two existing databases or zero sessions before every fixture cleanup is not proved.
+
+The [16-case logging probe](../evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/probe-v1/index.json)
+and [real PG baseline](../evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/baseline-v1/index.json)
+retain **1 FAIL / 6 PASS / 94.20s** under controlled CLI ordering: effective INFO (20),
+handler present, Cloud/API enabled, sink=false and zero shipped DEBUG lines.
+Two generated paths lacked before bindings; agreeing runtime/postrun hashes
+are not retroactive pre-run proof. The retained fresh baseline DB has zero
+observed sessions/no DROP/FORCE. Historical CI gw0 ordering/cause stays unknown.
+
+The [closed corrected full module](../evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/actualpassed-module-v1/index.json)
+is **151 PASS / 82.37s**, actual pytest0 and launcher/tool exit 0 persisted, with no
+failure/error/skip or harness timeout/signal. The patch is test-only: 24+/6− in
+three methods; production/default INFO/Cloud shipping gates are unchanged.
+All 1756 source/generated bindings are prebound with zero drift; 1216 imports have
+zero mismatch; all five new PID/start identities closed; the fresh DB is retained
+with zero observed sessions/no DROP/FORCE. The [Principal peer receipt](../evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/actualpassed-module-v1/peer/closed-v4-file-review-v1.json)
+is independent file-only review of author execution, not a personal151 rerun.
+The [earlier151 attempt](../evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/failed-candidate-module-v1/index.json)
+remains interrupted at 330s/exit143/no JUnit with a dead unreaped PID1 zombie.
+The [recovered seven-body attempt](../evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/recovered-selected-v1/index.json)
+retains 7 PASS / 12.53s but launcher exit 1/pytest waitUNKNOWN after a postwait wrapper
+failure. Neither is rewritten as wrapper acceptance. The old orphan remains a
+separate operational artifact, not a failure of successful v4/native5k closure.
+
+The [last old-head CI snapshot](../evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/actualpassed-module-v1/root/old-ci-snapshot.json)
+at04:49:28 Europe/Moscow (01:49:28 UTC) reports 13/19 required runtime cases PASS
+on d906; 86 jobs success, one active, five queued, one skip and one known General
+logging failure. Both sync recovery cases passed; async accepted200 was active,
+async incomplete200/four heavy profiles queued. This historical snapshot is not
+new-head green CI or acceptance of the unpublished test correction.
+Other three local heavy profiles, full 19/four-heavy/NI2-014 gates and full ADR-0043
+remain open. NI2-012/N2.2b remain `progress`; planned 27% is unearned and earned
+readiness stays **15%**, with zero new credit.

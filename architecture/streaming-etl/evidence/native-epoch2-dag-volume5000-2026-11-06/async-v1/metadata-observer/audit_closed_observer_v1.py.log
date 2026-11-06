@@ -1,0 +1,177 @@
+"""Offline-only audit of closed, Root-authorized current-trial MVCC captures."""
+import datetime
+import hashlib
+import json
+import pathlib
+
+BASE = pathlib.Path('/tmp/native-async5000-metadata-observer-d906-v1')
+HEAD = 'd906ceca414baeac825ce472e0b78cd1dcae3363'
+FLOW = '8830e565-b6b0-4404-87f5-d5000173b2a7'
+GRAPH = '01a1ae34-11dc-7443-9587-267d6c42d591'
+DATABASE = 'native_ni012_runtime_v5_e033736e_tests_master'
+TRIAL = pathlib.Path('/tmp/native-n2-2-volume5000-preparation-recovery2-v1/async5000-7644c487')
+ORM_SOURCE = pathlib.Path('/workspace/ariadne/src/prefect/server/database/orm_models.py')
+MUTABLE = {
+    'scope': ['state', 'terminal_operation_id', 'flow_state'],
+    'flow_lease': ['state_id', 'state_type', 'deployment_active_slots'],
+    'subtasks': ['physical_slot_released'], 'tasks': ['state_type'],
+    'partitions': ['state', 'last_sequence', 'tail_sequence', 'producer_position', 'released'],
+    'physical_slots': ['released', 'release_operation_id', 'released_at'],
+    'tag_allocations': ['released'], 'assigned_workers': ['status'],
+    'limits': ['active_slots'], 'grants': ['state'], 'launches': ['state'],
+    'authority': ['state'], 'coordinator_launches': ['state'],
+}
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def binding(path):
+    return {'path': str(path), 'sha256': sha(path), 'bytes': path.stat().st_size}
+
+
+def projection(metadata):
+    return {
+        family: [{key: value for key, value in row.items()
+                  if key not in MUTABLE.get(family, [])} for row in rows]
+        for family, rows in metadata.items() if family != 'lease_history'
+    }
+
+
+def audit():
+    stop_path = BASE / 'observer-STOP-receipt-v1.json'
+    stop = json.loads(stop_path.read_text())
+    assert stop['status'] == 'DB_OBSERVER_STOPPED_NO_MORE_CONNECTIONS'
+    assert stop['reason'] == 'PRE_TERMINAL_4900_OR_ALL_CURSORS_MARKER'
+    assert stop['outstanding_capture_process'] is None
+    assert stop['controller_database_connections'] == 0
+    paths = sorted(BASE.glob('sample-*.json'))
+    captures = [json.loads(path.read_text()) for path in paths]
+    assert paths and len(paths) == len(stop['samples'])
+    expected_counts = captures[0]['counts']
+    first = projection(captures[0]['metadata'])
+    proofs = []
+    for path, capture, declared in zip(paths, captures, stop['samples']):
+        assert str(path) == declared['path'] and sha(path) == declared['sha256']
+        assert capture['status'] == 'ACTUAL_READONLY_MVCC_CAPTURE'
+        assert capture['readonly'] is True and capture['explicit_row_locks'] is False
+        assert capture['head'] == HEAD and capture['flow_id'] == FLOW and capture['graph_id'] == GRAPH
+        assert capture['target_database'] == DATABASE
+        context = capture['database_context']
+        assert context['database'] == DATABASE and context['read_only'] == 'on'
+        assert str(context['server_version']).startswith('17')
+        assert capture['counts'] == expected_counts
+        assert projection(capture['metadata']) == first
+        assert capture['sql_sha256'] == sha(BASE / 'queries.json')
+        assert capture['command_sha256'] == sha(TRIAL / 'command.json')
+        assert capture['orm_source_sha256'] == sha(ORM_SOURCE)
+        expected_script = 'observer_v2.py' if 'connection_closed' in capture else 'observer.py'
+        assert capture['script_sha256'] == sha(BASE / expected_script)
+        if expected_script == 'observer_v2.py':
+            assert capture['connection_closed'] is True
+        metadata = capture['metadata']
+        scope = metadata['scope'][0]
+        assert scope['graph_id'] == GRAPH and scope['flow_run_id'] == FLOW
+        assert scope['assignment_epoch'] == scope['flow_run_count'] == 1
+        tasks = {row['id']: row for row in metadata['tasks']}
+        subs = {row['id']: row for row in metadata['subtasks']}
+        operators = {row['id']: row for row in metadata['operators']}
+        workers = {row['id']: row for row in metadata['assigned_workers']}
+        grants = {row['id']: row for row in metadata['grants']}
+        channels = {row['id']: row for row in metadata['partitions']}
+        assert len(tasks) == len(subs) == 4 and len(operators) == 3 and len(channels) == 7
+        assert all(row['flow_run_id'] == FLOW and row['run_count'] == 1 for row in tasks.values())
+        assert {row['task_run_id'] for row in subs.values()} == set(tasks)
+        for sub in subs.values():
+            assert sub['graph_revision_id'] == GRAPH
+            assert sub['assignment_epoch'] == sub['physical_epoch'] == 1
+            assert sub['assigned_worker_id'] in workers and sub['operator_run_id'] in operators
+            assert sub['output_stream_id'] in channels
+            assert channels[sub['output_stream_id']]['producer_task_run_id'] == sub['task_run_id']
+            assert sub['input_stream_id'] is None or sub['input_stream_id'] in channels
+            grant = grants[sub['current_grant_id']]
+            assert grant['subtask_id'] == sub['id'] and grant['worker_id'] == sub['assigned_worker_id']
+            assert grant['physical_epoch'] == sub['physical_epoch']
+        for family in ['physical_slots', 'tag_allocations', 'launches']:
+            assert {row['subtask_id'] for row in metadata[family]} == set(subs)
+        for slot in metadata['physical_slots']:
+            assert slot['graph_revision_id'] == GRAPH
+            assert slot['admission_operation_id'] == scope['admission_operation_id']
+            assert slot['worker_id'] == subs[slot['subtask_id']]['assigned_worker_id']
+        for birth in metadata['launches']:
+            sub = subs[birth['subtask_id']]
+            assert birth['task_run_id'] == sub['task_run_id']
+            assert birth['worker_id'] == sub['assigned_worker_id']
+            assert birth['attempt_index'] == birth['planned_physical_epoch'] == 1
+        for edge in metadata['edge_partitions']:
+            assert edge['flow_run_id'] == FLOW and edge['graph_revision_id'] == GRAPH
+            assert edge['stream_id'] == subs[edge['target_subtask_id']]['input_stream_id']
+        lease = metadata['flow_lease'][0]
+        assert lease['id'] == FLOW and lease['deployment_id'] == scope['deployment_id']
+        assert {row['lease_id'] for row in metadata['lease_history'] if row['lease_id']} == {lease['deployment_concurrency_lease_id']}
+        progress = capture['progress_record']['snapshot']
+        assert progress['graph_revision_id'] == GRAPH and progress['task_run_count'] == 4
+        assert {row['id'] for row in progress['channels']} == set(channels)
+        assert {row['subtask_id'] for row in progress['subtasks']} == set(subs)
+        for row in progress['subtasks']:
+            sub = subs[row['subtask_id']]
+            for key in ['task_run_id', 'input_stream_id', 'output_stream_id', 'subtask_index', 'physical_epoch']:
+                assert row[key] == sub[key]
+            assert row['operator_uid'] == operators[sub['operator_run_id']]['operator_uid']
+            assert row['run_count'] == 1
+        proofs.append({**binding(path), 'observed_utc': context['observed_utc'],
+                       'backend_pid': context['backend_pid'],
+                       'started_monotonic_ns': capture['started_monotonic_ns'],
+                       'duration_ms': (capture['ended_monotonic_ns'] - capture['started_monotonic_ns']) / 1e6,
+                       'cursors': [row['completed_through'] for row in progress['consumers']],
+                       'connection_closed': declared['connection_closed']})
+    intervals = [(right['started_monotonic_ns'] - left['started_monotonic_ns']) / 1e9
+                 for left, right in zip(proofs, proofs[1:])]
+    assert min(intervals) >= 60
+    receipt = {
+        'schema': 'principal-current-owned-async5000-mvcc-metadata-audit-v1',
+        'recorded_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        'verdict': 'DISCRETE_LIVE_IDENTITY_CARDINALITY_AND_BINDINGS_VALID',
+        'reviewer': '/root/etl_principal_recovery2', 'head': HEAD,
+        'flow_id': FLOW, 'graph_id': GRAPH, 'target_database': DATABASE,
+        'stop': binding(stop_path), 'controller_identity': stop['identity'],
+        'artifacts': [binding(BASE / name) for name in ['observer.py', 'observer_v2.py', 'controller.py', 'queries.json', 'controller-identity.json', 'audit_closed_observer_v1.py']],
+        'trial_source_bindings': [binding(TRIAL / name) for name in ['command.json', 'source-before.json', 'external-assets.json']],
+        'orm_source_binding': binding(ORM_SOURCE),
+        'captures': proofs, 'capture_count': len(proofs),
+        'minimum_sampling_interval_seconds': min(intervals),
+        'counts_at_every_capture': expected_counts,
+        'stable_metadata_identity_projection': first,
+        'excluded_volatile_fields': MUTABLE,
+        'explicitly_verified': [
+            '17 metadata identity projections stable across all actual MVCC captures',
+            'TaskRun/Subtask/OperatorRun/Worker/current Grant/physical slot/tag allocation/birth FK bindings',
+            'Current Flow and exact graph scope; graph admission/activation IDs and assignment epoch',
+            'Exact graph/subtask/task/channel/input/output/operator mapping overlaps actual saved progress',
+            'Persisted Flow lease UUID is one stable value in current and historical Flow states',
+            'Every capture PG17/read_only on; each fresh connection closed before capture success',
+            'No mutation, explicit locking clause, second native body or other database scope',
+        ],
+        'limitations': stop['limitations'] + [
+            'This observer audit alone does not accept the native test body, wider health or final cleanup',
+            '17 family stability is discrete sampling, not proof of every intervening transition',
+            'First actual SQL sample starts at cursors692/690/694, not at activation or500',
+            'Final released physical/tag allocation rows not captured before early observer STOP',
+            'Actual concurrency lease storage outside PostgreSQL not inspected',
+            'Separate same-source normal500-versus5000 comparison remains NOT_YET_PROVEN',
+            'No new readiness/AC/throughput/SLO/5000 prediction credit',
+        ],
+        'new_DB_connections_by_this_audit': 0, 'repository_or_runtime_asset_mutations': 0,
+        'normal500_comparison': 'NOT_YET_PROVEN', 'earned_epoch2_percent': 15,
+    }
+    output = BASE / 'principal-observer-metadata-readonly-audit-v1.json'
+    with output.open('x') as handle:
+        json.dump(receipt, handle, sort_keys=True, indent=2)
+        handle.write('\n')
+    output.chmod(0o600)
+    print(json.dumps({'receipt': str(output), 'sha256': sha(output), 'verdict': receipt['verdict'], 'captures': len(proofs)}))
+
+
+if __name__ == '__main__':
+    audit()

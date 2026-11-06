@@ -1,0 +1,244 @@
+"""Independent offline reconciliation. No project import, DB, subprocess or test body."""
+import datetime
+import hashlib
+import json
+import pathlib
+import re
+import xml.etree.ElementTree as ET
+
+BASE = pathlib.Path('/tmp/native-async5000-metadata-observer-d906-v1')
+TRIAL = pathlib.Path('/tmp/native-n2-2-volume5000-preparation-recovery2-v1/async5000-7644c487')
+FIXTURE = TRIAL / 'pytest/test_public_dag_bounded_volume0'
+HEAD = 'd906ceca414baeac825ce472e0b78cd1dcae3363'
+NODE = 'tests/test_native_stream_dag_execution_http.py::test_public_dag_bounded_volume_postgres[True-5000]'
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def bind(path):
+    return {'path': str(path), 'sha256': sha(path), 'bytes': path.stat().st_size}
+
+
+def load(path):
+    return json.loads(path.read_text())
+
+
+def jsonl(path):
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def main():
+    command = load(TRIAL / 'command.json')
+    receipt = load(TRIAL / 'native5000-receipt-v1.json')
+    assert command['head'] == receipt['head'] == HEAD
+    assert command['nodeid'] == receipt['nodeid'] == NODE
+    assert command['count'] == 5000 and command['mode'] == 'normal'
+    assert command['asynchronous'] is True and command['profiling'] is False
+    assert command['budgets'] == {'wait': 3960, 'observe': 4080, 'pytest': 4200}
+    assert receipt['runtime_STOPPED'] is True and receipt['pytest_exit'] == 0
+    assert receipt['status'] == 'NATIVE_DAG5000_PASS'
+    checkout = pathlib.Path(command['cwd'])
+    assert checkout == pathlib.Path('/tmp/ariadne-native-5000-diagnosis-v1')
+    source = load(TRIAL / 'source-before.json')
+    assert len(source) == 1600 and source == load(TRIAL / 'source-after.json')
+    for name, expected in source.items():
+        path = checkout / name
+        assert sha(path) == expected['sha256'] and path.stat().st_size == expected['bytes'], name
+    assert load(TRIAL / 'drift.json') == [] and load(TRIAL / 'import-mismatches.json') == []
+    for name, expected in load(TRIAL / 'external-assets.json').items():
+        assert sha(TRIAL.parent / name) == expected, name
+    imported = []
+    for path in sorted((TRIAL / 'audit').glob('*.jsonl')):
+        for row in jsonl(path):
+            relative = str(pathlib.Path(row['path']).relative_to(checkout))
+            assert relative in source and row['source_sha256'] == source[relative]['sha256']
+            imported.append(row)
+    assert len(imported) == 3866
+    metadata = load(BASE / 'principal-observer-metadata-readonly-audit-v1.json')
+    assert metadata['verdict'] == 'DISCRETE_LIVE_IDENTITY_CARDINALITY_AND_BINDINGS_VALID'
+    m = metadata['stable_metadata_identity_projection']
+    graph = m['scope'][0]['graph_id']; flow = m['scope'][0]['flow_run_id']
+    subs = {row['id']: row for row in m['subtasks']}
+    operators = {row['id']: row for row in m['operators']}
+    channels = {row['id'] for row in m['partitions']}
+    grants = {row['id']: row for row in m['grants']}
+    births = {row['id']: row for row in m['launches']}
+    all_grants = set(); all_births = set(); all_consumers = set()
+    release_seen = set(); one_run_seen = set(); one_epoch_seen = set()
+    channel_state = {}; channel_last = {}; cursor_last = {}; seen_all_running = False
+    records = jsonl(FIXTURE / 'progress.jsonl')
+    final = load(FIXTURE / 'final-progress.json')
+    first_all_running_record = None
+    max_consumer_cardinality = 0
+    for ordinal, record in enumerate(records + [{'snapshot': final}]):
+        snap = record['snapshot']
+        assert snap['graph_revision_id'] == graph and snap['task_run_count'] == 4
+        assert len(snap['subtasks']) == 4 and {row['subtask_id'] for row in snap['subtasks']} == set(subs)
+        assert len(snap['channels']) == 7 and {row['id'] for row in snap['channels']} == channels
+        if all(row['run_count'] == 1 for row in snap['subtasks']):
+            if first_all_running_record is None:
+                first_all_running_record = ordinal
+            seen_all_running = True
+        for row in snap['subtasks']:
+            sub = subs[row['subtask_id']]
+            for field in ['task_run_id', 'input_stream_id', 'output_stream_id', 'subtask_index']:
+                assert row[field] == sub[field]
+            assert row['operator_uid'] == operators[sub['operator_run_id']]['operator_uid']
+            assert row['run_count'] in (0, 1) and row['physical_epoch'] in (0, 1)
+            if row['run_count'] == 1:
+                one_run_seen.add(sub['id'])
+            else:
+                assert sub['id'] not in one_run_seen
+            if row['physical_epoch'] == 1:
+                one_epoch_seen.add(sub['id'])
+            else:
+                assert sub['id'] not in one_epoch_seen
+            if row['physical_slot_released']:
+                release_seen.add(sub['id'])
+            else:
+                assert sub['id'] not in release_seen
+            if seen_all_running:
+                assert row['run_count'] == row['physical_epoch'] == 1
+        for row in snap['channels']:
+            assert 0 <= row['last_sequence'] <= 5000
+            assert row['last_sequence'] >= channel_last.get(row['id'], 0)
+            channel_last[row['id']] = row['last_sequence']
+            if channel_state.get(row['id']) == 'COMPLETED':
+                assert row['state'] == 'COMPLETED'
+            channel_state[row['id']] = row['state']
+        max_consumer_cardinality = max(max_consumer_cardinality, len(snap['consumers']))
+        assert len(snap['consumers']) <= 3
+        for row in snap['consumers']:
+            all_consumers.add(row['id'])
+            sub = subs[row['subtask_id']]
+            assert row['task_run_id'] == sub['task_run_id'] and row['input_stream_id'] == sub['input_stream_id']
+            assert row['attempt'] == 1 and 0 <= row['completed_through'] <= 5000
+            assert row['completed_through'] >= cursor_last.get(row['id'], 0)
+            cursor_last[row['id']] = row['completed_through']
+        for row in snap['grants']:
+            all_grants.add(row['id']); expected = grants[row['id']]
+            for field in ['subtask_id', 'child_process_id', 'process_start_ticks', 'physical_epoch']:
+                assert row[field] == expected[field]
+        for row in snap['launches']:
+            all_births.add(row['id']); expected = births[row['id']]
+            assert row['subtask_id'] == expected['subtask_id']
+            assert row['child_process_id'] == expected['child_process_id']
+            assert row['planned_physical_epoch'] == expected['planned_physical_epoch'] == 1
+    assert all_grants == set(grants) and all_births == set(births)
+    assert len(all_consumers) == max_consumer_cardinality == 3
+    assert set(cursor_last.values()) == {5000}
+    assert final['graph_state'] == 'RELEASED' and final['task_run_count'] == 4
+    assert all(row['state_type'] == 'COMPLETED' and row['physical_slot_released'] for row in final['subtasks'])
+    assert all(row['state'] == 'COMPLETED' and row['last_sequence'] == row['tail_sequence'] == 5000 for row in final['channels'])
+    assert all(row['state'] == 'RETIRED' for row in final['grants'])
+    assert all(row['state'] == 'CLOSED' and row['close_proof_kind'] == 'DEATH' for row in final['launches'])
+    accepted = load(FIXTURE / 'accepted-cursors.json')
+    assert len(accepted['consumers']) == 3 and all(row['completed_through'] == 5000 for row in accepted['consumers'])
+    observations = load(FIXTURE / 'observations.json')
+    assert observations['flow_run_id'] == flow and observations['graph_revision_id'] == graph
+    assert observations['count'] == 5000 and observations['mode'] == 'normal' and observations['asynchronous'] is True
+    assert observations['flow_state'] == 'COMPLETED' and observations['task_runs'] == 4
+    numbers = list(range(1, 5001)); effects = []; call_summary = {}
+    for branch in ['B-0', 'C-0', 'C-1']:
+        calls = jsonl(FIXTURE / ('calls-' + branch + '.jsonl'))
+        assert [row['number'] for row in calls] == numbers
+        assert [row['sequence'] for row in calls] == numbers
+        assert {row['attempt'] for row in calls} == {1}
+        assert len({row['task_run_id'] for row in calls}) == len({row['pid'] for row in calls}) == 1
+        marker = load(FIXTURE / (branch + '.pid.json'))
+        assert {row['pid'] for row in calls} == {marker['pid']}
+        assert {row['task_run_id'] for row in calls} == {marker['task_run_id']}
+        assert marker['attempt'] == 1 and marker['task_run_id'] in {row['task_run_id'] for row in subs.values()}
+        branch_paths = list((FIXTURE / branch).iterdir())
+        assert len(branch_paths) == 5000 and {path.name for path in branch_paths} == {f'document-{i}.json' for i in numbers}
+        for i in numbers:
+            path = FIXTURE / branch / f'document-{i}.json'
+            assert load(path) == {'document_id': f'document-{i}', 'number': i}
+            effects.append(bind(path))
+        call_summary[branch] = {'calls': len(calls), 'effects': len(branch_paths), 'attempt': 1,
+                                'pid': marker['pid'], 'task_run_id': marker['task_run_id']}
+    source_accepted = jsonl(FIXTURE / 'source-accepted.jsonl')
+    assert [row['position'] for row in source_accepted] == numbers
+    assert {row['pid'] for row in source_accepted} == {load(FIXTURE / 'A-0.pid.json')['pid']}
+    health_findings = []
+    ansi = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
+    http5 = re.compile(r'\bHTTP/\d(?:\.\d)?[\"\x27]?\s+5\d{2}\b', re.I)
+    client5 = re.compile(r'Server error [\"\x27]5\d{2}\b', re.I)
+    for path in sorted(FIXTURE.glob('*.log')):
+        for number, raw in enumerate(path.read_text(errors='replace').splitlines(), 1):
+            line = ansi.sub('', raw)
+            tags = []
+            if http5.search(line) or client5.search(line): tags.append('HTTP5xx')
+            if re.search(r'\bTimeoutError\b', line): tags.append('TimeoutError')
+            if 'Exception in ASGI application' in line: tags.append('ASGI_unhandled')
+            if path.name.startswith('worker-') and re.search(r'(?:^|\|)\s*ERROR(?:\s*\||\s*:)', line): tags.append('worker_ERROR')
+            if tags: health_findings.append({'path': str(path), 'line': number, 'tags': tags, 'line_sha256': hashlib.sha256(line.encode()).hexdigest()})
+    assert health_findings == []
+    assert load(FIXTURE / 'coordinator-retirement.json') == {'authority_state': 'RELEASED', 'launch_states': ['RELEASED'], 'snapshot_state': 'RELEASED'}
+    worker_health = load(FIXTURE / 'worker-health.json')
+    assert worker_health['errors'] == worker_health['rejected'] == [] and worker_health['strict_all_errors'] is True
+    cleanup = load(TRIAL / 'cleanup.json')
+    owned = ['native_ni012_runtime_v5_e033736e', 'native_ni012_runtime_v5_e033736e_tests_master']
+    assert sorted(cleanup['dropped']) == owned and cleanup['sessions_before_drop'] == [] and cleanup['remaining'] == []
+    assert cleanup['force_used'] is False and cleanup['old_soak_or_forensic_touched'] is False
+    closure = load(TRIAL / 'process-closure.json')
+    assert len(closure['observed_pid_start_pairs']) == 11
+    assert closure['remaining_same_identity_live'] == closure['remaining_same_identity_zombies'] == []
+    remaining = []
+    for pid, start in closure['observed_pid_start_pairs'].items():
+        try:
+            stat = pathlib.Path('/proc', pid, 'stat').read_text().rsplit(')', 1)[1].split()
+            if stat[19] == str(start): remaining.append({'pid': pid, 'state': stat[0]})
+        except FileNotFoundError:
+            pass
+    assert remaining == []
+    suite = ET.parse(TRIAL / 'pytest.public.xml').getroot().find('testsuite')
+    assert suite is not None and [suite.get(key) for key in ['tests', 'errors', 'failures', 'skipped']] == ['1', '0', '0', '0']
+    artifacts = [TRIAL / name for name in ['native5000-receipt-v1.json', 'command.json', 'source-before.json', 'source-after.json', 'external-assets.json', 'process-closure.json', 'cleanup.json', 'drift.json', 'import-mismatches.json', 'pytest.public.xml', 'body-wider-health-audit.json']]
+    artifacts += [FIXTURE / name for name in ['progress.jsonl', 'final-progress.json', 'accepted-cursors.json', 'observations.json', 'source-accepted.jsonl', 'worker-health.json', 'coordinator-retirement.json', 'phases.json', 'all-cursors-observed']]
+    artifacts += sorted(FIXTURE.glob('*.log')) + sorted(FIXTURE.glob('calls-*.jsonl')) + sorted(FIXTURE.glob('*.pid.json')) + sorted((TRIAL / 'audit').glob('*.jsonl'))
+    artifacts += [BASE / name for name in ['principal-observer-metadata-readonly-audit-v1.json', 'observer-STOP-receipt-v1.json', 'observer-local-reap-proof-v1.json', 'audit_closed_native_history_v1.py']]
+    output = {
+        'schema': 'principal-offline-async5000-full-history-supplement-v1',
+        'recorded_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        'verdict': 'ONE_ASYNC_DAG5000_FUNCTIONAL_HEALTH_CLOSURE_AND_OBSERVED_METADATA_VALID',
+        'reviewer': '/root/etl_principal_recovery2', 'head': HEAD, 'nodeid': NODE,
+        'hold_sha256': receipt['hold_sha256'], 'budgets': command['budgets'],
+        'pytest_cases': 1, 'pytest_seconds': suite.get('time'),
+        'full_progress_records': len(records), 'first_all_run_count1_record': first_all_running_record,
+        'metadata': {'task_runs': 4, 'subtasks': 4, 'operators': 3, 'channels': 7,
+                     'physical_allocations_during_live_capture': 4, 'tag_allocations_during_live_capture': 4,
+                     'assignment_workers': 2, 'unique_births': 4, 'unique_grants': 4,
+                     'run_count_and_physical_epoch_after_start': 1,
+                     'MVCC_samples': metadata['capture_count'], 'normal500_comparison': 'NOT_YET_PROVEN'},
+        'calls_and_effects': call_summary, 'source_positions': len(source_accepted),
+        'source_files_rehashed': len(source), 'import_records_personally_reconciled': len(imported),
+        'PID_start_pairs_personally_checked_closed': len(closure['observed_pid_start_pairs']),
+        'health_findings': health_findings, 'artifacts': [bind(path) for path in artifacts],
+        'effect_bindings': effects, 'fresh_database_cleanup': cleanup,
+        'limits': [
+            'Independent file-only replay of the author actual execution, not a second independently executed5000 body',
+            'All1968 saved progress records and final snapshot reconciled; transition gaps between records remain unobserved',
+            'Actual SQL identity capture spans692/690/694 to4888/4881/4894 and stops before teardown',
+            'Final slot flags come from final-progress and source predicate; no postrelease allocation SQL rows were queried',
+            'External concurrency lease backend not observed; persisted Flow lease identity only',
+            'Exact API/log health scans are observations, not a complete HTTP trace or causal/performance proof',
+            'No compatible normal500 comparison; old7d99 CI and recovery500/fivebirth profile excluded',
+            'No all-four5000, async recovery pair, fullNI2-014, A43-04 or27percent readiness acceptance inferred',
+        ],
+        'new_runtime_bodies': 0, 'new_DB_connections': 0, 'repository_or_five_asset_changes': 0,
+        'epoch2_earned_percent_unchanged': 15,
+        'audit_reader_corrections': ['Preparation-only reader treated B-0 directory as a text file and raised IsADirectoryError; corrected to inspect5000document files. No DB/test body or source mutation occurred.'],
+    }
+    target = BASE / 'principal-async5000-full-history-readonly-supplement-v1.json'
+    with target.open('x') as handle:
+        json.dump(output, handle, sort_keys=True, indent=2)
+        handle.write('\n')
+    target.chmod(0o600)
+    print(json.dumps({'receipt': str(target), 'sha256': sha(target), 'verdict': output['verdict'], 'records': len(records), 'effects': len(effects)}))
+
+
+if __name__ == '__main__':
+    main()

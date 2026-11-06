@@ -1,0 +1,120 @@
+{
+  "schema": "ni020a-profile-check-replacement-matrix-v1",
+  "status": "PLANNING_STATIC_AST_READ_NOT_SQL_EXECUTION",
+  "source_head": "d906ceca414baeac825ce472e0b78cd1dcae3363",
+  "source_sha256": "74e9b9252afcd52f323e5d7a429ff06d48739f27f9e92e01528c693a8f164022",
+  "checks": [
+    {
+      "class": "StreamDAGLifecycleOperation",
+      "constraint_name": "identity_valid",
+      "line": 1363,
+      "old_sql_exact": "id = operation_id AND profile = 'partitioned-dag-v1'",
+      "added_v2_branch": "id = operation_id AND profile = 'partitioned-dag-v2'",
+      "replacement_sql": "(id = operation_id AND profile = 'partitioned-dag-v1') OR (id = operation_id AND profile = 'partitioned-dag-v2')",
+      "old_branch_preserved_exact": true,
+      "paired_migration_required": true
+    },
+    {
+      "class": "StreamGraphRevision",
+      "constraint_name": "dag_operations_profile_valid",
+      "line": 1714,
+      "old_sql_exact": "profile = 'partitioned-dag-v1' OR (current_control_operation_id IS NULL AND terminal_operation_id IS NULL)",
+      "added_v2_branch": "profile = 'partitioned-dag-v2'",
+      "replacement_sql": "(profile = 'partitioned-dag-v1' OR (current_control_operation_id IS NULL AND terminal_operation_id IS NULL)) OR (profile = 'partitioned-dag-v2')",
+      "old_branch_preserved_exact": true,
+      "paired_migration_required": true
+    },
+    {
+      "class": "StreamGraphRevision",
+      "constraint_name": "profile_valid",
+      "line": 1721,
+      "old_sql_exact": "profile IN ('partitioned-fixed-v1', 'partitioned-dag-v1') AND assignment_epoch = 1",
+      "added_v2_branch": "profile = 'partitioned-dag-v2' AND assignment_epoch = 1",
+      "replacement_sql": "(profile IN ('partitioned-fixed-v1', 'partitioned-dag-v1') AND assignment_epoch = 1) OR (profile = 'partitioned-dag-v2' AND assignment_epoch = 1)",
+      "old_branch_preserved_exact": true,
+      "paired_migration_required": true
+    },
+    {
+      "class": "StreamOperatorRun",
+      "constraint_name": "fixed_shape_valid",
+      "line": 1776,
+      "old_sql_exact": "role IN ('SOURCE', 'OPERATOR') AND ((profile = 'partitioned-fixed-v1' AND parallelism = 2) OR (profile = 'partitioned-dag-v1' AND parallelism BETWEEN 1 AND 16))",
+      "added_v2_branch": "role IN ('SOURCE', 'OPERATOR') AND profile = 'partitioned-dag-v2' AND parallelism BETWEEN 1 AND 16",
+      "replacement_sql": "(role IN ('SOURCE', 'OPERATOR') AND ((profile = 'partitioned-fixed-v1' AND parallelism = 2) OR (profile = 'partitioned-dag-v1' AND parallelism BETWEEN 1 AND 16))) OR (role IN ('SOURCE', 'OPERATOR') AND profile = 'partitioned-dag-v2' AND parallelism BETWEEN 1 AND 16)",
+      "old_branch_preserved_exact": true,
+      "paired_migration_required": true
+    },
+    {
+      "class": "StreamPhysicalSubtask",
+      "constraint_name": "assignment_valid",
+      "line": 1854,
+      "old_sql_exact": "assignment_epoch = 1 AND ((profile = 'partitioned-fixed-v1' AND subtask_index BETWEEN 0 AND 1) OR (profile = 'partitioned-dag-v1' AND subtask_index BETWEEN 0 AND 15))",
+      "added_v2_branch": "assignment_epoch = 1 AND profile = 'partitioned-dag-v2' AND subtask_index BETWEEN 0 AND 15",
+      "replacement_sql": "(assignment_epoch = 1 AND ((profile = 'partitioned-fixed-v1' AND subtask_index BETWEEN 0 AND 1) OR (profile = 'partitioned-dag-v1' AND subtask_index BETWEEN 0 AND 15))) OR (assignment_epoch = 1 AND profile = 'partitioned-dag-v2' AND subtask_index BETWEEN 0 AND 15)",
+      "old_branch_preserved_exact": true,
+      "paired_migration_required": true
+    },
+    {
+      "class": "StreamWorkerCapability",
+      "constraint_name": "protocol_valid",
+      "line": 2023,
+      "old_sql_exact": "protocol IN ('partitioned-fixed-v1', 'partitioned-dag-v1') AND protocol_version = 1",
+      "added_v2_branch": "protocol = 'partitioned-dag-v2' AND protocol_version = 1",
+      "replacement_sql": "(protocol IN ('partitioned-fixed-v1', 'partitioned-dag-v1') AND protocol_version = 1) OR (protocol = 'partitioned-dag-v2' AND protocol_version = 1)",
+      "old_branch_preserved_exact": true,
+      "paired_migration_required": true
+    },
+    {
+      "class": "StreamGraphPort",
+      "constraint_name": "port_shape_valid",
+      "line": 2076,
+      "old_sql_exact": "profile = 'partitioned-dag-v1' AND direction IN ('INPUT', 'OUTPUT') AND length(port_uid) BETWEEN 1 AND 64",
+      "added_v2_branch": "profile = 'partitioned-dag-v2' AND direction IN ('INPUT', 'OUTPUT') AND length(port_uid) BETWEEN 1 AND 64",
+      "replacement_sql": "(profile = 'partitioned-dag-v1' AND direction IN ('INPUT', 'OUTPUT') AND length(port_uid) BETWEEN 1 AND 64) OR (profile = 'partitioned-dag-v2' AND direction IN ('INPUT', 'OUTPUT') AND length(port_uid) BETWEEN 1 AND 64)",
+      "old_branch_preserved_exact": true,
+      "paired_migration_required": true
+    },
+    {
+      "class": "StreamGraphEdge",
+      "constraint_name": "edge_shape_valid",
+      "line": 2148,
+      "old_sql_exact": "profile = 'partitioned-dag-v1' AND producer_direction = 'OUTPUT' AND consumer_direction = 'INPUT' AND producer_port_id != consumer_port_id",
+      "added_v2_branch": "profile = 'partitioned-dag-v2' AND producer_direction = 'OUTPUT' AND consumer_direction = 'INPUT' AND producer_port_id != consumer_port_id",
+      "replacement_sql": "(profile = 'partitioned-dag-v1' AND producer_direction = 'OUTPUT' AND consumer_direction = 'INPUT' AND producer_port_id != consumer_port_id) OR (profile = 'partitioned-dag-v2' AND producer_direction = 'OUTPUT' AND consumer_direction = 'INPUT' AND producer_port_id != consumer_port_id)",
+      "old_branch_preserved_exact": true,
+      "paired_migration_required": true
+    },
+    {
+      "class": "StreamGraphEdgePartition",
+      "constraint_name": "partition_shape_valid",
+      "line": 2228,
+      "old_sql_exact": "profile = 'partitioned-dag-v1' AND partition_index BETWEEN 0 AND 15",
+      "added_v2_branch": "profile = 'partitioned-dag-v2' AND partition_index BETWEEN 0 AND 15",
+      "replacement_sql": "(profile = 'partitioned-dag-v1' AND partition_index BETWEEN 0 AND 15) OR (profile = 'partitioned-dag-v2' AND partition_index BETWEEN 0 AND 15)",
+      "old_branch_preserved_exact": true,
+      "paired_migration_required": true
+    },
+    {
+      "class": "StreamPhysicalSlotAllocation",
+      "constraint_name": "profile_valid",
+      "line": 2267,
+      "old_sql_exact": "profile = 'partitioned-dag-v1'",
+      "added_v2_branch": "profile = 'partitioned-dag-v2'",
+      "replacement_sql": "(profile = 'partitioned-dag-v1') OR (profile = 'partitioned-dag-v2')",
+      "old_branch_preserved_exact": true,
+      "paired_migration_required": true
+    },
+    {
+      "class": "NativeStreamDeploymentSnapshot",
+      "constraint_name": "profile_valid",
+      "line": 2554,
+      "old_sql_exact": "profile IN ('bounded-linear-v1', 'partitioned-fixed-v1', 'partitioned-dag-v1')",
+      "added_v2_branch": "profile = 'partitioned-dag-v2'",
+      "replacement_sql": "(profile IN ('bounded-linear-v1', 'partitioned-fixed-v1', 'partitioned-dag-v1')) OR (profile = 'partitioned-dag-v2')",
+      "old_branch_preserved_exact": true,
+      "paired_migration_required": true
+    }
+  ],
+  "count": 11,
+  "migration_policy": "New paired PG/SQLite migrations replace these named constraints; old migration files immutable. Unknown profiles still fail. Runtime profile dispatch requires separate audit."
+}

@@ -22,7 +22,7 @@ against the actual runtime and storage.
 | N2.1b — Scoped authority and store | `done` | 10% | +5% | NI2-003, NI2-004 | Strict subtask-only authentication, existing-store fences, whole-region admission and canonical keys pass cross-resource negatives; codec alone earns 0%. |
 | N2.1c — Physical runtime gate | `done` | 15% | +5% | NI2-005, NI2-006 | Four ordinary physical TaskRuns run in separate processes, recover 200/201 and keep metadata constant at 500/5000 under the complete real gate. |
 | N2.2a — DAG and routes | `progress` | 21% | +6% | NI2-010, NI2-011 | Typed acyclic graph and four append-materialized exchanges preserve independent edge identities. |
-| N2.2b — Fan-out runtime gate | `progress` | 27% | +6% | NI2-012…014 | Latest held local correction: 50 independent checks PASS plus personally verified native synchronous 500-record accepted200/incomplete200 pair PASS with whole-health and normal graph/coordinator release. Committed 7d99 hosted DAG500 sync/async exact gates PASS; full hosted run, async recovery and corrected 5000-record gates remain open. Historical failures and unknown b4 blocker remain retained; earned readiness 15%. |
+| N2.2b — Fan-out runtime gate | `progress` | 27% | +6% | NI2-012…014 | First d906 native async DAG5000 PASS; normal async500↔5000 thirteen observed metadata comparisons MATCH. Final allocation SQL/external KV remains unobserved. Controlled logger baseline1FAIL/6PASS is retained; test-only candidate151PASS/pytest0/tool0 has independent file-only review. Prior interrupted/recovered wrappers remain qualified. Last old-head CI13/19 runtime PASS/known General logging failure; other three local heavy/full19/four-heavy/NI2-014 open. Earned15%, zero new credit. |
 | N2.3a — State and mailbox | `planned` | 32% | +5% | NI2-020, NI2-021 | Journaled state and deterministic multi-input apply order recover without accepted-body replay. |
 | N2.3b — Join, outcomes and cuts | `planned` | 37% | +5% | NI2-022…024 | OUTPUT/NO_OUTPUT, bounded correlated join and complete barrier cuts compose atomically. |
 | N2.3c — Stateful join gate | `planned` | 42% | +5% | NI2-025 | Native process-loss matrix closes every ADR-0044 criterion. |
@@ -842,3 +842,36 @@ reports limit whole-health attribution.
 NI2-012/N2.2b and ADR-0043 remain `progress`, with **15% earned**. Async recovery,
 corrected 5000 and full hosted/frozen-union exits remain open. The planned 27%
 and whole-ADR completion are not earned; historical failures remain intact.
+
+
+## N2.2 async5000, observed-count comparison and worker logging correction — 2026-11-06
+
+The [first native async5000 case](evidence/native-epoch2-dag-volume5000-2026-11-06/async-v1/index.json)
+passed 1 case / 2225.473s with exact three 5000-call/effect branches and fixed
+4 TaskRuns / 4 births / 7 channels. Independent Principal file-only review is not a
+second native5k run. The [normal async500 comparison](evidence/native-epoch2-dag-volume5000-2026-11-06/async500-comparison-v1/index.json)
+now records 13 observed cardinality/role comparisons MATCH at d906. This supports
+A43-04 counts only; A43-04/05/07 remain scoped. No final allocation SQL/external
+KV observation or independent CI HTTP/retry replay is inferred. PG samples begin
+692/690/694 and end preterminal 4888/4881/4894. [Cleanup limits](evidence/native-epoch2-dag-volume5000-2026-11-06/async-v1/qualifications/cleanup-attribution-v1/index.json)
+retain zero sessions at driver check/two fresh names absent afterward, with earlier
+framework cleanup uninstrumented.
+
+[Controlled logging baseline](evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/baseline-v1/index.json)
+remains1 FAIL / 6 PASS / 94.20s at INFO20; its two generated before-binding gaps remain
+qualified. The [test-only corrected module](evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/actualpassed-module-v1/index.json)
+now has 151 PASS / 82.37s/actual pytest exit 0/tool exit 0, 1756 prebound source files with no drift,
+1216 imports with no mismatch, five new PIDs closed and retained fresh DB sessions0.
+Its Principal review is file-only, not personal151 execution. Production code
+is unchanged. The [interrupted151 wrapper](evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/failed-candidate-module-v1/index.json)
+and [recovered7PASS wrapperexit1/waitUNKNOWN](evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/recovered-selected-v1/index.json)
+retain their qualifications; the old dead unreaped zombie is separate from
+successful v4/native5k closure. Historical CI gw0 ordering/cause remains unknown.
+
+The [old d906 CI snapshot](evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/actualpassed-module-v1/root/old-ci-snapshot.json)
+(04:49:28Europe/Moscow/01:49:28 UTC) reports 13/19 runtime cases PASS and the known
+General logging failure. It proves neither new-head green CI nor the unpublished
+correction. See the [epoch note](epochs/epoch-02-native-streaming-completion.md#n22-async5000-observed-count-comparison-and-worker-logging-correction--2026-11-06)
+for source/audit limits. Other three local heavy profiles and full 19/four-heavy/
+NI2-014 remain open. NI2-012/N2.2b stay `progress`, **15% earned**, zero new credit;
+planned 27% and whole ADR-0043 acceptance remain unearned.

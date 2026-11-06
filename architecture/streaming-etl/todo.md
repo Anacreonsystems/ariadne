@@ -72,7 +72,7 @@ appended to each approved ADR.
 | --- | --- | --- | --- | --- |
 | NI2-010 | `accepted` | NI2-006 | M/H | Seal named typed ports, DAG revision and acyclic topology; reject cycles, duplicate subscribers and unsupported edges before user code. The [Principal acceptance](evidence/native-epoch2-ni2-010-principal-acceptance-2026-11-05/acceptance.json) closes the metadata-only component with zero earned epoch percentage; public execution remains fenced. A43-02 remains partial until NI2-012…014. |
 | NI2-011 | `accepted` | NI2-010 | L/H | Materialize bounded forward/rebalance/broadcast/keyed routes in the existing terminal transaction, with independent edge partitions/cursors/pins. The [Principal acceptance](evidence/native-epoch2-routed-server-2026-11-05/principal-v1/acceptance.json) closes the finite storage component with zero earned epoch percentage; public DAG execution remains fenced until NI2-012. A43-03 and A43-09 remain partial. |
-| NI2-012 | `progress` | NI2-010, NI2-011 | M/H | SDK/client/worker graph bootstrap and fan-out with ordinary Task definitions and constant fixed-graph metadata. Latest held parent-lock correction has 50 independent checks PASS and personally verified native synchronous 500-record accepted200/incomplete200 pair PASS with exact effects, healthy-sibling continuity and full scoped graph/coordinator release plus whole-health. Committed 7d99 hosted DAG500 sync/async exact gates PASS; remaining async recovery, corrected 5000-record and full hosted/frozen-union exits stay open. Historical failures and unknown b4 blocker remain retained. A42-02, A43-02, A43-04; current correction evidence maps A43-05/A43-07. Earned 15%, no new credit. |
+| NI2-012 | `progress` | NI2-010, NI2-011 | M/H | SDK/client/worker graph bootstrap and fan-out. First d906 native async DAG5000 PASS with exact effects,4TaskRuns/4births/7channels; normal async500↔5000 thirteen observed metadata comparisons MATCH. Scoped A43-04/05/07 evidence; no final allocation SQL/external KV inference. Logger baseline1FAIL/6PASS is qualified; test-only candidate151PASS/pytest0/tool0 has file-only peer review. Prior wrappers remain qualified. Last old-head CI13/19 runtime PASS/known General logging failure, other three local heavy/full19/four-heavy/NI2-014 gates open. A42-02/A43-02/04;15% earned, no new credit. |
 | NI2-013 | `planned` | NI2-011, NI2-012 | M/H | Exact append/read retry and branch replacement with immutable route digest, different partition counts and no cross-branch acknowledgement. A43-03, A43-09. |
 | NI2-014 | `planned` | NI2-010…013 | M/H | Real branched native process gate and independent Principal verification on frozen source. A43-02, A43-03, A43-09. |
 
@@ -1124,3 +1124,36 @@ reports limit whole-health attribution.
 NI2-012/N2.2b and ADR-0043 remain `progress`, with **15% earned**. Async recovery,
 corrected 5000 and full hosted/frozen-union exits remain open. The planned 27%
 and whole-ADR completion are not earned; historical failures remain intact.
+
+
+## N2.2 async5000, observed-count comparison and worker logging correction — 2026-11-06
+
+The [first native async5000 case](evidence/native-epoch2-dag-volume5000-2026-11-06/async-v1/index.json)
+passed 1 case / 2225.473s with exact three 5000-call/effect branches and fixed
+4 TaskRuns / 4 births / 7 channels. Independent Principal file-only review is not a
+second native5k run. The [normal async500 comparison](evidence/native-epoch2-dag-volume5000-2026-11-06/async500-comparison-v1/index.json)
+now records 13 observed cardinality/role comparisons MATCH at d906. This supports
+A43-04 counts only; A43-04/05/07 remain scoped. No final allocation SQL/external
+KV observation or independent CI HTTP/retry replay is inferred. PG samples begin
+692/690/694 and end preterminal 4888/4881/4894. [Cleanup limits](evidence/native-epoch2-dag-volume5000-2026-11-06/async-v1/qualifications/cleanup-attribution-v1/index.json)
+retain zero sessions at driver check/two fresh names absent afterward, with earlier
+framework cleanup uninstrumented.
+
+[Controlled logging baseline](evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/baseline-v1/index.json)
+remains1 FAIL / 6 PASS / 94.20s at INFO20; its two generated before-binding gaps remain
+qualified. The [test-only corrected module](evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/actualpassed-module-v1/index.json)
+now has 151 PASS / 82.37s/actual pytest exit 0/tool exit 0, 1756 prebound source files with no drift,
+1216 imports with no mismatch, five new PIDs closed and retained fresh DB sessions0.
+Its Principal review is file-only, not personal151 execution. Production code
+is unchanged. The [interrupted151 wrapper](evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/failed-candidate-module-v1/index.json)
+and [recovered7PASS wrapperexit1/waitUNKNOWN](evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/recovered-selected-v1/index.json)
+retain their qualifications; the old dead unreaped zombie is separate from
+successful v4/native5k closure. Historical CI gw0 ordering/cause remains unknown.
+
+The [old d906 CI snapshot](evidence/native-epoch2-worker-log-ci-isolation-2026-11-06/actualpassed-module-v1/root/old-ci-snapshot.json)
+(04:49:28Europe/Moscow/01:49:28 UTC) reports 13/19 runtime cases PASS and the known
+General logging failure. It proves neither new-head green CI nor the unpublished
+correction. See the [epoch note](epochs/epoch-02-native-streaming-completion.md#n22-async5000-observed-count-comparison-and-worker-logging-correction--2026-11-06)
+for source/audit limits. Other three local heavy profiles and full 19/four-heavy/
+NI2-014 remain open. NI2-012/N2.2b stay `progress`, **15% earned**, zero new credit;
+planned 27% and whole ADR-0043 acceptance remain unearned.

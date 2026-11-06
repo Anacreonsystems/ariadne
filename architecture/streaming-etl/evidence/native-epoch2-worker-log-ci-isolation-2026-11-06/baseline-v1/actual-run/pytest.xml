@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="7" time="96.561" timestamp="2026-11-06T01:00:17.146669+00:00" hostname="f8abb611283c"><testcase classname="tests.cli.test_config" name="test_view_prefers_canonical_dot_env_value_over_alias" time="49.250" /><testcase classname="tests.test_logging.TestWorkerLogging" name="test_get_worker_logger_works_with_no_backend_id" time="10.569" /><testcase classname="tests.test_logging.TestWorkerLogging" name="test_get_worker_logger_works_with_backend_id" time="9.794" /><testcase classname="tests.test_logging.TestWorkerLogging" name="test_worker_emits_logs_with_worker_id" time="4.130" /><testcase classname="tests.test_logging.TestWorkerLogging" name="test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud" time="7.503"><failure message="assert 0 == 1&#10; +  where 0 = len([])">self = &lt;tests.test_logging.TestWorkerLogging object at 0x7fc5fd323b30&gt;
+mock_log_worker = &lt;MagicMock id='140488641095744'&gt;
+
+    @pytest.mark.usefixtures("worker_handler", "logging_to_api_enabled")
+    async def test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud(
+        self, mock_log_worker: MagicMock
+    ):
+        async with self.CloudWorkerTestImpl(
+            name="test", work_pool_name="test-work-pool"
+        ) as worker:
+            await worker.sync_with_backend()
+            with temporary_settings(
+                {
+                    PREFECT_API_URL: "https://api.prefect.cloud/api/accounts/test/workspaces/test"
+                }
+            ):
+                worker._logger.debug("test-worker-log")
+    
+        log_statement = [
+            log
+            for call in mock_log_worker.instance().send.call_args_list
+            for log in call.args
+            if log["name"] == worker._logger.name
+            and log["message"] == "test-worker-log"
+        ]
+    
+&gt;       assert len(log_statement) == 1
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/test_logging.py:1130: AssertionError</failure></testcase><testcase classname="tests.test_logging.TestWorkerLogging" name="test_worker_logger_does_not_send_logs_when_not_connected_to_cloud" time="2.739" /><testcase classname="tests.test_logging.TestWorkerLogging" name="test_self_hosted_registered_worker_keeps_console_logs_without_shipping" time="4.024" /></testsuite></testsuites>
