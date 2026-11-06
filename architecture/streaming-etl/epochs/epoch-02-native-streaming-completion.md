@@ -1616,3 +1616,28 @@ no retry/profile work authorized by this evidence. All earlier versions,
 approvedADR42–48 bodies/AC/history and packets remain immutable. NI2-012…014
 OPEN/BLOCKED/NI2-020blocked/15%earned/27unearned, no full19/fourheavy/SourceGate
 acceptance; conflict scan incomplete/grill-me/spec-first variants excluded.
+
+
+## N2.2 single-leaf cursor latch and scheduling cap — 2026-11-06
+
+The [small closed fixture/cap proof](../evidence/native-epoch2-dag-volume5000-2026-11-06/ed892-leaf-latch-cap-v1/index.json)
+binds publisheded892 plus exactthree-file candidate/e624: DAGtest9f7 holds only
+B's final acceptance while SourceA/healthyC reach EOF; CImaxparallel1→3 and its
+existing selection guard change, production/DB protocol/matrix/budgets/oracles
+unchanged. Authorrebalance64 PASS54.296 and syncincomplete200 PASS219.818;
+Principal personalrebalance PASS54.10/JUnit54.451 and asyncaccepted200
+PASS216.30/JUnit216.745. Allfour pytest/tool0/no skips, source1604drift0/import
+mismatch0/originalhealth+retirement+release checks pass, retainedDB sessions[];
+all50knownPID/start identities gone. Captures witness A/Ccomplete/Bheld with
+threefrontiers32/32/64 or500/500/500. Syncincomplete retains replay; asyncaccepted
+resumes201/no replay/C500once. Original150/210/300 and750/840/900 budgets stay.
+
+Eight real-filesystem/stub-domain latch controls pass; selection9PASS/actionlint0
+are direct observed output with no persisted log (external shellcheck/pyflakes
+disabled). Olded892CIrebalance FAIL250.39/proximalSDKwaitTimeout and underlying
+noncompletionUNKNOWN remain historical. Localfixture-overlap verification is
+not CPU/product/host-cause proof, hostedCIgreen, performance/SLO or full19/fourheavy
+acceptance. Rawreceipts/ownedheaders/source/config/profiler copies excluded;
+prior history remains exact. NI2-012…014OPEN/BLOCKED/NI2-020blocked/15%earned/
+27unearned; approvedADR42–48 bodies/AC unchanged, conflict scan incomplete and
+grill-me/spec-first variants excluded.

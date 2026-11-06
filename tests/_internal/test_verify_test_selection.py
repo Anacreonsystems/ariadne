@@ -321,7 +321,7 @@ def test_actual_runtime_matrix_covers_every_required_case(
         ]
         workflow = yaml.safe_load(WORKFLOW.read_text())
         runtime_strategy = workflow["jobs"]["run-native-runtime-case"]["strategy"]
-        assert runtime_strategy["max-parallel"] == 1
+        assert runtime_strategy["max-parallel"] == 3
         assert json.loads(output.read_text().removeprefix("cases=")) == matrix
 
 

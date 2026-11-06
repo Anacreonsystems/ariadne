@@ -163,7 +163,6 @@ def source(ctx, directory: str, count: int, mode: str, keyed: bool = False):
         if count > 8 and position == count and mode in {"normal", "accepted200", "incomplete200"}:
             if mode != "normal":
                 wait_for_file(directory, "replacement-started.json")
-            wait_for_file(directory, "all-cursors-observed", final_cursor_budget(count))
         if mode in {"failure", "cancel"}:
             time.sleep(60)
 
@@ -180,7 +179,6 @@ async def source_async(ctx, directory: str, count: int, mode: str, keyed: bool =
         if count > 8 and position == count and mode in {"normal", "accepted200", "incomplete200"}:
             if mode != "normal":
                 await wait_for_file_async(directory, "replacement-started.json")
-            await wait_for_file_async(directory, "all-cursors-observed", final_cursor_budget(count))
         if mode in {"failure", "cancel"}:
             await anyio.sleep(60)
 
@@ -218,7 +216,7 @@ def operator(ctx, document, directory: str, role: str, count: int = 8, mode: str
             ready = cut_ready(ctx, directory, mode)
             wait_for_file(directory, "branch-cut-observed", 120)
             exit_at_cut(directory, ready)
-        if count > 8 and document["number"] == count and mode in {"normal", "accepted200", "incomplete200"}:
+        if role == "B" and count > 8 and document["number"] == count and mode in {"normal", "accepted200", "incomplete200"}:
             wait_for_file(directory, "all-cursors-observed", final_cursor_budget(count))
 
 
@@ -239,7 +237,7 @@ async def operator_async(ctx, document, directory: str, role: str, count: int = 
             ready = cut_ready(ctx, directory, mode)
             await wait_for_file_async(directory, "branch-cut-observed", 120)
             exit_at_cut(directory, ready)
-        if count > 8 and document["number"] == count and mode in {"normal", "accepted200", "incomplete200"}:
+        if role == "B" and count > 8 and document["number"] == count and mode in {"normal", "accepted200", "incomplete200"}:
             await wait_for_file_async(directory, "all-cursors-observed", final_cursor_budget(count))
 
 

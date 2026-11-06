@@ -1177,3 +1177,16 @@ primariesUNKNOWN; four5000queued/notgreen. Yappi297.43 remainsstrictFAIL/noYSTAT
 noCPUattribution; earlier cProfilePASS/INVALID and273c history preserved.
 [Version/clock/control limits](epochs/epoch-02-native-streaming-completion.md#n22-bounded-p2-eof-rendezvous-and-dag-failure-visibility--2026-11-06):
 NI2-012…014OPEN/BLOCKED/NI2-020blocked/15%earned/27unearned; no fullgate credit.
+
+
+## N2.2 single-leaf cursor latch and scheduling cap — 2026-11-06
+
+[Closed small ed892+candidate proof](evidence/native-epoch2-dag-volume5000-2026-11-06/ed892-leaf-latch-cap-v1/index.json):
+B-only finalcursor latch preserves A/C EOF overlap; CIcap1→3+existingguard only.
+Authorrebalance54.296/syncincomplete219.818 and Principalpersonalrebalance54.10/
+asyncaccepted216.30 PASS; originalbudgets/health/replay/release/source/import/
+ownedclosure checks retained. Actual32/32/64 and500cursor witnesses, accepted201
+withoutreplay/incomplete200replay remain distinct. Eight latch controls and
+directselection9PASS/actionlint0 are qualified, notCIgreen. OldCI250.39Timeout/
+underlyingUNKNOWN retained; [limits](epochs/epoch-02-native-streaming-completion.md#n22-single-leaf-cursor-latch-and-scheduling-cap--2026-11-06).
+No CPU/productcause/full19/fourheavy credit; NI014blocked/15%earned/27unearned.
