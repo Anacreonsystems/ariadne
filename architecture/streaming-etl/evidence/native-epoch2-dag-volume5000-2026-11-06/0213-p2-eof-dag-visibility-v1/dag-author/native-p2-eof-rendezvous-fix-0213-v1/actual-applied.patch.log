@@ -1,0 +1,73 @@
+diff --git a/tests/fixtures/native_partitioned_stream_flow.py b/tests/fixtures/native_partitioned_stream_flow.py
+index e583cb7..3d5b2cb 100644
+--- a/tests/fixtures/native_partitioned_stream_flow.py
++++ b/tests/fixtures/native_partitioned_stream_flow.py
+@@ -3,6 +3,7 @@
+ import asyncio
+ import atexit
+ import json
++import math
+ import os
+ import sys
+ import time
+@@ -79,6 +80,19 @@ if (
+         raise SystemExit(73)
+ 
+ 
++def _wait_for_replacement(target: Path) -> None:
++    # This fixture and its parent test share one host's monotonic clock.
++    deadline = float((target / "replacement-observation-deadline").read_text())
++    if not math.isfinite(deadline) or deadline <= 0:
++        raise ValueError("Invalid replacement observation deadline")
++    while not (target / "replacement-started").exists():
++        if time.monotonic() >= deadline:
++            raise TimeoutError(
++                "Replacement did not start before the case observation deadline"
++            )
++        time.sleep(0.02)
++
++
+ @task(
+     version="native-partitioned-v1",
+     retries=2,
+@@ -102,13 +116,7 @@ def partitioned_source(
+                 str(time.monotonic_ns())
+             )
+     if fault in {"operator-loss-200", "operator-before-yield-200"}:
+-        deadline = time.monotonic() + 90
+-        while not (target / "replacement-started").exists():
+-            if time.monotonic() > deadline:
+-                raise TimeoutError(
+-                    "Replacement did not start while healthy sources waited"
+-                )
+-            time.sleep(0.02)
++        _wait_for_replacement(target)
+ 
+ 
+ @task(
+diff --git a/tests/test_native_partitioned_stream_http.py b/tests/test_native_partitioned_stream_http.py
+index 3b3c1ab..8be03d4 100644
+--- a/tests/test_native_partitioned_stream_http.py
++++ b/tests/test_native_partitioned_stream_http.py
+@@ -399,12 +399,20 @@ async def test_actual_process_worker_runs_four_partition_tasks(
+                     break
+             assert time.monotonic() < deadline, diagnostics()
+             time.sleep(0.1)
++        # Publish before the Flow can launch; use this same finite deadline
++        # for both the healthy-source rendezvous and parent observation.
++        deadline = time.monotonic() + (3540 if count == 5000 else 840)
++        if fault in {"operator-loss-200", "operator-before-yield-200"}:
++            staged_deadline = tmp_path / "replacement-observation-deadline.tmp"
++            with staged_deadline.open("x") as output:
++                output.write(repr(deadline))
++            staged_deadline.replace(tmp_path / "replacement-observation-deadline")
++            lifecycle_checks["replacement_observation_deadline"] = deadline
+         with server.client() as client:
+             run = client.create_flow_run_from_deployment(
+                 deployment_id,
+                 parameters={"directory": str(tmp_path), "count": count, "fault": fault},
+             )
+-        deadline = time.monotonic() + (3540 if count == 5000 else 840)
+         observed = False
+         while True:
+             assert all(worker.poll() is None for worker in workers), diagnostics()

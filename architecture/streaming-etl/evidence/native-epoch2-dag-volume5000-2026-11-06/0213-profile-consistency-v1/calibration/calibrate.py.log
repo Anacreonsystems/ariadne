@@ -1,0 +1,86 @@
+"""Root-authorized benign calibration; no application imports, DB, API or signals."""
+import cProfile
+import hashlib
+import json
+from pathlib import Path
+import pstats
+import sys
+import threading
+import time
+import greenlet
+
+BASE = Path(__file__).resolve().parent
+
+def burn(count=160_000):
+    value = 1
+    for number in range(count):
+        value = (value * 33 + number) % 65521
+    return value
+
+def plain_cpu():
+    for _ in range(3):
+        burn()
+
+def cooperative_greenlets():
+    parent = greenlet.getcurrent()
+    def child_cpu():
+        for _ in range(40):
+            burn(4000)
+            parent.switch()
+    child = greenlet.greenlet(child_cpu)
+    for _ in range(40):
+        burn(4000)
+        child.switch()
+    if not child.dead:
+        child.switch()
+    assert child.dead
+
+def foreign_thread_marker():
+    burn(300_000)
+
+def bounded_thread_scope():
+    child = threading.Thread(target=foreign_thread_marker)
+    child.start()
+    burn(100_000)
+    child.join()
+    assert not child.is_alive()
+
+factories = {
+    'thread_ns': lambda: cProfile.Profile(timer=time.thread_time_ns, timeunit=1e-9),
+    'thread_float': lambda: cProfile.Profile(timer=time.thread_time),
+    'monotonic_ns': lambda: cProfile.Profile(timer=time.perf_counter_ns, timeunit=1e-9),
+    'builtin_default': lambda: cProfile.Profile(),
+}
+results = []
+for timer, factory in factories.items():
+    for kind, workload in [('plain_cpu', plain_cpu), ('greenlet', cooperative_greenlets), ('thread_scope', bounded_thread_scope)]:
+        assert sys.getprofile() is None
+        profile = factory()
+        wall, cpu, process = time.monotonic(), time.thread_time(), time.process_time()
+        profile.enable(subcalls=True, builtins=True)
+        workload()
+        profile.disable()
+        observed = {'wall_seconds': time.monotonic()-wall, 'main_thread_cpu_seconds': time.thread_time()-cpu, 'process_cpu_seconds': time.process_time()-process}
+        path = BASE / (timer + '-' + kind + '.pstats')
+        profile.dump_stats(str(path))
+        stats = pstats.Stats(str(path)).stats
+        foreign = [key for key in stats if key[2] == 'foreign_thread_marker']
+        values = list(stats.values())
+        results.append({'timer': timer, 'case': kind, **observed,
+            'sum_self_seconds': sum(value[2] for value in values),
+            'max_self_seconds': max(value[2] for value in values),
+            'negative_self_count': sum(value[2] < 0 for value in values),
+            'cumulative_less_than_self_count': sum(value[3]+1e-12 < value[2] for value in values),
+            'foreign_thread_marker_captured': bool(foreign),
+            'functions': len(stats), 'pstats_sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+assert not any(name == 'prefect' or name.startswith('prefect.') for name in sys.modules)
+result = {'status': 'BENIGN_CALIBRATION_COMPLETED', 'executable': sys.executable,
+    'python': sys.version, 'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+    'greenlet_file_sha256': hashlib.sha256(Path(greenlet.__file__).read_bytes()).hexdigest(),
+    'cProfile_source_sha256': hashlib.sha256(Path(cProfile.__file__).read_bytes()).hexdigest(),
+    'application_imported': False, 'DB_API_native_signals': False, 'all_owned_threads_joined': True,
+    'timing_quality': 'Short synthetic workloads only; no application performance or accepted gate claim.',
+    'results': results}
+output = BASE / 'result.json'
+output.write_text(json.dumps(result, indent=2, sort_keys=True)+'\n')
+print(json.dumps({'result': str(output), 'sha256': hashlib.sha256(output.read_bytes()).hexdigest(), 'cases': len(results), 'status': result['status']}))

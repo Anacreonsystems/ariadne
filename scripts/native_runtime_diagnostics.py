@@ -18,6 +18,7 @@ JSON_NAMES = {
     "case-observation.json",
     "coordinator-retirement.json",
     "worker-health.json",
+    "dag-flow-failure.json",
     "branch-cut-ready.json",
     "branch-cut-observation.json",
     "branch-loss.json",

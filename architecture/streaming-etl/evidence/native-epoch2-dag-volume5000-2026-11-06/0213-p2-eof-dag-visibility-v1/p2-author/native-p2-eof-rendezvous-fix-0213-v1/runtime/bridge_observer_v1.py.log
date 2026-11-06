@@ -1,0 +1,33 @@
+"""Read only owned P2 trial artifacts, never DB or process control."""
+import datetime,json,pathlib,re,sys,time
+base=pathlib.Path('/tmp/native-p2-eof-rendezvous-fix-0213-v1/runtime')
+trial=pathlib.Path(sys.argv[1]);assert trial.is_absolute() and trial.parent==base
+row={'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'monotonic_ns':time.monotonic_ns(),'trial':str(trial),'fixtures':[],'health':{'exact_api_access_5xx':[],'TimeoutError':[],'unexpected_assignment_epoch':[]},'durable_cursor_observation':'not written by unchanged P2 fixture; external Root observer required'}
+ansi=re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]');access=re.compile(r'\bHTTP/\d(?:\.\d)?[\"\']?\s+5\d{2}\b')
+def lines(path):
+ try:return path.read_text(errors='replace').splitlines()
+ except FileNotFoundError:return []
+for directory in sorted((trial/'pytest').glob('*')):
+ if not directory.is_dir() or directory.is_symlink():continue
+ item={'directory':str(directory),'body_calls':{},'signed_effect_files':len(list(directory.glob('signed-*.json'))),'source_first_accepted_markers':[p.name for p in directory.glob('source-first-accepted-*.time')],'pid_markers':[p.name for p in directory.glob('*.pid')]}
+ for path in directory.glob('calls-*.jsonl'):
+  calls=[]
+  for line in lines(path):
+   try:calls.append(json.loads(line))
+   except json.JSONDecodeError:continue
+  if calls:item['body_calls'][path.name]={'count':len(calls),'last_sequence':calls[-1]['sequence'],'pids':sorted({v['pid'] for v in calls}),'task_run_ids':sorted({v['task_run_id'] for v in calls}),'assignment_epochs':sorted({v.get('assignment_epoch') for v in calls})}
+  for value in calls:
+   if value.get('assignment_epoch') != 1:row['health']['unexpected_assignment_epoch'].append({'file':path.name,'sequence':value.get('sequence'),'assignment_epoch':value.get('assignment_epoch')})
+ observation=directory/'case-observation.json'
+ if observation.exists():
+  try:item['case_observation']=json.loads(observation.read_text())
+  except json.JSONDecodeError:pass
+ for log in [*directory.glob('api-*.log'),directory/'worker-left.log',directory/'worker-right.log']:
+  for number,line in enumerate(lines(log),1):
+   plain=ansi.sub('',line)
+   if log.name.startswith('api-') and access.search(plain):row['health']['exact_api_access_5xx'].append({'file':log.name,'line':number})
+   if re.search(r'\bTimeoutError\b',plain):row['health']['TimeoutError'].append({'file':log.name,'line':number})
+ row['fixtures'].append(item)
+row['unexpected_health_observed']=any(row['health'].values())
+with (trial/'bridge-live-observations.jsonl').open('a') as stream:stream.write(json.dumps(row,sort_keys=True)+'\n')
+print(json.dumps(row,sort_keys=True))

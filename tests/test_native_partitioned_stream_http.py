@@ -399,12 +399,20 @@ async def test_actual_process_worker_runs_four_partition_tasks(
                     break
             assert time.monotonic() < deadline, diagnostics()
             time.sleep(0.1)
+        # Publish before the Flow can launch; use this same finite deadline
+        # for both the healthy-source rendezvous and parent observation.
+        deadline = time.monotonic() + (3540 if count == 5000 else 840)
+        if fault in {"operator-loss-200", "operator-before-yield-200"}:
+            staged_deadline = tmp_path / "replacement-observation-deadline.tmp"
+            with staged_deadline.open("x") as output:
+                output.write(repr(deadline))
+            staged_deadline.replace(tmp_path / "replacement-observation-deadline")
+            lifecycle_checks["replacement_observation_deadline"] = deadline
         with server.client() as client:
             run = client.create_flow_run_from_deployment(
                 deployment_id,
                 parameters={"directory": str(tmp_path), "count": count, "fault": fault},
             )
-        deadline = time.monotonic() + (3540 if count == 5000 else 840)
         observed = False
         while True:
             assert all(worker.poll() is None for worker in workers), diagnostics()

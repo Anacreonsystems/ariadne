@@ -1,0 +1,128 @@
+{
+  "decision": "CONFIRMED_DIAGNOSTIC_THREAD_SCOPE_DEFECT_TIMING_ATTRIBUTION_INCONCLUSIVE_NATIVE_PASS_PRESERVED",
+  "created_at_utc": "2026-11-06T13:20:36.719975+00:00",
+  "scope": "Independent closed-file/raw-marshal/source/binary audit only. No profiler or calibration/application/DB/native/CI execution by reviewer.",
+  "input_scope": {
+    "path": "/tmp/native-profile-consistency-audit-0213-v1/closed-profile-scope-v1.json",
+    "sha256": "e02eabe17759f664382789f9278ce808f8a8f8251889568f2c7bf3ae5dffc77e",
+    "files": [
+      {
+        "bytes": 512147,
+        "path": "/tmp/native-api-mainthread-cprofile-0213-v1/control-0c436ff3/api-mainthread.pstats",
+        "sha256": "c7b871cc8f513eaecc01294f3c1d1d84d660b833442e55fb6cdcddd18c8d6ae7"
+      },
+      {
+        "bytes": 17170,
+        "path": "/tmp/native-api-mainthread-cprofile-0213-v1/control-0c436ff3/api-mainthread-profile.json",
+        "sha256": "aad5b2ec3e18ce735811a8583501e333dc1242b86b9e2024d679a558b5c77eb1"
+      },
+      {
+        "bytes": 17655,
+        "path": "/tmp/native-api-mainthread-cprofile-0213-v1/control-0c436ff3/profile-final-qualified.json",
+        "sha256": "9d27ebb1ebc6deed9631f8c7ae409ce726dc0be33bde23afbe9af7a0c59141ee"
+      },
+      {
+        "bytes": 81662,
+        "path": "/tmp/native-api-mainthread-cprofile-0213-v1/control-0c436ff3/pstats-derived-summary.json",
+        "sha256": "ea8e8de1ed839eeb994f3a550c566fda6680b4611422567661b390b4458a6db0"
+      },
+      {
+        "bytes": 1149,
+        "path": "/tmp/native-profile-consistency-audit-0213-v1/consistency-readout-v1.json",
+        "sha256": "6c8b1d8638962ae38674cc882d9732473b36d33c1f5521e2145e4df9a6bc4b61"
+      },
+      {
+        "bytes": 4109,
+        "path": "/tmp/native-profile-consistency-audit-0213-v1/safe-native-summary-v1.json",
+        "sha256": "dd2a6bdbeffb2437205c2893f844c78543e71dc53f8bf1539f983ed6a524b8aa"
+      }
+    ],
+    "original_native_receipt": "Hash991193a706c5341c7403e217ef16c90ada42230111292599c23c41b3923f3745 referenced by owner; NOT read because raw identity marker excluded."
+  },
+  "actual_asset_bindings": {
+    "manifest": "48c8813e160fce331006c6f3d48db7ad54043e8b510d03c7d6313b28c2a155dc",
+    "head": "0213b24fefdd3561b95d8dadf356482c89c67903",
+    "source1604": "61c6654ff845c4ceb11414a0e457f693814b36f3f34958de1e38ceabbc9e799e",
+    "profile_window": "45a2c699c8da860ae917f36953ec04709bac4655d9c8d84f21988bb3e99c0755",
+    "runner": "304a5f90c7b64426e64cd6426cb8850f8cd71e93286d2c58d152509d42d59a46",
+    "derive_profile": "d0cb7f1e32580c46a34f89d1143be94543f7eb1c326ab1c57923b45604177d26",
+    "actual_executable": {
+      "path": "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3.12",
+      "sha256": "fa67443527ed9647f760d807e2a38f26340757123e643c4639cf273ed15d5ea7"
+    }
+  },
+  "raw_facts": {
+    "functions": 2757,
+    "actual_window_wall_seconds": 20.00846923,
+    "recorded_mainthread_cpu_seconds": 19.668770813,
+    "sum_raw_self_seconds": -0.33020941000105297,
+    "negative_self_entries": 13,
+    "self_above_recorded_mainthread_cpu_entries": 29,
+    "cumulative_below_self_entries": 14
+  },
+  "confirmed_findings": [
+    {
+      "location": "profile_window.py:92 and Window.gate/start/stop",
+      "finding": "Main-thread enable and same-thread timer callbacks do not restrict collection population in this exact Python3.12.14 monitoring-based cProfile implementation. Foreign thread callbacks run the same thread_time_ns timer against a shared Profiler call context, mixing different per-thread clock origins and stacks. The approved main-thread-only assumption was false; earlier fake-profiler tests did not exercise backend event scope."
+    },
+    {
+      "location": "Exact executable fa674435 profiler_enable0x49b200; pystart_callback0x49a5b0; ptrace_enter_call0x49a5f0; ptrace_leave_call0x49a6c0; CallExternalTimer0x49ac50; Stop0x49ad40",
+      "finding": "Read-only disassembly imports sys.monitoring/use_tool_id/register_callback/set_events. Python start/return callbacks directly update the shared Profiler+0x18 context without an owner-thread test; CallExternalTimer invokes the configured timer on the executing callback thread; Stop subtracts the saved context timer. Actual ELF DT_NEEDED has no libpython entry: installed libpython7e177a is corroborating build evidence, not independently established as this executable linked dependency."
+    },
+    {
+      "location": "derive_profile.py:20-28 and installed cProfile.py:57-82",
+      "finding": "Function tuples are correctly interpreted as primitive_calls,total_calls,self_seconds,cumulative_seconds,callers, with tt from entry.inlinetime and ct from entry.totaltime. Direct raw marshal values exactly match derived top fields. No postprocessing rescale exists. Integer nanoseconds with timeunit1e-9 are the documented positive-unit path; a uniform rescale would preserve negatives and cumulative/self inequalities and cannot repair these values."
+    },
+    {
+      "location": "runner.py profile_audit and final raw capture status",
+      "finding": "BOUNDED_PROFILE_CAPTURED describes successful structural capture/ownership/window, not valid timing attribution. The current validity expression checks metadata status/errors but no exclusive-time conservation/domain invariants; therefore it is insufficient as timing-quality acceptance. Preserve original status/raw bytes and add separate INCONCLUSIVE_FOR_TIMING_ATTRIBUTION qualification before any ranking/product conclusion."
+    }
+  ],
+  "concrete_examples": {
+    "socket_send": {
+      "raw_self_seconds": 19498.316925993,
+      "raw_cumulative_seconds": 19439.225020506,
+      "primitive_calls": 10958,
+      "total_calls": 11593,
+      "interpretation": "Impossible CPU attribution, not evidence of a network hotspot."
+    },
+    "concurrent_futures_thread_run": {
+      "calls": 274,
+      "raw_self_seconds": -36.063908558,
+      "raw_cumulative_seconds": -5687.123441473001,
+      "interpretation": "Foreign-thread work and invalid arithmetic already present in original binary."
+    }
+  },
+  "corroborating_closed_principal_calibrations": {
+    "owner": "/root/etl_principal_recovery2",
+    "execution_by_this_reviewer": false,
+    "calibration_result": {
+      "path": "/tmp/native-profile-consistency-audit-0213-v1/calibration/result.json",
+      "sha256": "4bb07efeb5c5ec11c07504f5545a22374c8dbc4312fca72fd8e400047a1578d8"
+    },
+    "monitoring_probe": {
+      "path": "/tmp/native-profile-consistency-audit-0213-v1/calibration/monitoring-probe-result.json",
+      "sha256": "7ccf31c5e5635f924bd3313bd2432b2e9ed6901eb6338ddce3dad8ba59144bb7"
+    },
+    "source_hashes_match_results": true,
+    "facts": [
+      "Twelve tiny cases: plain CPU and simple cooperative greenlet are sane with all four timers; this does not prove every async/greenlet path safe.",
+      "Foreign-thread marker appears with thread_ns,thread_float,monotonic_ns and builtin default. Both thread clocks produce negative self entries, falsifying ns-unit-only and greenlet-required explanations.",
+      "Monitoring probe shows cProfile/eventmask12319 in main and foreign thread while sys.getprofile/threading.getprofile are False; foreign-only target marker is captured; all owned threads joined.",
+      "Default/monotonic clocks removing negative self does not restore promised main-thread population or prove correct nested cross-thread attribution."
+    ]
+  },
+  "what_remains_unknown": "The exact contribution of other async/greenlet accounting effects to every native row is unproven. The cross-thread scope/clock defect is independently sufficient and reproduced without greenlet. No application or CI critical-path cause is established.",
+  "minimal_correction_and_falsifiers": [
+    "Preserve every original raw/derived/native file and structural status; qualify timing attribution separately as INCONCLUSIVE. Do not normalize corrupt values, relabel units or use top-function ranking.",
+    "Before any successor, prove actual callback scope and clock domain on this exact interpreter using unique foreign-thread markers plus independent clocks. A main-thread claim requires zero foreign-only markers and callback filtering before shared profiler state/timer, or a profiler with demonstrated thread-local contexts.",
+    "A common process clock is a new explicitly whole-process candidate, not a unit repair. Require known distinct CPU markers/caller relationships/counts under concurrent threads; nonnegative self and a matching grand total alone are insufficient.",
+    "Guard active sys.monitoring PROFILER_ID occupancy as well as legacy profile hooks without mutating unrelated monitoring tools. Keep trace/debug intrinsic facts separate from absence of all monitoring instrumentation.",
+    "Timing-quality checks should reject material negative exclusive times, self above owned-clock budget, impossible cumulative/self relationships and invalid exclusive totals before any hotspot attribution; retain complete anomaly facts.",
+    "No further original native case, app/DB/API/CI action or source correction is authorized by this audit. Any future calibration is Principal-owned under Root scope; any new diagnostic assets need exact review before a new original-case GO."
+  ],
+  "native_outcome": "Original instrumented native case PASS remains independent: one selected test/tool0,source1604drift0/import3884mismatch0,1500effects/all six wider health lists empty,authority/snapshot/launch RELEASED,retainedDB0sessions,ownedPIDclosure clean. Console254.84s is owner/root-reported; allowed safe JUnit summary255.178s is separately retained. No throughput/CI parity/speedup/readiness credit.",
+  "prior_review_accountability": "The prior f480c5d2 source approval correctly checked lifecycle and declared unit/identity mechanics but missed the installed cProfile backend collection population. This audit explicitly corrects that main-thread-only conclusion; it is not a product runtime regression or a rejection/rewrite of approved ADR bodies.",
+  "actions": "Bounded safe closed files read and hashes, direct marshal decode, source reads and executable nm/objdump/readelf only; no project/asset imports, profiler enable, calibration, tests, DB, network, hooks, process controls or repository/index/source/doc mutations. New output is only this compact outside receipt.",
+  "exclusions": "Cloud conflict scan incomplete; all grill-me/spec-first case/space/hyphen variants excluded. User legacy ADR paths/statuses and immutable approved bodies/AC prevail; NI014/NI020blocked15% unchanged."
+}

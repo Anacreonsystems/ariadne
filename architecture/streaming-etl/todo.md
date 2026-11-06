@@ -1428,3 +1428,34 @@ retains failed retry2/no mutations and only three additional exact archive skip
 paths, pyproject9fe→63942325. Independent raw/parsedTOML/lock/code/archive proof;
 no rawconfig/context recursion, new tests or runtime credit. Earlier third-skip
 note/f628/3981 histories stay exact; NI014blocked/15%earned/27unearned.
+
+
+## N2.2 0213 profile consistency and CI as-of status — 2026-11-06
+
+[Closed compact0213 packet](evidence/native-epoch2-dag-volume5000-2026-11-06/0213-profile-consistency-v1/index.json):
+normal publication/source61c665; CI as-of16:14:04Moscow Unit75success0observedFAIL/
+3active15queued1skip, native3success1active15queued; Static2/2SUCCESS, not fullgreen.
+Old95 fiveFAIL/True500PRIMARY_NOT_RETAINED stays separate. One Principal native
+False500PASS retains safe255.178JUnit/ownerconsole254.84 and functional closure;
+profile attribution INCONCLUSIVE. Global-monitoring/thread-clock defect and
+benign shared-process-clock falsifier correct earlier scope assumptions; no
+product hotspot/sourcefix/corrected native profile. [Limits](epochs/epoch-02-native-streaming-completion.md#n22-0213-profile-consistency-and-ci-as-of-status--2026-11-06)
+retain excluded private/rawstats and Yappi benign-only pending scope. No new
+fullmatrix/heavy5k/acceptance; NI2-012…014OPEN/BLOCKED/NI2-020blocked/15%earned.
+
+
+## N2.2 bounded P2 EOF rendezvous and DAG failure visibility — 2026-11-06
+
+[Closed finite candidate evidence](evidence/native-epoch2-dag-volume5000-2026-11-06/0213-p2-eof-dag-visibility-v1/index.json):
+P2fixture90s samePIDretry corrected by one prePOST finite840/3540 rendezvous;
+original budgets/assertions retained. Author3PASS+Principal repeatedasyncPASS
+means3unique profiles/4executions, not fictitiousfourth; sourcee44 stays actual.
+DAGsource20c visibility-only controls PASS31.700/35.434/Principal25.84(JUnit26.198),
+actual300/300/180 markers; no lost-primary-cause fix or SDKtimeout experiment.
+Collectoroutsideimportauditprefix requires44e0 command/callsite qualification,
+not zeroimportproof. Old0213CI18:12:36Moscow=83success4CIjobFAIL1active5queued1skip;
+runnerlostcommunication has no observed pytest exit, other two new/knownDAG
+primariesUNKNOWN; four5000queued/notgreen. Yappi297.43 remainsstrictFAIL/noYSTAT/
+noCPUattribution; earlier cProfilePASS/INVALID and273c history preserved.
+[Version/clock/control limits](epochs/epoch-02-native-streaming-completion.md#n22-bounded-p2-eof-rendezvous-and-dag-failure-visibility--2026-11-06):
+NI2-012…014OPEN/BLOCKED/NI2-020blocked/15%earned/27unearned; no fullgate credit.

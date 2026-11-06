@@ -1,0 +1,117 @@
+"""Source-bound native sync5000 support; import never connects or launches."""
+import asyncio
+import ctypes
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import time
+import asyncpg
+ROOT = Path("/tmp/ariadne-native-5000-diagnosis-v1")
+SELECTOR = Path("/tmp/native-ni012-runtime-test-env.json")
+EXPECTED_HEAD = "0213b24fefdd3561b95d8dadf356482c89c67903"
+_controller_start_ticks = None
+
+
+def source_snapshot():
+    tracked = subprocess.check_output(['git', 'ls-files', 'src/prefect', 'tests', 'pyproject.toml', 'uv.lock', '.github/workflows/python-tests.yaml', 'scripts/native_runtime_diagnostics.py'], cwd=ROOT, text=True).splitlines()
+    paths = sorted({p for p in tracked if p.endswith('.py') or p in {'pyproject.toml','uv.lock','.github/workflows/python-tests.yaml'}} | {str(p.relative_to(ROOT)) for p in (ROOT/'src/prefect').rglob('*.py')} | {'pyrightconfig-native-dag.json','ui-v2/src/api/prefect.ts','architecture/streaming-etl/adr/README.md'})
+    paths = sorted(set(paths) | {'.github/workflows/native-stream-progress.yaml', 'scripts/native_progress.py', '.github/workflows/static-analysis.yaml'})
+    return {name: {'sha256': hashlib.sha256((ROOT/name).read_bytes()).hexdigest(), 'bytes': (ROOT/name).stat().st_size} for name in paths}
+
+def sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def write(path: Path, value: object) -> None:
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+def proc_state(pid: int):
+    try:
+        fields = Path("/proc", str(pid), "stat").read_text().rsplit(")", 1)[1].split()
+    except FileNotFoundError:
+        return None
+    return {"state": fields[0], "parent": int(fields[1]), "pgid": int(fields[2]), "start_ticks": fields[19]}
+
+def collect_group(pgid: int, identities: dict[int, str]) -> None:
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit():
+            state = proc_state(int(entry.name))
+            if state is not None and state["pgid"] == pgid:
+                identities[int(entry.name)] = state["start_ticks"]
+
+def enable_owned_subreaper() -> dict[str, object]:
+    global _controller_start_ticks
+    libc = ctypes.CDLL(None, use_errno=True)
+    enabled = ctypes.c_int(0)
+    if libc.prctl(36, 1, 0, 0, 0) != 0:
+        raise RuntimeError("Own PR_SET_CHILD_SUBREAPER failed; no DB/Popen allowed")
+    if libc.prctl(37, ctypes.byref(enabled), 0, 0, 0) != 0 or enabled.value != 1:
+        raise RuntimeError("Own PR_GET_CHILD_SUBREAPER verification failed")
+    own = proc_state(os.getpid())
+    parent = proc_state(os.getppid())
+    assert own is not None and parent is not None
+    _controller_start_ticks = own["start_ticks"]
+    return {
+        "runner_pid": os.getpid(), "runner_start_ticks": own["start_ticks"],
+        "parent_pid": os.getppid(), "parent_start_ticks": parent["start_ticks"],
+        "pr_set_child_subreaper": 1, "pr_get_child_subreaper": enabled.value,
+        "scope": "this runner's future descendants only",
+        "pid1_or_prior_orphan_modified": False,
+        "subreaper_support_source_sha256": sha(Path(__file__)),
+    }
+
+def reap_owned_adopted(pgid: int, identities: dict[int, str], timeout: float = 5) -> dict[str, object]:
+    reaped = []
+    deadline = time.monotonic() + timeout
+    echild = False
+    alive_child_polls = 0
+    while True:
+        try:
+            pid, status = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            echild = True
+            break
+        if pid:
+            reaped.append({"pid": pid, "start_ticks": identities.get(pid), "waitpid_options": "WNOHANG", "wait_status": status, "exit_code": os.waitstatus_to_exitcode(status), "ownership": "this verified subreaper had ECHILD before Popen; only its future children can be waited"})
+            continue
+        alive_child_polls += 1
+        collect_group(pgid, identities)
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+    return {"adopted_reaped": reaped, "waitpid_echild_success": echild, "alive_child_polls": alive_child_polls, "proc_children_interface_used": False, "prior_pid1_orphan_touched": False}
+
+async def create_owned(config, name: str) -> dict[str, object]:
+    connection = await asyncpg.connect(config["admin_dsn"], timeout=3, command_timeout=5)
+    try:
+        version = int(await connection.fetchval("SHOW server_version_num"))
+        assert version // 10000 == 17
+        assert re.fullmatch("[a-z][a-z0-9_]{1,47}", name)
+        assert await connection.fetchval("SELECT 1 FROM pg_database WHERE datname=$1", name) is None
+        role = config["database_role"].replace('"', '""')
+        await connection.execute('CREATE DATABASE "' + name + '" OWNER "' + role + '"')
+        return {"database": name, "server_major": 17, "created_fresh": True, "existing_database_reused": False}
+    finally:
+        await connection.close()
+
+async def owned_sessions(config, name: str) -> dict[str, object]:
+    connection = await asyncpg.connect(config["admin_dsn"], timeout=3, command_timeout=5)
+    try:
+        sessions = [dict(row) for row in await connection.fetch(
+            "SELECT pid,state FROM pg_stat_activity WHERE datname=$1", name
+        )]
+        remaining = bool(await connection.fetchval("SELECT 1 FROM pg_database WHERE datname=$1", name))
+        return {"database": name, "sessions": sessions, "retained": remaining, "drop_requested": False, "force_used": False}
+    finally:
+        await connection.close()
+
+def sanitize(value: str, config, sqlalchemy_url: str) -> str:
+    for private in (config["admin_dsn"], sqlalchemy_url):
+        value = value.replace(private, "[redacted-owned-test-dsn]")
+    return re.sub(
+        r"(?i)(postgres(?:ql)?(?:\+asyncpg)?://)[^\s\'\"<>]+",
+        r"\1[redacted-owned-test-dsn]",
+        value,
+    )

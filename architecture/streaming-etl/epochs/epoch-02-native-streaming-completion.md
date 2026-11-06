@@ -1528,3 +1528,91 @@ third-skip note remains historical; this is a further policy-only extension.
 No new rawconfig/patchcontext/source copy, recursive capture or runtime/DB test;
 normal retry/publication outcomes remain separate. f628/3981/tested captures/
 history remain exact;15%earned/NI2-012…014OPEN/BLOCKED/NI2-020blocked/27unearned.
+
+
+## N2.2 0213 profile consistency and CI as-of status — 2026-11-06
+
+The [compact closed history packet](../evidence/native-epoch2-dag-volume5000-2026-11-06/0213-profile-consistency-v1/index.json)
+records publication0213b24fefdd3561b95d8dadf356482c89c67903 with normal Git/hooks/
+push0, source160461c665 and exact155path guard; published three-doc bytes match
+the prior reviewed snapshots. Closed CI **as-of16:14:04 Europe/Moscow (13:14:04UTC)**
+has94Unit jobs75success/0observedFAIL/3active/15queued/1skip; native19 has3success/
+1active/15queued. Static2/2SUCCESS is separate (Root-reported precommit12m13
+within20m). This is not terminal/current fullgreen. Old95 prepush JIT fiveFAIL,
+including True500 **PRIMARY_NOT_RETAINED**, stays on95fb; retained secondary
+cleanup/fencing observations do not reconstruct its primary cause.
+
+Principal's one actual0213 False500 native case remains **PASS**: owner-reported
+console254.84s/safeJUnit255.178s,1604source drift0/import3884 mismatch0/1500effects/
+sixhealthlists empty/release and observedPID closure/retainedDB0sessions. Only
+the explicit public functional derivative is copied; raw receipt/header is
+excluded. Structural profile capture20.008wall/19.668main-threadCPU is separate
+from timing attribution:2757functions/13negative self/14cum<self/negative summed
+self and impossible roughly19k-second self entry make attribution **INCONCLUSIVE**.
+The independent audit corrects the earlier main-thread-only assumption: this
+exact Python3.12 backend uses process-global monitoring/shared profiler context
+with per-thread clocks; no product/network/ORM hotspot or regression is inferred.
+
+Author88c audit remains historical; correction25b7 binds actual executablefa6744
+and probe7ccf, with installed shared library only corroboration. Four closed
+benign scripts/four results and independent111bf/ba578 falsify even a shared
+process-clock substitution: nonnegative/conserved totals still misattribute
+per-function CPU. No corrected native profile exists. Raw512KBpstats/all21micro
+stats remain references, not recopied; reports use exact-byte `.log` captures.
+Yappi is separate benign investigation/pending, **not native or product work**
+in this packet. No source fix, CI cause, performance/SLO, heavy5000/fullmatrix
+or acceptance credit; NI2-012…014OPEN/BLOCKED/NI2-020blocked/15%earned/27unearned.
+All earlier ADR42–48 bodies/AC/history/packets remain exact; conflict scan
+incomplete and grill-me/spec-first variants excluded.
+
+
+## N2.2 bounded P2 EOF rendezvous and DAG failure visibility — 2026-11-06
+
+The [closed finite substantive packet](../evidence/native-epoch2-dag-volume5000-2026-11-06/0213-p2-eof-dag-visibility-v1/index.json)
+keeps old published0213 CI separate from the uncommitted four-file candidate.
+Closedv6 asof17:33:57Moscow had83success/2FAIL/1active/7queued/1skip; v7 asof
+**18:12:36Moscow (15:12:36UTC)** has83success/**4CIjobFAIL**/1active/5queued/1skip,
+native19=10success/3CIjobFAIL/1active/5queued. Static2PASS is prior; four5000
+cases remain queued. Distinct dispositions: physical fixture90s EOF issue has
+the local fixedscope below; DAGTrue500838.57 primary remainsNOT_RETAINED,
+visibility only; Falseaccepted200893.64 outer terminal assertion has primary
+UNKNOWN; Falseincomplete200 is **runner-lost-communication CIjobFAIL**, actual
+pytest exit/assertionNOT_OBSERVED/log404, not proof of test/product failure.
+No current/fullgreen or underlying infrastructure-cause claim follows.
+
+Confirmed P2 source-fixture90s Timeout led to samePIDattempt2, not productextra
+Birth. RawHH:MM trace labels have no embedded date/TZ and are not converted to
+proved Moscow time. Proposal f722/actual executed diff4a2 retain lineage; actual
+92d395/dd589/sourcee44 bind ONE same-host monotonic finite840/3540 deadline
+atomically beforePOST, parentanchor strictly earlier. Original numeric budgets/
+assertions stay unchanged. Author three profiles PASS102.066/100.852/114.127,
+replacementfirst201/200/201/fivebirths500effects/fullrelease/source+import+PID+
+retainedDB closure valid. Principal personally repeats existingasyncaccepted
+PASS ownerconsole100.21/JUnit100.569: **3unique profiles/4actual executions**.
+The nonexistent fourth selector is0collected/0body preparation, no newcoverage.
+ConfiguredRuff0.15.19PASS remains distinct from shared0.16.2's four baseline
+findings85c08; no no-qa or broader source waiver.
+
+DAGvisibility proposal00c53/actualcombined76fc/source20c adds one bounded failure
+JSON/collectorfilename only: no normalpoll/DB/schema/publicAPI or original
+domain-oracle change. Actual pre-DB collection verifies original pytest markers
+**300/300/180**: lifecycleFalse-failure testPASS31.700 (intentionalFlowFAILED,
+ValueError+ownedgraphUUID); lifecycleTrue-normal PASS35.434/no failurefile;
+PrincipalpresealTrue PASS25.84/JUnit26.198 (ValueError/nullgraph/asyncframe,
+all14executioncounts0/coordinatorRELEASED/original rejected-health0). Source/
+imports/PID/ECHILD/retained0sessions closure passes within each version. Author
+13FS+collectorCLI0 and Principal30FS helper checks are separate from those three
+native executions; no actualSDKwaittimeout experiment. Mandatory44e0 qualifies
+P2e44→20c relevance: DAGmodule absence is audited, but collector is **outside
+importauditprefix**; its relevance is command/callsite review, not zero-row
+import proof. Earlier P2 runs are not relabeled as execution on20c.
+
+Prior273c/b09d history stays exact, including firstcProfile nativePASS/timing
+INVALID; its pendingYappi note is followed by now-closed **YappiFAIL297.43** on
+old0213/source61c665: stricthealth/twoAPI500/APIexit−9, noYSTAT/finalmetadata,
+restorationUNOBSERVABLE. Partial functional/release facts do not override FAIL.
+No nativePASS, CPUattribution, product hotspot or accepted profiler/host cause;
+no retry/profile work authorized by this evidence. All earlier versions,
+approvedADR42–48 bodies/AC/history and packets remain immutable. NI2-012…014
+OPEN/BLOCKED/NI2-020blocked/15%earned/27unearned, no full19/fourheavy/SourceGate
+acceptance; conflict scan incomplete/grill-me/spec-first variants excluded.
