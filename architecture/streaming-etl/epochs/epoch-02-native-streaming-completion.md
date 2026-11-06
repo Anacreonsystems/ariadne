@@ -727,3 +727,82 @@ source-bound recovery, volume and hosted exits. The b4 recovery prepare/record
 and actual hosted serial-profile acceptance are unexecuted. This scoped
 component result does not complete N2.2 or an ADR. Earned readiness remains
 **15%**, with no additional credit.
+
+
+## N2.2 launch parent-lock correction and scoped sync500 recovery — 2026-11-06
+
+As a developer, I can inspect the [closed parent-reader RED baseline](../evidence/native-epoch2-launch-parent-locks-2026-11-06/baseline-v1/index.json),
+[failed first candidate](../evidence/native-epoch2-launch-parent-locks-2026-11-06/failed-candidate-v1/index.json),
+[final implementer component](../evidence/native-epoch2-launch-parent-locks-2026-11-06/component-v1/index.json) and
+[Principal's independent 50-check verification](../evidence/native-epoch2-launch-parent-locks-2026-11-06/principal-v1/index.json).
+The production change selects the existing shared parent prefix only in launch
+prepare and record. The helper default, other callers, own-target locks and
+lifecycle fences remain unchanged. The RED requests were pending at the same
+five-second deadline with an identified synthetic SHARE blocker; each returned
+200 only after that holder rolled back. Pending did not mean HTTP 500, and the
+historical b4 blocker identity remains unknown. The eight first-candidate
+failures were retained incorrect 409 status expectations, corrected to the
+existing 403 `SUBTASK_SCOPE_DENIED` contract without another product change.
+
+As a user, I got two personally verified existing native SDK/TCP/PostgreSQL17/OS
+sync500 recovery cases: [accepted200](../evidence/native-epoch2-launch-parent-locks-2026-11-06/native-accepted200-v1/index.json)
+resumes first at 201, while [incomplete200 and the pair receipt](../evidence/native-epoch2-launch-parent-locks-2026-11-06/native-incomplete200-v1/index.json)
+repeat only unfinished input 200. B keeps its TaskRun and changes PID; the
+incomplete case has exactly 501 body calls and 500 distinct effects. Both cases
+reach all three cursors at 500, retain healthy A/C attempt 1, close all five
+births and release graph plus coordinator authority/snapshot/launch states.
+Source-body and wider-health PASS are separate: exact API access 5xx,
+`TimeoutError`, unhandled ASGI failures and unexpected healthy retries are zero.
+The old B exit 77 is the expected injected fault.
+
+As a system, I got exact final-byte source leases and physical cleanup evidence.
+The 50 personal checks and each native case retain unchanged 1,600-file holds and zero
+import mismatches. Across the native pair, 24 captured PID/start-time identities
+closed and four fresh owned databases were dropped without FORCE or remaining
+sessions. Cleanup observations accompany the persisted release proofs.
+
+| Approved criterion | Current scoped evidence | Remaining boundary |
+| --- | --- | --- |
+| A43-05 — Separate source/operator processes and isolated replacement | Personal50 proves shared-reader coexistence and exclusive lifecycle/own-target fences; the native synchronous 500-record pair proves 200/201 continuation with healthy-sibling continuity and exact effects. | Async recovery, corrected 5000 and the complete hosted/frozen-union gates remain open; this does not complete the whole criterion or ADR. |
+| A43-07 — Observable slots, pending admission and one FlowRun lease | The [health-artifact collector](../evidence/native-epoch2-runtime-health-artifacts-2026-11-06/component-v1/index.json) retains coordinator retirement and worker health; the pair records released coordinator/graph state and explicit whole-health checks. | Diagnostic retention and these release observations do not establish the complete slot/admission/FlowRun-lease acceptance profile. |
+
+The collector's two actual CLI checks and final static checks pass. Its v1
+source reconstruction qualification remains retained; v2 has actual pre-run
+source capture. Both workflow event filters include the collector path. The new
+retention does not backfill missing coordinator/health reports in older hosted
+artifacts. Post-hoc archival resource snapshots are labeled after-case
+collection, rather than evidence of either test's resource window. The
+[ADR graph README](../adr/README.md) corrects the stale current zero to the existing
+15% earned value; that navigation correction grants no new credit.
+
+The current hosted [run 42116718681](https://github.com/Anacreonsystems/ariadne/actions/runs/42116718681) is a separate committed
+`7d99d8472c617a966c868c3bd1696a3fe4410c1a` source boundary. At the verified
+2026-11-06 02:43:45 Europe/Moscow (2026-11-05 23:43:45 UTC) snapshot, both DAG500 jobs passed their exact no-skip gates:
+[sync 1 PASS / 709.65s](https://github.com/Anacreonsystems/ariadne/actions/runs/42116718681/job/127559987264) and
+[async 1 PASS / 638.66s](https://github.com/Anacreonsystems/ariadne/actions/runs/42116718681/job/127559987278).
+The [hosted sync accepted200 job](https://github.com/Anacreonsystems/ariadne/actions/runs/42116718681/job/127559989778) also completed its
+pytest/no-skip/upload/cleanup steps. The whole run was still incomplete; the
+remaining recovery/5000 gates were not accepted. These committed-source CI
+observations do not test the separately held local parent-lock correction.
+Older CI artifacts lack the two new coordinator/health reports, so job success
+is not substituted for their missing whole-health evidence.
+
+NI2-012, N2.2b and ADR-0043 remain `progress`. The historical b4 RED and failed
+5000 records remain unchanged. Earned readiness stays **15%**; the planned
+27% target, full 5000 acceptance and whole-ADR completion remain unearned.
+
+
+## N2.2 bounded external API profile observation — 2026-11-06
+
+The [closed profile64 observation](../evidence/native-epoch2-api-profile64-2026-11-06/observation-v1/index.json)
+retains one control PASS (64.155s) and one instrumented PASS (84.509s) on the
+same normal sync64 workload, 150/210/300 budgets and 1,600-file source hold.
+The Principal's read-only audit validates the functional pair and selected API
+capture while declaring attribution inconclusive. The instrumented API process
+lifetime records 64.019836 process CPU seconds across all API threads and
+75.97745 wall seconds; cProfile covers its main event-loop thread. Seven entries
+have cumulative time below self time. The retained binary and derived tables
+therefore do not establish SQL wait, API/DB latency, query counts, CI/b4 cause,
+5000 forecasts or throughput/SLO performance. Both phases retain clean recorded
+health and owned-process/database closure. This diagnostic observation earns
+no new credit; epoch-2 readiness remains **15%**.

@@ -1,0 +1,18 @@
+"""Allowlist only the unchanged RestartableAPI uvicorn invocation."""
+
+import re
+
+
+def api_identity(argv: list[str]) -> dict[str, str | int] | None:
+    if len(argv) != 11 or argv[1:5] != [
+        "-m", "uvicorn", "--factory", "prefect.server.api.server:create_app"
+    ]:
+        return None
+    if argv[5] != "--fd" or argv[7] != "--header" or argv[9:] != ["--log-level", "warning"]:
+        return None
+    if not argv[6].isdigit() or int(argv[6]) < 0:
+        return None
+    header = re.fullmatch(r"X-Native-Recovery-ID:([0-9a-f]{32})", argv[8])
+    if header is None:
+        return None
+    return {"factory": argv[4], "fd": int(argv[6]), "header": header.group(1)}

@@ -2,6 +2,9 @@
 
 import asyncio
 import json
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4, uuid5
@@ -19,15 +22,17 @@ from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.schemas import stream_dag_executions as s
 from prefect.server.schemas import stream_subtasks as physical
 from prefect.server.schemas.native_deployments import NativeStreamProcessDeathWitness
+from prefect.server.schemas.streams import StreamExecutionCredentials
 from prefect.server.services.task_run_recorder import dispatch_stream_subtask_event
 from prefect.types._datetime import now
 from tests.server.api.test_native_deployments import _observe_heartbeat_blocker
 from tests.server.api.test_stream_dag_executions import (
-    execution_api as execution_api,
+    execution_api as execution_api,  # noqa: PLC0414 -- pytest fixture re-export
 )
 from tests.server.api.test_stream_dag_executions import (
     parent_body,
 )
+from tests.server.api.test_stream_dags import assert_error
 from tests.server.models.test_stream_dag_executions import (
     produce_and_finish_region,
     ready_deployed_region,
@@ -36,6 +41,1003 @@ from tests.server.models.test_stream_dag_executions import (
 )
 
 pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
+
+
+@dataclass(frozen=True)
+class _LaunchHTTPCase:
+    graph_id: UUID
+    flow_id: UUID
+    graph_digest: str
+    credentials: StreamExecutionCredentials
+    worker_id: UUID
+    subtask_id: UUID
+    principal: physical.StreamWorkerPrincipal
+    prepare: s.StreamDAGLaunchPrepareRequest
+    request: s.StreamDAGLaunchPrepareRequest | s.StreamDAGLaunchRecordRequest
+    launch_id: UUID | None
+    tag: str
+
+    @property
+    def root(self) -> str:
+        return (
+            f"/streams/v2/dags/workers/{self.worker_id}/subtasks/"
+            f"{self.subtask_id}/launches"
+        )
+
+    @property
+    def path(self) -> str:
+        return (
+            self.root + "/prepare"
+            if self.launch_id is None
+            else self.root + f"/{self.launch_id}/record"
+        )
+
+
+@asynccontextmanager
+async def _launch_http_client(
+    execution_api: httpx.AsyncClient,
+) -> AsyncGenerator[httpx.AsyncClient, None]:
+    transport = execution_api._transport
+    assert isinstance(transport, httpx.ASGITransport)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=transport.app, raise_app_exceptions=False),
+        base_url=execution_api.base_url,
+        auth=execution_api.auth,
+    ) as api:
+        yield api
+
+
+async def _launch_http_case(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    *,
+    record: bool,
+    replacement: bool = False,
+) -> _LaunchHTTPCase:
+    tag = "launch-lock-" + uuid4().hex
+    async with db.session_context(begin_transaction=True) as transaction:
+        transaction.add(
+            db.ConcurrencyLimitV2(name="tag:" + tag, limit=10, active_slots=0)
+        )
+    replacement_id = None
+    if replacement:
+        plan, credentials, children = await ready_deployed_region(
+            db, session, api, deployment, tags=(tag,)
+        )
+        child = next(
+            item for item in children if item.bootstrap.context.operator_uid == "B"
+        )
+        worker_id, principal = child.worker_id, child.principal
+        subtask_id = child.bootstrap.assignment.id
+        start_id = uuid5(plan.id, "prefect-stream-dag-start-v1")
+        replacement_id = uuid4()
+        grant = child.bootstrap.grant
+        authorization = physical.StreamWorkerReplacementAuthorizeRequest(
+            principal=principal,
+            replacement=physical.StreamSubtaskReplacementAuthorizeRequest(
+                operation_id=replacement_id,
+                expected_grant_id=grant.id,
+                expected_physical_epoch=grant.physical_epoch,
+                host_id=grant.host_id,
+                challenge_capability="ab" * 32,
+            ),
+        )
+        response = await api.post(
+            f"/streams/v2/workers/{worker_id}/subtasks/{subtask_id}"
+            "/replacements/authorize",
+            json=authorization.model_dump(mode="json"),
+        )
+        assert response.status_code == 200, response.text
+        assert (
+            grant.child_process_id is not None and grant.process_start_ticks is not None
+        )
+        # Exact fixture witness exercises the lifecycle protocol, not real OS death.
+        close = s.StreamDAGLaunchCloseRequest(
+            principal=principal,
+            operation_id=uuid5(
+                child.bootstrap.launch_attempt_id, "prefect-stream-dag-close-v1"
+            ),
+            proof=s.StreamDAGLaunchDeathProof(
+                kind="DEATH",
+                death_witness=NativeStreamProcessDeathWitness(
+                    kind="WAITPID",
+                    observed_at=now("UTC"),
+                    host_id=grant.host_id,
+                    boot_id=grant.boot_id,
+                    child_process_id=grant.child_process_id,
+                    process_start_ticks=grant.process_start_ticks,
+                    exit_code=0,
+                ),
+            ),
+        )
+        response = await api.post(
+            f"/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/"
+            f"{child.bootstrap.launch_attempt_id}/close",
+            json=close.model_dump(mode="json"),
+        )
+        assert response.status_code == 200, response.text
+    else:
+        plan, credentials, workers = await start_deployed_region(
+            db, session, api, deployment, tags=(tag,)
+        )
+        worker_id, principal = workers[0]
+        response = await api.post(
+            f"/streams/v2/dags/workers/{worker_id}/poll",
+            json=s.StreamDAGWorkerPollRequest(principal=principal).model_dump(
+                mode="json"
+            ),
+        )
+        assert response.status_code == 200, response.text
+        assignment = s.StreamDAGWorkerAssignment.model_validate(response.json()[0])
+        subtask_id, start_id = assignment.assignment.id, assignment.start_operation_id
+    prepare = s.StreamDAGLaunchPrepareRequest(
+        principal=principal,
+        operation_id=uuid5(
+            subtask_id,
+            "prefect-stream-dag-launch-v1/" + str(replacement_id or start_id),
+        ),
+        start_operation_id=start_id,
+        replacement_operation_id=replacement_id,
+    )
+    launch_id = None
+    request: s.StreamDAGLaunchPrepareRequest | s.StreamDAGLaunchRecordRequest = prepare
+    if record:
+        response = await api.post(
+            f"/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}"
+            "/launches/prepare",
+            json=prepare.model_dump(mode="json"),
+        )
+        assert response.status_code == 200, response.text
+        prepared = s.StreamDAGLaunchOperationResult.model_validate(response.json())
+        assert prepared.current.state == "PREPARED"
+        launch_id = prepared.current.id
+        request = s.StreamDAGLaunchRecordRequest(
+            principal=principal,
+            operation_id=uuid5(launch_id, "prefect-stream-dag-record-v1"),
+            child_process_id=34567,
+            process_start_ticks=456789,
+            local_journal_digest="cd" * 32,
+        )
+    return _LaunchHTTPCase(
+        plan.id,
+        plan.flow_run_id,
+        plan.graph_digest,
+        credentials,
+        worker_id,
+        subtask_id,
+        principal,
+        prepare,
+        request,
+        launch_id,
+        tag,
+    )
+
+
+async def _launch_rows(
+    db: PrefectDBInterface, case: _LaunchHTTPCase
+) -> dict[str, list[dict[str, Any]]]:
+    targets = sa.select(db.StreamPhysicalSubtask.id).where(
+        db.StreamPhysicalSubtask.graph_revision_id == case.graph_id
+    )
+    workers = sa.select(db.StreamPhysicalSubtask.assigned_worker_id).where(
+        db.StreamPhysicalSubtask.graph_revision_id == case.graph_id
+    )
+    tasks = sa.select(db.StreamPhysicalSubtask.task_run_id).where(
+        db.StreamPhysicalSubtask.graph_revision_id == case.graph_id
+    )
+    limits = sa.select(db.StreamSubtaskAllocation.concurrency_limit_id).where(
+        db.StreamSubtaskAllocation.subtask_id.in_(targets)
+    )
+    filters = (
+        (db.FlowRun, db.FlowRun.id == case.flow_id),
+        (db.FlowRunState, db.FlowRunState.flow_run_id == case.flow_id),
+        (
+            db.StreamExecutionAuthority,
+            db.StreamExecutionAuthority.flow_run_id == case.flow_id,
+        ),
+        (db.StreamGraphRevision, db.StreamGraphRevision.id == case.graph_id),
+        (db.StreamPhysicalSubtask, db.StreamPhysicalSubtask.id.in_(targets)),
+        (db.TaskRun, db.TaskRun.id.in_(tasks)),
+        (db.TaskRunState, db.TaskRunState.task_run_id.in_(tasks)),
+        (db.StreamPartition, db.StreamPartition.flow_run_id == case.flow_id),
+        (db.Worker, db.Worker.id.in_(workers)),
+        (db.StreamWorkerCapability, db.StreamWorkerCapability.worker_id.in_(workers)),
+        (
+            db.StreamPhysicalSlotAllocation,
+            db.StreamPhysicalSlotAllocation.graph_revision_id == case.graph_id,
+        ),
+        (
+            db.StreamSubtaskAllocation,
+            db.StreamSubtaskAllocation.subtask_id.in_(targets),
+        ),
+        (db.StreamSubtaskGrant, db.StreamSubtaskGrant.subtask_id.in_(targets)),
+        (
+            db.StreamSubtaskReplacement,
+            db.StreamSubtaskReplacement.subtask_id.in_(targets),
+        ),
+        (
+            db.StreamDAGLifecycleOperation,
+            db.StreamDAGLifecycleOperation.graph_revision_id == case.graph_id,
+        ),
+        (
+            db.StreamDAGControlTarget,
+            db.StreamDAGControlTarget.graph_revision_id == case.graph_id,
+        ),
+        (
+            db.StreamDAGLaunchAttempt,
+            db.StreamDAGLaunchAttempt.graph_revision_id == case.graph_id,
+        ),
+        (db.ConcurrencyLimit, db.ConcurrencyLimit.tag == case.tag),
+        (db.ConcurrencyLimitV2, db.ConcurrencyLimitV2.id.in_(limits)),
+    )
+    async with db.session_context() as check:
+        return {
+            model.__tablename__: [
+                dict(row)
+                for row in (
+                    await check.execute(
+                        sa.select(model.__table__).where(condition).order_by(model.id)
+                    )
+                ).mappings()
+            ]
+            for model, condition in filters
+        }
+
+
+def _assert_launch_only_mutation(
+    before: dict[str, list[dict[str, Any]]],
+    after: dict[str, list[dict[str, Any]]],
+    case: _LaunchHTTPCase,
+    result: s.StreamDAGLaunchOperationResult,
+) -> None:
+    name = "stream_dag_launch_attempt"
+    assert {key: value for key, value in before.items() if key != name} == {
+        key: value for key, value in after.items() if key != name
+    }
+    prior = {row["id"]: row for row in before[name]}
+    current = {row["id"]: row for row in after[name]}
+    row = current[result.current.id]
+    assert row["subtask_id"] == case.subtask_id
+    assert row["worker_id"] == case.worker_id
+    authority = before["stream_execution_authority"][0]
+    assert (
+        row["flow_generation"],
+        row["flow_holder_id"],
+        row["flow_run_run_count"],
+    ) == (
+        authority["generation"],
+        authority["holder_id"],
+        authority["flow_run_run_count"],
+    )
+    if case.launch_id is None:
+        assert current.keys() - prior.keys() == {result.current.id}
+        assert {key: current[key] for key in prior} == prior
+        assert row["state"] == "PREPARED" and row["record_operation_id"] is None
+        assert row["prepare_receipt"] == result.receipt.model_dump(mode="json")
+        assert row["prepare_operation_id"] == case.prepare.operation_id
+        own = [
+            value for value in prior.values() if value["subtask_id"] == case.subtask_id
+        ]
+        assert row["attempt_index"] == len(own) + 1
+        assert row["planned_physical_epoch"] == row["expected_physical_epoch"] + 1
+    else:
+        assert current.keys() == prior.keys()
+        assert {key: current[key] for key in prior if key != case.launch_id} == {
+            key: value for key, value in prior.items() if key != case.launch_id
+        }
+        assert prior[case.launch_id]["state"] == "PREPARED"
+        permitted = {
+            "updated",
+            "child_process_id",
+            "process_start_ticks",
+            "local_journal_digest",
+            "record_operation_id",
+            "record_request_digest",
+            "record_receipt",
+            "state",
+        }
+        assert {key: value for key, value in row.items() if key not in permitted} == {
+            key: value
+            for key, value in prior[case.launch_id].items()
+            if key not in permitted
+        }
+        assert isinstance(case.request, s.StreamDAGLaunchRecordRequest)
+        assert row["state"] == "PID_RECORDED"
+        assert row["child_process_id"] == case.request.child_process_id
+        assert row["process_start_ticks"] == case.request.process_start_ticks
+        assert row["local_journal_digest"] == case.request.local_journal_digest
+        assert row["record_receipt"] == result.receipt.model_dump(mode="json")
+
+
+async def _launch_block_witness(
+    db: PrefectDBInterface,
+    holder_pid: int,
+    table: str,
+    statements: list[str],
+) -> dict[str, Any]:
+    async with db.session_context() as observer:
+        async with asyncio.timeout(5):
+            while True:
+                await observer.execute(sa.text("SELECT pg_stat_clear_snapshot()"))
+                activity = [
+                    dict(row)
+                    for row in (
+                        await observer.execute(
+                            sa.text(
+                                "SELECT pid, application_name, backend_start, xact_start, "
+                                "backend_xid::text, state, wait_event_type, wait_event, "
+                                "pg_blocking_pids(pid) AS blockers, query "
+                                "FROM pg_stat_activity WHERE datname=current_database() "
+                                "AND pid <> pg_backend_pid()"
+                            )
+                        )
+                    ).mappings()
+                ]
+                by_pid = {row["pid"]: row for row in activity}
+
+                def chain(
+                    pid: int, seen: set[int], rows: dict[int, dict[str, Any]]
+                ) -> set[int]:
+                    if pid in seen:
+                        return set()
+                    seen.add(pid)
+                    blockers = set(rows.get(pid, {}).get("blockers", []))
+                    return blockers | set().union(
+                        *(chain(item, seen, rows) for item in blockers)
+                    )
+
+                candidates = [
+                    row
+                    for row in activity
+                    if row["query"].startswith(f"SELECT {table}.")
+                    and holder_pid in chain(row["pid"], set(), by_pid)
+                    and row["wait_event_type"] == "Lock"
+                ]
+                if candidates:
+                    assert len(candidates) == 1, candidates
+                    waiter = candidates[0]
+                    locks = [
+                        dict(row)
+                        for row in (
+                            await observer.execute(
+                                sa.text(
+                                    "SELECT pid, locktype, mode, granted, "
+                                    "relation::regclass::text AS relation, page, tuple, "
+                                    "transactionid::text, virtualxid, virtualtransaction "
+                                    "FROM pg_locks WHERE pid=:holder OR pid=:waiter "
+                                    "ORDER BY pid, locktype, mode"
+                                ),
+                                {"holder": holder_pid, "waiter": waiter["pid"]},
+                            )
+                        ).mappings()
+                    ]
+                    actual_sql = [
+                        query
+                        for query in statements
+                        if query.startswith(f"SELECT {table}.")
+                        and ("FOR UPDATE" in query or "FOR SHARE" in query)
+                    ]
+                    assert actual_sql, "Actual locking SQL was not captured"
+                    return {
+                        "holder": by_pid[holder_pid],
+                        "waiter": waiter,
+                        "blocker_chain": sorted(chain(waiter["pid"], set(), by_pid)),
+                        "locks": locks,
+                        "actual_locking_sql": actual_sql[-1],
+                        "surface": "real PostgreSQL17 / protected HTTP via ASGI",
+                    }
+                await asyncio.sleep(0.01)
+
+
+@asynccontextmanager
+async def _launch_sql_capture(
+    db: PrefectDBInterface,
+) -> AsyncGenerator[list[str], None]:
+    statements: list[str] = []
+    engine = await db.engine()
+
+    def observe(
+        connection: Any,
+        cursor: Any,
+        statement: str,
+        parameters: Any,
+        context: Any,
+        executemany: bool,
+    ) -> None:
+        # Observe actual submitted SQL only; no bind values or query mutation.
+        if statement.startswith("SELECT ") and (
+            "FOR UPDATE" in statement or "FOR SHARE" in statement
+        ):
+            statements.append(statement)
+
+    sa.event.listen(engine.sync_engine, "before_cursor_execute", observe)
+    try:
+        yield statements
+    finally:
+        sa.event.remove(engine.sync_engine, "before_cursor_execute", observe)
+
+
+@pytest.mark.parametrize("replacement", [False, True], ids=["initial", "replacement"])
+@pytest.mark.parametrize("record", [False, True], ids=["prepare", "record"])
+async def test_launch_http_commits_under_parent_reader_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    tmp_path: Path,
+    record: bool,
+    replacement: bool,
+):
+    async with _launch_http_client(execution_api) as api:
+        case = await _launch_http_case(
+            db, session, api, deployment, record=record, replacement=replacement
+        )
+        before = await _launch_rows(db, case)
+        task: asyncio.Task[httpx.Response] | None = None
+        evidence: dict[str, Any] = {"deadline_seconds": 5, "holder_released": False}
+        try:
+            async with (
+                _launch_sql_capture(db) as statements,
+                db.session_context(begin_transaction=True) as holder,
+            ):
+                holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+                assert isinstance(holder_pid, int)
+                await _hold_data_reader_prefix(holder, db, case.flow_id, case.graph_id)
+                statements.clear()
+                task = asyncio.create_task(
+                    api.post(case.path, json=case.request.model_dump(mode="json"))
+                )
+                try:
+                    response = await asyncio.wait_for(asyncio.shield(task), timeout=5)
+                    assert response.status_code == 200, response.text
+                    result = s.StreamDAGLaunchOperationResult.model_validate(
+                        response.json()
+                    )
+                    assert holder.in_transaction()
+                    after = await _launch_rows(db, case)
+                    _assert_launch_only_mutation(before, after, case, result)
+                    assert holder.in_transaction()
+                    replay = await asyncio.wait_for(
+                        api.post(case.path, json=case.request.model_dump(mode="json")),
+                        timeout=5,
+                    )
+                    assert replay.status_code == 200, replay.text
+                    assert replay.json() == response.json()
+                    assert await _launch_rows(db, case) == after
+                    assert holder.in_transaction()
+                    evidence.update(
+                        {
+                            "outcome": "200_COMMITTED_BEFORE_RELEASE",
+                            "response": response.json(),
+                        }
+                    )
+                except TimeoutError:
+                    witness = await _launch_block_witness(
+                        db, holder_pid, "flow_run", statements
+                    )
+                    assert "FOR UPDATE" in witness["actual_locking_sql"]
+                    assert holder.in_transaction()
+                    assert await _launch_rows(db, case) == before
+                    evidence.update(
+                        {
+                            "outcome": "PENDING_AT_DEADLINE",
+                            "witness": witness,
+                            "holder_still_open": True,
+                            "no_mutation": True,
+                        }
+                    )
+                    raise
+                finally:
+                    await holder.rollback()
+                    evidence["holder_released"] = True
+                    if task is not None:
+                        response = await asyncio.wait_for(
+                            asyncio.shield(task), timeout=5
+                        )
+                        evidence["status_after_release"] = response.status_code
+        finally:
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            evidence["request_task_closed"] = task is None or task.done()
+            (tmp_path / "launch-parent-reader-witness.json").write_text(
+                json.dumps(evidence, indent=2, default=str) + "\n"
+            )
+
+
+@pytest.mark.parametrize("record", [False, True], ids=["prepare", "record"])
+@pytest.mark.parametrize("held_lock", ["flow", "authority", "graph", "same-subtask"])
+async def test_launch_http_preserves_parent_and_target_fences_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    tmp_path: Path,
+    record: bool,
+    held_lock: str,
+):
+    async with _launch_http_client(execution_api) as api:
+        case = await _launch_http_case(db, session, api, deployment, record=record)
+        before = await _launch_rows(db, case)
+        task: asyncio.Task[httpx.Response] | None = None
+        evidence: dict[str, Any] = {}
+        try:
+            async with (
+                _launch_sql_capture(db) as statements,
+                db.session_context(begin_transaction=True) as holder,
+            ):
+                holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+                assert isinstance(holder_pid, int)
+                for name, model, condition in (
+                    ("flow", db.FlowRun, db.FlowRun.id == case.flow_id),
+                    (
+                        "authority",
+                        db.StreamExecutionAuthority,
+                        db.StreamExecutionAuthority.flow_run_id == case.flow_id,
+                    ),
+                    (
+                        "graph",
+                        db.StreamGraphRevision,
+                        db.StreamGraphRevision.id == case.graph_id,
+                    ),
+                    (
+                        "same-subtask",
+                        db.StreamPhysicalSubtask,
+                        db.StreamPhysicalSubtask.id == case.subtask_id,
+                    ),
+                ):
+                    # Predecessors stay SHARE: later-parent probes must reach
+                    # their selected parent rather than stopping at Flow.
+                    await holder.execute(
+                        sa.select(model.id)
+                        .where(condition)
+                        .with_for_update(
+                            read=name != held_lock or held_lock == "same-subtask"
+                        )
+                    )
+                    if name == held_lock:
+                        table = model.__tablename__
+                        break
+                statements.clear()
+                task = asyncio.create_task(
+                    api.post(case.path, json=case.request.model_dump(mode="json"))
+                )
+                try:
+                    evidence = await _launch_block_witness(
+                        db, holder_pid, table, statements
+                    )
+                    assert not task.done() and holder.in_transaction()
+                    assert await _launch_rows(db, case) == before
+                    assert (
+                        "FOR UPDATE" if held_lock == "same-subtask" else "FOR SHARE"
+                    ) in evidence["actual_locking_sql"]
+                finally:
+                    await holder.rollback()
+                response = await asyncio.wait_for(asyncio.shield(task), timeout=5)
+                assert response.status_code == 200, response.text
+                result = s.StreamDAGLaunchOperationResult.model_validate(
+                    response.json()
+                )
+                _assert_launch_only_mutation(
+                    before, await _launch_rows(db, case), case, result
+                )
+        finally:
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            evidence["request_task_closed"] = task is None or task.done()
+            (tmp_path / "launch-exclusive-fence-witness.json").write_text(
+                json.dumps(evidence, indent=2, default=str) + "\n"
+            )
+
+
+@pytest.mark.parametrize("record", [False, True], ids=["prepare", "record"])
+async def test_launch_http_commits_beside_other_target_reader_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    record: bool,
+):
+    async with _launch_http_client(execution_api) as api:
+        case = await _launch_http_case(db, session, api, deployment, record=record)
+        before = await _launch_rows(db, case)
+        other = next(
+            row["id"]
+            for row in before["stream_physical_subtask"]
+            if row["id"] != case.subtask_id
+        )
+        async with db.session_context(begin_transaction=True) as holder:
+            await _hold_data_reader_prefix(holder, db, case.flow_id, case.graph_id)
+            await holder.execute(
+                sa.select(db.StreamPhysicalSubtask.id)
+                .where(db.StreamPhysicalSubtask.id == other)
+                .with_for_update(read=True)
+            )
+            response = await asyncio.wait_for(
+                api.post(case.path, json=case.request.model_dump(mode="json")),
+                timeout=5,
+            )
+            assert response.status_code == 200, response.text
+            result = s.StreamDAGLaunchOperationResult.model_validate(response.json())
+            _assert_launch_only_mutation(
+                before, await _launch_rows(db, case), case, result
+            )
+            assert holder.in_transaction()
+
+
+def _launch_parent_headers(case: _LaunchHTTPCase) -> dict[str, str]:
+    return {
+        "X-Prefect-Stream-Execution-Generation": str(case.credentials.generation),
+        "X-Prefect-Stream-Execution-Holder": str(case.credentials.holder_id),
+        "X-Prefect-Stream-Execution-Capability": case.credentials.capability,
+    }
+
+
+async def _launch_http_control(
+    api: httpx.AsyncClient, case: _LaunchHTTPCase, kind: str
+) -> httpx.Response:
+    if kind == "startup-abort":
+        request = s.StreamDAGWorkerStartupAbortRequest(
+            principal=case.principal,
+            start_operation_id=case.prepare.start_operation_id,
+            graph_digest=case.graph_digest,
+            routing_digest=parent_body(case.graph_id, "start", case.graph_digest)[
+                "routing_digest"
+            ],
+        )
+        return await api.post(
+            f"/streams/v2/dags/workers/{case.worker_id}/graphs/{case.graph_id}/startup-abort",
+            json=request.model_dump(mode="json"),
+        )
+    return await api.post(
+        f"/streams/v2/dags/{case.graph_id}/{kind}",
+        json=parent_body(case.graph_id, kind, case.graph_digest),
+        headers=_launch_parent_headers(case),
+    )
+
+
+@pytest.mark.parametrize("kind", ["fail", "cancel", "startup-abort"])
+async def test_launch_http_control_first_keeps_replay_and_delayed_record_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    kind: str,
+):
+    async with _launch_http_client(execution_api) as api:
+        case = await _launch_http_case(db, session, api, deployment, record=True)
+        assert case.launch_id is not None
+        accepted = await api.post(
+            case.root + "/prepare", json=case.prepare.model_dump(mode="json")
+        )
+        assert accepted.status_code == 200, accepted.text
+        stopped = await _launch_http_control(api, case, kind)
+        assert stopped.status_code == 200, stopped.text
+        before = await _launch_rows(db, case)
+        replay = await api.post(
+            case.root + "/prepare", json=case.prepare.model_dump(mode="json")
+        )
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["receipt"] == accepted.json()["receipt"]
+        assert replay.json()["disposition"] == "STOP_REQUIRED"
+        assert await _launch_rows(db, case) == before
+        response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+        assert response.status_code == 200, response.text
+        recorded = s.StreamDAGLaunchOperationResult.model_validate(response.json())
+        assert recorded.disposition == "STOP_REQUIRED"
+        after = await _launch_rows(db, case)
+        _assert_launch_only_mutation(before, after, case, recorded)
+        replay = await api.post(case.path, json=case.request.model_dump(mode="json"))
+        assert replay.status_code == 200 and replay.json() == response.json()
+        assert isinstance(case.request, s.StreamDAGLaunchRecordRequest)
+        conflict = await api.post(
+            case.path,
+            json=case.request.model_copy(
+                update={"child_process_id": case.request.child_process_id + 1}
+            ).model_dump(mode="json"),
+        )
+        assert_error(conflict, 409, "IDENTITY_CONFLICT")
+        # A different, admitted target has no accepted birth to replay.
+        other = next(
+            row
+            for row in after["stream_physical_subtask"]
+            if row["id"] != case.subtask_id
+            and row["assigned_worker_id"] == case.worker_id
+        )
+        fresh = case.prepare.model_copy(
+            update={
+                "operation_id": uuid5(
+                    other["id"],
+                    "prefect-stream-dag-launch-v1/"
+                    + str(case.prepare.start_operation_id),
+                )
+            }
+        )
+        denied = await api.post(
+            f"/streams/v2/dags/workers/{case.worker_id}/subtasks/{other['id']}/launches/prepare",
+            json=fresh.model_dump(mode="json"),
+        )
+        assert_error(denied, 409, "CONTROL_CONFLICT")
+        assert await _launch_rows(db, case) == after
+
+
+@pytest.mark.parametrize("record", [False, True], ids=["prepare", "record"])
+@pytest.mark.parametrize("conflicting", [False, True], ids=["identical", "changed"])
+async def test_launch_http_concurrent_calls_keep_one_birth_and_receipt_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    record: bool,
+    conflicting: bool,
+):
+    async with _launch_http_client(execution_api) as api:
+        case = await _launch_http_case(db, session, api, deployment, record=record)
+        before = await _launch_rows(db, case)
+        alternative = case.request
+        if conflicting:
+            alternative = alternative.model_copy(
+                update=(
+                    {
+                        "child_process_id": 34568,
+                        "process_start_ticks": 456790,
+                        "local_journal_digest": "ef" * 32,
+                    }
+                    if record
+                    else {"start_operation_id": uuid4()}
+                )
+            )
+        responses = await asyncio.wait_for(
+            asyncio.gather(
+                api.post(case.path, json=case.request.model_dump(mode="json")),
+                api.post(case.path, json=alternative.model_dump(mode="json")),
+            ),
+            timeout=5,
+        )
+        if conflicting:
+            assert sorted(response.status_code for response in responses) == [
+                200,
+                409,
+            ], [response.text for response in responses]
+            index = next(
+                index
+                for index, response in enumerate(responses)
+                if response.status_code == 200
+            )
+            accepted_case = case if index == 0 else replace(case, request=alternative)
+            assert_error(responses[1 - index], 409, "IDENTITY_CONFLICT")
+        else:
+            assert all(response.status_code == 200 for response in responses), [
+                response.text for response in responses
+            ]
+            assert responses[0].json() == responses[1].json()
+            index, accepted_case = 0, case
+        result = s.StreamDAGLaunchOperationResult.model_validate(
+            responses[index].json()
+        )
+        after = await _launch_rows(db, case)
+        _assert_launch_only_mutation(before, after, accepted_case, result)
+        assert (
+            len(
+                [
+                    row
+                    for row in after["stream_dag_launch_attempt"]
+                    if row["subtask_id"] == case.subtask_id
+                ]
+            )
+            == 1
+        )
+
+
+@pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+@pytest.mark.parametrize(
+    "damage",
+    ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+)
+async def test_launch_http_current_scope_guards_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    record: bool,
+    damage: str,
+):
+    async with _launch_http_client(execution_api) as api:
+        case = await _launch_http_case(db, session, api, deployment, record=True)
+        if not record:
+            case = replace(case, request=case.prepare, launch_id=None)
+        if damage in {"generation", "holder", "run-count", "missing-slot"}:
+            # Isolated corruption injection verifies fail-closed guards; this
+            # is deliberately not presented as a supported authority takeover.
+            async with db.session_context(begin_transaction=True) as transaction:
+                scope = await lifecycle.lock_dag_graph(
+                    transaction, db, case.graph_id, None, update=True, worker=True
+                )
+                if damage == "generation":
+                    scope.authority.generation += 1
+                elif damage == "holder":
+                    scope.authority.holder_id = uuid4()
+                elif damage == "run-count":
+                    scope.authority.flow_run_run_count += 1
+                else:
+                    await transaction.execute(
+                        sa.delete(db.StreamPhysicalSlotAllocation).where(
+                            db.StreamPhysicalSlotAllocation.subtask_id
+                            == case.subtask_id
+                        )
+                    )
+        elif damage == "principal":
+            principal = case.principal.model_copy(
+                update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+            )
+            case = replace(
+                case, request=case.request.model_copy(update={"principal": principal})
+            )
+        else:
+            rows = await _launch_rows(db, case)
+            worker_id = next(
+                row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+            )
+            case = replace(case, worker_id=worker_id)
+        before = await _launch_rows(db, case)
+        response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+        assert_error(
+            response,
+            409 if damage in {"run-count", "missing-slot"} else 403,
+            "IDENTITY_CONFLICT"
+            if damage in {"run-count", "missing-slot"}
+            else "SUBTASK_SCOPE_DENIED",
+        )
+        assert await _launch_rows(db, case) == before
+
+
+async def test_launch_first_transaction_fences_http_control_until_birth_is_visible_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    tmp_path: Path,
+):
+    async with _launch_http_client(execution_api) as api:
+        case = await _launch_http_case(db, session, api, deployment, record=False)
+        task: asyncio.Task[httpx.Response] | None = None
+        evidence: dict[str, Any] = {
+            "launch_surface": "direct-model held transaction adjunct",
+            "control_surface": "protected HTTP via ASGI",
+        }
+        try:
+            async with _launch_sql_capture(db) as statements:
+                async with db.session_context(
+                    begin_transaction=True
+                ) as launch_transaction:
+                    launch_pid = await launch_transaction.scalar(
+                        sa.text("SELECT pg_backend_pid()")
+                    )
+                    assert isinstance(launch_pid, int)
+                    accepted = await m.prepare_worker_stream_dag_launch(
+                        launch_transaction,
+                        db,
+                        case.worker_id,
+                        case.subtask_id,
+                        case.prepare,
+                    )
+                    assert accepted.current.state == "PREPARED"
+                    statements.clear()
+                    task = asyncio.create_task(_launch_http_control(api, case, "fail"))
+                    evidence["overlap"] = await _launch_block_witness(
+                        db, launch_pid, "flow_run", statements
+                    )
+                    assert launch_transaction.in_transaction() and not task.done()
+                    assert not (await _launch_rows(db, case))[
+                        "stream_dag_launch_attempt"
+                    ]
+                    await launch_transaction.commit()
+                response = await asyncio.wait_for(asyncio.shield(task), timeout=5)
+                assert response.status_code == 200, response.text
+            control_id = UUID(response.json()["execution"]["control"]["operation_id"])
+            rows = await _launch_rows(db, case)
+            targets = rows["stream_dag_control_target"]
+            assert len(targets) == 4
+            assert any(row["subtask_id"] == case.subtask_id for row in targets)
+            assert rows["stream_dag_launch_attempt"][0]["id"] == accepted.current.id
+            stop = s.StreamDAGWorkerStopRequest(
+                principal=case.principal,
+                operation_id=uuid5(
+                    control_id, "prefect-stream-dag-stop-v1/" + str(case.subtask_id)
+                ),
+                control_operation_id=control_id,
+            )
+            target_root = case.root.removesuffix("/launches")
+            denied = await api.post(
+                target_root + "/stop", json=stop.model_dump(mode="json")
+            )
+            assert_error(denied, 409, "PHYSICAL_STOP_REQUIRED")
+            # Close every other target first: the last prepared birth must
+            # continue to hold its slot and prevent terminal Flow success.
+            capabilities = {
+                row["worker_id"]: row for row in rows["stream_worker_capability"]
+            }
+            for target in targets:
+                if target["subtask_id"] == case.subtask_id:
+                    continue
+                cap = capabilities[target["worker_id"]]
+                principal = physical.StreamWorkerPrincipal(
+                    **{
+                        key: cap[key]
+                        for key in (
+                            "work_pool_id",
+                            "host_id",
+                            "boot_id",
+                            "launcher_process_id",
+                            "launcher_start_ticks",
+                        )
+                    }
+                )
+                request = s.StreamDAGWorkerStopRequest(
+                    principal=principal,
+                    operation_id=uuid5(
+                        control_id,
+                        "prefect-stream-dag-stop-v1/" + str(target["subtask_id"]),
+                    ),
+                    control_operation_id=control_id,
+                )
+                stopped = await api.post(
+                    f"/streams/v2/dags/workers/{target['worker_id']}/subtasks/{target['subtask_id']}/stop",
+                    json=request.model_dump(mode="json"),
+                )
+                assert stopped.status_code == 200, stopped.text
+            remaining = await _launch_rows(db, case)
+            assert remaining["flow_run"][0]["state_type"].value == "RUNNING"
+            assert (
+                sum(
+                    not row["released"]
+                    for row in remaining["stream_physical_slot_allocation"]
+                )
+                == 1
+            )
+            denied = await api.post(
+                target_root + "/stop", json=stop.model_dump(mode="json")
+            )
+            assert_error(denied, 409, "PHYSICAL_STOP_REQUIRED")
+            close = s.StreamDAGLaunchCloseRequest(
+                principal=case.principal,
+                operation_id=uuid5(accepted.current.id, "prefect-stream-dag-close-v1"),
+                proof=s.StreamDAGLaunchUnstartedProof(
+                    kind="CLOSED_UNSTARTED",
+                    local_journal_digest="ab" * 32,
+                    recovery_complete=True,
+                    spawn_fence_closed=True,
+                ),
+            )
+            closed = await api.post(
+                case.root + f"/{accepted.current.id}/close",
+                json=close.model_dump(mode="json"),
+            )
+            assert closed.status_code == 200, closed.text
+            stopped = await api.post(
+                target_root + "/stop", json=stop.model_dump(mode="json")
+            )
+            assert stopped.status_code == 200, stopped.text
+            final = await _launch_rows(db, case)
+            assert final["flow_run"][0]["state_type"].value == "FAILED"
+            assert all(
+                row["released"] for row in final["stream_physical_slot_allocation"]
+            )
+            assert (
+                final["stream_graph_revision"][0]["terminal_operation_id"] is not None
+            )
+            evidence["closure_verified"] = True
+        finally:
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            evidence["request_task_closed"] = task is None or task.done()
+            (tmp_path / "launch-first-control-witness.json").write_text(
+                json.dumps(evidence, indent=2, default=str) + "\n"
+            )
 
 
 async def _renewal_grant_row(db: PrefectDBInterface, grant_id: UUID) -> dict[str, Any]:
@@ -193,7 +1195,7 @@ async def test_worker_renewal_http_commits_under_reader_prefix_postgres(
     )
     transport = execution_api._transport
     assert isinstance(transport, httpx.ASGITransport)
-    async with httpx.AsyncClient(
+    async with httpx.AsyncClient(  # noqa: SIM117 -- retain existing renewal fixture lifetime
         transport=httpx.ASGITransport(app=transport.app, raise_app_exceptions=False),
         base_url=execution_api.base_url,
         auth=execution_api.auth,

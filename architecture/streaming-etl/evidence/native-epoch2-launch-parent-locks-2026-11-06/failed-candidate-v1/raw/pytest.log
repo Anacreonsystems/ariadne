@@ -1,0 +1,773 @@
+.....................FFFF..FFFF...................                       [100%]
+=================================== FAILURES ===================================
+__ test_launch_http_current_scope_guards_postgres[generation-prepare-replay] ___
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdf40c4da0>
+execution_api = <httpx.AsyncClient object at 0x7fbdf20ce8a0>
+deployment = Deployment(id=a435479d-09f0-4469-b0d1-60e8f460aaef), record = False
+damage = 'generation'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+>           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = <Response [403 Forbidden]>, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -> None:
+>       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Launch attempt is outside its current worker target","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.384 seconds
+23:18:25.590 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.384 seconds
+23:18:25.600 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-b3e9b762ac984dd98fe50d44f19ffb5f because it does not have a base job template
+23:18:25.613 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-a44d-773a-9f87-6f097d74f149 for resource: prefect.work-pool.1057a342-34e3-49e8-bf51-9ffd92529175
+23:18:25.642 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1ae01-a466-7985-a353-6b9697ee8501 for resource: prefect.work-pool.1057a342-34e3-49e8-bf51-9ffd92529175
+23:18:25.686 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-b3e9b762ac984dd98fe50d44f19ffb5f because it does not have a base job template
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.279 seconds
+23:18:26.232 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.279 seconds
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.384 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-b3e9b762ac984dd98fe50d44f19ffb5f because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-a44d-773a-9f87-6f097d74f149 for resource: prefect.work-pool.1057a342-34e3-49e8-bf51-9ffd92529175
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1ae01-a466-7985-a353-6b9697ee8501 for resource: prefect.work-pool.1057a342-34e3-49e8-bf51-9ffd92529175
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-b3e9b762ac984dd98fe50d44f19ffb5f because it does not have a base job template
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.279 seconds
+______ test_launch_http_current_scope_guards_postgres[generation-record] _______
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdf02f4d10>
+execution_api = <httpx.AsyncClient object at 0x7fbdebfbf740>
+deployment = Deployment(id=3223e3d8-0260-44a6-bad4-e6958fef5a8e), record = True
+damage = 'generation'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+>           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = <Response [403 Forbidden]>, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -> None:
+>       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Launch attempt is outside its current worker target","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.380 seconds
+23:18:27.890 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.380 seconds
+23:18:27.901 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-1ad085d69f974f8dbbff042c21e86d8e because it does not have a base job template
+23:18:27.916 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-ad4c-79a0-9dac-307759275f09 for resource: prefect.work-pool.13a7e48e-1c98-4606-abeb-2b0b02bf2c6a
+23:18:27.946 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1ae01-ad66-78fb-873e-04b90899e5ef for resource: prefect.work-pool.13a7e48e-1c98-4606-abeb-2b0b02bf2c6a
+23:18:27.990 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-1ad085d69f974f8dbbff042c21e86d8e because it does not have a base job template
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.380 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-1ad085d69f974f8dbbff042c21e86d8e because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-ad4c-79a0-9dac-307759275f09 for resource: prefect.work-pool.13a7e48e-1c98-4606-abeb-2b0b02bf2c6a
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1ae01-ad66-78fb-873e-04b90899e5ef for resource: prefect.work-pool.13a7e48e-1c98-4606-abeb-2b0b02bf2c6a
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-1ad085d69f974f8dbbff042c21e86d8e because it does not have a base job template
+____ test_launch_http_current_scope_guards_postgres[holder-prepare-replay] _____
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdf04a3b00>
+execution_api = <httpx.AsyncClient object at 0x7fbdf0659b80>
+deployment = Deployment(id=ec9bd48a-3fa3-43d1-9f71-dacef536cb6a), record = False
+damage = 'holder'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+>           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = <Response [403 Forbidden]>, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -> None:
+>       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Launch attempt is outside its current worker target","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.375 seconds
+23:18:29.757 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.375 seconds
+23:18:29.769 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-a45c0dd9c9804d83872fef4901e0d71c because it does not have a base job template
+23:18:29.782 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-b496-74a0-9180-08a860b2fb17 for resource: prefect.work-pool.0e0973a1-5ad1-4f78-8f16-9aa853a3238c
+23:18:29.813 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1ae01-b4b1-7cea-bfdd-e6fd0ab3ead8 for resource: prefect.work-pool.0e0973a1-5ad1-4f78-8f16-9aa853a3238c
+23:18:29.855 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-a45c0dd9c9804d83872fef4901e0d71c because it does not have a base job template
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.375 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-a45c0dd9c9804d83872fef4901e0d71c because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-b496-74a0-9180-08a860b2fb17 for resource: prefect.work-pool.0e0973a1-5ad1-4f78-8f16-9aa853a3238c
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1ae01-b4b1-7cea-bfdd-e6fd0ab3ead8 for resource: prefect.work-pool.0e0973a1-5ad1-4f78-8f16-9aa853a3238c
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-a45c0dd9c9804d83872fef4901e0d71c because it does not have a base job template
+________ test_launch_http_current_scope_guards_postgres[holder-record] _________
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdf0f6e090>
+execution_api = <httpx.AsyncClient object at 0x7fbdf20aaa50>
+deployment = Deployment(id=48cfccb1-54dc-431c-90b4-9b9ebe22d21f), record = True
+damage = 'holder'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+>           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = <Response [403 Forbidden]>, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -> None:
+>       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Launch attempt is outside its current worker target","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.654 seconds
+23:18:31.896 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.654 seconds
+23:18:31.908 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-05e29ad26e694661a0b6f382bb352d1e because it does not have a base job template
+23:18:31.922 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-bcf2-7ef2-8db8-d04d59863d77 for resource: prefect.work-pool.4fc24d2b-43ec-47ef-9451-5b79b495b980
+23:18:31.949 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1ae01-bd0a-71fd-bbda-4c29b4b817b3 for resource: prefect.work-pool.4fc24d2b-43ec-47ef-9451-5b79b495b980
+23:18:31.994 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-05e29ad26e694661a0b6f382bb352d1e because it does not have a base job template
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.654 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-05e29ad26e694661a0b6f382bb352d1e because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-bcf2-7ef2-8db8-d04d59863d77 for resource: prefect.work-pool.4fc24d2b-43ec-47ef-9451-5b79b495b980
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1ae01-bd0a-71fd-bbda-4c29b4b817b3 for resource: prefect.work-pool.4fc24d2b-43ec-47ef-9451-5b79b495b980
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-05e29ad26e694661a0b6f382bb352d1e because it does not have a base job template
+___ test_launch_http_current_scope_guards_postgres[principal-prepare-replay] ___
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdf072cc50>
+execution_api = <httpx.AsyncClient object at 0x7fbdeb3976e0>
+deployment = Deployment(id=f2c30a25-a69e-4d1d-9637-46419c71fdca), record = False
+damage = 'principal'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+>           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = <Response [403 Forbidden]>, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -> None:
+>       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Worker does not own the persisted DAG assignment","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.373 seconds
+23:18:37.470 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.373 seconds
+23:18:37.480 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-ffae42be71a349419118dfd34167874f because it does not have a base job template
+23:18:37.497 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-d2b9-7fe4-a630-8d451703437e for resource: prefect.work-pool.13825146-1905-46ff-a87d-ded81ba9a734
+23:18:37.527 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1ae01-d2d2-78c9-b1b1-9b4a5a2e346a for resource: prefect.work-pool.13825146-1905-46ff-a87d-ded81ba9a734
+23:18:37.565 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-ffae42be71a349419118dfd34167874f because it does not have a base job template
+Executing <Task pending name='Task-3034' coro=<test_launch_http_current_scope_guards_postgres() running at /tmp/ariadne-native-5000-diagnosis-v1/tests/server/models/test_stream_dag_launches.py:885> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181, WorkerThread.stop()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.332 seconds
+23:18:38.760 | WARNING | asyncio - Executing <Task pending name='Task-3034' coro=<test_launch_http_current_scope_guards_postgres() running at /tmp/ariadne-native-5000-diagnosis-v1/tests/server/models/test_stream_dag_launches.py:885> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181, WorkerThread.stop()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.332 seconds
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.373 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-ffae42be71a349419118dfd34167874f because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-d2b9-7fe4-a630-8d451703437e for resource: prefect.work-pool.13825146-1905-46ff-a87d-ded81ba9a734
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1ae01-d2d2-78c9-b1b1-9b4a5a2e346a for resource: prefect.work-pool.13825146-1905-46ff-a87d-ded81ba9a734
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-ffae42be71a349419118dfd34167874f because it does not have a base job template
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-3034' coro=<test_launch_http_current_scope_guards_postgres() running at /tmp/ariadne-native-5000-diagnosis-v1/tests/server/models/test_stream_dag_launches.py:885> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181, WorkerThread.stop()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.332 seconds
+_______ test_launch_http_current_scope_guards_postgres[principal-record] _______
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdeae95670>
+execution_api = <httpx.AsyncClient object at 0x7fbdeb342c00>
+deployment = Deployment(id=a7a3dd63-8e23-40d1-9f5f-4586b6102145), record = True
+damage = 'principal'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+>           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = <Response [403 Forbidden]>, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -> None:
+>       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Worker does not own the persisted DAG assignment","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.393 seconds
+23:18:39.684 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.393 seconds
+23:18:39.695 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-284875f28d9f49b2b285205e012a8364 because it does not have a base job template
+23:18:39.708 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-db5c-7110-ae01-f452a01a0bf3 for resource: prefect.work-pool.949de241-fad5-481c-bfff-252a93693581
+23:18:39.738 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1ae01-db76-7913-826f-fde19bebdf06 for resource: prefect.work-pool.949de241-fad5-481c-bfff-252a93693581
+23:18:39.790 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-284875f28d9f49b2b285205e012a8364 because it does not have a base job template
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.393 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-284875f28d9f49b2b285205e012a8364 because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-db5c-7110-ae01-f452a01a0bf3 for resource: prefect.work-pool.949de241-fad5-481c-bfff-252a93693581
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1ae01-db76-7913-826f-fde19bebdf06 for resource: prefect.work-pool.949de241-fad5-481c-bfff-252a93693581
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-284875f28d9f49b2b285205e012a8364 because it does not have a base job template
+____ test_launch_http_current_scope_guards_postgres[worker-prepare-replay] _____
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdeb37d5b0>
+execution_api = <httpx.AsyncClient object at 0x7fbdeaec3ad0>
+deployment = Deployment(id=5648240c-4c4c-44b3-8751-343c55300981), record = False
+damage = 'worker'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+>           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = <Response [403 Forbidden]>, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -> None:
+>       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Worker does not own the persisted DAG assignment","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.384 seconds
+23:18:41.657 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.384 seconds
+23:18:41.670 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-15e1c430c78349298d4fa1fbd54ee7bd because it does not have a base job template
+23:18:41.682 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-e312-7552-a52d-39323c852925 for resource: prefect.work-pool.d05e001e-729a-4ac3-b914-6b14cc2b06f1
+23:18:41.714 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1ae01-e32e-770b-8408-c745c1685ad1 for resource: prefect.work-pool.d05e001e-729a-4ac3-b914-6b14cc2b06f1
+23:18:41.757 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-15e1c430c78349298d4fa1fbd54ee7bd because it does not have a base job template
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.384 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-15e1c430c78349298d4fa1fbd54ee7bd because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-e312-7552-a52d-39323c852925 for resource: prefect.work-pool.d05e001e-729a-4ac3-b914-6b14cc2b06f1
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1ae01-e32e-770b-8408-c745c1685ad1 for resource: prefect.work-pool.d05e001e-729a-4ac3-b914-6b14cc2b06f1
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-15e1c430c78349298d4fa1fbd54ee7bd because it does not have a base job template
+________ test_launch_http_current_scope_guards_postgres[worker-record] _________
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdf05b5a30>
+execution_api = <httpx.AsyncClient object at 0x7fbdf21d0b60>
+deployment = Deployment(id=ab3f3716-1dc4-4160-8908-4bd03e528fd6), record = True
+damage = 'worker'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+>           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = <Response [403 Forbidden]>, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -> None:
+>       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Worker does not own the persisted DAG assignment","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.377 seconds
+23:18:43.581 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.377 seconds
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.297 seconds
+23:18:43.885 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.297 seconds
+23:18:43.890 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-1252a1bd3af64cc193fb41e1145d80ad because it does not have a base job template
+23:18:43.904 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-ebc0-7a05-b977-15f47774ee45 for resource: prefect.work-pool.1e424b07-ec41-46e3-a41b-0fc6a861ce54
+23:18:43.932 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1ae01-ebd8-7b58-8945-fbfeaebc686c for resource: prefect.work-pool.1e424b07-ec41-46e3-a41b-0fc6a861ce54
+23:18:43.974 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-1252a1bd3af64cc193fb41e1145d80ad because it does not have a base job template
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.377 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.297 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-1252a1bd3af64cc193fb41e1145d80ad because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1ae01-ebc0-7a05-b977-15f47774ee45 for resource: prefect.work-pool.1e424b07-ec41-46e3-a41b-0fc6a861ce54
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1ae01-ebd8-7b58-8945-fbfeaebc686c for resource: prefect.work-pool.1e424b07-ec41-46e3-a41b-0fc6a861ce54
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-1252a1bd3af64cc193fb41e1145d80ad because it does not have a base job template
+=========================== short test summary info ============================
+FAILED tests/server/models/test_stream_dag_launches.py::test_launch_http_current_scope_guards_postgres[generation-prepare-replay]
+FAILED tests/server/models/test_stream_dag_launches.py::test_launch_http_current_scope_guards_postgres[generation-record]
+FAILED tests/server/models/test_stream_dag_launches.py::test_launch_http_current_scope_guards_postgres[holder-prepare-replay]
+FAILED tests/server/models/test_stream_dag_launches.py::test_launch_http_current_scope_guards_postgres[holder-record]
+FAILED tests/server/models/test_stream_dag_launches.py::test_launch_http_current_scope_guards_postgres[principal-prepare-replay]
+FAILED tests/server/models/test_stream_dag_launches.py::test_launch_http_current_scope_guards_postgres[principal-record]
+FAILED tests/server/models/test_stream_dag_launches.py::test_launch_http_current_scope_guards_postgres[worker-prepare-replay]
+FAILED tests/server/models/test_stream_dag_launches.py::test_launch_http_current_scope_guards_postgres[worker-record]
+8 failed, 42 passed in 136.09s (0:02:16)

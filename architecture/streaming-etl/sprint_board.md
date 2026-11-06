@@ -22,7 +22,7 @@ against the actual runtime and storage.
 | N2.1b — Scoped authority and store | `done` | 10% | +5% | NI2-003, NI2-004 | Strict subtask-only authentication, existing-store fences, whole-region admission and canonical keys pass cross-resource negatives; codec alone earns 0%. |
 | N2.1c — Physical runtime gate | `done` | 15% | +5% | NI2-005, NI2-006 | Four ordinary physical TaskRuns run in separate processes, recover 200/201 and keep metadata constant at 500/5000 under the complete real gate. |
 | N2.2a — DAG and routes | `progress` | 21% | +6% | NI2-010, NI2-011 | Typed acyclic graph and four append-materialized exchanges preserve independent edge identities. |
-| N2.2b — Fan-out runtime gate | `progress` | 27% | +6% | NI2-012…014 | Real fan-out SDK/process execution survives retry and branch replacement without route or cursor drift. Historical normal/lifecycle/500, branch recovery and exchange controls have passing records. Historical `835b8c2` attempts were interrupted on renewal/read liveness. The latest `f416080` async 1000 probe passed its strict data helper but exposed post-terminal coordinator retirement errors; 5000 and final hosted gates remain open. Partition causality is unresolved. |
+| N2.2b — Fan-out runtime gate | `progress` | 27% | +6% | NI2-012…014 | Latest held local correction: 50 independent checks PASS plus personally verified native synchronous 500-record accepted200/incomplete200 pair PASS with whole-health and normal graph/coordinator release. Committed 7d99 hosted DAG500 sync/async exact gates PASS; full hosted run, async recovery and corrected 5000-record gates remain open. Historical failures and unknown b4 blocker remain retained; earned readiness 15%. |
 | N2.3a — State and mailbox | `planned` | 32% | +5% | NI2-020, NI2-021 | Journaled state and deterministic multi-input apply order recover without accepted-body replay. |
 | N2.3b — Join, outcomes and cuts | `planned` | 37% | +5% | NI2-022…024 | OUTPUT/NO_OUTPUT, bounded correlated join and complete barrier cuts compose atomically. |
 | N2.3c — Stateful join gate | `planned` | 42% | +5% | NI2-025 | Native process-loss matrix closes every ADR-0044 criterion. |
@@ -795,3 +795,50 @@ source-bound recovery, volume and hosted exits. The b4 recovery prepare/record
 and actual hosted serial-profile acceptance are unexecuted. This scoped
 component result does not complete N2.2 or an ADR. Earned readiness remains
 **15%**, with no additional credit.
+
+
+## N2.2 launch parent-lock correction and scoped sync500 recovery — 2026-11-06
+
+As a developer, I can inspect the [baseline RED](evidence/native-epoch2-launch-parent-locks-2026-11-06/baseline-v1/index.json),
+[retained failed candidate](evidence/native-epoch2-launch-parent-locks-2026-11-06/failed-candidate-v1/index.json),
+[implementer component](evidence/native-epoch2-launch-parent-locks-2026-11-06/component-v1/index.json) and
+[separate Principal 50 checks PASS](evidence/native-epoch2-launch-parent-locks-2026-11-06/principal-v1/index.json).
+Only launch prepare/record select the shared parent prefix; default/other
+callers, own-target locks and lifecycle fences remain unchanged. The baseline
+identified a synthetic SHARE blocker and pending Flow `FOR UPDATE`, followed
+by the same request's 200 after rollback. It does not identify the historical
+b4 blocker or turn pending into HTTP 500.
+
+As a user, I got personally verified native SDK/TCP/PostgreSQL17/OS sync500
+[accepted200](evidence/native-epoch2-launch-parent-locks-2026-11-06/native-accepted200-v1/index.json) and
+[incomplete200 pair PASS](evidence/native-epoch2-launch-parent-locks-2026-11-06/native-incomplete200-v1/index.json).
+Accepted200 resumes at 201; incomplete200 repeats only unfinished 200,
+with 501 B body calls and 500 distinct effects. B retains its TaskRun, healthy
+A/C stay at attempt 1, all cursors reach 500 and all five births plus graph and
+coordinator state close/release. Both source-body and wider-health checks pass;
+exact API 5xx / TimeoutError / unhandled ASGI / unexpected healthy retry counts are zero.
+As a system, I got 1,600-file holds with zero drift/import mismatches, 24 closed
+native PID/start-time identities and four dropped fresh databases without
+FORCE or remaining sessions.
+
+A43-05 gains scoped process/replacement and parent-fence evidence. A43-07 gains
+[coordinator/worker-health retention](evidence/native-epoch2-runtime-health-artifacts-2026-11-06/component-v1/index.json) and explicit
+release/health observations, without claiming its complete slot/admission
+profile. The collector's two CLI checks and final static checks pass; v1's
+reconstructed-source qualification remains preserved. Existing hosted missing
+reports are not backfilled, and post-hoc resource snapshots are labeled as
+archival collection. The [ADR graph README](adr/README.md) retains the corrected
+current **15%**, with no new earned credit. The [epoch note](epochs/epoch-02-native-streaming-completion.md#n22-launch-parent-lock-correction-and-scoped-sync500-recovery--2026-11-06)
+contains the full story/criterion mapping and immutable evidence links.
+
+The separate current [hosted 7d99 run](https://github.com/Anacreonsystems/ariadne/actions/runs/42116718681) had both DAG500 exact no-skip
+jobs successful at the 2026-11-06 02:43:45 Europe/Moscow (2026-11-05 23:43:45 UTC) snapshot:
+[sync 1 PASS / 709.65s](https://github.com/Anacreonsystems/ariadne/actions/runs/42116718681/job/127559987264) and [async 1 PASS / 638.66s](https://github.com/Anacreonsystems/ariadne/actions/runs/42116718681/job/127559987278).
+Hosted sync accepted200 also completed its exact step/gates, while the whole
+run and remaining recovery/5000 gates were unfinished. These CI observations
+bind committed 7d99, not the local held correction; missing old coordinator/health
+reports limit whole-health attribution.
+
+NI2-012/N2.2b and ADR-0043 remain `progress`, with **15% earned**. Async recovery,
+corrected 5000 and full hosted/frozen-union exits remain open. The planned 27%
+and whole-ADR completion are not earned; historical failures remain intact.

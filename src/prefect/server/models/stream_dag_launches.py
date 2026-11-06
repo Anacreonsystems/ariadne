@@ -263,7 +263,13 @@ async def prepare_worker_stream_dag_launch(
     request: s.StreamDAGLaunchPrepareRequest,
 ) -> s.StreamDAGLaunchOperationResult:
     scope = await lock_worker_subtask(
-        session, db, worker_id, subtask_id, request.principal, all_workers=True
+        session,
+        db,
+        worker_id,
+        subtask_id,
+        request.principal,
+        all_workers=True,
+        graph_update=False,
     )
     graph = scope.graph.graph
     expected_op = uuid5(
@@ -433,7 +439,7 @@ async def record_worker_stream_dag_launch(
     request: s.StreamDAGLaunchRecordRequest,
 ) -> s.StreamDAGLaunchOperationResult:
     scope = await lock_worker_subtask(
-        session, db, worker_id, subtask_id, request.principal
+        session, db, worker_id, subtask_id, request.principal, graph_update=False
     )
     row = await locked_launch(session, db, scope, launch_attempt_id)
     if request.operation_id != uuid5(row.id, "prefect-stream-dag-record-v1"):

@@ -6,7 +6,7 @@ import json
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,8 @@ JSON_NAMES = {
     "phases.json",
     "observations.json",
     "case-observation.json",
+    "coordinator-retirement.json",
+    "worker-health.json",
     "branch-cut-ready.json",
     "branch-cut-observation.json",
     "branch-loss.json",
@@ -63,7 +65,7 @@ def redact_text(value: str, counts: dict[str, int]) -> str:
         ("credential_assignment", ASSIGNMENT),
     ):
 
-        def replace(match: re.Match[str]) -> str:
+        def replace(match: re.Match[str], name: str = name) -> str:
             prefix = match.group(1)
             if name == "url_userinfo":
                 return prefix + "[REDACTED]@"
@@ -136,7 +138,7 @@ def resources() -> dict[str, Any]:
         except OSError as error:
             errors[name] = type(error).__name__
     return {
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "recorded_at": datetime.now(UTC).isoformat(),
         "monotonic_ns": time.monotonic_ns(),
         "phase": "after-runtime-command",
         "cpu_affinity": sorted(os.sched_getaffinity(0)),
