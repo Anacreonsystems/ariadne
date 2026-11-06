@@ -1,0 +1,171 @@
+
+
+async def _assert_reference_refusal_left_data_unchanged(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    region: RoutingRegion,
+    binding: ConsumerBinding,
+    record_ids: set[UUID],
+    receipt_ids: set[UUID],
+) -> None:
+    cursor = (
+        await session.execute(
+            sa.select(
+                db.StreamConsumer.completed_through,
+                db.StreamConsumer.inflight_sequence,
+                db.StreamConsumer.delivery_id,
+                db.StreamConsumer.managed_state,
+            ).where(db.StreamConsumer.id == binding.consumer_id)
+        )
+    ).one()
+    assert tuple(cursor) == (0, None, None, {})
+    output = (
+        await session.execute(
+            sa.select(
+                db.StreamPartition.last_sequence,
+                db.StreamPartition.producer_position,
+                db.StreamPartition.record_count,
+                db.StreamPartition.byte_count,
+            ).where(db.StreamPartition.id == binding.output_stream_id)
+        )
+    ).one()
+    assert tuple(output) == (0, 0, 0, 0)
+    assert set(
+        (
+            await session.scalars(
+                sa.select(db.StreamRecord.id).where(
+                    db.StreamRecord.graph_revision_id == region.plan.id
+                )
+            )
+        ).all()
+    ) == record_ids
+    assert set(
+        (
+            await session.scalars(
+                sa.select(db.StreamRouteReceipt.id).where(
+                    db.StreamRouteReceipt.graph_revision_id == region.plan.id
+                )
+            )
+        ).all()
+    ) == receipt_ids
+
+
+@pytest.mark.parametrize("poison", ["reference", "receipt", "payload"])
+async def test_postgres_reference_resolution_refreshes_cached_record_material(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun, poison: str
+):
+    region = await routing_region(db, flow_run)
+    source = await claim_source(db, region)
+    outcome = await append(db, region, source_request(region, source, 1, {"kept": True}))
+    reference = outcome.references[0]
+    target = next(row for row in region.plan.subtasks if row.input_stream_id == reference.stream_id)
+    binding = await open_input(db, region, target.operator_uid, target.subtask_index)
+    before = await contents(db, region)
+    async with route_store(db, region, target.operator_uid, target.subtask_index) as (session, store, _):
+        cached_reference = await session.get(db.StreamRecord, reference.record_id)
+        cached_payload = await session.get(db.StreamRecord, outcome.payload_record_id)
+        cached_receipt = await session.get(db.StreamRouteReceipt, outcome.receipt_id)
+        assert cached_reference is not None and cached_payload is not None and cached_receipt is not None
+        assert (await store.resolve_reference(reference.stream_id, reference.sequence)).value == {"kept": True}
+        async with session.begin_nested() as savepoint:
+            if poison == "reference":
+                original = cached_reference.value
+                corrupted = {**original, "graph_revision_id": str(uuid4())}
+                _, encoded, digest = stream_routes.canonical_stream_payload(corrupted)
+                update = sa.update(db.StreamRecord).where(db.StreamRecord.id == cached_reference.id).values(value=corrupted, value_digest=digest, size_bytes=len(encoded))
+            elif poison == "receipt":
+                original = cached_receipt.outcome
+                corrupted = {**original, "references": [dict(item) for item in original["references"]]}
+                corrupted["references"][0]["edge_id"] = str(uuid4())
+                corrupted["references"].sort(key=lambda item: (UUID(item["edge_id"]).bytes, UUID(item["edge_partition_id"]).bytes, UUID(item["record_id"]).bytes))
+                corrupted["outcome_digest"] = route_outcome_digest(corrupted)
+                wire.StreamDAGRouteOutcome.model_validate(corrupted)
+                update = sa.update(db.StreamRouteReceipt).where(db.StreamRouteReceipt.id == cached_receipt.id).values(outcome=corrupted, outcome_digest=corrupted["outcome_digest"], outcome_size=len(canonical_route_json(corrupted)))
+            else:
+                original = cached_payload.value
+                update = sa.update(db.StreamRecord).where(db.StreamRecord.id == cached_payload.id).values(value={"changed_without_digest": True})
+            await session.execute(update.execution_options(synchronize_session=False))
+            assert (cached_reference.value if poison == "reference" else cached_receipt.outcome if poison == "receipt" else cached_payload.value) == original
+            with pytest.raises(NativeStreamError) as refused:
+                await store.read_consumer(binding)
+            assert refused.value.code == "REFERENCE_IDENTITY_CONFLICT"
+            await _assert_reference_refusal_left_data_unchanged(session, db, region, binding, {row.id for row in before["records"]}, set(before["receipts"]))
+            await savepoint.rollback()
+    assert await contents(db, region) == before
+
+
+async def test_postgres_reference_resolution_distinguishes_missing_input_from_bad_envelope(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+):
+    region = await routing_region(db, flow_run)
+    source = await claim_source(db, region)
+    outcome = await append(db, region, source_request(region, source, 1, {"kept": True}))
+    reference = outcome.references[0]
+    target = next(row for row in region.plan.subtasks if row.input_stream_id == reference.stream_id)
+    binding = await open_input(db, region, target.operator_uid, target.subtask_index)
+    before = await contents(db, region)
+    async with route_store(db, region, target.operator_uid, target.subtask_index) as (session, store, _):
+        with pytest.raises(NativeStreamError) as missing:
+            await store.resolve_reference(reference.stream_id, reference.sequence + 1)
+        assert missing.value.code == "ROUTE_HORIZON_EXPIRED"
+        async with session.begin_nested() as savepoint:
+            await session.execute(sa.update(db.StreamRecord).where(db.StreamRecord.id == reference.record_id).values(value={"malformed": True}).execution_options(synchronize_session=False))
+            await session.execute(sa.update(db.StreamRouteReceipt).where(db.StreamRouteReceipt.id == outcome.receipt_id).values(outcome={"also_malformed": True}).execution_options(synchronize_session=False))
+            with pytest.raises(NativeStreamError, match="Reference envelope is invalid") as refused:
+                await store.read_consumer(binding)
+            assert refused.value.code == "REFERENCE_IDENTITY_CONFLICT"
+            await _assert_reference_refusal_left_data_unchanged(session, db, region, binding, {row.id for row in before["records"]}, set(before["receipts"]))
+            await savepoint.rollback()
+    assert await contents(db, region) == before
+
+
+async def test_postgres_reference_resolution_uses_fresh_topology_with_cached_edge(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+):
+    region = await routing_region(db, flow_run)
+    source = await claim_source(db, region)
+    outcome = await append(db, region, source_request(region, source, 1, {"kept": True}))
+    reference = outcome.references[0]
+    target = next(row for row in region.plan.subtasks if row.input_stream_id == reference.stream_id)
+    binding = await open_input(db, region, target.operator_uid, target.subtask_index)
+    before = await contents(db, region)
+    async with route_store(db, region, target.operator_uid, target.subtask_index) as (session, store, _):
+        cached_edge = await session.get(db.StreamGraphEdge, reference.edge_id)
+        assert cached_edge is not None
+        original_port = cached_edge.producer_port_id
+        alternate_port = next(row.output_port.id for row in region.plan.operators if row.operator_uid == target.operator_uid)
+        assert alternate_port != original_port and alternate_port != cached_edge.consumer_port_id
+        async with session.begin_nested() as savepoint:
+            await session.execute(sa.update(db.StreamGraphEdge).where(db.StreamGraphEdge.id == cached_edge.id).values(producer_port_id=alternate_port).execution_options(synchronize_session=False))
+            assert cached_edge.producer_port_id == original_port
+            with pytest.raises(NativeStreamError, match="Original payload identity, content or producer differs") as refused:
+                await store.read_consumer(binding)
+            assert refused.value.code == "REFERENCE_IDENTITY_CONFLICT"
+            assert cached_edge.producer_port_id == original_port
+            await _assert_reference_refusal_left_data_unchanged(session, db, region, binding, {row.id for row in before["records"]}, set(before["receipts"]))
+            await savepoint.rollback()
+    assert await contents(db, region) == before
+
+
+async def test_postgres_reference_resolution_autoflushes_pending_payload_poison(
+    db: PrefectDBInterface, flow_run: orm_models.FlowRun
+):
+    region = await routing_region(db, flow_run)
+    source = await claim_source(db, region)
+    outcome = await append(db, region, source_request(region, source, 1, {"kept": True}))
+    reference = outcome.references[0]
+    target = next(row for row in region.plan.subtasks if row.input_stream_id == reference.stream_id)
+    binding = await open_input(db, region, target.operator_uid, target.subtask_index)
+    before = await contents(db, region)
+    async with route_store(db, region, target.operator_uid, target.subtask_index) as (session, store, _):
+        cached_payload = await session.get(db.StreamRecord, outcome.payload_record_id)
+        assert cached_payload is not None
+        async with session.begin_nested() as savepoint:
+            cached_payload.value = {"pending_without_digest": True}
+            assert cached_payload in session.dirty
+            with pytest.raises(NativeStreamError) as refused:
+                await store.resolve_reference(reference.stream_id, reference.sequence)
+            assert refused.value.code == "REFERENCE_IDENTITY_CONFLICT"
+            await _assert_reference_refusal_left_data_unchanged(session, db, region, binding, {row.id for row in before["records"]}, set(before["receipts"]))
+            await savepoint.rollback()
+    assert await contents(db, region) == before

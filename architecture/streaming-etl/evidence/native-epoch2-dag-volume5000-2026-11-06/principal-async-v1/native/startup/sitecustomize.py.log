@@ -1,0 +1,20 @@
+import hashlib,json,marshal,os,sys,time
+_seen=set();_identities={};_source='/tmp/ariadne-native-5000-diagnosis-v1/src/prefect/';_tests='/tmp/ariadne-native-5000-diagnosis-v1/tests/';_out='/tmp/native-principal-dag5000-18124-v1/async-v4/async5000-7ea011c2/audit'
+
+def audit(event,args):
+ if event!='exec' or not args:return
+ code=args[0];path=getattr(code,'co_filename','')
+ if not isinstance(path,str) or not path.endswith('.py') or path in _seen:return
+ if not (path.startswith(_source) or path.startswith(_tests) or '/src/prefect/' in path or '/site-packages/prefect/' in path):return
+ _seen.add(path)
+ try:
+  pid=os.getpid()
+  if pid not in _identities:
+   with open('/proc/'+str(pid)+'/stat') as state:_identities[pid]=state.read().rsplit(')',1)[1].split()[19]
+  with open(path,'rb') as source:source_digest=hashlib.sha256(source.read()).hexdigest()
+  row={'pid':pid,'start_ticks':_identities[pid],'parent':os.getppid(),'monotonic_ns':time.monotonic_ns(),'path':path,'source_sha256':source_digest,'code_sha256':hashlib.sha256(marshal.dumps(code)).hexdigest()}
+  fd=os.open(_out+'/'+str(pid)+'.jsonl',os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
+  try:os.write(fd,(json.dumps(row,sort_keys=True)+chr(10)).encode())
+  finally:os.close(fd)
+ except OSError:pass
+sys.addaudithook(audit)

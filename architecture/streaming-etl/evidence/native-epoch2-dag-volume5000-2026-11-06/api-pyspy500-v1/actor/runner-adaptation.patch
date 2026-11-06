@@ -1,0 +1,145 @@
+--- closedJOINpassiveCONTROLrunner
++++ externalpyspy500runner
+@@ -17,11 +17,12 @@
+ from audit_sync500 import inspect
+ import support as s
+ from observation_support import publication_snapshot,resources,cpu_sample
++from sampler_support import Sampler, BINARY, BINARY_SHA
+ 
+ BASE = Path(__file__).resolve().parent
+ ROOT = s.ROOT
+ NODE = "tests/test_native_stream_dag_execution_http.py::test_public_dag_bounded_volume_postgres[False-500]"
+-ASSETS = ("runner.py","support.py","audit_sync500.py","provision_observer_plugin.py","api_selector.py","measurement_runtime.py","startup_measure.py","observation_support.py","startup-template.py.txt")
++ASSETS = ("runner.py","support.py","audit_sync500.py","provision_observer_plugin.py","api_selector.py","measurement_runtime.py","startup_measure.py","observation_support.py","startup-template.py.txt","sampler_support.py")
+ BUDGETS = {"wait":750,"observe":840,"pytest":900}
+ ADDITIONAL_SOURCE = "tests/server/models/test_stream_dag_task_projection.py"
+ 
+@@ -43,11 +44,11 @@
+     assert len(sys.argv) == 2, "usage: runner.py /ABS/ROOT_AUTHORIZED_MEASUREMENT_HOLD.json"
+     hold_path = Path(sys.argv[1]); assert hold_path.is_absolute()
+     hold = json.loads(hold_path.read_text())
+-    assert hold["status"] == "ROOT_AUTHORIZED_REFERENCE_JOIN_SYNC500_MEASUREMENT_SOURCE_HOLD"
++    assert hold["status"] == "ROOT_AUTHORIZED_API_PYSPY500_SOURCE_HOLD"
+     assert hold["runtime_authorized_by"] == "/root" and hold["publication_hooks_status"] == "STOPPED_PASS"
+     assert hold["authorized_nodes"] == [NODE] and hold["budgets"] == BUDGETS
+     assert hold["source_root"] == str(ROOT) and hold["retain_owned_database_on_pass_and_fail"] is True
+-    mode=hold["mode"];assert mode in {"control","instrumented"}
++    mode=hold["mode"];assert mode=="control"
+     assert hold["phase_separate_root_go"] is True and hold["only_provisioning_fixture_override"] is True
+     head = subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip()
+     assert head == hold["head"] == s.EXPECTED_HEAD
+@@ -60,25 +61,14 @@
+     assert hold["tested_version"]["publication_delta_sha256"] == hashlib.sha256(json.dumps(publication_before,sort_keys=True).encode()).hexdigest()
+     assets = {name:s.sha(BASE/name) for name in ASSETS}; assert assets == hold["assets"]
+     auxiliary={name:s.sha(ROOT/name) for name in hold["auxiliary_source_bindings"]};assert auxiliary==hold["auxiliary_source_bindings"]
+-    if mode=="control":
+-        previous_path=Path(hold["previous_pg68_stop"]["path"])
+-        assert previous_path.is_absolute() and s.sha(previous_path)==hold["previous_pg68_stop"]["sha256"]
+-        previous=json.loads(previous_path.read_text())
+-        assert previous["status"]=="REFERENCE_JOIN_PG68_PASS_DB_RETAINED" and previous["runtime_STOPPED"] is True
+-        assert previous["pytest_exit"]==0 and previous["actual_exit_persisted_before_metadata"] is True
+-        assert previous["source_files"]==1601 and previous["source_drift"]==[] and previous["import_audit"]["mismatches"]==[]
+-        assert previous["provisioning_proof_valid"] is True and previous["collection"]["count"]==68
+-        assert previous["database"]["sessions"]==[] and previous["database"]["retained"] is True
+-        assert json.loads((previous_path.parent/"source-before.json").read_text())==before
+-    if mode=="instrumented":
+-        previous_path=Path(hold["previous_control_stop"]["path"])
+-        assert previous_path.is_absolute() and s.sha(previous_path)==hold["previous_control_stop"]["sha256"]
+-        previous=json.loads(previous_path.read_text())
+-        assert previous["mode"]=="control" and previous["runtime_STOPPED"] is True and previous["status"]=="DIAGNOSTIC_CASE_PASS_DB_RETAINED"
+-        assert previous["source_drift"]==[] and previous["assets"]==assets
+-        assert previous["source_files"]==1601 and previous["pytest_exit"]==0 and previous["actual_exit_persisted_before_metadata"] is True
+-        assert previous["database"]["sessions"]==[] and previous["database"]["retained"] is True
+-        assert json.loads((previous_path.parent/"source-before.json").read_text())==before
++    previous_path=Path(hold["previous_counters_stop"]["path"])
++    assert previous_path.is_absolute() and s.sha(previous_path)==hold["previous_counters_stop"]["sha256"]
++    previous=json.loads(previous_path.read_text())
++    assert previous["mode"]=="counters" and previous["runtime_STOPPED"] is True and previous["status"]=="DIAGNOSTIC_CASE_PASS_DB_RETAINED"
++    assert previous["pytest_exit"]==0 and previous["source_files"]==1601 and previous["source_drift"]==[]
++    assert previous["database"]["sessions"]==[] and previous["database"]["retained"] is True
++    assert json.loads((previous_path.parent/"source-before.json").read_text())==before
++    assert hold["pyspy_binary_sha256"]==BINARY_SHA==s.sha(BINARY.resolve())
+     conftest=(ROOT/"tests/conftest.py").read_text()
+     nodes=[n for n in ast.parse(conftest).body if isinstance(n,ast.AsyncFunctionDef) and n.name=="generate_test_database_connection_url"]
+     assert len(nodes)==1
+@@ -88,7 +78,7 @@
+     original_fixture="".join(conftest.splitlines(keepends=True)[fixture.decorator_list[0].lineno-1:fixture.end_lineno])
+     fixture_sha=hashlib.sha256(original_fixture.encode()).hexdigest()
+     assert fixture_sha==hold["original_provisioning_fixture_sha256"]
+-    trial=BASE/(mode+"-"+uuid4().hex[:8]);trial.mkdir(mode=0o700)
++    trial=BASE/("profile-"+uuid4().hex[:8]);trial.mkdir(mode=0o700)
+     for name in ("audit","startup","temp"):(trial/name).mkdir(mode=0o700)
+     s.write(trial/"source-before.json",before);s.write(trial/"external-assets.json",assets)
+     s.write(trial/"auxiliary-source-bindings.json",auxiliary)
+@@ -123,8 +113,8 @@
+         "TMPDIR":str(trial/"temp"),"PREFECT_LOGGING_LEVEL":"INFO","PREFECT_LOGGING_INTERNAL_LEVEL":"WARNING",
+         "NATIVE_MEASURE500_TRIAL":str(trial),"NATIVE_MEASURE500_DBNAME":database})
+     command=["uv","run","--no-sync","--offline","python","-m","pytest",NODE,"-n0","-q","-o","addopts=","-p","provision_observer_plugin","--junitxml="+str(trial/"pytest.private.xml"),"--basetemp="+str(trial/"pytest")]
+-    s.write(trial/"command.json",{"command":command,"nodeid":NODE,"cwd":str(ROOT),"phase":"sync500","mode":mode,"head":head,"database":database,"private_selector_path":str(s.SELECTOR),"hold_sha256":s.sha(hold_path),"assets":assets,"generated_startup_sha256":hashlib.sha256(site.encode()).hexdigest(),"budgets":BUDGETS,"whole_process_deadline_added":False,"count":500,"workload_mode":"normal","asynchronous":False,"profiling":False,"tested_version":hold["tested_version"],"only_provisioning_fixture_override":True,"derived_tests_master_database_created":False,"database_retained_always":True,"drop_or_terminate_backend_allowed":False})
+-    process=None;identities={};pytest_exit=None;waited=False;direct_wait=None;reaping=None;harness_errors=[];pgid=None
++    s.write(trial/"command.json",{"command":command,"nodeid":NODE,"cwd":str(ROOT),"phase":"sync500","mode":mode,"head":head,"database":database,"private_selector_path":str(s.SELECTOR),"hold_sha256":s.sha(hold_path),"assets":assets,"generated_startup_sha256":hashlib.sha256(site.encode()).hexdigest(),"budgets":BUDGETS,"whole_process_deadline_added":False,"count":500,"workload_mode":"normal","asynchronous":False,"profiling":True,"tested_version":hold["tested_version"],"only_provisioning_fixture_override":True,"derived_tests_master_database_created":False,"database_retained_always":True,"drop_or_terminate_backend_allowed":False})
++    process=None;identities={};pytest_exit=None;waited=False;direct_wait=None;reaping=None;harness_errors=[];pgid=None;sampler=None;profile=None
+     def capture(stage,callback,default=None):
+         try:return callback()
+         except BaseException as exc:
+@@ -139,6 +129,7 @@
+             identities[process.pid]=current["start_ticks"]
+             identity={"pytest_pid":process.pid,"pytest_start_ticks":current["start_ticks"],"pgid":pgid,"runner_pid":os.getpid(),"runner_start_ticks":subreaper["runner_start_ticks"],"subreaper_verified_before_popen":True}
+             s.write(trial/"process.json",identity)
++            sampler=Sampler(trial,process.pid)
+             print(json.dumps({"status":"ONE_EXACT_SYNC500_DIAGNOSTIC_RUNNING","trial":str(trial),**identity}),flush=True)
+             with (trial/"disk-observations.jsonl").open("w") as disk, (trial/"process-cpu-samples.jsonl").open("w") as cpu:
+                 def sample_cpu():
+@@ -148,6 +139,7 @@
+                     try:
+                         value=process.wait(timeout=5)
+                     except subprocess.TimeoutExpired:
++                        sampler.poll()
+                         sample_cpu()
+                         s.collect_group(pgid,identities)
+                         disk.write(json.dumps({"monotonic_ns":time.monotonic_ns(),"disks":disk_snapshot()})+"\n");disk.flush()
+@@ -163,6 +155,13 @@
+         harness_errors.append({"stage":"pytest_or_process_metadata","exception_type":type(exc).__name__})
+     # No harness signal/deadline overrides. If an unexpected harness error leaves
+     # a live owner, retain the DB and explicitly report incomplete closure.
++    try:
++        profile=sampler.finish() if sampler is not None else {"status":"PROFILE_OBSERVER_INCONCLUSIVE","stage":"native_process_not_started"}
++    except Exception as error:
++        profile={**(sampler.result or {}),"status":"PROFILE_OBSERVER_INCONCLUSIVE","stage":"sampler_finish_parse_or_write","error_type":type(error).__name__}
++        # Observer failure never skips the native source/import/closure audits.
++        try:s.write(trial/"profile-result.json",profile)
++        except OSError:pass
+     def imports_audit():
+         rows=0;mismatches=[]
+         for path in (trial/"audit").glob("*.jsonl"):
+@@ -182,6 +181,7 @@
+     drift=sorted(k for k in before.keys()|after.keys() if before.get(k)!=after.get(k)) if after is not None else ["SOURCE_AFTER_UNAVAILABLE"]
+     if capture("head_after",lambda:subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip())!=head:drift.append("GIT_HEAD")
+     if capture("assets_after",lambda:{name:s.sha(BASE/name) for name in ASSETS})!=assets:drift.append("EXTERNAL_ASSETS")
++    if capture("pyspy_binary_after",lambda:s.sha(BINARY.resolve()))!=BINARY_SHA:drift.append("PYSPY_BINARY")
+     if capture("auxiliary_after",lambda:{name:s.sha(ROOT/name) for name in auxiliary})!=auxiliary:drift.append("AUXILIARY_SOURCE_BINDINGS")
+     if capture("startup_after",lambda:(trial/"startup/sitecustomize.py").read_text())!=site:drift.append("GENERATED_STARTUP")
+     publication_after=capture("publication_after",publication_snapshot)
+@@ -230,15 +230,17 @@
+     sampled={pid for row in samples for pid in row['processes']}
+     s.write(trial/'cpu-sampling-coverage.json',{'samples':len(samples),'sampled_pid_identities':sorted(sampled),'audited_identities_not_sampled':sorted(str(pid) for pid in identities if str(pid) not in sampled),'qualification':'Last process sample is not an exit total; missing short-lived processes have unknown CPU, not zero. APIfinally RUSAGE is separate whole-process accounting.'})
+     runtime_closed=bool(waited and closure and not closure["remaining_same_identity_live"] and not closure["remaining_same_identity_zombies"] and reaping and reaping["waitpid_echild_success"] and database_closure and database_closure["sessions"]==[])
+-    passed=bool(measurement["status"]=="API_SELECTION_AND_MEASUREMENT_VALID" and pytest_exit==0 and waited and not harness_errors and not drift and not imports["mismatches"] and runtime_closed and proof_valid and collection and collection["nodeids"]==[NODE] and collection["pytest_timeout_marker"]==900 and body["status"]=="BODY_AND_WIDER_HEALTH_PASS" and database_closure["retained"] is True)
+-    receipt={"status":"DIAGNOSTIC_CASE_PASS_DB_RETAINED" if passed else "NATIVE_OR_HEALTH_OR_HARNESS_RED","runtime_STOPPED":runtime_closed,"phase":"sync500","mode":mode,"nodeid":NODE,"head":head,"pytest_exit":pytest_exit,"actual_exit_persisted_before_metadata":waited,"harness_errors":harness_errors,"source_files":len(before),"source_drift":drift,"import_audit":imports,"process_closure":closure,"subreaper_proof":subreaper,"direct_child_wait":direct_wait,"adopted_reaping":reaping,"database":database_closure,"body_wider_health":body,"measurement_audit":measurement,"provisioning_proof":proof,"provisioning_proof_valid":proof_valid,"collection":collection,"budgets":BUDGETS,"assets":assets,"hold_sha256":s.sha(hold_path),"profiling":False,"tested_version":hold["tested_version"],"harness_signals_sent":[],"whole_process_deadline_added":False,"retry":False,"known_prior_orphan":{"pid":384983,"status":"prior dead PPID1 artifact excluded; untouched"},"qualification":"One unchanged exact native DAG sync500 SDK/TCP/PG17/OS case. API measurement treatment unchanged; reviewed TaskRun projection/refresh and bounded reference JOIN changes are explicit in source1601 lease. No cache/profile/newmetrics or causal/readiness claim; local resources need not match CI8GiB. Provisioning-only fixture override preserves its fresh DB on PASS/FAIL for Root postterminal SQL and Principal verdict. Runtime STOP is not next-phase authorization. No auto retry/P2, causal/performance/readiness claim, source correction, drop or terminate."}
+-    s.write(trial/"diagnostic-receipt-v1.json",receipt)
++    native_passed=bool(measurement["status"]=="API_SELECTION_AND_MEASUREMENT_VALID" and pytest_exit==0 and waited and not harness_errors and not drift and not imports["mismatches"] and runtime_closed and proof_valid and collection and collection["nodeids"]==[NODE] and collection["pytest_timeout_marker"]==900 and body["status"]=="BODY_AND_WIDER_HEALTH_PASS" and database_closure["retained"] is True)
++    profile_captured=profile.get("status")=="PROFILE_SAMPLES_CAPTURED"
++    passed=native_passed and profile_captured
++    receipt={"status":"NATIVE_CASE_PASS_PROFILE_CAPTURED" if passed else "NATIVE_CASE_PASS_PROFILE_INCONCLUSIVE" if native_passed else "NATIVE_OR_HEALTH_OR_HARNESS_RED","native_outcome":"PASS" if native_passed else "RED","profile_outcome":profile,"runtime_STOPPED":runtime_closed,"phase":"sync500","mode":mode,"nodeid":NODE,"head":head,"pytest_exit":pytest_exit,"actual_exit_persisted_before_metadata":waited,"harness_errors":harness_errors,"source_files":len(before),"source_drift":drift,"import_audit":imports,"process_closure":closure,"subreaper_proof":subreaper,"direct_child_wait":direct_wait,"adopted_reaping":reaping,"database":database_closure,"body_wider_health":body,"measurement_audit":measurement,"provisioning_proof":proof,"provisioning_proof_valid":proof_valid,"collection":collection,"budgets":BUDGETS,"assets":assets,"hold_sha256":s.sha(hold_path),"profiling":True,"tested_version":hold["tested_version"],"harness_signals_sent":[],"whole_process_deadline_added":False,"retry":False,"known_prior_orphan":{"pid":384983,"status":"prior dead PPID1 artifact excluded; untouched"},"qualification":"One unchanged exact native DAG sync500 SDK/TCP/PG17/OS case. Passive CONTROL API selection/RUSAGE plus ONEownedexternal py-spy nonblocking120s49Hzwindow. No inprocessstage/ASGI/SQLwrappers/cache/productchanges. Nativeandprofileoutcomes separate; no causal/readiness claim; local resources need not match CI8GiB. Provisioning-only fixture override preserves its fresh DB on PASS/FAIL for Root postterminal SQL and Principal verdict. Runtime STOP is not next-phase authorization. No auto retry/P2, causal/performance/readiness claim, source correction, drop or terminate."}
++    s.write(trial/"pyspy-receipt-v1.json",receipt)
+     print(json.dumps({"status":receipt["status"] if runtime_closed else "RUNTIME_CLOSURE_INCOMPLETE","runtime_STOPPED":runtime_closed,"trial":str(trial),"pytest_exit":pytest_exit,"harness_errors":harness_errors,"source_drift":drift,"failed_checks":body["failed_checks"][:12],"remaining_sessions":database_closure["sessions"] if database_closure else None,"fresh_database_retained":database_closure["retained"] if database_closure else None}),flush=True)
+-    return 0 if passed else (pytest_exit or 90)
++    return 0 if passed else (91 if native_passed else (pytest_exit or 90))
+ 
+ 
+ if __name__=="__main__":
+-    lock=os.open(BASE/"one-diagnostic-runtime.lock",os.O_WRONLY|os.O_CREAT,0o600)
++    lock=os.open(BASE/"one-pyspy-native-runtime.lock",os.O_WRONLY|os.O_CREAT,0o600)
+     try:
+         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+         code=main()

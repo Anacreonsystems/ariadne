@@ -1,0 +1,83 @@
+"""Read-only exact P2 fault500/PG selected test reconciliation; no DB connection."""
+import json
+from pathlib import Path
+import re
+import xml.etree.ElementTree as ET
+
+
+def inspect(trial:Path,phase:str,expected_count:int)->dict:
+    failures=[]
+    def check(value,message):
+        if not value:failures.append(message)
+    def load(path):
+        try:return json.loads(path.read_text())
+        except (OSError,ValueError):failures.append(str(path.relative_to(trial))+":missing_or_invalid");return {}
+    def rows(path):
+        try:return [json.loads(line) for line in path.read_text().splitlines()]
+        except (OSError,ValueError):failures.append(str(path.relative_to(trial))+":missing_or_invalid");return []
+    try:suites=ET.parse(trial/'pytest.private.xml').findall('.//testsuite')
+    except (OSError,ET.ParseError):suites=[];failures.append('pytest XML missing/invalid')
+    check(len(suites)==1,'exactly one pytest suite')
+    suite=suites[0].attrib if suites else {}
+    check(suite.get('tests')==str(expected_count) and all(suite.get(k)=='0' for k in ('failures','errors','skipped')),'one exact unchanged P2 fault500 PASS without skip')
+    if phase=='pg_selected':
+        return {'status':'BODY_AND_WIDER_HEALTH_PASS' if not failures else 'PG_SELECTOR_RED','pytest_suite':suite,'failed_checks':failures,'wider_health':{},'qualification':'Selected unchanged real PG17 tests; exact expanded collection/count proven by provisioning plugin. Existing clear_db/normal fixture cleanup remain unmodified and may erase last metadata; no postterminal-row preservation claim. No native SDK/OS or independent SQL capture inferred from this group.'}
+    health={key:[] for key in ('api_access_5xx','http_client_5xx','TimeoutError','api_asgi_unhandled','worker_error','healthy_retry')}
+    ansi=re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]');access=re.compile(r'\bHTTP/\d(?:\.\d)?[\"\']?\s+5\d{2}\b',re.I)
+    for path in sorted((trial/'pytest').rglob('*.log')):
+        if not(path.name.startswith('api-') or path.name in {'worker-left.log','worker-right.log'}):continue
+        for number,line in enumerate(path.read_text(errors='replace').splitlines(),1):
+            line=ansi.sub('',line);record={'file':str(path.relative_to(trial)),'line':number}
+            if path.name.startswith('api-') and access.search(line):health['api_access_5xx'].append(record)
+            if re.search(r"Server error ['\"]5\d{2}\b",line,re.I):health['http_client_5xx'].append(record)
+            if re.search(r'\bTimeoutError\b',line):health['TimeoutError'].append(record)
+            if path.name.startswith('api-') and 'exception in asgi application' in line.lower():health['api_asgi_unhandled'].append(record)
+            if path.name.startswith('worker-') and re.search(r'(?:^|\|)\s*ERROR(?:\s*\||\s*:)',line):health['worker_error'].append(record)
+    directories=[p for p in (trial/'pytest').glob('*') if p.is_dir() and not p.is_symlink() and (p/'case-observation.json').exists()]
+    check(len(directories)==1,'one complete existing P2 fixture observation')
+    business={};observation={}
+    if directories:
+        directory=directories[0];observation=load(directory/'case-observation.json')
+        check(observation.get('status')=='PASS' and observation.get('count')==500 and observation.get('fault')==('operator-before-yield-200' if phase=='sync_incomplete200' else 'operator-loss-200') and observation.get('asynchronous') is (phase=='async_accepted200'),'declared normal P2 fault500 workload and existing fixture PASS')
+        check(observation.get('flow_run_id') and len(observation.get('workers',[]))==2,'owned Flow and two registered real workers')
+        check(observation.get('lifecycle_checks',{}).get('final_flow_slots')==0,'existing fixture terminal Flow slots zero')
+        expected_pid_names={f'{role}-{partition}-1.pid' for role in ('source','operator') for partition in (0,1)}|{'operator-0-2.pid'}
+        pid_files=list(directory.glob('*.pid'))
+        check({p.name for p in pid_files}==expected_pid_names,'five births: four initial and one B0 replacement, no extra pid markers')
+        identities={p.name:int(p.read_text()) for p in pid_files}
+        check(len(set(identities.values()))==5,'five distinct births: four initial and one B0 replacement')
+        worker_pids={row['pid'] for row in observation.get('workers',[])}
+        for role in ('source','operator'):
+            for partition in (0,1):
+                try:parent=int((directory/f'{role}-{partition}-1.ppid').read_text())
+                except (OSError,ValueError):parent=None
+                check(parent in worker_pids,f'{role}{partition} real worker parent')
+        check(len(list(directory.glob('source-first-accepted-*.time')))==2,'both source partitions observed first accepted position')
+        replay=200 if phase=='sync_incomplete200' else 201
+        first=rows(directory/'calls-0-1.jsonl');second=rows(directory/'calls-0-2.jsonl');healthy=rows(directory/'calls-1-1.jsonl')
+        check([r['sequence'] for r in first]==list(range(1,201)),'B0 attempt1 exact1..200 body entries')
+        check([r['sequence'] for r in second]==list(range(replay,251)),'B0 replacement exact replay200/201..250')
+        check([r['sequence'] for r in healthy]==list(range(1,251)),'healthy B1 exact250 body entries')
+        check({p.name for p in directory.glob('calls-*.jsonl')}=={'calls-0-1.jsonl','calls-0-2.jsonl','calls-1-1.jsonl'},'exact fault traces; no extra attempts')
+        check({r['task_run_id'] for r in first}=={r['task_run_id'] for r in second} and len({r['task_run_id'] for r in first})==1,'B0 stable TaskRun across replacement')
+        for label,calls,pid_name,epoch in [('B0initial',first,'operator-0-1.pid',1),('B0replacement',second,'operator-0-2.pid',1),('B1healthy',healthy,'operator-1-1.pid',1)]:
+            check({r['pid'] for r in calls}=={identities.get(pid_name)},label+' exact owned process')
+            check(all(r.get('assignment_epoch')==epoch and r.get('operator_uid')=='operator.sign' for r in calls),label+' exact assignment epoch and UID')
+            business[label]={'body_calls':len(calls),'processes':len({r['pid'] for r in calls}),'task_runs':len({r['task_run_id'] for r in calls})}
+        fault=load(directory/'operator-loss')
+        check(fault.get('pid')==identities.get('operator-0-1.pid') and {fault.get('task_run_id')}=={r['task_run_id'] for r in first},'expected original B0 death identity')
+        try:replacement=(directory/'replacement-started').read_text()
+        except OSError:replacement=None
+        check(replacement==str(replay),'exact replay marker200/201')
+        try:replacement_parent=int((directory/'operator-0-2.ppid').read_text())
+        except (OSError,ValueError):replacement_parent=None
+        check(replacement_parent in worker_pids,'replacement owned worker parent')
+        signed=list(directory.glob('signed-*.json'));check(len(signed)==500,'500 unique signed effects')
+        invalid=[]
+        for number in range(1,501):
+            value=load(directory/f'signed-{number}.json')
+            if value!={'number':number,'document_id':f'invoice-{number}','signed':True,'partition':(number-1)%2,'input_sequence':(number+1)//2}:invalid.append(number)
+        check(not invalid,'exact signed bodies; firstinvalid='+str(invalid[:10]))
+    fault_worker_errors=health.pop('worker_error')
+    check(not any(health.values()),'no extra HTTP5xx/TimeoutError/ASGI/healthy retry')
+    return {'status':'BODY_AND_WIDER_HEALTH_PASS' if not failures else 'NATIVE_BODY_OR_HEALTH_RED','pytest_suite':suite,'failed_checks':failures,'wider_health':health,'fault_worker_error_rows_for_principal_review':fault_worker_errors,'business':business,'case_observation':observation,'qualification':'Expected B0 os._exit77 fault worker error rows are recorded separately, not asserted zero or automatically declared benign; independent Principal reviews them. Body entries are not durable acceptance. Read-only file replay of exact existing P2 test, including its unchanged SQL assertions through pytest PASS. Body-entered calls are not durable cursor acceptance. P2 fixture does not write full graph/allocation/coordinator/cursor snapshots; external Root-controlled MVCC/postterminal capture remains separate. Typed409 is not5xx; no causal, throughput or readiness claim.'}

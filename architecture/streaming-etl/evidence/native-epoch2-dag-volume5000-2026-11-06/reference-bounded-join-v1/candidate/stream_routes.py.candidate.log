@@ -1,0 +1,1571 @@
+"""DAG routed storage seams; public execution remains explicitly unavailable."""
+
+import hashlib
+from dataclasses import dataclass, field
+from typing import NoReturn, TypeAlias
+from uuid import UUID
+
+import sqlalchemy as sa
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+
+from prefect._internal.stream_key_wire import decode_tagged_key_wire_v1
+from prefect._internal.stream_route_plan import (
+    RouteEdge,
+    RoutePlanningError,
+    RouteTarget,
+    canonical_route_json,
+    graph_routing_digest,
+    plan_route_targets,
+    route_outcome_digest,
+    route_semantic_digest,
+)
+from prefect._internal.stream_routing import encode_tagged_key_v1
+from prefect._internal.uuid7 import uuid7
+from prefect.server.database import PrefectDBInterface, orm_models
+from prefect.server.models import stream_dags
+from prefect.server.models._stream_errors import NativeStreamError
+from prefect.server.models.stream_executions import require_execution
+from prefect.server.models.stream_subtask_authority import (
+    require_physical_backend,
+)
+from prefect.server.models.streams import (
+    canonical_stream_payload,
+    finish_stream_partition,
+)
+from prefect.server.schemas import stream_dags as topology
+from prefect.server.schemas import stream_routes as s
+from prefect.server.schemas.states import StateType
+from prefect.server.schemas.stream_subtasks import StreamSubtaskCredentials
+from prefect.server.schemas.streams import (
+    ConsumerBinding,
+    DeliveryToken,
+    SourceAdmission,
+    SourceBinding,
+    StreamDelivery,
+    StreamExecutionCredentials,
+    StreamLimits,
+)
+
+RouteRequest: TypeAlias = (
+    s.StreamDAGSourceAppendRequest | s.StreamDAGConsumerCompleteRequest
+)
+RouteCredentials: TypeAlias = (
+    StreamExecutionCredentials | StreamSubtaskCredentials | None
+)
+
+
+def validate_route_context(
+    plan: topology.StreamDAGPlan, request: RouteRequest
+) -> topology.StreamDAGSubtaskProjection:
+    """Match every caller witness to server-owned immutable topology."""
+    context = request.context
+    subtask = next(
+        (row for row in plan.subtasks if row.id == context.producer_subtask_id), None
+    )
+    if (
+        plan.id != context.graph_revision_id
+        or plan.flow_run_id != request.binding.flow_run_id
+        or plan.graph_digest != context.graph_digest
+        or graph_routing_digest(plan.graph_digest) != context.routing_digest
+        or subtask is None
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Route graph or producer identity differs"
+        )
+    operator = next(row for row in plan.operators if row.id == subtask.operator_run_id)
+    keyed = any(
+        edge.exchange == "keyed"
+        for edge in plan.edges
+        if edge.producer_operator_uid == operator.operator_uid
+    )
+    if (
+        operator.operator_uid != context.operator_uid
+        or operator.output_port.uid != context.output_port_uid
+        or subtask.subtask_index != context.subtask_index
+        or keyed != context.has_keyed_outgoing
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Route operator, port, index or key witness differs"
+        )
+    if isinstance(request, s.StreamDAGSourceAppendRequest):
+        if (
+            operator.role != "SOURCE"
+            or subtask.manifest.task_run_id != request.binding.task_run_id
+            or subtask.output_stream_id != request.binding.stream_id
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Source binding is outside its exact DAG subtask"
+            )
+    else:
+        edge_partition = next(
+            (
+                part
+                for edge in plan.edges
+                for part in edge.partitions
+                if part.target_subtask_id == subtask.id
+            ),
+            None,
+        )
+        if (
+            operator.role != "OPERATOR"
+            or edge_partition is None
+            or edge_partition.subscriber_id != request.binding.consumer_id
+            or subtask.input_stream_id != request.binding.input_stream_id
+            or subtask.output_stream_id != request.binding.output_stream_id
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Consumer binding is outside its stable DAG subscriber",
+            )
+    return subtask
+
+
+async def require_dag_route_execution(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: RouteRequest,
+    execution: RouteCredentials,
+) -> s.StreamDAGRouteOutcome:
+    """Dispatch only exact scoped DAG children; Flow holders keep the fence."""
+    if isinstance(execution, StreamSubtaskCredentials):
+        # The lifecycle service reuses this module's transaction store; defer
+        # this inverse edge solely to break that genuine import cycle.
+        from prefect.server.models import stream_dag_executions
+
+        if isinstance(request, s.StreamDAGSourceAppendRequest):
+            return await stream_dag_executions.append_stream_dag_source(
+                session, db, request, execution
+            )
+        return await stream_dag_executions.complete_stream_dag_consumer(
+            session, db, request, execution
+        )
+    else:
+        plan = await stream_dags.read_dag_plan(
+            session, db, request.context.graph_revision_id, execution
+        )
+        validate_route_context(plan, request)
+    raise NativeStreamError(
+        "EXECUTION_PROFILE_NOT_READY",
+        "DAG routed execution is unavailable until NI2-012",
+    )
+
+
+@dataclass(frozen=True)
+class DAGRouteAuthorization:
+    """Internal transaction-local proof, never accepted by an HTTP handler."""
+
+    session: AsyncSession = field(repr=False)
+    transaction: object = field(repr=False)
+    context: s.StreamDAGRouteContext
+    flow_run_id: UUID
+    task_run_id: UUID
+    generation: int
+    holder_id: UUID
+    flow_run_run_count: int
+    flow: orm_models.FlowRun = field(repr=False)
+    authority: orm_models.StreamExecutionAuthority = field(repr=False)
+    graph: orm_models.StreamGraphRevision = field(repr=False)
+    subtask: orm_models.StreamPhysicalSubtask = field(repr=False)
+    plan_bytes: bytes = field(repr=False)
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError(
+            "Internal routing authority cannot cross process or wire boundaries"
+        )
+
+    @property
+    def plan(self) -> topology.StreamDAGPlan:
+        return topology.StreamDAGPlan.model_validate_json(self.plan_bytes)
+
+    def validate(
+        self, session: AsyncSession, context: s.StreamDAGRouteContext | None = None
+    ) -> None:
+        if (
+            self.session is not session
+            or self.transaction is not session.get_transaction()
+            or (context is not None and context != self.context)
+            or self.graph.id != self.context.graph_revision_id
+            or self.graph.flow_run_id != self.flow_run_id
+            or self.graph.graph_digest != self.context.graph_digest
+            or self.subtask.id != self.context.producer_subtask_id
+            or self.subtask.graph_revision_id != self.graph.id
+            or self.subtask.task_run_id != self.task_run_id
+            or self.authority.flow_run_id != self.flow_run_id
+            or self.authority.generation != self.generation
+            or self.authority.holder_id != self.holder_id
+            or self.flow.run_count != self.flow_run_run_count
+            or self.authority.flow_run_run_count != self.flow_run_run_count
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Routing authority belongs to another session, transaction or resource",
+            )
+        if self.authority.state == "RELEASED":
+            raise NativeStreamError(
+                "ROUTE_HORIZON_EXPIRED", "The routed execution horizon was released"
+            )
+        if (
+            self.authority.state != "ACTIVE"
+            or self.authority.cancel_requested
+            or self.graph.state != "ADMITTED"
+            or self.graph.abort_operation_id is not None
+        ):
+            raise NativeStreamError(
+                "RECOVERY_NOT_READY", "Routing authority is no longer active"
+            )
+
+
+def context_for_subtask(
+    plan: topology.StreamDAGPlan, subtask_id: UUID
+) -> s.StreamDAGRouteContext:
+    subtask = next((row for row in plan.subtasks if row.id == subtask_id), None)
+    if subtask is None:
+        raise NativeStreamError("IDENTITY_CONFLICT", "Subtask is not part of this DAG")
+    operator = next(row for row in plan.operators if row.id == subtask.operator_run_id)
+    return s.StreamDAGRouteContext(
+        graph_revision_id=plan.id,
+        graph_digest=plan.graph_digest,
+        routing_digest=graph_routing_digest(plan.graph_digest),
+        producer_subtask_id=subtask.id,
+        operator_uid=operator.operator_uid,
+        output_port_uid=operator.output_port.uid,
+        subtask_index=subtask.subtask_index,
+        has_keyed_outgoing=any(
+            edge.exchange == "keyed"
+            for edge in plan.edges
+            if edge.producer_operator_uid == operator.operator_uid
+        ),
+    )
+
+
+async def authorize_dag_routing_discovery(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    context: s.StreamDAGRouteContext,
+    execution: StreamExecutionCredentials,
+) -> DAGRouteAuthorization:
+    """Trusted model-test/service seam; public handlers cannot request this proof."""
+    await require_physical_backend(session, db)
+    locator = await session.get(db.StreamGraphRevision, context.graph_revision_id)
+    if locator is None:
+        raise NativeStreamError("NOT_FOUND", "Unknown DAG revision")
+    flow = await session.scalar(
+        sa.select(db.FlowRun)
+        .where(db.FlowRun.id == locator.flow_run_id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    if flow is None:
+        raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+    # Refresh under the ordered authority lock before the shared existing
+    # credential validator uses the identity map. No graph lock is held yet.
+    await session.scalar(
+        sa.select(db.StreamExecutionAuthority)
+        .where(db.StreamExecutionAuthority.flow_run_id == flow.id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    authority = await require_execution(
+        session, db, flow.id, execution, allowed_states=("ACTIVE",)
+    )
+    if authority is None:
+        raise NativeStreamError(
+            "EXECUTION_BINDING_REQUIRED", "Current Flow execution authority is required"
+        )
+    graph = await session.scalar(
+        sa.select(db.StreamGraphRevision)
+        .where(db.StreamGraphRevision.id == context.graph_revision_id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    if (
+        graph is None
+        or graph.profile != "partitioned-dag-v1"
+        or graph.state != "ADMITTED"
+    ):
+        raise NativeStreamError(
+            "RECOVERY_NOT_READY", "Internal routed transactions require an admitted DAG"
+        )
+    plan = await stream_dags.dag_plan(session, db, graph)
+    expected_context = context_for_subtask(plan, context.producer_subtask_id)
+    if context != expected_context:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Routing context differs from the immutable DAG"
+        )
+    subtask = await session.scalar(
+        sa.select(db.StreamPhysicalSubtask)
+        .where(db.StreamPhysicalSubtask.id == context.producer_subtask_id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    assert subtask is not None
+    proof = DAGRouteAuthorization(
+        session=session,
+        transaction=session.get_transaction(),
+        context=context,
+        flow_run_id=flow.id,
+        task_run_id=subtask.task_run_id,
+        generation=authority.generation,
+        holder_id=authority.holder_id,
+        flow_run_run_count=authority.flow_run_run_count,
+        flow=flow,
+        authority=authority,
+        graph=graph,
+        subtask=subtask,
+        plan_bytes=plan.model_dump_json().encode("utf-8"),
+    )
+    proof.validate(session)
+    return proof
+
+
+class _ReferenceEnvelope(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, hide_input_in_errors=True
+    )
+    format: str = Field(alias="schema")
+    graph_revision_id: str
+    route_receipt_id: str
+    edge_partition_id: str
+    payload_record_id: str
+    payload_stream_id: str
+    payload_sequence: int = Field(ge=1, strict=True)
+    payload_value_digest: str
+
+
+@dataclass(frozen=True)
+class ResolvedDAGValue:
+    value: JsonValue
+    payload_record_id: UUID
+    payload_stream_id: UUID
+    payload_sequence: int
+    payload_value_digest: str
+    payload_size_bytes: int
+    reference_record_id: UUID
+    edge_partition_id: UUID
+
+
+@dataclass(frozen=True)
+class _ReferenceTopologyFacts:
+    edge_partition_id: UUID | None
+    graph_revision_id: UUID | None
+    target_subtask_id: UUID | None
+    stream_id: UUID | None
+    edge_id: UUID | None
+    matched_edge_id: UUID | None
+    producer_port_id: UUID | None
+    producer_subtask_id: UUID | None
+
+
+class NativeDAGRouteStore:
+    """Existing-partition DAG transactions under a current internal authority."""
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        db: PrefectDBInterface,
+        authorization: DAGRouteAuthorization,
+    ):
+        self.session = session
+        self.db = db
+        self.authorization = authorization
+        authorization.validate(session)
+
+    async def lock_current_task(
+        self, *, allow_final: bool = False
+    ) -> orm_models.TaskRun:
+        self.authorization.validate(self.session)
+        task = await self.session.scalar(
+            sa.select(self.db.TaskRun)
+            .where(self.db.TaskRun.id == self.authorization.task_run_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        allowed = {StateType.RUNNING}
+        if allow_final:
+            allowed.update({StateType.COMPLETED, StateType.FAILED, StateType.CRASHED})
+        if (
+            task is None
+            or task.flow_run_id != self.authorization.flow_run_id
+            or task.flow_run_run_count != self.authorization.flow_run_run_count
+            or task.run_count < 1
+            or task.state_type not in allowed
+        ):
+            raise NativeStreamError(
+                "TASK_NOT_RUNNING",
+                "Current physical TaskRun does not permit this routed operation",
+            )
+        return task
+
+    async def lock_partitions(
+        self, stream_ids: list[UUID]
+    ) -> dict[UUID, orm_models.StreamPartition]:
+        ids = sorted(set(stream_ids), key=lambda value: value.bytes)
+        rows = list(
+            (
+                await self.session.scalars(
+                    sa.select(self.db.StreamPartition)
+                    .where(self.db.StreamPartition.id.in_(ids))
+                    .order_by(self.db.StreamPartition.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        )
+        if {row.id for row in rows} != set(ids) or any(
+            row.flow_run_id != self.authorization.flow_run_id for row in rows
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Routed partitions do not belong to the exact Flow"
+            )
+        if any(row.released for row in rows):
+            raise NativeStreamError(
+                "ROUTE_HORIZON_EXPIRED", "A routed partition horizon was released"
+            )
+        return {row.id: row for row in rows}
+
+    async def claim_source(self, owner_id: UUID) -> SourceAdmission:
+        task = await self.lock_current_task()
+        subtask = self.authorization.subtask
+        if subtask.input_stream_id is not None:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Only a SOURCE can claim source production"
+            )
+        stream = (await self.lock_partitions([subtask.output_stream_id]))[
+            subtask.output_stream_id
+        ]
+        if stream.producer_kind != "SOURCE" or stream.producer_task_run_id != task.id:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Source producer binding differs"
+            )
+        if stream.owner_id is None:
+            stream.owner_id, stream.attempt, stream.owner_epoch = (
+                owner_id,
+                task.run_count,
+                1,
+            )
+        elif (stream.owner_id, stream.attempt) != (owner_id, task.run_count):
+            if stream.attempt >= task.run_count:
+                raise NativeStreamError(
+                    "STALE_OWNER", "A current source attempt already has another owner"
+                )
+            stream.owner_id, stream.attempt, stream.owner_epoch = (
+                owner_id,
+                task.run_count,
+                stream.owner_epoch + 1,
+            )
+        if stream.state == "FAILED":
+            raise NativeStreamError("TERMINAL_CONFLICT", "Failed sources cannot reopen")
+        await self.session.flush()
+        return SourceAdmission(
+            binding=SourceBinding(
+                flow_run_id=self.authorization.flow_run_id,
+                stream_id=stream.id,
+                task_run_id=task.id,
+                owner_id=owner_id,
+                attempt=task.run_count,
+                owner_epoch=stream.owner_epoch,
+            ),
+            state="COMPLETED" if stream.state == "COMPLETED" else "OPEN",
+            accepted_source_position=stream.producer_position,
+        )
+
+    def require_source_owner(
+        self,
+        task: orm_models.TaskRun,
+        stream: orm_models.StreamPartition,
+        binding: SourceBinding,
+    ) -> None:
+        if (binding.flow_run_id, binding.stream_id, binding.task_run_id) != (
+            self.authorization.flow_run_id,
+            self.authorization.subtask.output_stream_id,
+            task.id,
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Source binding is outside this routed subtask"
+            )
+        if (binding.owner_id, binding.attempt, binding.owner_epoch) != (
+            stream.owner_id,
+            stream.attempt,
+            stream.owner_epoch,
+        ) or binding.attempt != task.run_count:
+            raise NativeStreamError("STALE_OWNER", "Source owner is no longer current")
+
+    async def open_consumer(self, owner_id: UUID) -> ConsumerBinding:
+        task = await self.lock_current_task()
+        subtask = self.authorization.subtask
+        if subtask.input_stream_id is None:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "A SOURCE has no input subscriber"
+            )
+        edge_partition = await self.session.scalar(
+            sa.select(self.db.StreamGraphEdgePartition).where(
+                self.db.StreamGraphEdgePartition.target_subtask_id == subtask.id
+            )
+        )
+        assert edge_partition is not None
+        edge = await self.session.get(self.db.StreamGraphEdge, edge_partition.edge_id)
+        assert edge is not None
+        port = await self.session.get(self.db.StreamGraphPort, edge.consumer_port_id)
+        assert port is not None
+        streams = await self.lock_partitions(
+            [subtask.input_stream_id, subtask.output_stream_id]
+        )
+        output = streams[subtask.output_stream_id]
+        consumer = await self.session.scalar(
+            sa.select(self.db.StreamConsumer)
+            .where(self.db.StreamConsumer.id == edge_partition.subscriber_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if consumer is None:
+            if output.owner_id is not None:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "Consumer output already has an owner without its subscriber",
+                )
+            consumer = self.db.StreamConsumer(
+                id=edge_partition.subscriber_id,
+                consumer_kind="DAG",
+                flow_run_id=self.authorization.flow_run_id,
+                graph_revision_id=self.authorization.graph.id,
+                edge_partition_id=edge_partition.id,
+                edge_id=edge.id,
+                input_port_id=port.id,
+                subtask_id=subtask.id,
+                task_run_id=task.id,
+                subscriber_uid=edge.subscriber_uid,
+                input_port_uid=port.port_uid,
+                input_stream_id=subtask.input_stream_id,
+                output_stream_id=subtask.output_stream_id,
+                owner_id=owner_id,
+                attempt=task.run_count,
+                owner_epoch=1,
+                managed_state={},
+            )
+            self.session.add(consumer)
+            output.owner_id, output.attempt, output.owner_epoch = (
+                owner_id,
+                task.run_count,
+                1,
+            )
+        elif (consumer.owner_id, consumer.attempt) != (owner_id, task.run_count):
+            if consumer.attempt >= task.run_count:
+                raise NativeStreamError(
+                    "STALE_OWNER",
+                    "A current subscriber attempt already has another owner",
+                )
+            consumer.owner_id, consumer.attempt, consumer.owner_epoch = (
+                owner_id,
+                task.run_count,
+                consumer.owner_epoch + 1,
+            )
+            consumer.inflight_sequence, consumer.delivery_id = None, None
+            output.owner_id, output.attempt, output.owner_epoch = (
+                owner_id,
+                task.run_count,
+                consumer.owner_epoch,
+            )
+        self.require_consumer_owner(
+            task, output, consumer, self._consumer_binding(consumer)
+        )
+        await self.session.flush()
+        return self._consumer_binding(consumer)
+
+    @staticmethod
+    def _consumer_binding(consumer: orm_models.StreamConsumer) -> ConsumerBinding:
+        return ConsumerBinding(
+            flow_run_id=consumer.flow_run_id,
+            consumer_id=consumer.id,
+            input_stream_id=consumer.input_stream_id,
+            output_stream_id=consumer.output_stream_id,
+            owner_id=consumer.owner_id,
+            attempt=consumer.attempt,
+            owner_epoch=consumer.owner_epoch,
+        )
+
+    def require_consumer_owner(
+        self,
+        task: orm_models.TaskRun,
+        output: orm_models.StreamPartition,
+        consumer: orm_models.StreamConsumer,
+        binding: ConsumerBinding,
+    ) -> None:
+        subtask = self.authorization.subtask
+        if (
+            consumer.consumer_kind != "DAG"
+            or consumer.graph_revision_id != self.authorization.graph.id
+            or consumer.subtask_id != subtask.id
+            or consumer.task_run_id != task.id
+            or consumer.flow_run_id != self.authorization.flow_run_id
+            or consumer.input_stream_id != subtask.input_stream_id
+            or consumer.output_stream_id != subtask.output_stream_id
+            or (
+                binding.flow_run_id,
+                binding.consumer_id,
+                binding.input_stream_id,
+                binding.output_stream_id,
+            )
+            != (
+                consumer.flow_run_id,
+                consumer.id,
+                consumer.input_stream_id,
+                consumer.output_stream_id,
+            )
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Consumer binding differs from its stable DAG subscriber",
+            )
+        if (output.producer_kind, output.producer_task_run_id) != ("CONSUMER", task.id):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "DAG output belongs to another task"
+            )
+        if (
+            (binding.owner_id, binding.attempt, binding.owner_epoch)
+            != (consumer.owner_id, consumer.attempt, consumer.owner_epoch)
+            or binding.attempt != task.run_count
+            or (
+                output.owner_id,
+                output.attempt,
+                output.owner_epoch,
+            )
+            != (binding.owner_id, binding.attempt, binding.owner_epoch)
+        ):
+            raise NativeStreamError(
+                "STALE_OWNER", "Subscriber owner is no longer current"
+            )
+
+    async def resolve_reference(
+        self, input_stream_id: UUID, sequence: int
+    ) -> ResolvedDAGValue:
+        self.authorization.validate(self.session)
+        if (
+            input_stream_id != self.authorization.subtask.input_stream_id
+            or type(sequence) is not int
+            or sequence < 1
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Reference is outside the assigned subscriber cursor",
+            )
+        reference = aliased(self.db.StreamRecord, name="reference")
+        payload = aliased(self.db.StreamRecord, name="payload")
+        edge_partition = self.db.StreamGraphEdgePartition
+        edge = self.db.StreamGraphEdge
+        port = self.db.StreamGraphPort
+        producer = self.db.StreamPhysicalSubtask
+        statement = (
+            sa.select(
+                reference,
+                payload,
+                self.db.StreamRouteReceipt,
+                edge_partition.id.label("edge_partition_id"),
+                edge_partition.graph_revision_id.label("graph_revision_id"),
+                edge_partition.target_subtask_id.label("target_subtask_id"),
+                edge_partition.stream_id.label("stream_id"),
+                edge_partition.edge_id.label("edge_id"),
+                edge.id.label("matched_edge_id"),
+                port.id.label("producer_port_id"),
+                producer.id.label("producer_subtask_id"),
+            )
+            .select_from(reference)
+            .outerjoin(edge_partition, edge_partition.id == reference.edge_partition_id)
+            .outerjoin(
+                self.db.StreamRouteReceipt,
+                self.db.StreamRouteReceipt.id == reference.route_receipt_id,
+            )
+            .outerjoin(payload, payload.id == reference.payload_record_id)
+            .outerjoin(edge, edge.id == edge_partition.edge_id)
+            .outerjoin(port, port.id == edge.producer_port_id)
+            .outerjoin(
+                producer,
+                sa.and_(
+                    producer.output_stream_id == payload.stream_id,
+                    producer.operator_run_id == port.operator_run_id,
+                    producer.graph_revision_id == self.authorization.graph.id,
+                ),
+            )
+            .where(
+                reference.stream_id == input_stream_id,
+                reference.sequence == sequence,
+            )
+            .execution_options(populate_existing=True)
+        )
+        row = (await self.session.execute(statement)).one_or_none()
+        if row is None:
+            raise NativeStreamError(
+                "ROUTE_HORIZON_EXPIRED", "The input reference is no longer retained"
+            )
+        record, payload_record, receipt = row[:3]
+        facts = _ReferenceTopologyFacts(
+            edge_partition_id=row.edge_partition_id,
+            graph_revision_id=row.graph_revision_id,
+            target_subtask_id=row.target_subtask_id,
+            stream_id=row.stream_id,
+            edge_id=row.edge_id,
+            matched_edge_id=row.matched_edge_id,
+            producer_port_id=row.producer_port_id,
+            producer_subtask_id=row.producer_subtask_id,
+        )
+        return await self._resolve_record(record, payload_record, receipt, facts)
+
+    async def _resolve_record(
+        self,
+        record: orm_models.StreamRecord,
+        payload: orm_models.StreamRecord | None,
+        receipt: orm_models.StreamRouteReceipt | None,
+        facts: _ReferenceTopologyFacts,
+    ) -> ResolvedDAGValue:
+        graph_id = self.authorization.graph.id
+        if (
+            record.record_kind != "REFERENCE"
+            or record.graph_revision_id != graph_id
+            or record.flow_run_id != self.authorization.flow_run_id
+            or record.payload_record_kind != "PAYLOAD"
+            or record.payload_record_id is None
+            or record.route_receipt_id is None
+            or facts.edge_partition_id is None
+            or facts.graph_revision_id != graph_id
+            or facts.target_subtask_id != self.authorization.subtask.id
+            or facts.stream_id != record.stream_id
+        ):
+            raise NativeStreamError(
+                "REFERENCE_IDENTITY_CONFLICT",
+                "The record is not a direct assigned DAG reference",
+            )
+        try:
+            envelope = _ReferenceEnvelope.model_validate(record.value)
+            _, envelope_bytes, envelope_digest = canonical_stream_payload(record.value)
+        except (ValidationError, ValueError, NativeStreamError) as error:
+            raise NativeStreamError(
+                "REFERENCE_IDENTITY_CONFLICT", "Reference envelope is invalid"
+            ) from error
+        if (
+            envelope.format != "prefect-stream-reference-v1"
+            or envelope_digest != record.value_digest
+            or len(envelope_bytes) != record.size_bytes
+            or envelope.graph_revision_id != str(graph_id)
+            or envelope.route_receipt_id != str(record.route_receipt_id)
+            or envelope.edge_partition_id != str(record.edge_partition_id)
+            or envelope.payload_record_id != str(record.payload_record_id)
+        ):
+            raise NativeStreamError(
+                "REFERENCE_IDENTITY_CONFLICT",
+                "Reference envelope identity or digest differs",
+            )
+        if receipt is None:
+            raise NativeStreamError(
+                "ROUTE_HORIZON_EXPIRED",
+                "The parent route receipt is no longer retained",
+            )
+        try:
+            accepted = _accepted_outcome(receipt)
+        except NativeStreamError as error:
+            raise NativeStreamError(
+                "REFERENCE_IDENTITY_CONFLICT",
+                "The parent route outcome is inconsistent",
+            ) from error
+        if not any(
+            item.record_id == record.id
+            and item.edge_id == facts.edge_id
+            and item.stream_id == record.stream_id
+            and item.sequence == record.sequence
+            and item.edge_partition_id == record.edge_partition_id
+            and item.payload_record_id == record.payload_record_id
+            for item in accepted.references
+        ):
+            raise NativeStreamError(
+                "REFERENCE_IDENTITY_CONFLICT",
+                "Reference is not part of its accepted parent route",
+            )
+        if payload is None:
+            raise NativeStreamError(
+                "ROUTE_HORIZON_EXPIRED", "Referenced payload is no longer retained"
+            )
+        try:
+            value, payload_bytes, digest = canonical_stream_payload(payload.value)
+        except NativeStreamError as error:
+            raise NativeStreamError(
+                "REFERENCE_IDENTITY_CONFLICT", "Original payload is not canonical"
+            ) from error
+        assert facts.matched_edge_id is not None
+        assert facts.producer_port_id is not None
+        if (
+            payload.record_kind != "PAYLOAD"
+            or payload.payload_record_id is not None
+            or payload.graph_revision_id != graph_id
+            or payload.flow_run_id != self.authorization.flow_run_id
+            or facts.producer_subtask_id is None
+            or envelope.payload_stream_id != str(payload.stream_id)
+            or envelope.payload_sequence != payload.sequence
+            or envelope.payload_value_digest != digest
+            or payload.value_digest != digest
+            or record.payload_value_digest != digest
+            or len(payload_bytes) != payload.size_bytes
+        ):
+            raise NativeStreamError(
+                "REFERENCE_IDENTITY_CONFLICT",
+                "Original payload identity, content or producer differs",
+            )
+        return ResolvedDAGValue(
+            value=value,
+            payload_record_id=payload.id,
+            payload_stream_id=payload.stream_id,
+            payload_sequence=payload.sequence,
+            payload_value_digest=digest,
+            payload_size_bytes=payload.size_bytes,
+            reference_record_id=record.id,
+            edge_partition_id=facts.edge_partition_id,
+        )
+
+    async def read_consumer(self, binding: ConsumerBinding) -> StreamDelivery | None:
+        task = await self.lock_current_task()
+        subtask = self.authorization.subtask
+        if subtask.input_stream_id is None:
+            raise NativeStreamError("IDENTITY_CONFLICT", "A source has no input cursor")
+        streams = await self.lock_partitions(
+            [subtask.input_stream_id, subtask.output_stream_id]
+        )
+        consumer = await self.session.scalar(
+            sa.select(self.db.StreamConsumer)
+            .where(self.db.StreamConsumer.id == binding.consumer_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if consumer is None:
+            raise NativeStreamError("NOT_FOUND", "Unknown DAG subscriber")
+        self.require_consumer_owner(
+            task, streams[subtask.output_stream_id], consumer, binding
+        )
+        upstream = streams[subtask.input_stream_id]
+        sequence = consumer.completed_through + 1
+        if sequence > upstream.last_sequence:
+            if upstream.state == "COMPLETED":
+                return None
+            if upstream.state == "FAILED":
+                raise NativeStreamError(
+                    "UPSTREAM_FAILED", "A sealed upstream producer failed"
+                )
+            return None
+        resolved = await self.resolve_reference(upstream.id, sequence)
+        if consumer.inflight_sequence is None:
+            consumer.inflight_sequence, consumer.delivery_id = sequence, uuid7()
+        if consumer.inflight_sequence != sequence or consumer.delivery_id is None:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Subscriber inflight cursor differs"
+            )
+        await self.session.flush()
+        state, _, _ = canonical_stream_payload(consumer.managed_state)
+        assert isinstance(state, dict)
+        return StreamDelivery(
+            token=DeliveryToken(
+                **binding.model_dump(),
+                record_id=resolved.reference_record_id,
+                sequence=sequence,
+                delivery_id=consumer.delivery_id,
+            ),
+            value=resolved.value,
+            managed_state=state,
+        )
+
+    async def append_source(
+        self, request: s.StreamDAGSourceAppendRequest
+    ) -> s.StreamDAGRouteOutcome:
+        request = s.StreamDAGSourceAppendRequest.model_validate(
+            request.model_dump(mode="json")
+        )
+        async with self.session.begin_nested():
+            return await _commit_route(self, request)
+
+    async def complete_consumer(
+        self, request: s.StreamDAGConsumerCompleteRequest
+    ) -> s.StreamDAGRouteOutcome:
+        request = s.StreamDAGConsumerCompleteRequest.model_validate(
+            request.model_dump(mode="json")
+        )
+        async with self.session.begin_nested():
+            return await _commit_route(self, request)
+
+    async def finish_producer(self, error: str | None = None) -> None:
+        async with self.session.begin_nested():
+            await _finish_producer(self, error)
+
+
+def _outgoing_edges(proof: DAGRouteAuthorization) -> tuple[RouteEdge, ...]:
+    plan = proof.plan
+    producer = next(
+        row for row in plan.operators if row.operator_uid == proof.context.operator_uid
+    )
+    return tuple(
+        RouteEdge(
+            edge_id=edge.id,
+            exchange=edge.exchange,
+            producer_parallelism=producer.parallelism,
+            target_parallelism=next(
+                row.parallelism
+                for row in plan.operators
+                if row.operator_uid == edge.consumer_operator_uid
+            ),
+            targets=tuple(
+                RouteTarget(
+                    edge_id=edge.id,
+                    edge_partition_id=part.id,
+                    stream_id=part.stream_id,
+                    partition_index=part.partition_index,
+                )
+                for part in sorted(
+                    edge.partitions, key=lambda item: item.partition_index
+                )
+            ),
+            routing_version=edge.routing_version,
+            key_group_count=edge.key_group_count,
+        )
+        for edge in plan.edges
+        if edge.producer_operator_uid == producer.operator_uid
+    )
+
+
+def _accepted_outcome(
+    receipt: orm_models.StreamRouteReceipt,
+) -> s.StreamDAGRouteOutcome:
+    try:
+        outcome = s.StreamDAGRouteOutcome.model_validate(receipt.outcome)
+    except ValidationError as error:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Stored route outcome shape is invalid"
+        ) from error
+    if (
+        outcome.receipt_id != receipt.id
+        or outcome.graph_revision_id != receipt.graph_revision_id
+        or outcome.routing_digest != receipt.routing_digest
+        or outcome.semantic_digest != receipt.semantic_digest
+        or outcome.outcome_digest != receipt.outcome_digest
+        or outcome.producer_stream_id != receipt.producer_stream_id
+        or outcome.producer_position != receipt.producer_position
+        or outcome.producer_sequence != receipt.producer_sequence
+        or outcome.producer_role != receipt.producer_role
+        or outcome.kind != receipt.kind
+        or outcome.payload_record_id != receipt.payload_record_id
+        or outcome.input_stream_id != receipt.input_stream_id
+        or outcome.input_record_id != receipt.input_reference_record_id
+        or outcome.input_payload_record_id != receipt.input_payload_record_id
+        or outcome.input_payload_value_digest != receipt.input_payload_value_digest
+        or outcome.input_sequence != receipt.input_sequence
+        or outcome.consumer_id != receipt.consumer_id
+        or len(canonical_route_json(receipt.outcome)) != receipt.outcome_size
+        or route_outcome_digest(outcome.model_dump(mode="json"))
+        != receipt.outcome_digest
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Stored route outcome identity or digest differs"
+        )
+    return outcome
+
+
+def _capacity(stream: orm_models.StreamPartition, size: int) -> None:
+    limits = StreamLimits.model_validate(stream.limits)
+    if size > limits.max_record_bytes:
+        raise NativeStreamError(
+            "PAYLOAD_TOO_LARGE", "Record exceeds its sealed stream limit"
+        )
+    if (
+        stream.record_count + 1 > limits.max_records
+        or stream.byte_count + size > limits.max_bytes
+    ):
+        raise NativeStreamError(
+            "CAPACITY", "A routed partition has exhausted its sealed capacity"
+        )
+
+
+async def _commit_route(
+    store: NativeDAGRouteStore, request: RouteRequest
+) -> s.StreamDAGRouteOutcome:
+    proof, session, db = store.authorization, store.session, store.db
+    proof.validate(session, request.context)
+    validate_route_context(proof.plan, request)
+    task = await store.lock_current_task(allow_final=True)
+    is_source = isinstance(request, s.StreamDAGSourceAppendRequest)
+    position = request.position if is_source else request.token.sequence
+    if position > (1 << 63) - 1:
+        raise NativeStreamError(
+            "PROTOCOL_ERROR", "Routed position exceeds signed 64-bit storage"
+        )
+    kind = "YIELD" if is_source else request.kind
+    value, value_bytes, value_digest = canonical_stream_payload(request.value)
+    state: dict[str, JsonValue] | None = None
+    state_digest: str | None = None
+    state_bytes: bytes | None = None
+    if not is_source:
+        snapshot, state_bytes, state_digest = canonical_stream_payload(
+            request.managed_state
+        )
+        assert isinstance(snapshot, dict)
+        state = snapshot
+    key_present = request.output_key is not None
+    key = (
+        decode_tagged_key_wire_v1(request.output_key.model_dump(mode="json"))
+        if request.output_key is not None
+        else None
+    )
+    key_digest = (
+        hashlib.sha256(encode_tagged_key_v1(key)).hexdigest() if key_present else None
+    )
+    output = await session.get(
+        db.StreamPartition, proof.subtask.output_stream_id, populate_existing=True
+    )
+    assert output is not None
+    # The own TaskRun UPDATE serializes this producer's sequence before the
+    # complete UUID-sorted stream-lock union is known. No stream is prelocked.
+    receipt = await session.scalar(
+        sa.select(db.StreamRouteReceipt).where(
+            db.StreamRouteReceipt.producer_stream_id == output.id,
+            db.StreamRouteReceipt.producer_position == position,
+        )
+    )
+    accepted = _accepted_outcome(receipt) if receipt is not None else None
+    producer_sequence = (
+        accepted.producer_sequence
+        if accepted is not None
+        else output.last_sequence + 1
+        if kind == "YIELD"
+        else None
+    )
+    if accepted is not None:
+        targets: tuple[RouteTarget, ...] = ()
+    elif kind == "YIELD":
+        assert producer_sequence is not None
+        try:
+            targets = plan_route_targets(
+                _outgoing_edges(proof),
+                proof.context.subtask_index,
+                producer_sequence,
+                physical_subtask_count=len(proof.plan.subtasks),
+                key_present=key_present,
+                key=key,
+            )
+        except (RoutePlanningError, ValueError) as error:
+            raise NativeStreamError(
+                "PROTOCOL_ERROR", "Sealed route selection is invalid"
+            ) from error
+    else:
+        targets = ()
+    stream_ids = [
+        output.id,
+        *(
+            [item.stream_id for item in accepted.references]
+            if accepted is not None
+            else [target.stream_id for target in targets]
+        ),
+    ]
+    if proof.subtask.input_stream_id is not None:
+        stream_ids.append(proof.subtask.input_stream_id)
+    streams = await store.lock_partitions(stream_ids)
+    output = streams[output.id]
+    consumer: orm_models.StreamConsumer | None = None
+    resolved: ResolvedDAGValue | None = None
+    if is_source:
+        store.require_source_owner(task, output, request.binding)
+    else:
+        consumer = await session.scalar(
+            sa.select(db.StreamConsumer)
+            .where(db.StreamConsumer.id == request.binding.consumer_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if consumer is None:
+            raise NativeStreamError("NOT_FOUND", "Unknown DAG subscriber")
+        store.require_consumer_owner(task, output, consumer, request.binding)
+        resolved = await store.resolve_reference(
+            request.binding.input_stream_id, position
+        )
+        if resolved.reference_record_id != request.token.record_id:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Original input reference identity differs"
+            )
+    # Only opaque canonical payload/state digests enter semantic material.
+    # Business JSON may contain worker_id/attempt/etc without being reserved.
+    material: dict[str, object] = {
+        "graph_revision_id": str(proof.graph.id),
+        "graph_digest": proof.graph.graph_digest,
+        "routing_digest": proof.context.routing_digest,
+        "producer_subtask_id": str(proof.subtask.id),
+        "producer_stream_id": str(output.id),
+        "producer_position": position,
+        "producer_sequence": producer_sequence,
+        "output_ordinal": 0 if kind == "YIELD" else None,
+        "producer_role": "SOURCE" if is_source else "OPERATOR",
+        "kind": kind,
+        "value_digest": value_digest,
+        "managed_state_digest": state_digest,
+        "key_present": key_present,
+        "output_key_digest": key_digest,
+        "input_stream_id": str(request.binding.input_stream_id)
+        if not is_source
+        else None,
+        "input_reference_record_id": str(resolved.reference_record_id)
+        if resolved
+        else None,
+        "input_payload_record_id": str(resolved.payload_record_id)
+        if resolved
+        else None,
+        "input_payload_value_digest": resolved.payload_value_digest
+        if resolved
+        else None,
+        "input_sequence": position if not is_source else None,
+        "consumer_id": str(consumer.id) if consumer else None,
+    }
+    semantic_digest = route_semantic_digest(material)
+    if receipt is not None:
+        assert accepted is not None
+        if (
+            receipt.semantic_digest != semantic_digest
+            or receipt.value_digest != value_digest
+            or receipt.managed_state_digest != state_digest
+            or receipt.key_present != key_present
+            or receipt.output_key_digest != key_digest
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Accepted routed terminal intent is immutable"
+            )
+        await _verify_accepted_route(store, receipt, accepted)
+        return accepted
+    if position <= output.producer_position:
+        raise NativeStreamError(
+            "ROUTE_HORIZON_EXPIRED", "Accepted route receipt is no longer retained"
+        )
+    if output.state != "OPEN":
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT", "Cannot append a new route after producer EOF"
+        )
+    if task.state_type != StateType.RUNNING:
+        raise NativeStreamError(
+            "TASK_NOT_RUNNING", "Only a running TaskRun can accept a new route"
+        )
+    if proof.authority.source_admission_closed and is_source:
+        raise NativeStreamError("SOURCE_DRAIN_REQUESTED", "Source admission has closed")
+    if is_source:
+        if position != output.producer_position + 1:
+            raise NativeStreamError(
+                "PROTOCOL_ERROR", "Source positions must be contiguous"
+            )
+    else:
+        assert consumer is not None and isinstance(
+            request, s.StreamDAGConsumerCompleteRequest
+        )
+        if (
+            consumer.inflight_sequence != position
+            or consumer.delivery_id != request.token.delivery_id
+            or consumer.completed_through + 1 != position
+            or output.producer_position != consumer.completed_through
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Terminal token does not match durable subscriber progress",
+            )
+    # Metadata projections intentionally omit private frozen limits. Resolve
+    # the exact operator from the locked, digest-validated declaration instead.
+    declaration = topology.StreamDAGSealRequest.model_validate(proof.graph.declaration)
+    specifications = [
+        operator
+        for operator in declaration.operators
+        if operator.operator_uid == proof.context.operator_uid
+    ]
+    if len(specifications) != 1:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Frozen operator configuration is ambiguous"
+        )
+    frozen_limits = specifications[0].limits
+    if output.limits != frozen_limits.model_dump(mode="json"):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Output limits differ from the frozen operator"
+        )
+    if not is_source:
+        assert proof.subtask.input_stream_id is not None and state_bytes is not None
+        if streams[proof.subtask.input_stream_id].limits != frozen_limits.model_dump(
+            mode="json"
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Input limits differ from the frozen operator"
+            )
+        if len(state_bytes) > frozen_limits.max_state_bytes:
+            raise NativeStreamError(
+                "PAYLOAD_TOO_LARGE", "Managed state exceeds its sealed limit"
+            )
+    if any(streams[target.stream_id].state != "OPEN" for target in targets):
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT", "A selected edge partition is already terminal"
+        )
+    receipt_id, payload_id = uuid7(), uuid7() if kind == "YIELD" else None
+    refs: list[s.StreamDAGRouteReference] = []
+    reference_material: list[tuple[RouteTarget, UUID, JsonValue, bytes, str]] = []
+    if kind == "YIELD":
+        assert payload_id is not None and producer_sequence is not None
+        _capacity(output, len(value_bytes))
+        for target in targets:
+            target_stream = streams[target.stream_id]
+            envelope = {
+                "schema": "prefect-stream-reference-v1",
+                "graph_revision_id": str(proof.graph.id),
+                "route_receipt_id": str(receipt_id),
+                "edge_partition_id": str(target.edge_partition_id),
+                "payload_record_id": str(payload_id),
+                "payload_stream_id": str(output.id),
+                "payload_sequence": producer_sequence,
+                "payload_value_digest": value_digest,
+            }
+            ref_value, encoded, ref_digest = canonical_stream_payload(envelope)
+            _capacity(target_stream, len(encoded))
+            ref_id = uuid7()
+            refs.append(
+                s.StreamDAGRouteReference(
+                    edge_id=target.edge_id,
+                    edge_partition_id=target.edge_partition_id,
+                    stream_id=target.stream_id,
+                    sequence=target_stream.last_sequence + 1,
+                    record_id=ref_id,
+                    payload_record_id=payload_id,
+                )
+            )
+            reference_material.append((target, ref_id, ref_value, encoded, ref_digest))
+    refs.sort(
+        key=lambda row: (
+            row.edge_id.bytes,
+            row.edge_partition_id.bytes,
+            row.record_id.bytes,
+        )
+    )
+    outcome = s.StreamDAGRouteOutcome(
+        receipt_id=receipt_id,
+        graph_revision_id=proof.graph.id,
+        routing_digest=proof.context.routing_digest,
+        semantic_digest=semantic_digest,
+        outcome_digest="00" * 32,
+        producer_stream_id=output.id,
+        producer_position=position,
+        producer_role="SOURCE" if is_source else "OPERATOR",
+        kind=kind,
+        input_stream_id=request.binding.input_stream_id if not is_source else None,
+        input_record_id=resolved.reference_record_id if resolved else None,
+        input_payload_record_id=resolved.payload_record_id if resolved else None,
+        input_payload_value_digest=resolved.payload_value_digest if resolved else None,
+        input_sequence=position if not is_source else None,
+        consumer_id=consumer.id if consumer else None,
+        producer_sequence=producer_sequence,
+        output_ordinal=0 if kind == "YIELD" else None,
+        payload_record_id=payload_id,
+        payload_value_digest=value_digest if payload_id is not None else None,
+        payload_size_bytes=len(value_bytes) if payload_id is not None else None,
+        references=refs,
+    )
+    outcome = outcome.model_copy(
+        update={"outcome_digest": route_outcome_digest(outcome.model_dump(mode="json"))}
+    )
+    stored_outcome = outcome.model_dump(mode="json")
+    # Every persisted header version must satisfy producer_position >=
+    # last_sequence, including the early PAYLOAD/receipt FK flushes. All
+    # mutations still commit or roll back with the whole routed turn.
+    output.producer_position = position
+    if payload_id is not None:
+        assert producer_sequence is not None
+        session.add(
+            db.StreamRecord(
+                id=payload_id,
+                record_kind="PAYLOAD",
+                graph_revision_id=proof.graph.id,
+                flow_run_id=proof.flow_run_id,
+                stream_id=output.id,
+                sequence=producer_sequence,
+                producer_position=position,
+                value=value,
+                value_digest=value_digest,
+                size_bytes=len(value_bytes),
+            )
+        )
+        output.last_sequence = producer_sequence
+        output.record_count += 1
+        output.byte_count += len(value_bytes)
+        await session.flush()
+    session.add(
+        db.StreamRouteReceipt(
+            id=receipt_id,
+            graph_revision_id=proof.graph.id,
+            flow_run_id=proof.flow_run_id,
+            producer_subtask_id=proof.subtask.id,
+            producer_task_run_id=task.id,
+            producer_stream_id=output.id,
+            producer_position=position,
+            producer_sequence=producer_sequence,
+            producer_role=outcome.producer_role,
+            kind=kind,
+            routing_digest=proof.context.routing_digest,
+            semantic_digest=semantic_digest,
+            outcome_digest=outcome.outcome_digest,
+            value_digest=value_digest,
+            managed_state_digest=state_digest,
+            key_present=key_present,
+            output_key_digest=key_digest,
+            output_ordinal=outcome.output_ordinal,
+            payload_record_id=payload_id,
+            payload_record_kind="PAYLOAD" if payload_id is not None else None,
+            input_stream_id=outcome.input_stream_id,
+            input_reference_record_id=outcome.input_record_id,
+            input_reference_record_kind="REFERENCE" if resolved is not None else None,
+            input_payload_record_id=outcome.input_payload_record_id,
+            input_payload_record_kind="PAYLOAD" if resolved is not None else None,
+            input_payload_value_digest=outcome.input_payload_value_digest,
+            input_sequence=outcome.input_sequence,
+            consumer_id=outcome.consumer_id,
+            outcome=stored_outcome,
+            outcome_size=len(canonical_route_json(stored_outcome)),
+        )
+    )
+    await session.flush()
+    for target, ref_id, ref_value, encoded, ref_digest in reference_material:
+        target_stream = streams[target.stream_id]
+        target_stream.last_sequence += 1
+        target_stream.producer_position = target_stream.last_sequence
+        target_stream.record_count += 1
+        target_stream.byte_count += len(encoded)
+        session.add(
+            db.StreamRecord(
+                id=ref_id,
+                record_kind="REFERENCE",
+                graph_revision_id=proof.graph.id,
+                flow_run_id=proof.flow_run_id,
+                stream_id=target.stream_id,
+                sequence=target_stream.last_sequence,
+                producer_position=target_stream.last_sequence,
+                payload_record_id=payload_id,
+                payload_record_kind="PAYLOAD",
+                payload_value_digest=value_digest,
+                route_receipt_id=receipt_id,
+                edge_partition_id=target.edge_partition_id,
+                value=ref_value,
+                value_digest=ref_digest,
+                size_bytes=len(encoded),
+            )
+        )
+    output.producer_position = position
+    if consumer is not None:
+        assert state is not None and isinstance(
+            request, s.StreamDAGConsumerCompleteRequest
+        )
+        session.add(
+            db.StreamCompletion(
+                consumer_id=consumer.id,
+                consumer_kind="DAG",
+                route_receipt_id=receipt_id,
+                input_sequence=position,
+                delivery_id=request.token.delivery_id,
+                owner_epoch=request.binding.owner_epoch,
+                kind=kind,
+                intent_digest=semantic_digest,
+                output_sequence=producer_sequence,
+            )
+        )
+        consumer.completed_through = position
+        consumer.managed_state = state
+        consumer.inflight_sequence, consumer.delivery_id = None, None
+    await session.flush()
+    return outcome
+
+
+async def _finish_producer(store: NativeDAGRouteStore, error: str | None) -> None:
+    proof, session, db = store.authorization, store.session, store.db
+    proof.validate(session)
+    task = await store.lock_current_task(allow_final=True)
+    if error is not None:
+        if (
+            task.state_type not in {StateType.FAILED, StateType.CRASHED}
+            or task.state is None
+            or (
+                task.run_count < (task.empirical_policy.retries or 0) + 1
+                and task.state.state_details.retriable is not False
+            )
+        ):
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "Only a final failed TaskRun can fail its producer"
+            )
+    elif task.state_type not in {StateType.RUNNING, StateType.COMPLETED}:
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT", "This TaskRun cannot finish successfully"
+        )
+    plan = proof.plan
+    edges = [
+        row
+        for row in plan.edges
+        if row.producer_operator_uid == proof.context.operator_uid
+    ]
+    own = proof.subtask.output_stream_id
+    contributors = [
+        row for row in plan.subtasks if row.operator_uid == proof.context.operator_uid
+    ]
+    ids = [
+        own,
+        *[row.output_stream_id for row in contributors],
+        *[part.stream_id for edge in edges for part in edge.partitions],
+    ]
+    if proof.subtask.input_stream_id is not None:
+        ids.append(proof.subtask.input_stream_id)
+    streams = await store.lock_partitions(ids)
+    output = streams[own]
+    if output.owner_id is None or output.attempt != task.run_count:
+        raise NativeStreamError("STALE_OWNER", "Producer has no current admitted owner")
+    if proof.subtask.input_stream_id is not None:
+        consumer = await session.scalar(
+            sa.select(db.StreamConsumer)
+            .where(db.StreamConsumer.output_stream_id == own)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if consumer is None:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Producer has no stable subscriber"
+            )
+        if error is None and (
+            consumer.inflight_sequence is not None
+            or streams[proof.subtask.input_stream_id].state != "COMPLETED"
+            or consumer.completed_through
+            != streams[proof.subtask.input_stream_id].last_sequence
+        ):
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "Operator cannot finish before complete input EOF"
+            )
+    finish_stream_partition(output, error)
+    for edge in edges:
+        for target in edge.partitions:
+            required = [
+                row
+                for row in contributors
+                if edge.exchange != "forward"
+                or row.subtask_index == target.partition_index
+            ]
+            states = [streams[row.output_stream_id].state for row in required]
+            if required and all(state in {"COMPLETED", "FAILED"} for state in states):
+                target_stream = streams[target.stream_id]
+                target_error = (
+                    "A sealed upstream producer failed" if "FAILED" in states else None
+                )
+                finish_stream_partition(target_stream, target_error)
+    await session.flush()
+
+
+async def _verify_accepted_route(
+    store: NativeDAGRouteStore,
+    receipt: orm_models.StreamRouteReceipt,
+    outcome: s.StreamDAGRouteOutcome,
+) -> None:
+    """Replay verifies persisted allocations; it never remaps or repairs them."""
+    session, db = store.session, store.db
+    payloads = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamRecord)
+                .where(
+                    db.StreamRecord.stream_id == receipt.producer_stream_id,
+                    db.StreamRecord.producer_position == receipt.producer_position,
+                    db.StreamRecord.record_kind == "PAYLOAD",
+                )
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    )
+    records = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamRecord)
+                .where(db.StreamRecord.route_receipt_id == receipt.id)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    )
+    if outcome.kind == "RETURN":
+        if payloads or records:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "RETURN unexpectedly owns payload or reference records",
+            )
+        return
+    if not payloads:
+        raise NativeStreamError(
+            "ROUTE_HORIZON_EXPIRED", "The accepted payload is no longer retained"
+        )
+    if len(payloads) != 1:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Accepted payload allocation is ambiguous"
+        )
+    payload = payloads[0]
+    _, payload_bytes, payload_digest = canonical_stream_payload(payload.value)
+    if (
+        payload.id != outcome.payload_record_id
+        or payload.graph_revision_id != receipt.graph_revision_id
+        or payload.flow_run_id != receipt.flow_run_id
+        or payload.sequence != outcome.producer_sequence
+        or payload.payload_record_id is not None
+        or payload.route_receipt_id is not None
+        or payload.value_digest != payload_digest
+        or payload_digest != receipt.value_digest
+        or outcome.payload_value_digest != payload_digest
+        or payload.size_bytes != len(payload_bytes)
+        or outcome.payload_size_bytes != payload.size_bytes
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Accepted payload identity, content or size differs"
+        )
+    by_id = {row.id: row for row in records}
+    expected_ids = {item.record_id for item in outcome.references}
+    if not expected_ids.issubset(by_id):
+        raise NativeStreamError(
+            "ROUTE_HORIZON_EXPIRED",
+            "An accepted reference allocation is no longer retained",
+        )
+    if set(by_id) != expected_ids:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Receipt has unexpected reference allocations"
+        )
+    for item in outcome.references:
+        record = by_id[item.record_id]
+        try:
+            envelope = _ReferenceEnvelope.model_validate(record.value)
+            _, encoded, digest = canonical_stream_payload(record.value)
+        except (ValidationError, ValueError, NativeStreamError) as error:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Accepted reference envelope is corrupt"
+            ) from error
+        partition = await session.get(
+            db.StreamGraphEdgePartition, item.edge_partition_id
+        )
+        if (
+            record.record_kind != "REFERENCE"
+            or record.graph_revision_id != receipt.graph_revision_id
+            or record.flow_run_id != receipt.flow_run_id
+            or record.stream_id != item.stream_id
+            or record.sequence != item.sequence
+            or record.producer_position != item.sequence
+            or record.edge_partition_id != item.edge_partition_id
+            or item.payload_record_id != payload.id
+            or record.payload_record_id != payload.id
+            or record.payload_record_kind != "PAYLOAD"
+            or record.payload_value_digest != payload_digest
+            or record.route_receipt_id != receipt.id
+            or record.value_digest != digest
+            or record.size_bytes != len(encoded)
+            or partition is None
+            or partition.edge_id != item.edge_id
+            or partition.stream_id != record.stream_id
+            or partition.graph_revision_id != receipt.graph_revision_id
+            or envelope.format != "prefect-stream-reference-v1"
+            or envelope.graph_revision_id != str(receipt.graph_revision_id)
+            or envelope.route_receipt_id != str(receipt.id)
+            or envelope.edge_partition_id != str(item.edge_partition_id)
+            or envelope.payload_record_id != str(payload.id)
+            or envelope.payload_stream_id != str(payload.stream_id)
+            or envelope.payload_sequence != payload.sequence
+            or envelope.payload_value_digest != payload_digest
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Accepted reference identity, content or size differs",
+            )

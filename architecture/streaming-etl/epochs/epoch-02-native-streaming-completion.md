@@ -871,3 +871,533 @@ new-head green CI or acceptance of the unpublished test correction.
 Other three local heavy profiles, full 19/four-heavy/NI2-014 gates and full ADR-0043
 remain open. NI2-012/N2.2b remain `progress`; planned 27% is unearned and earned
 readiness stays **15%**, with zero new credit.
+
+
+## N2.2 personal normal5000 pair and candidate P2 cleanup gates — 2026-11-06
+
+At published 1812460, the [author sync5000 case](../evidence/native-epoch2-dag-volume5000-2026-11-06/sync-v1/index.json)
+is **1 PASS / 2090.278s** and the [Principal personal async5000 case](../evidence/native-epoch2-dag-volume5000-2026-11-06/principal-async-v1/index.json)
+is **1 PASS / 1989.457s**. Both record actual pytest/tool exit 0 and no failure/
+error/skip, unchanged original `[False-5000]`/`[True-5000]` tests and 3960/4080/4200
+budgets. Each binds 1600 source files and 3884 imports with zero drift/mismatch,
+exact 5000 effects in each of three branches and six wider-health counters 0.
+The async result is actual personal SDK/TCP/PostgreSQL17/OS execution, distinct
+from the earlier author/file-only results. Author native 11 PID/start identities
+plus reader/runner closed; the personal async whole phase closes 14 captured
+identities. Fresh databases remain retained with zero sessions at the driver
+checks and no terminate/DROP/FORCE. Final readonly connectionclosure is not a
+new post-final session-count query or proof about every prior framework action.
+
+
+The [Principal personal sync5000 case](../evidence/native-epoch2-dag-volume5000-2026-11-06/principal-sync-v1/index.json)
+now closes the other normal personal case: **1 PASS / 1974.770s / actual pytest 0/
+tool 0**, with source 1600/import 3884 drift/mismatch0, 15000 effects, all six health
+counters 0 and 14 phase PID/start identities closed. Its 28 live 19-family readonly
+repeatable-read SQL captures begin 211/215/216 and end 4825/4827/4855, followed by
+final 19/all 15 literal checks true. Final Consumer 0 rows is not retained 5000 cursor
+proof; no exact 500/activation capture is inferred. Source captures remain late,
+with the original closed-manifest/time qualification; actual reader/watch sources
+and adaptation identify what ran. No active P2 material is included. The normal
+personal async/sync5000 pair has two distinct closed actual SDK executions; it
+still does not complete P2/four-heavy/current full 19/NI2-014 or earn 27%.
+
+
+The [independent author-sync metadata](../evidence/native-epoch2-dag-volume5000-2026-11-06/sync-v1/metadata-v1/index.json)
+contains 30 live 18-family captures, final 18 and a separate Consumer transaction.
+The personal async package contains 24 independently executed live 19-family
+repeatable-read readonly captures including Consumer and one final 19-family
+capture, all 25 connections/tools closed. Seventeen immutable mapping projections
+are stable through the final observations; Consumer owner mapping is stable in
+24 async live captures. Final SQL records graph/authority/coordinator RELEASED,
+four Tasks COMPLETED/run_count 1, grants RETIRED/births CLOSED, four physical slots
+and four tag allocations released, two persisted counters 0 and seven terminal
+partitions released/completed at 5000. One persisted historical lease UUID remains;
+external KV/backend state is unobserved. Final Consumer queries return 0 rows,
+which cannot prove retained literal 5000 Consumer cursors. Separate author-sync
+final 18/Consumer transactions do not establish combined atomicity.
+
+Author-sync co-sampled direct-PG labels begin 51/51/51 and end 4718/4727/4714;
+personal async actual independent SQL cursors begin 794/795/795 and end 4874/4898/4888.
+Later file guards>=4900 are not additional SQL captures at 4900. No activation or
+exact 500 snapshot is inferred. Author progress/accepted/final helper snapshots
+are direct PostgreSQL ordinary multi-SELECT observations, neither API reads nor
+the independent atomic 19-family captures. The [erratum](../evidence/native-epoch2-dag-volume5000-2026-11-06/sync-v1/qualifications/progress-source-provenance-v1/erratum.json)
+and Principal adoption preserve that qualification beside old immutable wording.
+Personal async binds 1734 author progress frames; the 11 later source copies match
+closed source-after and retain capture-time qualification. The old sealed observer
+namespace assertion was not changed/executed; separate actual reader/watch sources
+and the adaptation receipt identify what ran. Each full history is stored once.
+
+The [current normal sync500 comparison](../evidence/native-epoch2-dag-volume5000-2026-11-06/sync500-comparison-v1/index.json)
+finds **13 normalized observable counts/roles MATCH** between current CI sync500
+PASS 539.420s and author sync5000. Principal FILE-ONLY review binds 16 safe CI files
+and 1818 author progress frames. CI birth/PID/source/call values are hash-bound
+derived aggregates; absent raw CI markers/full history are not independently
+replayed. The v1 worker_id_count KeyError and earlier artifact-review grant-state
+assumption remain preserved as review/harness errors, not workload failures or
+artifact repair. Literal grants are RETIRED. Reported API 5xx0 over 7547 statuslines
+is an aggregate, not independent HTTP replay; retry count is unavailable.
+No missing CI operator/assignment/allocation SQL or externalKV metrics are inferred.
+
+The [personal85/hosted bridge](../evidence/native-epoch2-dag-volume5000-2026-11-06/routing85-bridge-v1/index.json)
+retains 85 personal PASS 17.910s and 85 current hosted PASS 17.482s, same case-set and
+codec/test hashes. Four Python minors/four seeds/literal routing goldens support
+A43-06/10 at recorded OS/compute-instance scope. Parent sys.modules audit is absent;
+PYTHONPATH/child source-SHA assertions qualify imports. Sixteen child invocations
+are source-derived, without per-child PID manifests. Different recorded managed-
+Cloud/GitHub-hosted instances do not attest physical hosts, ADR47, native process
+loss or network behavior. ZIP is digest-only; private inputs/download URLs excluded.
+
+A43-04/05/07 gain sampled identity, scoped process and persisted release support;
+these observations do not complete all criteria or all intervening transitions.
+The remaining P2 bridge and current
+[CI 42147494934](https://github.com/Anacreonsystems/ariadne/actions/runs/42147494934)
+full 19/four-heavy/NI2-014 exits remain open; old d906 13/19 is historical. No whole
+current CI green/ADR43 result, throughput/SLO/cause/forecast or planned 27% credit.
+NI2-012/N2.2b remain `progress`; earned readiness stays **15%**, zero new credit.
+All original source/raw inputs/approved ADR body+AC/history and old indices remain
+unchanged; no active personal-sync artifacts enter these archives.
+
+
+### P2 baseline: functional PASS with full cleanup incomplete
+
+The immutable personal fixed-P2 incomplete200 baseline native receipt
+`f8c5c21e106f492367590820714dd3f15ed400d28ac2ad9ee1a5266be820aa12`
+records **1 PASS / 102.962s / pytest 0/tool 0**, while its actual postterminal SQL
+`15f9c83cd98411755a066bfffec8b1517352cccc9257d1f66f17a99ced3bbdf9`
+has **9 true / 3 false**, tool 1/connection closed. The sealed STOP
+`dae848461ee30e4837d603bca8ad3fa347f3d7d8b61f90ff762a88dd2c22aa74`
+retains all actors gone and `full_automatic_cleanup_accepted=false`.
+Physical/tag/deployment release and scoped recovery facts remain valid: four
+Tasks complete (B0 count 2, others 1), B0 physical epoch 2, five grants/births,
+four subtask slots/tag allocations freed and selected active counters 0. The
+three full cleanup predicates fail with graph ADMITTED/authority TERMINAL/
+launch PROCESS_REGISTERED and partitions.released=false. They are valid fixed-P2
+automatic-release requirements, not optional output retention or harmless copied
+DAG assertions. This is an OPEN automatic coordinator/payload cleanup result.
+
+Read-only classification `f02d962fbfb13d967ed9dcb09d346bb8c45cd124f5654f534d099236ecf868a1`
+compares the accepted lifecycle and explains that the legacy fixture stops workers
+before awaiting their separate post-process-wait release phase. About 273ms from
+final Flow timestamp to recorded worker stop and no completed access response for
+the exact release endpoint support teardown preemption; no exact cancellation/
+kill trace or new production regression is established. Retained forensic DBs
+are not repaired, and old outcomes/indices remain unchanged.
+
+The first UUID wait proposal remains unexecuted `REQUEST_CHANGES` in its
+[separate lineage receipt](../evidence/native-epoch2-dag-volume5000-2026-11-06/p2-candidate-v1/separate-unexecuted-UUID-preflight-request-changes/review.json).
+The [closed P2 candidate package](../evidence/native-epoch2-dag-volume5000-2026-11-06/p2-candidate-v1/index.json)
+records actual personal native sync incomplete200 **1 PASS / 101.022s**, with
+501 body calls/500 effects and replacement first 200; async accepted200 is
+**1 PASS / 103.467s**, 500 calls/500 effects and first 201. Each independently
+captured 19-family repeatable-read [sync](../evidence/native-epoch2-dag-volume5000-2026-11-06/p2-candidate-v1/sync_incomplete200/independent-SQL/postterminal-capture.json)/
+[async](../evidence/native-epoch2-dag-volume5000-2026-11-06/p2-candidate-v1/async_accepted200/independent-SQL/postterminal-capture.json)
+SQL snapshot has all 12 literal replacement/physical/full automatic-release
+checks true. The new guard observes natural release before worker termination,
+within original 840/900 budgets, without manual release or database repair.
+The [PG selected review](../evidence/native-epoch2-dag-volume5000-2026-11-06/p2-candidate-v1/pg_selected/principal-PG19-closed-review-v1.json)
+records 19 real-PG ASGI/model controls PASS / 49.016s/0 skip; that tier is not a
+native TCP pipeline. All three phases have pytest/tool 0, zero failure/error/skip,
+1600 candidate source bindings drift 0, native imports 4173 percase/PG imports 1202
+mismatch 0 and closed owned actors. Fresh DBs remain retained with driver zero-
+session checks; final readonly connections close separately, without a new
+post-final session-count query. 17 source captures retain actual owner timing.
+
+The old native baseline/SQL 9 true/3 false remains unchanged in its separate prefix;
+new helper assertions do not retroactively attach to that execution. Both named
+positive P2 cleanup profiles now have fresh evidence. Normalheavy/stall cleanup
+guards and excluded after-activation/import-exit/before-declaration profiles
+receive no new execution credit from this pair. The packaging-preparation v1
+filename-classification assertion and corrected helper remain distinct from
+runtime failures; public testcase selectors are not private DB selectors.
+
+The [selected-file normal hooks](../evidence/native-epoch2-dag-volume5000-2026-11-06/p2-candidate-v1/closed-publication-hooks/hooks-receipt-v1.json)
+actually exited 0 at pre-commit and pre-push with candidate source unchanged.
+They are selected-file checks, not whole-publication hooks or current/future CI.
+The exact version is 1812460 plus test-only patch4550f35d5db3b4ddc74160f55354d33165551d1cd82d33695ee687402621b0b7,
+P2 module 61ebfdfaac8e394c08e8156f0ab94a0483701f6932b3bd83020c39d70d1ade71.
+The [closed source-relevance bridge](../evidence/native-epoch2-dag-volume5000-2026-11-06/p2-candidate-v1/version-accounting-source-bridge/review.md)
+compares 1600 files total:
+1599 unchanged and one modified test. Old actual DAG/CI jobs ran 1812460, not this
+WIP or a future commit. The DAG module imports execution_api from the modified
+P2 module, so full imported-module byte equality is not claimed. Its fixture/
+decorator/globals are unchanged and new P2 helper/polling is not invoked by the
+DAG fixture; this narrow dependency bridge supports reuse of original version-
+attributed evidence without renaming or replaying those executions.
+
+[The existing final exit](#n22-retained-verification-and-finalization-correction--2026-11-05)
+keeps NI2-012 through NI2-014 OPEN until corrected native sync/async5000, terminal
+release, the required hosted matrix and independent verification are all met.
+Bootstrap/retry implementation evidence may be VERIFIED; that does not accept
+these tasks while CI is pending. Root's current 1812460 matrix is 15/19, with the
+four-heavy/full hosted exits open, not candidate-head CI green. No task-accepted
+or zero-credit subscope shortcut is applied. Earned 15%; planned 27% and full
+NI2-014/ADR43 completion remain open. No approved ADR body/AC is changed.
+
+
+## N2.2 current CI sync5000 failure and original-AC block — 2026-11-06
+
+The [closed failed CI case](../evidence/native-epoch2-dag-volume5000-2026-11-06/ci-sync5000-failure-v1/index.json)
+binds published 1812460 run 42147494934/job127663650911, original sync `[False-5000]`:
+**1 FAIL / 0 ERROR / 0 SKIP**, testcase 4014.625s. Flow FAILED where COMPLETED was
+required. The [original 18-file metadata index](../evidence/native-epoch2-dag-volume5000-2026-11-06/ci-sync5000-failure-v1/metadata/original-verify-index.json)
+retains `underlying_cause=UNKNOWN` byte-exact; no old receipt or execution is renamed.
+
+The later [bounded diagnostic receipt](../evidence/native-epoch2-dag-volume5000-2026-11-06/ci-sync5000-failure-v1/diagnostics/diagnostic-receipt.json)
+records four sanitized excerpts/source hashes: **SDK_DAG_WAIT_TIMEOUT after 3960.31s**
+at 05:22:14.207UTC, same-graph `/fail` HTTP200 at 05:22:15.299UTC, then 409
+`CANCEL_REQUESTED` Task refusals and three retry-scheduling messages. Actual
+control failure_kind/payload is not retained; scheduling does not prove executed
+retries/new processes/epochs. The proximate timeout→terminal control→fencing path
+is observed. The underlying slow-progress/throughput/resource bottleneck is
+still **UNKNOWN**; no CPU/quota/OOM/lock/data-corruption or SLO/forecast cause is
+established. The original wait 3960/outer 4080 deadlines remain source-bound.
+
+Source accepted 5000. Last-polled output positions 3178/3206/3179 are separate from
+call-record counts 3178/3206/3180; their one-record C1 difference does not prove
+loss or retry. Graph RELEASED with FAILED Flow/channels is not successful execution.
+Last polling records are not final-progress/accepted/coordinator/worker-health
+reports; six dedicated reports are missing and are not backfilled from local
+PASS. Actual HTTP retries/operator-allocation SQL and whole worker health remain
+unknown. API 5xx0 is a reported aggregate, not independent HTTP replay.
+
+The [later one-shot closed status](../evidence/native-epoch2-dag-volume5000-2026-11-06/ci-sync5000-failure-v1/supplements/ci-status-053618-v1/index.json)
+at 05:36:18.437UTC records **15 native PASS / 1 known FAIL / 1 ACTIVE / 2 QUEUED**
+on 1812460, with DAG async5000 active since 05:26:07 and P2 sync/async5000 queued.
+No additional RED or newer snapshot is inferred; only the exact public closed
+index/snapshot digests are archived, without raw API response/ZIP/log export.
+
+The [Principal original-AC BLOCKED map](../evidence/native-epoch2-dag-volume5000-2026-11-06/ci-sync5000-failure-v1/principal/original-AC-component-status-BLOCKED-v1.json)
+keeps NI2-012/013 implementation verification scoped and their formal tasks OPEN;
+NI2-014 is BLOCKED by actual required hosted RED/fullmatrix unfinished. NI2-020
+implementation GO remains false. The existing final exit at
+[NI2-012 through NI2-014](#n22-retained-verification-and-finalization-correction--2026-11-05)
+requires corrected native/release/hosted/independent evidence together. Actual
+local normal5000/P2/PG19 results and the narrow imported-fixture bridge retain
+their original clean18124/WIP versions; they do not supply hosted PASS or task
+acceptance. No exhaustive case cross-product or zero-subscope workaround is added.
+Full 19/four-heavy/NI2-014/wholeADR/planned 27% remain open; earned readiness stays
+**15%**, zero new credit. All approved ADR bodies/AC, historical evidence and
+existing closed indices remain unchanged.
+
+
+The later [independent Principal source audit](../evidence/native-epoch2-dag-volume5000-2026-11-06/ci-sync5000-failure-v1/supplements/principal-classification-v1/index.json)
+reconciles all 18 metadata copies, four bounded excerpts and four published
+source bindings. It independently confirms SDK wait timeout→error cleanup
+`/fail`→secondary fencing, while underlying slow-progress/resource cause remains
+UNKNOWN. This is read-only source/file classification with no new test, DB,
+ZIP/network query or acceptance; original metadata/status/AC-map indices remain
+immutable at their capture times.
+
+
+## N2.2 bounded sync500 CONTROL/INSTRUMENTED observations — 2026-11-06
+
+The [closed diagnostic 500 pair](../evidence/native-epoch2-dag-volume5000-2026-11-06/sync500-measurement-pair-v1/index.json)
+contains two personally executed normal sync500 phases: CONTROL 1 PASS 218.526s
+and INSTRUMENTED 1 PASS 250.317s, both actual pytest/tool 0/0 failure/error/skip.
+All 1600 runtime and 636 publication files remain identical, 3884 imports have no
+mismatch, six wider-health counters are zero, provision hook 1/original body 0,
+fresh databases retained with sessions[] at driver checks and 13 owned identities
+closed per phase. Original 750/840/900 budgets remain. These are diagnostic 500
+runs, not personal 5000, a performance SLO or hosted-gate acceptance.
+
+Selected whole API process/all-thread CPU is 189.345343s control and 222.174119s
+instrumented. Instrumented API lifetime is 241.237177977s wall. These observed
+counter boundaries are not request/component CPU attribution or calibrated
+instrumentation overhead. Local/hosted resources differ; no CI cause or 5000
+forecast follows. Process samples are not exit totals; missing CPU is unknown.
+
+The byte-exact [public structured ledger](../evidence/native-epoch2-dag-volume5000-2026-11-06/sync500-measurement-pair-v1/instrumented/api-measurements.json)
+and [derived reconciliation](../evidence/native-epoch2-dag-volume5000-2026-11-06/sync500-measurement-pair-v1/principal-derived/derived-api-counts-v1.json)
+record 181310 balanced selected SQLAlchemy Engine dispatch attempts/5868 requests,
+0 errors/0 pending. These are not all PostgreSQL statements or necessarily successful
+server queries. ASGI ContextVar grouping can include awaited/inherited background
+work until the request row closes; **outside means absent or closed request
+context**. This exact definition in the [Principal review](../evidence/native-epoch2-dag-volume5000-2026-11-06/sync500-measurement-pair-v1/principal-review/principal-pair-closed-review-v1.json)
+also clarifies the archive wrapper's compact “no/open request-context” wording.
+The synchronous getter 8008 calls use 2.073158677s thread CPU, a small observed share
+of whole API CPU. `_dag_plan` 4104 calls total 151.159770104s inclusive **wall**
+across awaits, not CPU/critical path. Summed SQL client-wall 596.685020727s exceeds
+API wall 241.237s because concurrent spans overlap and include driver/network/server/
+scheduling. Overlapping SQL/request/plan spans cannot be added as disjoint latency.
+
+No getter cache/reuse, optimization or proof/lifecycle change was implemented.
+The getter returns a fresh mutable DTO. Unexecuted V1 field/range/hook preparation
+defects remain preserved separately from successful runtime phases. The required
+CI sync5000 RED and underlying slow-progress cause UNKNOWN are not fixed by these
+observations. NI2-012…014 remain OPEN/BLOCKED, NI2-020 implementation blocked;
+earned readiness **15%**, planned 27% unearned. Existing ADR bodies/AC/history,
+all earlier indices and the current publication delta remain unchanged.
+
+
+## N2.2 closed projection diagnostics, JOIN PG68 and CI03 status — 2026-11-06
+
+The [closed TaskRun projection source package](../evidence/native-epoch2-dag-volume5000-2026-11-06/taskrun-projection-v1/index.json)
+preserves rejected/unexecuted V1 and approved V2, Root application/normal selected
+hooks, proposed preformat test b016 and actual posthook 27c1 plus immutable final
+three-file captures. V2 retains nine mapped TaskRun fields/proofs and explicitly
+refreshes mutable project_execution rows; no DTO cache/reuse/lock/validation skip.
+The unsafe-V1 activation FAIL and old-product 4 PASS remain source-derived
+unexecuted expectations. [Actual PG23](../evidence/native-epoch2-dag-volume5000-2026-11-06/taskrun-projection-pg23-v1/index.json)
+is 23 PASS/55.516s/0 skip, including four real stale-identity/freshness cases plus
+19 previous scoped cases; source 1601/import 1209 drift/mismatch 0. It is real
+PG/model/API-ASGI correctness, not a native 5000/performance result.
+
+The [POSTFIX500 pair/comparison](../evidence/native-epoch2-dag-volume5000-2026-11-06/sync500-measurement-postfix-pair-v1/index.json)
+records personal CONTROL 1 PASS 212.262s/API wholeCPU185.085536s and INSTRUMENTED
+1 PASS 227.587s/API wholeCPU198.606205s on that exact source 1601, publication 636
+unchanged, 3884 imports/no mismatch/six health0/provision1original0, retainedDB
+sessions[] at driverchecks and 13 identities closed each. Eight observers are
+byte-identical to BEFORE. Old public 50MB metrics are referenced, not copied again.
+Matched DATA dispatch histograms are complete47→46, nonemptyread39→38,
+emptyread31→30 and sourceappend41→40: **-1 per matched request, 3507 saved**.
+Total 181310→175522 saves 5788 but includes requestmix/poll differences; it is not
+all attributed to projection. Single-run times/CPU differences are descriptive,
+not calibrated causal speedup, CI benefit, SLO or 5000forecast. SQL/request/plan
+spans overlap; inclusive wall is not CPU/pure SQL latency or a critical path.
+
+The later [bounded reference-JOIN source](../evidence/native-epoch2-dag-volume5000-2026-11-06/reference-bounded-join-v1/index.json)
+is a distinct model/test source version: manifest bf5dc647…/review 66348187…/
+hooks 0888e041…, model a540…/test ccdb…, source1601 a0f2…. It bundles six LEFTJOINs
+with local scalar facts and refreshes three parent ORM aliases; fresh topology
+rejection/eager parent refresh on failure are declared strengthening, not blanket
+identity-map sideeffect equivalence. Existing contents() equality is a business
+projection, not all DBcolumns/wholeDB unchanged. No cache/newlock/proof weakening.
+[Actual JOIN PG68](../evidence/native-epoch2-dag-volume5000-2026-11-06/reference-bounded-join-pg68-v1/index.json)
+is **67 PASS / 1 exact SQLite-only SKIP / 147.025s**, pytest/tool0, 1601 source
+no drift, 1209 imports/no mismatch/provision1original0/ECHILD/five identities gone/
+retainedDB driver sessions[]. The only skip is
+`test_sqlite_discovery_authorization_refuses_before_any_mutation`, reason
+`SQLite backend-refusal control` on realPG17. Six new JOIN cases passed. This is
+route45+disjointPG23/model/API-ASGI correctness, not native/performance acceptance.
+The future JOIN CONTROL/instrumented500 pair is **PENDING**; active trial files
+were not read or copied and no PASS/dispatch/CPU benefit is invented for it.
+Closed projection/POSTFIX results remain their original earlier source versions.
+
+The [published 18124 async CI5000 failure](../evidence/native-epoch2-dag-volume5000-2026-11-06/ci-async5000-failure-v1/index.json)
+retains 18 safe files, actual Flow FAILED vs COMPLETED/1 FAIL. Primary cause is
+NOT_RETAINED and underlying bottleneck UNKNOWN; the separate sync SDK 3960.31s
+timeout cause is not transferred to async. Secondary fencing/aggregate line
+counts do not establish primary cause, executed retries or complete health.
+[Six safe resource JSONs](../evidence/native-epoch2-dag-volume5000-2026-11-06/ci-cpu-wall-pairing-v1/index.json)
+retain arithmetic CPU deltas, but genuinely paired same-cgroup CPU/wall is
+NOT_OBSERVED: start-wall timestamp and cgroup identity/membership are missing.
+No API/PG/host attribution, resource-cause or causal timing conclusion follows.
+
+[CI02 as-of 07:09:39.284](../evidence/native-epoch2-dag-volume5000-2026-11-06/ci-status-070939-v1/index.json)
+is preserved separately from [CI03 as-of 07:33:36.420UTC](../evidence/native-epoch2-dag-volume5000-2026-11-06/ci-status-0733-v1/index.json):
+**16 native PASS / 2 known DAG5000 FAIL / physical async5000 ACTIVE**, all on OLD
+published 1812460. Physical sync5000 whole job succeeded 07:14:53, exact runtime
+06:37:06→07:14:37. This is job/step status only, no artifact download/health replay
+or proof of the new cleanup guard. No newer matrix state is inferred. Old CI does
+not become projection/JOIN/futurecommit CI. Full 19/four-heavy/NI2-012…014 remains
+OPEN/BLOCKED, NI2-020 implementation blocked, 15% earned/no 27% credit; no new gate
+or decision is introduced. Original ADR42–48 approved bodies/AC/history and all
+closed artifacts/indices remain unchanged.
+
+
+## N2.2 terminal old18124 CI04 matrix — 2026-11-06
+
+[CI04 exact public ledger and declared snapshot](../evidence/native-epoch2-dag-volume5000-2026-11-06/ci-status-075802-v1/index.json)
+at 07:58:02.148UTC closes all 94 jobs (91SUCCESS/2knownFAIL/1SKIP) and all 19 native
+cases: **17 PASS / 2 known DAG5000 FAIL**, no active/queued cases. P2async5000
+wholejob SUCCESS 07:53:02, runtime 07:18:09→07:52:47/no-skips-validatorSUCCESS;
+P2sync wholejob success remains in CI03. These are OLD 1812460 job/step statuses,
+not artifacts/health replay, new cleanup-guard execution or candidate/futureheadCI.
+CI02/03 and failure/cause/resource history above remain immutable. The terminal
+required matrix is **not green**; no further active or queued status is implied.
+
+Source components are verified only in their declared scopes/versions. Later JOIN
+PG68 is **67 PASS / 1 exact SQLite-only backend SKIP / 147.025s**. The JOIN500
+measurement pair remains **PENDING** until its own closed owner handoff; no
+performance result or fixedCI claim is borrowed from prior POSTFIX500. Current
+tracker rows are concise; detailed causality/proof/version limits remain in the
+appended history and linked packets. NI2-012…014 remain OPEN/BLOCKED, NI2-020
+implementation blocked, earned readiness **15%**, planned 27% unearned. Existing
+approvedADR42–48 bodies/AC and all earlier evidence/history remain unchanged.
+
+
+## N2.2 closed JOIN500 diagnostic pair: dispatch reduction without speedup — 2026-11-06
+
+The [closed JOIN500 pair](../evidence/native-epoch2-dag-volume5000-2026-11-06/reference-join-measurement-pair-v1/index.json)
+now records actual CONTROL 1 PASS 223.458s/APIwholeCPU196.472938s and INSTRUMENTED
+1 PASS 293.313s/APIwholeCPU262.308499s, both pytest/tool 0/all six health0/source1601a0f2/
+publication636 unchanged/import3884 no mismatch/provision1original0/retainedDB
+driver sessions[]/all 13 phase identities closed each. No active file was copied.
+The [exact comparison](../evidence/native-epoch2-dag-volume5000-2026-11-06/reference-join-measurement-pair-v1/principal-derived/POSTFIX-JOIN-comparison-v1.json)
+confirms nonempty-read38→32 and complete46→40 for 1500 matched requests each,
+**18000 matched dispatches saved**; sourceappend40/emptyread30 are unchanged.
+Total 175522→160132 decreases 15390, with requestmix/background differences not all
+assigned to JOIN. The new ledger 160132 before/after balances 0 errors/0 pending;
+old baseline rawmetrics are linked by SHA rather than recopied.
+
+Observed CONTROL suite/API CPU is **slower by 5.27%/6.15%** than POSTFIX; treated
+suite/API CPU is **slower by 28.88%/32.07%**. These are individual descriptive
+comparisons, not demonstrated speedup or calibrated causal regression. Reason
+for slower work remains UNKNOWN; no SQL compilation/materialization/cache/resource
+cause is established. Selected API Engine attempts are not all/successful PG
+statements. SQL/request/dag_plan elapsed spans overlap and are not CPU/pure SQL
+latency/critical path. Same local resources do not establish hostedCI parity or
+5k forecast. Retain actual functional PASS and slower observations together;
+no automatic source erasure or whole-ADR acceptance/rejection follows.
+
+The separate new COUNTERS-ONLY diagnostic is source-only preparing/**NOT EXECUTED**;
+its source/trial files are not read or archived here. PG68 remains 67 PASS/1 exact
+SQLite-only backendSKIP. OLD 18124 CI all 19 terminal17 PASS/2DAG5kFAIL is still not
+green; neither dispatch reduction nor local500PASS fixes required hosted gates.
+NI2-012…014 OPEN/BLOCKED, NI2-020 implementation blocked, earned **15%**, planned 27%
+unearned. No approved ADR body/AC/history or older index was rewritten.
+
+
+## N2.2 closed counters-only diagnostic: residual API CPU unknown — 2026-11-06
+
+The earlier COUNTERS-ONLY preparation now has one actual [closed diagnostic 500](../evidence/native-epoch2-dag-volume5000-2026-11-06/reference-join-api-sync-counters-v1/index.json):
+**1 PASS/224.438s/API wholeCPU196.481766s**, source1601a0f2/publication636 unchanged,
+3884 imports/no mismatch/sixhealth0/provision1original0/retainedDB driver sessions[]/
+all 13 owned identities gone. No SQL/ASGI ledger/global profiler/cache was used.
+Exact [counters](../evidence/native-epoch2-dag-volume5000-2026-11-06/reference-join-api-sync-counters-v1/run/api-sync-cpu-counters.json)
+show alias6011/.196471s, Select121231/2.695267s, compiler4762/.560284s,
+validated4057/2.180657s, submission16224/1.477574s, pure reference3000/.915598s
+(selected inclusive threadCPU). Originalexceptions0/observererrors0/active0.
+
+**Inclusive stages may nest and are not summed.** Compiler constructions are not
+engine cache misses; Select covers constructor/column coercion, not generative
+JOIN/WHERE/cache-key work. Wholeprocess CPU includes observation overhead; six
+selected stages are not a complete profile. Other ORM/result adaptation, JSON/
+digests and scheduling remain unattributed. Pureasync helper CPU depends on its
+pinned no-suspension/direct-sync-callee proof. These costs do not justify a
+shape-cache fix or explain the prior slowdown; **residual CPU remains UNKNOWN**.
+
+The [Principal review](../evidence/native-epoch2-dag-volume5000-2026-11-06/reference-join-api-sync-counters-v1/principal/principal-counters-closed-review-v1.json)
+preserves the failed file-audit object/digest assertion as preparation, not an
+actual test failure/product drift. A new standard nonblocking statistical profile
+is only source-feasibility/**PENDING, NOT EXECUTED**; no source/trial is read here.
+All prior JOIN/source/pass/slower-measurement and CI failure histories remain.
+No CI fix/SLO/5000forecast, NI2-012…014 acceptance, NI2-020 GO or 27% credit follows;
+earned readiness **15%**, old CI17PASS/2DAG5kFAIL/notgreen/NI014blocked. No approved
+ADR body/AC/history or older index was rewritten.
+
+
+## N2.2 closed py-spy500 and JOIN integration rollback — 2026-11-06
+
+The previously pending statistical profile now has one actual [closed personal
+py-spy500 diagnostic](../evidence/native-epoch2-dag-volume5000-2026-11-06/api-pyspy500-v1/index.json):
+**1 PASS/224.973s/API whole-process CPU197.759607s**, historical JOIN
+source1601a0f2/publication636 unchanged/import3884 no mismatch/sixhealth0/all14
+owned identities gone/fresh database retained with driver sessions[]. The sampler
+selected one verified API owner for fixed120s/49Hz nonblocking recording; actual
+`wait4` exit0/resource CPU8.317530s is sampler accounting, not four seconds.
+The [raw profile](../evidence/native-epoch2-dag-volume5000-2026-11-06/api-pyspy500-v1/run/api-profile.raw)
+is preserved once (2,226,954 bytes). The [descriptive summary](../evidence/native-epoch2-dag-volume5000-2026-11-06/api-pyspy500-v1/principal/descriptive-stack-summary-v1.json)
+records **3748 weights = 3609 nonempty + 139 EMPTY**, and **1899 separate
+unreadable errors**. Weights are not CPU seconds; the error population cannot
+be divided by trace weights to invent a loss rate. Empty observations remain
+unknown; high read loss/non-atomic reads and truncated Python/native ancestry
+can bias attribution. Inclusive stack counts overlap and are not summed.
+Verdict: **DESCRIPTIVE_ONLY / HIGH_LOSS; whole-API CPU attribution INCONCLUSIVE**.
+No exact CPU percentage, residual bottleneck, cache justification, latency/SLO,
+CI cause or 5000 forecast follows. The [Principal review](../evidence/native-epoch2-dag-volume5000-2026-11-06/api-pyspy500-v1/principal/principal-pyspy500-closed-review-v1.json)
+preserves hold487a phase-flag assertion as **UNEXECUTED preparation** before any
+trial/DB/Popen, followed by separately authorized holdab245 with only the phase
+flag corrected; there was one actual native attempt.
+
+Root rejected the bounded reference JOIN optimization **for current integration**
+because no benefit was demonstrated. The [closed exact two-file rollback](../evidence/native-epoch2-dag-volume5000-2026-11-06/reference-join-rollback-v1/index.json)
+restored modela4acc3d4/testf7efcd77 and source1601**012a2d9d**, retaining P2 cleanup
+and TaskRun projection. The [final owner hooks receipt](../evidence/native-epoch2-dag-volume5000-2026-11-06/reference-join-rollback-v1/owner/hooks-receipt.json)
+records normal selected pre-commit0/pre-push0/no source or AST mutation, publication636
+unchanged and PRIMARY clean18124. The earlier apply receipt's HOOKS_PENDING status
+is preserved as its historical stage. All candidate source/tests, PG68 PASS, JOIN500
+slower pair, counters and py-spy evidence remain on their actual **a0f2** source;
+they are not relabeled as rollback-source tests. This integration decision is
+not rejection of ADR43 or its approved requirements. Restored-source PG62 remains
+preparation/**NOT EXECUTED** here; CI-runner DAG500 diagnostics are source-planning/
+**NOT RUN**. No post-rollback functional/performance PASS is inferred.
+
+OLD published18124 CI remains all19 terminal **17 PASS/2 DAG5000 FAIL**, not green
+and not rollback/candidate CI. NI2-012…014 remain OPEN/BLOCKED, NI2-020 implementation
+blocked, earned readiness**15%**, planned27% unearned. Prior requirements/history,
+failed/preparation records, approved ADR42–48 bodies/AC and all closed indices
+remain immutable. Conflict scan remains incomplete; grill-me/spec-first variants
+remain excluded. No repo/source/Git-index/runtime/DB/hooks/network action was
+performed by this evidence/draft preparation.
+
+
+## N2.2 restored-source PG62 component verification — 2026-11-06
+
+The [closed restored-source PG62 packet](../evidence/native-epoch2-dag-volume5000-2026-11-06/reference-join-reverted-pg62-v1/index.json)
+now records the Principal's actual model/API-ASGI real-PG17 component execution:
+**61 PASS / 1 exact SQLite-only backend SKIP / 136.786s**, pytest/tool exit0.
+The [personal review](../evidence/native-epoch2-dag-volume5000-2026-11-06/reference-join-reverted-pg62-v1/principal/principal-PG62-closed-review-v1.json)
+and [actual receipt](../evidence/native-epoch2-dag-volume5000-2026-11-06/reference-join-reverted-pg62-v1/run/pg62-receipt-v1.json)
+bind source1601**012a2d9d** before/after equal, 1209 import audit rows/no mismatch,
+provisioning-only hook1/original provisioning body0, all five observed identities
+gone/waitpid ECHILD, fresh retained DB with driver sessions[]. The only skip is
+`test_sqlite_discovery_authorization_refuses_before_any_mutation`, reason
+`SQLite backend-refusal control`. The first file-only allowlist draft's reference
+to nonexistent publication-before/after captures is preserved as preparation-only
+correction, not a workload failure or invented before/after capture; the actual
+publication guard is bound in hold/runner/receipt.
+
+This closes the prior preparation-only status **within restored-source component
+verification**, without claiming native SDK/TCP 500/5000, performance or hostedCI
+acceptance. JOIN remains excluded from current integration for no demonstrated
+benefit; exact a4acc/f7ef rollback, retained P2 cleanup/TaskRun projection and all
+historical candidate a0f2 code/tests/PG68/slower pair/counters/high-loss py-spy
+records remain distinct and immutable. PG62 is not retrospective validation of
+those candidate measurements. CI-runner DAG500 diagnostics remain source-only/
+**NOT RUN**. OLD published18124 CI terminal17PASS/2DAG5000FAIL remains not green
+and is not current rollback-source CI. NI2-012…014 OPEN/BLOCKED, NI2-020
+implementation blocked, earned15%, planned27% unearned; no new readiness credit.
+No approved ADR42–48 body/AC/history, old index or prior draft was rewritten.
+
+
+## N2.2 local DAG500 observer rehearsal and reviewed CI diagnostics — 2026-11-06
+
+The [closed two-file diagnostic implementation](../evidence/native-epoch2-dag-volume5000-2026-11-06/dag500-ci-observer-implementation-v1/index.json)
+preserves final workflow499d58a3/plugin a25be925 source, exact patch, bounded
+plan/matching Principal reviews, normal selected hooks0/0 and pure transport/
+extraction/lifecycle checks. It adds explicit DAG500sync/async choices and a
+DAG-profile observer branch while retaining legacy P2 behavior, original500
+test nodes/750-840-900 budgets and ordinary CI fixtures. Those source/pure
+checks alone are not SQL, native or hostedCI acceptance.
+
+The [actual closed LOCAL rehearsal](../evidence/native-epoch2-dag-volume5000-2026-11-06/dag500-observer-rehearsal-v1/index.json)
+now records Principal personal SDK/TCP/OS/PG17 execution: **1 PASS/0 SKIP/226.097s**,
+pytest/tool0; source1603 before/after equal = legacy1601**012a2d9d** plus explicit
+workflow/plugin extras, 3885 import rows/no mismatch. Local provisioning-only
+hook1/original provisioning body0 differs from the future ordinary CI fixture.
+B0/C0/C1 each have500 calls/500 effects; all six native health categories empty,
+all13 observed owned identities gone/ECHILD, fresh retainedDB driver sessions[].
+The [observer audit](../evidence/native-epoch2-dag-volume5000-2026-11-06/dag500-observer-rehearsal-v1/run/DAG-observer-audit.json)
+preserves **45 snapshots/41 complete4Task7partition snapshots/all11 query families**,
+with one owned Flow/Graph and at least one actual all-three-frontiers500 sample.
+Exactly one preGraph/bootstrap **UndefinedTableError** is retained with its
+connection confirmed closed; later queries succeeded. **This is not a claim of
+zero observer errors.** Final cleanup absence and normal-case control/action/
+message UNKNOWN remain literal; no retrospective durable cursor or actual
+failed-case cause capture is invented.
+
+Actual checkpoint84.07843ms acknowledged, active0/unconfirmed closes0/threadSTOP;
+these observations and cooperative6s-query/1s-close limits are not strict future
+real-time guarantees. Snapshots are default-readonly multiSELECT/**NONATOMIC**,
+not RR. Ten paired same-PID/start CPU windows are partial observed windows, not
+exit/lifetime CPU, SQL/RPC latency or critical path; cgroup totals can include
+other processes. Same runner label does not establish physical-host/resource
+parity or CI slowdown cause. Exact100 rehearsal inputs are accounted once:88
+physical copies+12 hash-bound canonical references to the CI implementation
+sibling, keeping shared499d/a25 sources in one copy. The [personal review](../evidence/native-epoch2-dag-volume5000-2026-11-06/dag500-observer-rehearsal-v1/principal/principal-rehearsal-closed-review-v1.json)
+and [minimal dispatch guard](../evidence/native-epoch2-dag-volume5000-2026-11-06/dag500-observer-rehearsal-v1/principal/minimal-CI-dispatch-guard-v1.json)
+preserve the execution boundary. The static ephemeral PostgreSQL fixture URI
+in source YAML is the explicitly classified public literal, not private runtime
+DSN/env/config; no unrelated URL exception follows.
+
+**The new diagnostic workflow has NOT RUN ON CI.** Local rehearsal is not oldCI
+reproduction, a fixed CI bottleneck, performance/5000 acceptance or permission
+for automatic dispatch/async/heavy runs. OLD18124 native matrix remains all19
+terminal17PASS/2DAG5000FAIL, distinct from this candidate source. NI2-012…014
+OPEN/BLOCKED, NI2-020 implementation blocked, earned15%, planned27% unearned.
+TaskRun projection/P2 cleanup retained/JOIN reverted; all historical candidate
+code/tests/slower measurements/profiles/failures and prior V1…V6 appendices
+remain exact. No approved ADR42–48 body/AC/history or closed index was rewritten.
+Conflict scan incomplete; grill-me/spec-first variants excluded.

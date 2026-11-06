@@ -1,0 +1,61 @@
+"""Stdlib-only process/resource and explicit publication-delta observation."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import time
+
+ROOT=Path('/tmp/ariadne-native-5000-diagnosis-v1')
+HOOK_RECEIPT=Path('/tmp/native-publication-full-candidate-hooks-18124-wip4550-v1/hooks-receipt-v1.json')
+HOOK_SHA='c05c6b06c24bf12e526dedaf6e9c669840d9a9072afc36e74afa9562cdb223cd'
+
+
+def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def publication_snapshot():
+    assert sha(HOOK_RECEIPT)==HOOK_SHA
+    receipt=json.loads(HOOK_RECEIPT.read_text())
+    assert receipt['status']=='NORMAL_FULL_CANDIDATE_HOOKS_PASS' and receipt['runtime_source1600_drift']==[] and receipt['hook_file_mutations']==[]
+    declared={name:{'sha256':sha(ROOT/name),'bytes':(ROOT/name).stat().st_size} for name in receipt['file_SHA_before']}
+    assert {name:row['sha256'] for name,row in declared.items()}==receipt['file_SHA_before']
+    return {'head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),'porcelain':subprocess.check_output(['git','status','--porcelain','--untracked-files=all'],cwd=ROOT,text=True).splitlines(),'tracked_binary_diff_sha256':hashlib.sha256(subprocess.check_output(['git','diff','--binary'],cwd=ROOT)).hexdigest(),'staged_binary_diff_sha256':hashlib.sha256(subprocess.check_output(['git','diff','--cached','--binary'],cwd=ROOT)).hexdigest(),'declared_public_candidate_files':declared,'hooks_receipt':{'path':str(HOOK_RECEIPT),'sha256':HOOK_SHA},'qualification':'Explicit frozen publication delta includes declared ignored public logs; not a blanket clean/one-dirty-path allowance.'}
+
+
+def resources():
+    data={'monotonic_ns':time.monotonic_ns(),'cpu_affinity':sorted(os.sched_getaffinity(0)),'cgroup':{},'qualification':'Actual local limits/cumulative counters only; no claim of CI8GiB parity or per-process interval CPU from cgroup totals.'}
+    for name in ('cpu.max','cpu.stat','memory.max','memory.current','memory.peak','memory.events','pids.current'):
+        try:data['cgroup'][name]=Path('/sys/fs/cgroup',name).read_text().strip()
+        except OSError:data['cgroup'][name]=None
+    return data
+
+
+def process_table():
+    result={}
+    for p in Path('/proc').iterdir():
+        if not p.name.isdigit():continue
+        try:
+            with (p/'stat').open() as handle:f=handle.read().rsplit(')',1)[1].split()
+            result[int(p.name)]={'state':f[0],'parent':int(f[1]),'pgid':int(f[2]),'utime_ticks':int(f[11]),'stime_ticks':int(f[12]),'start_ticks':f[19],'rss_pages':int(f[21])}
+        except (OSError,ValueError,IndexError):continue
+    return result
+
+
+def cpu_sample(root_pid,runner_pid,runner_ticks,identities):
+    table=process_table();owned={root_pid,runner_pid}
+    changed=True
+    while changed:
+        prior=len(owned)
+        for pid,row in table.items():
+            if row['parent'] in owned and int(row['start_ticks'])>=int(runner_ticks):owned.add(pid)
+        changed=len(owned)!=prior
+    owned.update(pid for pid,ticks in identities.items() if pid in table and table[pid]['start_ticks']==str(ticks))
+    selected={}
+    for pid in owned:
+        row=table.get(pid)
+        if row is None or int(row['start_ticks'])<int(runner_ticks):continue
+        if pid in identities and str(identities[pid])!=row['start_ticks']:continue
+        if pid!=runner_pid:identities[pid]=row['start_ticks']
+        selected[str(pid)]=row
+    return {'monotonic_ns':time.monotonic_ns(),'clock_ticks_per_second':os.sysconf('SC_CLK_TCK'),'processes':selected,'qualification':'Whole-process CPU counters from /proc/stat for exact PID/starttick identities. Last sample is not an exit total; old PID1 orphan and unrelated processes are excluded. No argv/env is serialized.'}

@@ -1,0 +1,195 @@
+"""Selected API process: six aggregate synchronous CPU stages, without SQL events."""
+import ast
+import functools
+import hashlib
+import inspect
+import json
+from pathlib import Path
+import threading
+import time
+import textwrap
+
+
+class Recorder:
+    def __init__(self, trial):
+        self.trial = Path(trial)
+        self.lock = threading.Lock()
+        self.errors = []
+        self.rows = {}
+        self.restorations = []
+        self.bindings = []
+        self.active = 0
+
+    def error(self, stage, error):
+        with self.lock:
+            if len(self.errors) < 8:
+                self.errors.append({"stage": stage, "error_type": type(error).__name__})
+
+    def begin(self, label):
+        try:
+            started = (time.perf_counter_ns(), time.thread_time_ns())
+            with self.lock:
+                self.active += 1
+            return started
+        except Exception as error:
+            self.error(label + "_observer_start", error)
+            return None
+
+    def record(self, label, started_wall, started_cpu, failed):
+        # Stop timers before taking the aggregate lock. Process RUSAGE still
+        # includes timer/wrapper/aggregation overhead; these spans are inclusive.
+        wall = time.perf_counter_ns() - started_wall
+        cpu = time.thread_time_ns() - started_cpu
+        with self.lock:
+            row = self.rows[label]
+            self.active -= 1
+            row["calls"] += 1
+            row["original_exceptions"] += int(failed)
+            row["inclusive_wall_ns"] += wall
+            row["inclusive_thread_cpu_ns"] += cpu
+
+    def patch(self, owner, name, label, pure_async=False):
+        had_local = name in owner.__dict__
+        descriptor = inspect.getattr_static(owner, name)
+        kind = "function"
+        if isinstance(descriptor, staticmethod):
+            kind, original = "staticmethod", descriptor.__func__
+        elif isinstance(descriptor, classmethod):
+            kind, original = "classmethod", descriptor.__func__
+        else:
+            original = descriptor
+        if not inspect.isfunction(original):
+            raise TypeError("Expected an ordinary Python callable descriptor")
+        source = inspect.getsource(original)
+        if pure_async:
+            tree = ast.parse(textwrap.dedent(source))
+            if not inspect.iscoroutinefunction(original) or any(
+                isinstance(node, (ast.Await, ast.AsyncFor, ast.AsyncWith, ast.Yield, ast.YieldFrom))
+                for node in ast.walk(tree)
+            ):
+                raise TypeError("Async helper suspension proof differs")
+        elif inspect.iscoroutinefunction(original):
+            raise TypeError("Synchronous stage unexpectedly suspends")
+        self.rows.setdefault(label, {"calls": 0, "original_exceptions": 0,
+                                    "inclusive_wall_ns": 0, "inclusive_thread_cpu_ns": 0})
+        if pure_async:
+            @functools.wraps(original)
+            async def wrapped(*args, **kwargs):
+                started = self.begin(label)
+                if started is None:
+                    return await original(*args, **kwargs)
+                wall, cpu = started
+                failed = False
+                try:
+                    return await original(*args, **kwargs)
+                except BaseException:
+                    failed = True
+                    raise
+                finally:
+                    try:
+                        self.record(label, wall, cpu, failed)
+                    except Exception as error:
+                        self.error(label + "_observer", error)
+        else:
+            @functools.wraps(original)
+            def wrapped(*args, **kwargs):
+                started = self.begin(label)
+                if started is None:
+                    return original(*args, **kwargs)
+                wall, cpu = started
+                failed = False
+                try:
+                    return original(*args, **kwargs)
+                except BaseException:
+                    failed = True
+                    raise
+                finally:
+                    try:
+                        self.record(label, wall, cpu, failed)
+                    except Exception as error:
+                        self.error(label + "_observer", error)
+        replacement = staticmethod(wrapped) if kind == "staticmethod" else classmethod(wrapped) if kind == "classmethod" else wrapped
+        setattr(owner, name, replacement)
+        self.restorations.append((owner, name, had_local, descriptor, replacement))
+        self.bindings.append({"stage": label, "owner": owner.__name__, "attribute": name,
+                              "descriptor_kind": kind, "inherited": not had_local,
+                              "source_sha256": hashlib.sha256(source.encode()).hexdigest(),
+                              "pure_no_suspension_async": pure_async,
+                              "source_file": inspect.getsourcefile(original),
+                              "file_sha256": hashlib.sha256(Path(inspect.getsourcefile(original)).read_bytes()).hexdigest()})
+        return replacement
+
+    def install(self):
+        # This module is imported/installed only inside the strict selected-API
+        # _serve owner gate. No Worker, Flow or physical Task process installs it.
+        from sqlalchemy.dialects.postgresql.asyncpg import PGDialect_asyncpg
+        from sqlalchemy.orm.util import AliasedClass
+        from sqlalchemy.sql.compiler import SQLCompiler
+        from sqlalchemy.sql.selectable import Select
+        from prefect.server.models import stream_dags, stream_routes
+        from prefect.server.models.streams import NativeStreamStore
+        compiler = PGDialect_asyncpg.statement_compiler
+        if not issubclass(compiler, SQLCompiler):
+            raise TypeError("Actual asyncpg statement compiler differs")
+        if inspect.getattr_static(NativeStreamStore, "submission_material") is not inspect.getattr_static(NativeStreamStore, "_submission_material"):
+            raise TypeError("Submission aliases no longer share one descriptor")
+        try:
+            self.patch(AliasedClass, "__init__", "alias_constructor")
+            self.patch(Select, "__init__", "select_constructor")
+            # Patch only the actual dialect compiler. Do not also wrap its base.
+            self.patch(compiler, "__init__", "sql_compiler_constructor")
+            self.patch(stream_dags, "_validated", "dag_validated")
+            private_descriptor = inspect.getattr_static(NativeStreamStore, "_submission_material")
+            private_had_local = "_submission_material" in NativeStreamStore.__dict__
+            shared = self.patch(NativeStreamStore, "submission_material", "submission_material")
+            setattr(NativeStreamStore, "_submission_material", shared)
+            self.restorations.append((NativeStreamStore, "_submission_material", private_had_local, private_descriptor, shared))
+            self.bindings.append({**self.bindings[-1], "attribute": "_submission_material", "inherited": not private_had_local})
+            if inspect.getattr_static(NativeStreamStore, "submission_material") is not inspect.getattr_static(NativeStreamStore, "_submission_material"):
+                raise TypeError("Shared submission descriptor identity differs")
+            self.patch(stream_routes.NativeDAGRouteStore, "_resolve_record", "pure_reference_validation", pure_async=True)
+        except BaseException:
+            self.restore()
+            raise
+
+    def restore(self):
+        for owner, name, had_local, original, replacement in reversed(self.restorations):
+            try:
+                if inspect.getattr_static(owner, name) is not replacement:
+                    raise RuntimeError("Observed descriptor changed during capture")
+                if had_local:
+                    setattr(owner, name, original)
+                else:
+                    delattr(owner, name)
+            except Exception as error:
+                self.error("restore_" + name, error)
+        self.restorations.clear()
+
+    def finish(self):
+        self.restore()
+        if self.active:
+            self.error("active_at_finish", RuntimeError())
+        output = {"schema": "selected-api-six-sync-stage-counters-v1",
+                  "status": "COUNTERS_VALID" if not self.errors else "COUNTERS_INCONCLUSIVE",
+                  "stages": self.rows, "bindings": self.bindings, "observer_errors": self.errors,
+                  "active_at_finish": self.active,
+                  "limits": [
+                      "Inclusive wall/thread CPU spans can nest and must not be blindly summed",
+                      "Compiler constructions are not exact engine cache misses; no SQL/ASGI events installed",
+                      "Select constructor covers column coercion, not outerjoin/where generative building or cache-key work",
+                      "Other ORM hydration/result adaptation, JSON/digests and scheduling remain unattributed",
+                      "Pure async helper thread CPU is valid only under pinned no-suspension/direct-sync-callee proof",
+                      "Original exceptions count and re-raise; observer errors alone mark capture inconclusive",
+                      "No arguments, results, payloads, SQL text/parameters, DSNs, headers or tokens retained",
+                      "Whole process RUSAGE includes wrapper/timer/aggregation/import/dump overhead",
+                  ]}
+        encoded = json.dumps(output, indent=2, sort_keys=True) + "\n"
+        if len(encoded.encode()) > 16384:
+            raise RuntimeError("Aggregate output exceeds bounded capture size")
+        path = self.trial / "api-sync-cpu-counters.json"
+        pending = path.with_suffix(".pending")
+        pending.write_text(encoded)
+        pending.replace(path)
+        return {"status": output["status"], "stage_count": len(self.rows),
+                "observer_errors": len(self.errors), "bytes": path.stat().st_size,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}

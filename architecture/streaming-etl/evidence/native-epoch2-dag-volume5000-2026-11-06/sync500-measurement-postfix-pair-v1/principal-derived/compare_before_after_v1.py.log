@@ -1,0 +1,119 @@
+"""File-only comparison; no application, database or profile imports."""
+import hashlib
+import json
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+
+OUT = Path(__file__).resolve().parent
+BEFORE = Path('/tmp/native-sync500-measurement-candidate-18124-v2')
+AFTER = Path('/tmp/native-sync500-measurement-postfix-18124-v1')
+TRIALS = {
+    'before_control': BEFORE / 'control-90b809fb',
+    'before_instrumented': BEFORE / 'instrumented-e494873a',
+    'after_control': AFTER / 'control-94db5043',
+    'after_instrumented': AFTER / 'instrumented-b5ee147b',
+}
+sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+load = lambda p: json.loads(p.read_text())
+ref = lambda p: {'path': str(p), 'sha256': sha(p), 'bytes': p.stat().st_size}
+
+def main():
+    records = {}
+    for key, trial in TRIALS.items():
+        r = load(trial / 'diagnostic-receipt-v1.json')
+        api = load(trial / 'api-measurement-complete.json')
+        assert r['status'] == 'DIAGNOSTIC_CASE_PASS_DB_RETAINED' and r['runtime_STOPPED']
+        assert r['pytest_exit'] == 0 and r['source_drift'] == r['harness_errors'] == r['import_audit']['mismatches'] == []
+        assert r['database']['retained'] and r['database']['sessions'] == []
+        resources = load(trial / 'resources-before.json')
+        records[key] = {
+            'native_receipt': ref(trial / 'diagnostic-receipt-v1.json'),
+            'API_counter': ref(trial / 'api-measurement-complete.json'),
+            'JUnit_suite_seconds': float(r['body_wider_health']['pytest_suite']['time']),
+            'API_process_CPU_seconds': api['process_rusage_user_seconds'] + api['process_rusage_system_seconds'],
+            'API_process_wall_seconds': api['process_elapsed_seconds'],
+            'API_serve_wall_seconds': api['serve_elapsed_seconds'],
+            'actual_resources': {'cpu_affinity': resources['cpu_affinity'], 'cpu.max': resources['cgroup']['cpu.max'], 'memory.max': resources['cgroup']['memory.max']},
+            'source_files': r['source_files'],
+            'import_observations': r['import_audit']['rows'],
+            'source_import_health_failures': 0,
+        }
+    oldsource = load(TRIALS['before_control'] / 'source-before.json')
+    newsource = load(TRIALS['after_control'] / 'source-before.json')
+    added = sorted(newsource.keys() - oldsource.keys())
+    removed = sorted(oldsource.keys() - newsource.keys())
+    changed = sorted(k for k in oldsource.keys() & newsource.keys() if oldsource[k] != newsource[k])
+    assert added == ['tests/server/models/test_stream_dag_task_projection.py'] and not removed
+    assert changed == ['src/prefect/server/models/stream_dag_executions.py', 'src/prefect/server/models/stream_dags.py']
+    oldassets = load(TRIALS['before_control'] / 'external-assets.json')
+    newassets = load(TRIALS['after_control'] / 'external-assets.json')
+    assert {k: v for k, v in oldassets.items() if k != 'runner.py'} == {k: v for k, v in newassets.items() if k != 'runner.py'}
+    metrics = {key: load(TRIALS[key] / 'api-measurements.json') for key in ('before_instrumented', 'after_instrumented')}
+    totals = {}
+    for key, m in metrics.items():
+        assert m['status'] == 'MEASUREMENT_COMPLETE' and m['instrumentation_errors'] == [] and m['unfinished_sql_dispatches'] == 0
+        buckets = [m['outside_request'], *m['requests']]
+        assert all(e['cursor_execute_before'] == e['cursor_execute_after'] + e['cursor_execute_error'] for b in buckets for e in b['sql'].values())
+        totals[key] = {'requests': m['request_count'], 'dispatches': sum(e['cursor_execute_before'] for b in buckets for e in b['sql'].values()), 'SQL_client_span_seconds_sum': sum(e['client_observed_elapsed_ns'] for b in buckets for e in b['sql'].values()) / 1e9, 'getter_calls': sum(b['plan_calls'] for b in buckets), 'getter_thread_CPU_seconds': sum(b['plan_thread_cpu_ns'] for b in buckets) / 1e9, 'dag_plan_calls': sum(b['dag_plan_calls'] for b in buckets), 'dag_plan_inclusive_wall_seconds_sum': sum(b['dag_plan_inclusive_wall_ns'] for b in buckets) / 1e9}
+    comparisons = []
+    for label, route, empty, count in (
+        ('complete', '/streams/v2/dags/consumers/complete', None, 1500),
+        ('nonempty_read', '/streams/v2/dags/consumers/read', False, 1500),
+        ('empty_read', '/streams/v2/dags/consumers/read', True, 7),
+        ('source_append', '/streams/v2/dags/sources/append', None, 500),
+    ):
+        side = {}
+        for key, m in metrics.items():
+            rows = [r for r in m['requests'] if r['method'] == 'POST' and r['route'] == route and r['status'] == 200 and (empty is None or r['empty_dag_consumer_read'] is empty)]
+            assert len(rows) == count
+            hist = Counter(sum(e['cursor_execute_before'] for e in r['sql'].values()) for r in rows)
+            assert len(hist) == 1
+            side[key] = {'requests': len(rows), 'dispatches_per_request_histogram': dict(hist), 'dispatch_total': sum(n * frequency for n, frequency in hist.items())}
+        before = next(iter(side['before_instrumented']['dispatches_per_request_histogram']))
+        after = next(iter(side['after_instrumented']['dispatches_per_request_histogram']))
+        assert after == before - 1
+        comparisons.append({'category': label, **side, 'per_request_delta': after - before})
+    core_saved = sum(row['before_instrumented']['dispatch_total'] - row['after_instrumented']['dispatch_total'] for row in comparisons)
+    assert core_saved == 3507
+    descriptive = {}
+    for mode in ('control', 'instrumented'):
+        a, b = records['before_' + mode], records['after_' + mode]
+        descriptive[mode] = {}
+        for field in ('JUnit_suite_seconds', 'API_process_CPU_seconds', 'API_process_wall_seconds'):
+            delta = b[field] - a[field]
+            descriptive[mode][field] = {'before': a[field], 'after': b[field], 'observed_delta': delta, 'observed_delta_percent': 100 * delta / a[field]}
+    result = {
+        'schema': 'principal-single-local-before-after-sourcebound-comparison-v1',
+        'recorded_at': datetime.now(timezone.utc).isoformat(),
+        'verdict': 'STRUCTURAL_DATA_DISPATCH_REDUCTION_VERIFIED_LOCAL_TIMINGS_DESCRIPTIVE_CI_FIX_UNPROVEN',
+        'executed_analysis_source': ref(Path(__file__)),
+        'phases': records,
+        'source_delta': {'before_files': len(oldsource), 'after_files': len(newsource), 'changed': {k: {'before': oldsource[k], 'after': newsource[k]} for k in changed}, 'added': {k: newsource[k] for k in added}, 'removed': removed},
+        'observation8assets_byte_equal': True,
+        'DATA_comparisons': comparisons,
+        'matched_DATA_dispatches_saved': core_saved,
+        'all_API_metrics': totals,
+        'descriptive_single_run_differences': descriptive,
+        'interpretation': [
+            'Every matched DATA request has exactly one fewer observed API Engine dispatch: complete47to46, nonemptyread39to38, emptyread31to30, sourceappend41to40. This confirms the structural hypothesis in this workload.',
+            'Total dispatch count decreases by5788, but only3507 is the fixed matchedDATA reduction. Requestmix/poll counts also differ, so the full total delta cannot all be assigned to the projection.',
+            'CONTROL suite and API CPU are lower by about2.87percent and2.25percent in these individual executions. Instrumented differences are larger, about9.08percent suite and10.61percent CPU; overhead and requestmix are not assumed constant.',
+            'A single local pair with two product changes does not establish precise causal speedup, material CI benefit, a throughputSLO or any5000completionforecast. CI sync and async5000 failures remain unclosed on oldsource.',
+            'Counters are API SQLAlchemy dispatchattempts, not all PostgreSQL serverqueries. SQLelapsed sums overlap scheduling/network/concurrentrequests; dag_plan wall includesawaits. Neither is DB CPU, pureSQLlatency or criticalpath.',
+            'ASGI request ContextVar can include awaited/inheritedbackground work untilrowcloses. API RUSAGE is wholeprocess/allthreads; it excludes DB and otherprocess CPU.',
+            'No queryfingerprint is assigned SQLmeaning byguess. No gettercache, topologyvalidation skip, newlocks, sourcecache, timeout extension or replaychange was introduced.',
+            'Local4CPUquota/affinity0..4/16GiB differs from hostedCI4CPUquota/affinity0..3/8GiB. CurrentHostedmatrix and required5000gate require separately authorized evidence on their declaredsource.',
+            'No further runtime/SQL/profile/hooks/sourceedit was executed by this comparison. All graph actors stopped; retainedDB0sessions are closeddrivercatalogfacts, not newPrincipalSQLqueries.',
+            'All grill-me/spec-first variants excluded; conflict scan incomplete. No readiness/NI014/NI020 acceptance credit.',
+        ],
+    }
+    p = OUT / 'before-after-comparison-v1.json'
+    p.write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
+    supplement = {'schema': 'closed-comparison-public-supplement-v1', 'files': {'principal-derived/compare_before_after_v1.py': ref(Path(__file__)), 'principal-derived/before-after-comparison-v1.json': ref(p)}, 'base_allowlist': ref(OUT / 'public-allowlist-v1.json'), 'base_closed_review': ref(OUT / 'principal-pair-closed-review-v1.json'), 'qualification': 'Two new public stdlibsource/numericreport files; base93allowlist and all native/metric receipts unchanged. No private captures/env/config/DSN/rawlogs/capability/token copies.'}
+    q = OUT / 'comparison-public-supplement-v1.json'
+    q.write_text(json.dumps(supplement, indent=2, sort_keys=True) + '\n')
+    print(json.dumps({'comparison': ref(p), 'supplement': ref(q), 'verdict': result['verdict'], 'matched_DATA_dispatches_saved': core_saved, 'total_dispatches_before_after': [totals['before_instrumented']['dispatches'], totals['after_instrumented']['dispatches']], 'single_run_differences': descriptive}))
+
+if __name__ == '__main__':
+    main()

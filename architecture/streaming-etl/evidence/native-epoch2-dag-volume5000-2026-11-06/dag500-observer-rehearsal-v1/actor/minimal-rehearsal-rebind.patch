@@ -1,0 +1,139 @@
+--- old/runner.py
++++ new/runner.py
+@@ -1,4 +1,4 @@
+-"""One Root-authorized JOIN unchanged sync500 node; retained fresh PG17 DB."""
++"""One Root-authorized DAG observer rehearsal; unchanged sync500 and retained PG17 DB."""
+ from __future__ import annotations
+ import ast
+ import asyncio
+@@ -24,6 +24,7 @@
+ ASSETS = ("runner.py","support.py","audit_sync500.py","provision_observer_plugin.py","api_selector.py","measurement_runtime.py","startup_measure.py","observation_support.py","startup-template.py.txt")
+ BUDGETS = {"wait":750,"observe":840,"pytest":900}
+ ADDITIONAL_SOURCE = "tests/server/models/test_stream_dag_task_projection.py"
++DIAGNOSTIC_SOURCES = (".github/workflows/native-stream-progress.yaml", "scripts/native_progress.py")
+ 
+ 
+ def source_snapshot_with_additional():
+@@ -31,6 +32,10 @@
+     assert ADDITIONAL_SOURCE not in result
+     result[ADDITIONAL_SOURCE] = {"sha256": s.sha(ROOT/ADDITIONAL_SOURCE), "bytes": (ROOT/ADDITIONAL_SOURCE).stat().st_size}
+     assert len(result) == 1601
++    for name in DIAGNOSTIC_SOURCES:
++        assert name not in result
++        result[name] = {"sha256": s.sha(ROOT/name), "bytes": (ROOT/name).stat().st_size}
++    assert len(result) == 1603
+     return dict(sorted(result.items()))
+ 
+ 
+@@ -43,33 +48,33 @@
+     assert len(sys.argv) == 2, "usage: runner.py /ABS/ROOT_AUTHORIZED_MEASUREMENT_HOLD.json"
+     hold_path = Path(sys.argv[1]); assert hold_path.is_absolute()
+     hold = json.loads(hold_path.read_text())
+-    assert hold["status"] == "ROOT_AUTHORIZED_REFERENCE_JOIN_SYNC500_MEASUREMENT_SOURCE_HOLD"
++    assert hold["status"] == "ROOT_AUTHORIZED_DAG500_OBSERVER_REHEARSAL_SOURCE_HOLD"
+     assert hold["runtime_authorized_by"] == "/root" and hold["publication_hooks_status"] == "STOPPED_PASS"
+     assert hold["authorized_nodes"] == [NODE] and hold["budgets"] == BUDGETS
+     assert hold["source_root"] == str(ROOT) and hold["retain_owned_database_on_pass_and_fail"] is True
+-    mode=hold["mode"];assert mode in {"control","instrumented"}
++    mode=hold["mode"];assert mode == "control"
+     assert hold["phase_separate_root_go"] is True and hold["only_provisioning_fixture_override"] is True
+     head = subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip()
+     assert head == hold["head"] == s.EXPECTED_HEAD
+     publication_before=publication_snapshot();assert publication_before==hold["publication_delta"]
+     assert subprocess.check_output(["git","status","--porcelain"],cwd="/workspace/ariadne",text=True)==""
+     before = source_snapshot_with_additional(); assert before == hold["files"]
+-    assert hold["additional_source_bindings"] == {ADDITIONAL_SOURCE: before[ADDITIONAL_SOURCE]}
++    assert hold["additional_source_bindings"] == {name: before[name] for name in (ADDITIONAL_SOURCE,*DIAGNOSTIC_SOURCES)}
+     assert hold["tested_version"]["head"] == head
+-    assert hold["tested_version"]["source1601_sha256"] == hashlib.sha256((json.dumps(before,indent=2,sort_keys=True)+"\n").encode()).hexdigest()
++    assert hold["tested_version"]["source1603_sha256"] == hashlib.sha256((json.dumps(before,indent=2,sort_keys=True)+"\n").encode()).hexdigest()
+     assert hold["tested_version"]["publication_delta_sha256"] == hashlib.sha256(json.dumps(publication_before,sort_keys=True).encode()).hexdigest()
+     assets = {name:s.sha(BASE/name) for name in ASSETS}; assert assets == hold["assets"]
+     auxiliary={name:s.sha(ROOT/name) for name in hold["auxiliary_source_bindings"]};assert auxiliary==hold["auxiliary_source_bindings"]
+     if mode=="control":
+-        previous_path=Path(hold["previous_pg68_stop"]["path"])
+-        assert previous_path.is_absolute() and s.sha(previous_path)==hold["previous_pg68_stop"]["sha256"]
++        previous_path=Path(hold["previous_pg62_stop"]["path"])
++        assert previous_path.is_absolute() and s.sha(previous_path)==hold["previous_pg62_stop"]["sha256"]
+         previous=json.loads(previous_path.read_text())
+-        assert previous["status"]=="REFERENCE_JOIN_PG68_PASS_DB_RETAINED" and previous["runtime_STOPPED"] is True
++        assert previous["status"]=="REFERENCE_JOIN_PG62_PASS_DB_RETAINED" and previous["runtime_STOPPED"] is True
+         assert previous["pytest_exit"]==0 and previous["actual_exit_persisted_before_metadata"] is True
+         assert previous["source_files"]==1601 and previous["source_drift"]==[] and previous["import_audit"]["mismatches"]==[]
+-        assert previous["provisioning_proof_valid"] is True and previous["collection"]["count"]==68
++        assert previous["provisioning_proof_valid"] is True and previous["collection"]["count"]==62
+         assert previous["database"]["sessions"]==[] and previous["database"]["retained"] is True
+-        assert json.loads((previous_path.parent/"source-before.json").read_text())==before
++        assert json.loads((previous_path.parent/"source-before.json").read_text())=={name:row for name,row in before.items() if name not in DIAGNOSTIC_SOURCES}
+     if mode=="instrumented":
+         previous_path=Path(hold["previous_control_stop"]["path"])
+         assert previous_path.is_absolute() and s.sha(previous_path)==hold["previous_control_stop"]["sha256"]
+@@ -104,7 +109,7 @@
+     except ChildProcessError:subreaper["waitpid_preflight_echild"]=True
+     else:raise RuntimeError("ECHILD required before any DB/Popen")
+     s.write(trial/"subreaper-proof.json",subreaper)
+-    site=(BASE/"startup-template.py.txt").read_text().replace("SOURCE_ROOT",repr(str(ROOT/"src/prefect")+"/")).replace("TEST_ROOT",repr(str(ROOT/"tests")+"/")).replace("AUDIT_DIRECTORY",repr(str(trial/"audit")))
++    site=(BASE/"startup-template.py.txt").read_text().replace("SOURCE_ROOT",repr(str(ROOT/"src/prefect")+"/")).replace("TEST_ROOT",repr(str(ROOT/"tests")+"/")).replace("AUDIT_DIRECTORY",repr(str(trial/"audit"))).replace("DIAGNOSTIC_PLUGIN",repr(str(ROOT/"scripts/native_progress.py")))
+     (trial/"startup/sitecustomize.py").write_text(site)
+     config=json.loads(s.SELECTOR.read_text())
+     parsed=urlsplit(config["admin_dsn"])
+@@ -119,10 +124,13 @@
+         "PATH":"/workspace/ariadne/.venv/bin"+os.pathsep+environment.get("PATH",""),
+         "UV_NO_SYNC":"1","UV_PROJECT_ENVIRONMENT":"/workspace/ariadne/.venv",
+         "PYTHONPYCACHEPREFIX":str(trial/"pycache"),
+-        "PYTHONPATH":os.pathsep.join((str(trial/"startup"),str(BASE),str(ROOT/"src"),str(ROOT))),
++        "PYTHONPATH":os.pathsep.join((str(trial/"startup"),str(BASE),str(ROOT/"src"),str(ROOT),str(ROOT/"scripts"))),
+         "TMPDIR":str(trial/"temp"),"PREFECT_LOGGING_LEVEL":"INFO","PREFECT_LOGGING_INTERNAL_LEVEL":"WARNING",
+-        "NATIVE_MEASURE500_TRIAL":str(trial),"NATIVE_MEASURE500_DBNAME":database})
+-    command=["uv","run","--no-sync","--offline","python","-m","pytest",NODE,"-n0","-q","-o","addopts=","-p","provision_observer_plugin","--junitxml="+str(trial/"pytest.private.xml"),"--basetemp="+str(trial/"pytest")]
++        "NATIVE_MEASURE500_TRIAL":str(trial),"NATIVE_MEASURE500_DBNAME":database,
++        "NATIVE_PROGRESS_DIR":str(trial/"progress"),"NATIVE_PROGRESS_BASETEMP":str(trial/"pytest"),
++        "NATIVE_PROGRESS_SOURCE_ROOT":str(ROOT),"NATIVE_PROGRESS_PROFILE":"partitioned-dag-v1",
++        "NATIVE_PROGRESS_TEST_DB_SUFFIX":""})
++    command=["uv","run","--no-sync","--offline","python","-m","pytest",NODE,"-n0","-q","-o","addopts=","-p","provision_observer_plugin","-p","native_progress","--junitxml="+str(trial/"pytest.private.xml"),"--basetemp="+str(trial/"pytest")]
+     s.write(trial/"command.json",{"command":command,"nodeid":NODE,"cwd":str(ROOT),"phase":"sync500","mode":mode,"head":head,"database":database,"private_selector_path":str(s.SELECTOR),"hold_sha256":s.sha(hold_path),"assets":assets,"generated_startup_sha256":hashlib.sha256(site.encode()).hexdigest(),"budgets":BUDGETS,"whole_process_deadline_added":False,"count":500,"workload_mode":"normal","asynchronous":False,"profiling":False,"tested_version":hold["tested_version"],"only_provisioning_fixture_override":True,"derived_tests_master_database_created":False,"database_retained_always":True,"drop_or_terminate_backend_allowed":False})
+     process=None;identities={};pytest_exit=None;waited=False;direct_wait=None;reaping=None;harness_errors=[];pgid=None
+     def capture(stage,callback,default=None):
+@@ -229,12 +237,24 @@
+     for line in (trial/'process-cpu-samples.jsonl').read_text().splitlines():samples.append(json.loads(line))
+     sampled={pid for row in samples for pid in row['processes']}
+     s.write(trial/'cpu-sampling-coverage.json',{'samples':len(samples),'sampled_pid_identities':sorted(sampled),'audited_identities_not_sampled':sorted(str(pid) for pid in identities if str(pid) not in sampled),'qualification':'Last process sample is not an exit total; missing short-lived processes have unknown CPU, not zero. APIfinally RUSAGE is separate whole-process accounting.'})
++    def observer_audit():
++        receipt=json.loads((trial/"progress/session-receipt.json").read_text())
++        samples=[json.loads(line) for line in (trial/"progress/timeline.jsonl").read_text().splitlines()]
++        complete=[row for row in samples if row.get("complete_owned_sample") is True and len(row.get("tasks",[]))==4 and len(row.get("partitions",[]))==7 and not row.get("observer_error") and not row.get("observer_close_error")]
++        checkpoints=receipt["teardown_checkpoints"]
++        imports=[json.loads((trial/"progress"/name).read_text()) for name in ("imports-start.json","imports-finish.json")]
++        configuration=json.loads((trial/"progress/collector-configuration.json").read_text())
++        imported=[row for path in (trial/"audit").glob("*.jsonl") for row in map(json.loads,path.read_text().splitlines()) if row["path"]==str(ROOT/"scripts/native_progress.py")]
++        valid=bool(receipt["observer_stopped"] and receipt["active_observer_connections"]==0 and receipt["unconfirmed_observer_closes"]==0 and checkpoints and all(point["acknowledged"] and point["active_observer_connections"]==point["unconfirmed_observer_closes"]==0 for point in checkpoints) and complete and not any(row["foreign_prefect_files"] for row in imports) and configuration["collector_sha256"]==before["scripts/native_progress.py"]["sha256"] and imported and all(row["source_sha256"]==before["scripts/native_progress.py"]["sha256"] for row in imported))
++        return {"status":"OBSERVER_COVERAGE_PASS" if valid else "OBSERVER_INCONCLUSIVE", "samples":len(samples),"complete_owned_four_task_seven_partition_samples":len(complete),"checkpoints":checkpoints,"session_receipt":receipt,"actual_plugin_import_rows":len(imported),"observer_error_samples":[{"index":index,"error":row.get("observer_error"),"close_error":row.get("observer_close_error")} for index,row in enumerate(samples) if row.get("observer_error") or row.get("observer_close_error")],"qualification":"Nonatomic read-only diagnostic snapshots; native result independent, no throughput/cause/readiness proof."}
++    observer=capture("DAG_observer_audit",observer_audit,{"status":"OBSERVER_INCONCLUSIVE"})
++    s.write(trial/"DAG-observer-audit.json",observer)
+     runtime_closed=bool(waited and closure and not closure["remaining_same_identity_live"] and not closure["remaining_same_identity_zombies"] and reaping and reaping["waitpid_echild_success"] and database_closure and database_closure["sessions"]==[])
+     passed=bool(measurement["status"]=="API_SELECTION_AND_MEASUREMENT_VALID" and pytest_exit==0 and waited and not harness_errors and not drift and not imports["mismatches"] and runtime_closed and proof_valid and collection and collection["nodeids"]==[NODE] and collection["pytest_timeout_marker"]==900 and body["status"]=="BODY_AND_WIDER_HEALTH_PASS" and database_closure["retained"] is True)
+-    receipt={"status":"DIAGNOSTIC_CASE_PASS_DB_RETAINED" if passed else "NATIVE_OR_HEALTH_OR_HARNESS_RED","runtime_STOPPED":runtime_closed,"phase":"sync500","mode":mode,"nodeid":NODE,"head":head,"pytest_exit":pytest_exit,"actual_exit_persisted_before_metadata":waited,"harness_errors":harness_errors,"source_files":len(before),"source_drift":drift,"import_audit":imports,"process_closure":closure,"subreaper_proof":subreaper,"direct_child_wait":direct_wait,"adopted_reaping":reaping,"database":database_closure,"body_wider_health":body,"measurement_audit":measurement,"provisioning_proof":proof,"provisioning_proof_valid":proof_valid,"collection":collection,"budgets":BUDGETS,"assets":assets,"hold_sha256":s.sha(hold_path),"profiling":False,"tested_version":hold["tested_version"],"harness_signals_sent":[],"whole_process_deadline_added":False,"retry":False,"known_prior_orphan":{"pid":384983,"status":"prior dead PPID1 artifact excluded; untouched"},"qualification":"One unchanged exact native DAG sync500 SDK/TCP/PG17/OS case. API measurement treatment unchanged; reviewed TaskRun projection/refresh and bounded reference JOIN changes are explicit in source1601 lease. No cache/profile/newmetrics or causal/readiness claim; local resources need not match CI8GiB. Provisioning-only fixture override preserves its fresh DB on PASS/FAIL for Root postterminal SQL and Principal verdict. Runtime STOP is not next-phase authorization. No auto retry/P2, causal/performance/readiness claim, source correction, drop or terminate."}
++    receipt={"observer_outcome":observer,"native_outcome":"PASS" if pytest_exit==0 and body["status"]=="BODY_AND_WIDER_HEALTH_PASS" else "FAIL_OR_INCONCLUSIVE","status":"DIAGNOSTIC_CASE_PASS_DB_RETAINED" if passed else "NATIVE_OR_HEALTH_OR_HARNESS_RED","runtime_STOPPED":runtime_closed,"phase":"sync500","mode":mode,"nodeid":NODE,"head":head,"pytest_exit":pytest_exit,"actual_exit_persisted_before_metadata":waited,"harness_errors":harness_errors,"source_files":len(before),"legacy_runtime_source_files":1601,"diagnostic_additional_sources":list(DIAGNOSTIC_SOURCES),"source_drift":drift,"import_audit":imports,"process_closure":closure,"subreaper_proof":subreaper,"direct_child_wait":direct_wait,"adopted_reaping":reaping,"database":database_closure,"body_wider_health":body,"measurement_audit":measurement,"provisioning_proof":proof,"provisioning_proof_valid":proof_valid,"collection":collection,"budgets":BUDGETS,"assets":assets,"hold_sha256":s.sha(hold_path),"profiling":False,"tested_version":hold["tested_version"],"harness_signals_sent":[],"whole_process_deadline_added":False,"retry":False,"known_prior_orphan":{"pid":384983,"status":"prior dead PPID1 artifact excluded; untouched"},"qualification":"One unchanged exact native DAG sync500 SDK/TCP/PG17/OS case. API measurement treatment unchanged; reviewed TaskRun projection/refresh and P2 cleanup retained; JOIN reverted. Runtime1601 plus two explicit diagnostic sources are bound in the1603 lease. Native outcome and observer coverage are separate. No cache/profile/newmetrics or causal/readiness claim; local resources need not match CI8GiB. Provisioning-only fixture override preserves its fresh DB on PASS/FAIL for Root postterminal SQL and Principal verdict. Runtime STOP is not next-phase authorization. No auto retry/P2, causal/performance/readiness claim, source correction, drop or terminate."}
+     s.write(trial/"diagnostic-receipt-v1.json",receipt)
+     print(json.dumps({"status":receipt["status"] if runtime_closed else "RUNTIME_CLOSURE_INCOMPLETE","runtime_STOPPED":runtime_closed,"trial":str(trial),"pytest_exit":pytest_exit,"harness_errors":harness_errors,"source_drift":drift,"failed_checks":body["failed_checks"][:12],"remaining_sessions":database_closure["sessions"] if database_closure else None,"fresh_database_retained":database_closure["retained"] if database_closure else None}),flush=True)
+-    return 0 if passed else (pytest_exit or 90)
++    return 0 if passed and observer["status"]=="OBSERVER_COVERAGE_PASS" else (pytest_exit or 90)
+ 
+ 
+ if __name__=="__main__":
+--- old/startup-template.py.txt
++++ new/startup-template.py.txt
+@@ -1,11 +1,11 @@
+ import hashlib,json,marshal,os,sys,time
+-_seen=set();_identities={};_source=SOURCE_ROOT;_tests=TEST_ROOT;_out=AUDIT_DIRECTORY
++_seen=set();_identities={};_source=SOURCE_ROOT;_tests=TEST_ROOT;_out=AUDIT_DIRECTORY;_diagnostic=DIAGNOSTIC_PLUGIN
+ 
+ def audit(event,args):
+  if event!='exec' or not args:return
+  code=args[0];path=getattr(code,'co_filename','')
+  if not isinstance(path,str) or not path.endswith('.py') or path in _seen:return
+- if not (path.startswith(_source) or path.startswith(_tests) or '/src/prefect/' in path or '/site-packages/prefect/' in path):return
++ if not (path.startswith(_source) or path.startswith(_tests) or path==_diagnostic or '/src/prefect/' in path or '/site-packages/prefect/' in path):return
+  _seen.add(path)
+  try:
+   pid=os.getpid()

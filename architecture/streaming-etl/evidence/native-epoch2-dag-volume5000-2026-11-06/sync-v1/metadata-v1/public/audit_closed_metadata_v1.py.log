@@ -1,0 +1,212 @@
+"""File-only audit of closed Principal MVCC observations. Stdlib only."""
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+BASE = Path('/tmp/native-sync5000-metadata-observer-18124-v1')
+HEAD = '18124603882fe9196a6eec6063a4619e7087f48f'
+FINAL = BASE / 'final-sample-154271478478562.json'
+CONSUMER = BASE / 'consumer-final-sample-154318445617902.json'
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def read(path):
+    return json.loads(path.read_text())
+
+
+def binding(path):
+    return {'path': str(path), 'sha256': sha(path), 'bytes': path.stat().st_size}
+
+
+stop = read(BASE / 'live-observer-STOP-receipt-v1.json')
+assert stop['status'] == 'LIVE_DB_OBSERVER_STOPPED_NO_MORE_CONNECTIONS'
+assert stop['outstanding_connections'] == 0
+assert stop['reason'] == 'PRETERMINAL_ALL_THREE_CURSORS_GE4900'
+samples = []
+for ref in stop['samples']:
+    path = Path(ref['path'])
+    assert path.parent == BASE and path.name.startswith('live-sample-')
+    assert sha(path) == ref['sha256']
+    samples.append((path, read(path)))
+assert len(samples) == 30
+assert {p for p, _ in samples} == set(BASE.glob('live-sample-*.json'))
+samples.sort(key=lambda item: item[1]['started_monotonic_ns'])
+assert sha(FINAL) == '831258223397d1b109ca154abb4cb4bf8c8f80eaf56d0b1a1a62e5a1263c8ee8'
+assert sha(CONSUMER) == '373b447de943b4125129b6543337d849512aa2511c89ae2594b07ea6c226f089'
+final = read(FINAL)
+consumer = read(CONSUMER)
+captures = samples + [(FINAL, final)]
+for _, data in captures:
+    assert data['head'] == HEAD
+    assert data['status'] == 'ACTUAL_READONLY_MVCC_CAPTURE'
+    assert data['readonly'] is True and data['explicit_row_locks'] is False
+    assert data['connection_closed'] is True
+    assert data['database_context']['read_only'] == 'on'
+    assert data['database_context']['server_version'].startswith('17')
+    assert data['flow_id'] == final['flow_id'] and data['graph_id'] == final['graph_id']
+    assert data['database'] == final['database'] and data['trial'] == final['trial']
+    assert all(data['counts'][name] == len(rows) for name, rows in data['metadata'].items())
+
+mutable = {
+    'scope': {'state', 'terminal_operation_id', 'flow_state'},
+    'flow_lease': {'state_id', 'state_type', 'deployment_active_slots'},
+    'tasks': {'state_type'},
+    'subtasks': {'physical_slot_released'},
+    'partitions': {'state', 'last_sequence', 'tail_sequence', 'producer_position', 'released'},
+    'physical_slots': {'released', 'release_operation_id', 'released_at'},
+    'tag_allocations': {'released'},
+    'assigned_workers': {'status'},
+    'limits': {'active_slots'},
+    'grants': {'state'},
+    'launches': {'state'},
+    'authority': {'state'},
+    'coordinator_launches': {'state'},
+}
+
+
+def projection(data, family):
+    rows = [{key: val for key, val in row.items() if key not in mutable.get(family, set())}
+            for row in data['metadata'][family]]
+    return sorted(json.dumps(row, sort_keys=True) for row in rows)
+
+
+families = sorted(set(final['metadata']) - {'lease_history'})
+first = samples[0][1]
+for family in families:
+    target = projection(first, family)
+    assert all(projection(data, family) == target for _, data in captures), family
+assert len(families) == 17
+intervals = [(b[1]['started_monotonic_ns'] - a[1]['started_monotonic_ns']) / 1e9
+             for a, b in zip(samples, samples[1:])]
+assert min(intervals) >= 65
+durations_ms = [(data['ended_monotonic_ns'] - data['started_monotonic_ns']) / 1e6
+                for _, data in captures]
+
+m = final['metadata']
+task_ids = {row['id'] for row in m['tasks']}
+subtask_ids = {row['id'] for row in m['subtasks']}
+grant_ids = {row['id'] for row in m['grants']}
+assert len(task_ids) == len(subtask_ids) == len(grant_ids) == 4
+assert {row['task_run_id'] for row in m['subtasks']} == task_ids
+assert {row['current_grant_id'] for row in m['subtasks']} == grant_ids
+assert {row['subtask_id'] for row in m['physical_slots']} == subtask_ids
+assert {row['subtask_id'] for row in m['tag_allocations']} == subtask_ids
+assert {row['subtask_id'] for row in m['grants']} == subtask_ids
+assert {row['subtask_id'] for row in m['launches']} == subtask_ids
+assert all(row['state_type'] == 'COMPLETED' and row['run_count'] == 1 for row in m['tasks'])
+assert all(row['assignment_epoch'] == row['physical_epoch'] == 1 and row['physical_slot_released'] for row in m['subtasks'])
+assert all(row['state'] == 'RETIRED' for row in m['grants'])
+assert all(row['state'] == 'CLOSED' and row['attempt_index'] == 1 for row in m['launches'])
+assert all(row['released'] and row['release_operation_id'] and row['released_at'] for row in m['physical_slots'])
+assert all(row['released'] for row in m['tag_allocations'])
+assert len(m['limits']) == 2 and all(row['active_slots'] == 0 for row in m['limits'])
+assert m['flow_lease'][0]['deployment_active_slots'] == 0
+assert m['scope'][0]['state'] == 'RELEASED' and m['scope'][0]['flow_state'] == 'COMPLETED'
+assert m['authority'][0]['state'] == m['coordinator_launches'][0]['state'] == 'RELEASED'
+assert len(m['partitions']) == 7
+assert all(row['state'] == 'COMPLETED' and row['released'] and
+           row['last_sequence'] == row['tail_sequence'] == row['producer_position'] == 5000
+           for row in m['partitions'])
+lease_sets = [{row['lease_id'] for row in data['metadata']['lease_history'] if row['lease_id']}
+              for _, data in captures]
+assert all(ids == lease_sets[0] and len(ids) == 1 for ids in lease_sets)
+assert m['flow_lease'][0]['deployment_concurrency_lease_id'] in lease_sets[0]
+assert consumer['status'] == 'ACTUAL_INDEPENDENT_CONSUMER_SELECT_CAPTURE'
+assert consumer['readonly'] and not consumer['explicit_row_locks'] and consumer['connection_closed']
+assert consumer['database_context']['read_only'] == 'on'
+assert consumer['consumer_count'] == 0 and consumer['consumer_rows'] == []
+assert consumer['base_final_sample']['sha256'] == sha(FINAL)
+
+manifest = read(BASE / 'preparation-manifest-v1.json')
+for ref in manifest['artifacts']:
+    assert sha(BASE / ref['path']) == ref['sha256']
+sources = []
+for root in [Path('/workspace/ariadne'), Path('/tmp/ariadne-native-5000-diagnosis-v1')]:
+    for ref in manifest['source_bindings']:
+        path = root / ref['path']
+        assert sha(path) == ref['sha256']
+        sources.append(binding(path))
+
+fixed_names = [
+    'preparation-manifest-v1.json', 'observer_common.py', 'controller.py', 'capture_final.py',
+    'queries.json', 'scope-plan.md', 'controller-identity.json', 'resolved-owned-identity.json',
+    'ROOT_AUTHORIZED_LIVE_SCOPE.json', 'ROOT_AUTHORIZED_FINAL_SCOPE.json',
+    'ROOT_AUTHORIZED_CONSUMER_FINAL_SCOPE.json', 'live-observer-STOP-receipt-v1.json',
+    'live-observer-reap-proof-v1.json', 'capture_consumer_final_v1.py',
+    'postterminal-consumer-select-v1.sql', 'consumer-final-preparation-manifest-v1.json',
+    'postterminal-expectations-and-consumer-select-v1.json',
+    'root-consumer-supplement-source-review-v1.json', 'root-native-STOP-finalGO-gate-v1.json',
+    'principal-provenance-erratum-adoption-v1.json', 'audit_closed_metadata_v1.py',
+]
+public_inputs = [binding(BASE / name) for name in fixed_names]
+public_inputs += [binding(path) for path, _ in captures] + [binding(CONSUMER)]
+erratum = Path('/tmp/native-dag-progress-provenance-erratum-18124-v1/erratum.json')
+assert sha(erratum) == 'ec7323997fe16d10b1708f0a5e6c64fca0ec286231278b6e1dd55845e0d22038'
+author = Path(final['trial']) / 'native5000-receipt-v2.json'
+assert sha(author) == 'acf2bcb79dfe79023df8636c91b82a4cc6372433fb92577360ab6db7d049763e'
+public_inputs += [binding(erratum), binding(author)]
+out = {
+    'schema': 'principal-sync5000-closed-metadata-audit-v1',
+    'recorded_at': datetime.now(timezone.utc).isoformat(),
+    'status': 'PASS_INDEPENDENT_DISCRETE_METADATA_IDENTITY_AND_TERMINAL_RELEASE_OBSERVATIONS',
+    'head': HEAD, 'trial': final['trial'], 'flow_id': final['flow_id'], 'graph_id': final['graph_id'],
+    'role': 'Principal personally executed live PG observer and two separate postterminal readonly captures; file-only audit of closed captures',
+    'personal_sdk_test_body_execution_for_this_trial': False,
+    'author_native_body_receipt': binding(author),
+    'this_audit_database_connections': 0, 'this_audit_project_imports': 0,
+    'this_audit_test_bodies': 0, 'this_audit_repository_changes': 0,
+    'live_capture_count': len(samples), 'final_18_capture_count': 1,
+    'separate_consumer_capture_count': 1,
+    'all_capture_connections_closed': True,
+    'live_observer_tool_exit': 0, 'final_18_tool_exit': 0, 'consumer_tool_exit': 0,
+    'live_stop_before_terminal': {'reason': stop['reason'], 'recorded_at': stop['recorded_at']},
+    'first_live_author_direct_PG_cursors': stop['samples'][0]['cursors'],
+    'last_live_author_direct_PG_cursors': stop['samples'][-1]['cursors'],
+    'first_live_observed_utc': first['database_context']['observed_utc'],
+    'startup_completed_at': first['metadata']['scope'][0]['startup_completed_at'],
+    'minimum_live_interval_seconds': min(intervals),
+    'maximum_18family_capture_ms': max(durations_ms),
+    'stable_immutable_projection_families': families,
+    'excluded_mutable_fields': {name: sorted(fields) for name, fields in mutable.items()},
+    'stable_identity_capture_count_including_final': len(captures),
+    'initial_and_final_counts_excluding_lease_history_equal': True,
+    'final_counts': final['counts'],
+    'terminal_checks': {
+        'graph_authority_coordinator_released': True, 'flow_completed': True,
+        'four_tasks_completed_run_count1': True, 'four_subtasks_assignment_physical_epoch1': True,
+        'four_grants_retired_four_launches_closed': True,
+        'four_physical_slots_released_with_operation_and_timestamp': True,
+        'four_tag_allocations_released': True, 'two_limits_active_slots0': True,
+        'flow_deployment_active_slots0': True,
+        'seven_same_partitions_completed_released_last_tail_producer5000': True,
+        'persisted_distinct_lease_uuid_count': 1,
+        'final_flow_lease_pointer_retained': True,
+        'final_consumer_rows': [], 'final_consumer_count': 0,
+    },
+    'source_bindings_personally_rehashed_both_checkouts': sources,
+    'public_closed_inputs': public_inputs,
+    'provenance_erratum': binding(erratum),
+    'limitations': [
+        'These are discrete snapshots; no proof of all intervening identity or capacity transitions.',
+        'The embedded progress_record cursors are author direct-PG ordinary multi-SELECT observations, not API reads and not our independent Consumer SELECT.',
+        'Our 18-family repeatable-read captures do not select StreamConsumer. The separate final Consumer capture returned zero rows; absence cannot prove retained literal5000 cursors.',
+        'Final18 and Consumer executions were distinct transactions and times, even though the reported MVCC snapshot string is equal; no combined atomicity claim.',
+        'Persisted Flow lease UUID/counters only; external KV lease backend not inspected.',
+        'No activation-time or exact500-frontier snapshot claim: first actual live author cursor labels were51/51/51.',
+        'Author SDK test execution remains author-attributed; no personal SDK5000 run credit from this SQL/file audit.',
+        'No cross-profile comparison, four-heavy union, complete NI2-014, ADR43 acceptance or27percent readiness credit.',
+        'Plain SELECT internally takes ordinary AccessShare relation locks; no explicit row locks, mutations, cleanup, termination, or admin repair.',
+        'Conflict scanner known incomplete; all grill-me and spec-first variants excluded.',
+    ],
+}
+output = BASE / 'principal-closed-sync5000-metadata-audit-v1.json'
+with output.open('x') as stream:
+    json.dump(out, stream, indent=2, sort_keys=True)
+    stream.write('\n')
+print(json.dumps({'status': out['status'], 'path': str(output), 'sha256': sha(output),
+                  'public_inputs': len(public_inputs), 'live_samples': len(samples),
+                  'minimum_interval_seconds': min(intervals), 'maximum_capture_ms': max(durations_ms)}))

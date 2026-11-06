@@ -243,12 +243,20 @@ async def dag_plan(
     task_rows = {
         row.id: row
         for row in (
-            await session.scalars(
-                sa.select(db.TaskRun)
-                .where(
+            await session.execute(
+                sa.select(
+                    db.TaskRun.id,
+                    db.TaskRun.dynamic_key,
+                    db.TaskRun.flow_run_id,
+                    db.TaskRun.name,
+                    db.TaskRun.task_inputs,
+                    db.TaskRun.task_key,
+                    db.TaskRun.task_version,
+                    db.TaskRun.empirical_policy,
+                    db.TaskRun.tags,
+                ).where(
                     db.TaskRun.id.in_([row.task_run_id for row in subtasks.values()])
                 )
-                .execution_options(populate_existing=True)
             )
         ).all()
     }

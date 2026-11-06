@@ -390,7 +390,9 @@ async def project_execution(
     tasks = list(
         (
             await session.scalars(
-                sa.select(db.TaskRun).where(db.TaskRun.flow_run_id == scope.flow.id)
+                sa.select(db.TaskRun)
+                .where(db.TaskRun.flow_run_id == scope.flow.id)
+                .execution_options(populate_existing=True)
             )
         ).all()
     )
