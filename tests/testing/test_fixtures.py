@@ -3,17 +3,25 @@ Tests for prefect.testing.fixtures module.
 """
 
 import asyncio
+import json
 import socket
 import subprocess
 import threading
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import anyio
+import httpx
 import pytest
 from anyio.abc import Process
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
 
 from prefect.testing import fixtures
 
@@ -329,3 +337,188 @@ class TestHostedApiServerOwnership:
             for url in urls:
                 with pytest.raises(fixtures.httpx.ConnectError):
                     await client.get(url + "/health")
+
+
+def _unready_test_app() -> Starlette:
+    async def health(request: Any) -> PlainTextResponse:
+        return PlainTextResponse("private-unready-body", status_code=503)
+
+    return Starlette(routes=[Route("/api/health", health)])
+
+
+class TestHostedApiReadinessDiagnostic:
+    @pytest.mark.unix
+    @pytest.mark.parametrize(
+        "outcome", ["connect_after_response", "unowned", "request_in_progress"]
+    )
+    async def test_failure_diagnostic_redacts_probe_details(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        disable_hosted_api_server: None,
+        outcome: str,
+    ):
+        owned_nonce = "private-owned-nonce"
+        foreign_nonce = "private-foreign-nonce"
+        private_body = "private-response-body"
+        process = mock.MagicMock()
+        process.pid = 12345
+        process.returncode = None
+        process.terminate.side_effect = lambda: setattr(process, "returncode", 0)
+
+        @asynccontextmanager
+        async def fake_process(**kwargs: Any) -> AsyncIterator[Any]:
+            yield process
+
+        original_scope = fixtures.anyio.move_on_after
+        deadlines: list[float] = []
+
+        def controlled_scope(seconds: float):
+            deadlines.append(seconds)
+            return original_scope(0.25)
+
+        calls = 0
+
+        async def handle(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            if outcome == "request_in_progress":
+                await anyio.sleep_forever()
+            if outcome == "connect_after_response" and calls > 1:
+                raise httpx.ConnectError("private-connect-exception", request=request)
+            return httpx.Response(
+                200,
+                headers={"X-Prefect-Test-Server-ID": foreign_nonce},
+                text=private_body,
+            )
+
+        original_client = fixtures.httpx.AsyncClient
+        monkeypatch.setattr(fixtures, "open_process", fake_process)
+        monkeypatch.setattr(fixtures, "uuid4", lambda: owned_nonce)
+        monkeypatch.setattr(fixtures.anyio, "move_on_after", controlled_scope)
+        monkeypatch.setattr(
+            fixtures.httpx,
+            "AsyncClient",
+            lambda: original_client(
+                transport=httpx.MockTransport(handle), trust_env=False
+            ),
+        )
+        gen = fixtures.hosted_api_server.__wrapped__(
+            unused_tcp_port_factory=lambda: 0, test_database_connection_url=None
+        )
+        try:
+            with pytest.raises(
+                RuntimeError,
+                match="Timed out while attempting to connect to the owned hosted test Prefect API",
+            ) as refused:
+                await gen.__anext__()
+            message = str(refused.value)
+            details = json.loads("{" + message.partition("{")[2])
+            assert deadlines == [60]
+            assert details["owned_pid"] == 12345 and details["returncode"] is None
+            assert details["attempts"] == calls > 0
+            assert details["cancel_scope_cancel_called"] is True
+            if outcome == "connect_after_response":
+                assert details["last_probe_outcome"] == "CONNECT_ERROR"
+                assert (
+                    details["last_status"] == 200
+                    and details["owned_header_match"] is False
+                )
+                assert details["error_type"] == "ConnectError"
+            elif outcome == "unowned":
+                assert details["last_probe_outcome"] == "RESPONSE"
+                assert (
+                    details["last_status"] == 200
+                    and details["owned_header_match"] is False
+                )
+                assert details["error_type"] is None
+            else:
+                assert details["last_probe_outcome"] == "REQUEST_IN_PROGRESS"
+                assert (
+                    details["last_status"]
+                    is details["owned_header_match"]
+                    is details["error_type"]
+                    is None
+                )
+            assert all(
+                secret not in message
+                for secret in (
+                    owned_nonce,
+                    foreign_nonce,
+                    private_body,
+                    "private-connect-exception",
+                )
+            )
+            process.terminate.assert_called_once()
+            process.kill.assert_not_called()
+        finally:
+            await gen.aclose()
+
+    @pytest.mark.unix
+    async def test_owned_unready_listener_times_out_with_safe_diagnostic(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        test_database_connection_url: str | None,
+        disable_hosted_api_server: None,
+        tmp_path: Path,
+    ):
+        original_open = fixtures.open_process
+        children: list[Process] = []
+        nonces: list[str] = []
+
+        @asynccontextmanager
+        async def unready_process(**kwargs: Any) -> AsyncIterator[Process]:
+            command = list(kwargs["command"])
+            assert (
+                command[command.index("--factory") + 1]
+                == "prefect.server.api.server:create_app"
+            )
+            command[command.index("--factory") + 1] = (
+                "tests.testing.test_fixtures:_unready_test_app"
+            )
+            nonces.append(command[command.index("--header") + 1].split(":", 1)[1])
+            async with original_open(**(kwargs | {"command": command})) as child:
+                children.append(child)
+                yield child
+
+        monkeypatch.setattr(fixtures, "open_process", unready_process)
+        gen = fixtures.hosted_api_server.__wrapped__(
+            unused_tcp_port_factory=lambda: 0,
+            test_database_connection_url=test_database_connection_url,
+        )
+        started = time.monotonic()
+        try:
+            with pytest.raises(
+                RuntimeError,
+                match="Timed out while attempting to connect to the owned hosted test Prefect API",
+            ) as refused:
+                await gen.__anext__()
+            message = str(refused.value)
+            details = json.loads("{" + message.partition("{")[2])
+            assert 60 <= details["elapsed_seconds"] < 65
+            assert 60 <= time.monotonic() - started < 70
+            assert len(children) == 1 and details["owned_pid"] == children[0].pid
+            assert details["returncode"] is None and children[0].returncode is not None
+            assert details["last_probe_outcome"] == "RESPONSE"
+            assert (
+                details["last_status"] == 503 and details["owned_header_match"] is True
+            )
+            assert (
+                details["cancel_scope_cancel_called"] is True
+                and details["attempts"] > 0
+            )
+            assert details["error_type"] is None
+            assert "private-unready-body" not in message and nonces[0] not in message
+            (tmp_path / "owned-readiness-diagnostic.json").write_text(
+                json.dumps(
+                    {
+                        "message": message,
+                        "details": details,
+                        "child_returncode_after_fixture": children[0].returncode,
+                        "observed_elapsed_seconds": time.monotonic() - started,
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+        finally:
+            await gen.aclose()

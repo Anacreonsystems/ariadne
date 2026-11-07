@@ -1,0 +1,76 @@
+"""Prepare a version-bound normalasync1000 probe; no test or DB is started."""
+from pathlib import Path
+import ast,hashlib,json,py_compile,re,subprocess,sys
+from uuid import uuid4
+
+HERE=Path(__file__).resolve().parent
+ASSETS=HERE/'native-gate-v2-assets'
+OLD=Path('/tmp/native-ni012-personal-d504c70')
+ROOT=Path('/workspace/ariadne')
+if len(sys.argv)!=2 or not re.fullmatch('[0-9a-f]{40}',sys.argv[1]):raise SystemExit('usage: prepare_native_candidate_v2.py EXACT_PUBLISHED_HEAD')
+head=sys.argv[1]
+if subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()!=head:raise SystemExit('Primary HEAD differs from expected published candidate')
+if subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True):raise SystemExit('Primary must be clean before source lease')
+base=HERE/('normal1000-'+head[:12]+'-'+uuid4().hex[:8]);base.mkdir(mode=0o700)
+for name in ['test_native_normal1000.py','health_monitor.py','capture_before_stop.py','stop_owned.py']:(base/name).write_bytes((ASSETS/name).read_bytes())
+# Reuse the previously observed controller/lifecycle-stop contract, changing
+# only a new external wrapper, exact source binding and prompt health watcher.
+s=(OLD/'controller.py').read_text().replace(str(OLD),str(base)).replace("EXPECTED_HEAD='d504c7042e72c8d18fb0f63f5ebeeee826a7d650'",'EXPECTED_HEAD='+repr(head)).replace('Personal gate HEAD differs from d504c70','Native probe HEAD differs from frozen candidate')
+start=s.index('def snapshot(target):');end=s.index('\n\nasync def create_database',start)
+s=s[:start]+'''def snapshot(target):
+    entries=json.loads(LEASE.read_text())['files']
+    result={name:{'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()} for name in entries for raw in [(ROOT/name).read_bytes()]}
+    target.write_text(json.dumps(result,indent=2,sort_keys=True)+'\\n')
+    return result
+'''+s[end:]
+s=s.replace("if scenario not in {'normal'", "if scenario not in {'normal1000','normal'")
+s=s.replace("    config=json.loads(CONFIG.read_text())", "    if scenario!='normal1000' or not asynchronous: raise SystemExit('This explicit probe is async normal1000 only')\n    config=json.loads(CONFIG.read_text())",1)
+needle="    command=[str(ROOT/'.venv/bin/python'),'-m','pytest'"
+pos=s.index(needle);s=s[:pos]+"    node=str(BASE/'test_native_normal1000.py')+'::test_normal_async1000_post_renewal_postgres'\n"+s[pos:]
+s=s.replace("    if mode=='collect':\n", "    command.extend(['-c',str(ROOT/'pyproject.toml'),'--confcutdir='+str(BASE),'-p','tests.conftest'])\n    if mode=='collect':\n",1)
+old="        (trial/'session.json').write_text(json.dumps({'pytest_pid':process.pid,'trial':str(trial)},indent=2)+'\\n')"
+new="""        start_ticks=Path('/proc',str(process.pid),'stat').read_text().rsplit(')',1)[1].split()[19]
+        (trial/'session.json').write_text(json.dumps({'pytest_pid':process.pid,'pytest_start_ticks':start_ticks,'trial':str(trial)},indent=2)+'\\n')
+        monitor=None
+        if mode=='run':
+            monitor=subprocess.Popen([str(ROOT/'.venv/bin/python'),str(BASE/'health_monitor.py'),str(trial)],cwd=ROOT,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            (trial/'health-session.json').write_text(json.dumps({'monitor_pid':monitor.pid},indent=2)+'\\n')"""
+assert old in s;s=s.replace(old,new)
+s=s.replace("    if observer is not None:\n        observer.wait(timeout=10)","    if observer is not None:\n        observer.wait(timeout=10)\n    if monitor is not None:\n        monitor.wait(timeout=40)")
+s=s.replace("    raise SystemExit(result)","    if (trial/'health-red.json').exists():raise SystemExit(91)\n    if monitor is not None and monitor.returncode!=0:raise SystemExit(92)\n    if mode=='run' and not (trial/'health-summary.json').exists():raise SystemExit(93)\n    raise SystemExit(result)")
+s=s.replace("'audit_hook_sha256':hashlib.sha256(site.encode()).hexdigest()", "'audit_hook_sha256':hashlib.sha256(site.encode()).hexdigest(),'declared_workload_documents':1000,'external_wrapper_sha256':hashlib.sha256((BASE/'test_native_normal1000.py').read_bytes()).hexdigest(),'health_monitor_sha256':hashlib.sha256((BASE/'health_monitor.py').read_bytes()).hexdigest(),'health_interval_seconds':2,'health_red_rule':'Any normal-probe HTTP5xx mention or persisted Task.run_count>1 triggers guarded stop before further volume'")
+(base/'controller.py').write_text(s)
+for name in ['formal-stop.py','formal-stop-pg.py']:
+    text=(OLD/name).read_text().replace(str(OLD),str(base))
+    if name=='formal-stop-pg.py':
+        text=text.replace("if (trial/'observer-session.json').exists():pids.add(json.loads((trial/'observer-session.json').read_text())['pid'])", "if (trial/'observer-session.json').exists():pids.add(json.loads((trial/'observer-session.json').read_text())['pid'])\nif (trial/'health-session.json').exists():pids.add(json.loads((trial/'health-session.json').read_text())['monitor_pid'])")
+    (base/name).write_text(text)
+# Use the already executed diagnostic observer including gzip activity/locks.
+text=(HERE/'source-835b8c21c83e/observe.py').read_text().replace(str(HERE/'source-835b8c21c83e'),str(base))
+(base/'observe.py').write_text(text)
+for path in base.glob('*.py'):py_compile.compile(str(path),doraise=True)
+paths=set(json.loads((OLD/'lease.json').read_text())['files'])
+paths.update(p for p in subprocess.check_output(['git','ls-files','src/prefect','tests'],cwd=ROOT,text=True).splitlines() if p.endswith('.py'))
+paths.update({'.github/workflows/python-tests.yaml','scripts/native_runtime_diagnostics.py'})
+paths.update(str(p) for p in base.glob('*.py'))
+items={name:{'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()} for name in sorted(paths) for raw in [(ROOT/name).read_bytes()]}
+assert items['tests/test_native_stream_dag_execution_http.py']['sha256']=='29cccab5b25c6ced436582ae4030e2c694986ef658fcfb563c9b7e10c1ad3f7e'
+heads={}
+for backend,expected in {'postgresql':'39c32d418d9a','sqlite':'4ad43e529eab'}.items():
+    revisions={}
+    for path in (ROOT/'src/prefect/server/database/_migrations/versions'/backend).glob('*.py'):
+        values={}
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node,ast.Assign):
+                for target in node.targets:
+                    if isinstance(target,ast.Name) and target.id in {'revision','down_revision'}:values[target.id]=ast.literal_eval(node.value)
+        if 'revision' in values:revisions[values['revision']]=values.get('down_revision')
+    parents={x for down in revisions.values() for x in ((down,) if isinstance(down,str) else (down or ()))}
+    assert set(revisions)-parents=={expected};heads[backend]=expected
+(base/'lease.json').write_text(json.dumps({'schema_version':1,'head':head,'files':items,'purpose':'Explicit temporary async1000 native probe, unchanged existing runtime helper/oracles; external operational monitor/controller paths are leased too'},indent=2,sort_keys=True)+'\n')
+command=f'uv run --no-sync python {base}/controller.py run async normal1000'
+receipt={'status':'PREPARED_NOT_EXECUTED','head':head,'test_bodies_started':0,'database_created':0,'root':str(ROOT),'base':str(base),'workload_documents':1000,'asynchronous':True,'source_files':len(items),'paired_heads':heads,'command':command,'hashes':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in base.glob('*') if p.is_file()},'qualification':'The external wrapper calls unchanged real native helper with1000; no5000 or readiness claim. Wait750/observe840/pytest900 match the existing bounded non5000 profile, database10s untouched. Live2s health monitor persists RED then bounded catalogs+exactPIDguarded operational stop.'}
+(base/'handoff.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+for p in base.glob('*'):
+    if p.is_file():p.chmod(0o600)
+print(json.dumps({'base':str(base),'source_files':len(items),'head':head,'handoff_sha256':hashlib.sha256((base/'handoff.json').read_bytes()).hexdigest(),'command':command,'test_bodies_started':0}))

@@ -1,0 +1,19 @@
+"""No signals; scoped post-exit PID, database and source receipt."""
+from pathlib import Path
+import hashlib,json,subprocess,sys
+BASE=Path('/tmp/native-ni012-restored-principal-2026-11-05/source-835b8c21c83e');ROOT=Path('/workspace/ariadne')
+trial=Path(sys.argv[1]);lease_path=Path(sys.argv[2]);database=json.loads((trial/'database.json').read_text())
+if database.get('backend')!='sqlite':
+    raise SystemExit(subprocess.run([sys.executable,str(BASE/'formal-stop-pg.py'),str(trial),str(lease_path)],cwd=ROOT).returncode)
+lease=json.loads(lease_path.read_text());pids={json.loads((trial/'session.json').read_text())['pytest_pid']}
+for path in (trial/'audit').glob('*.jsonl'):
+    for line in path.read_text().splitlines():pids.add(json.loads(line)['pid'])
+after={};drift=[]
+for rel,before in lease['files'].items():
+    path=ROOT/rel;raw=path.read_bytes();after[rel]={'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()}
+    if before!=after[rel]:drift.append(rel)
+remaining=[pid for pid in sorted(pids) if Path('/proc',str(pid)).exists()]
+artifacts=[str(path.relative_to(trial)) for path in (trial/'temp').rglob('*') if path.is_file() and ('.db' in path.name)]
+result={'lease_sha256':hashlib.sha256(lease_path.read_bytes()).hexdigest(),'files':len(after),'drift':drift,'pytest_exit':int((trial/'exit').read_text()),'database_backend':'sqlite','observed_pids':sorted(pids),'remaining_observed_pids':remaining,'remaining_database_sessions':None,'database_session_note':'SQLite has no server session catalog; pytest exit plus isolated temp-home teardown observed','remaining_sqlite_artifacts':artifacts,'signal_sent':False}
+(trial/'source-lease-after.json').write_text(json.dumps(after,indent=2,sort_keys=True)+'\n');(trial/'source-lease-drift.json').write_text(json.dumps({key:result[key] for key in ['lease_sha256','files','drift','pytest_exit']},indent=2)+'\n');path=trial/'formal-stop.json';path.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+print(json.dumps({'trial':str(trial),'exit':result['pytest_exit'],'formal_stop_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'remaining_pids':remaining,'sqlite_artifacts':artifacts,'source_files':len(after),'source_drift':drift}),flush=True)

@@ -1,0 +1,199 @@
+"""Offline stdlib-only reconciliation of two closed same-source native cases."""
+import ast
+import datetime
+import hashlib
+import json
+import pathlib
+import subprocess
+import xml.etree.ElementTree as ET
+
+HERE = pathlib.Path(__file__).parent
+CI = pathlib.Path('/tmp/native-ni013-d906-ci-async500-metadata-20261106')
+TRIAL = pathlib.Path('/tmp/native-n2-2-volume5000-preparation-recovery2-v1/async5000-7644c487')
+LOCAL = TRIAL / 'pytest/test_public_dag_bounded_volume0'
+PRINCIPAL = pathlib.Path('/tmp/native-async5000-metadata-observer-d906-v1')
+HEAD = 'd906ceca414baeac825ce472e0b78cd1dcae3363'
+REPO = pathlib.Path('/workspace/ariadne')
+
+
+def load(path):
+    return json.loads(path.read_text())
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def bind(path):
+    return {'path': str(path), 'bytes': path.stat().st_size, 'sha256': sha(path)}
+
+
+def stable_subtask(row):
+    return {key: row[key] for key in ['operator_uid', 'subtask_index', 'subtask_id',
+                                     'task_run_id', 'input_stream_id', 'output_stream_id',
+                                     'physical_epoch', 'run_count']}
+
+
+def case(base, count):
+    accepted = load(base / 'accepted-cursors.json')
+    final = load(base / 'final-progress.json')
+    observed = load(base / 'observations.json')
+    assert observed['asynchronous'] is True and observed['mode'] == 'normal'
+    assert observed['count'] == count and observed['c_exchange'] == 'broadcast'
+    assert observed['task_runs'] == final['task_run_count'] == accepted['task_run_count'] == 4
+    assert observed['flow_state'] == 'COMPLETED'
+    assert observed['graph_revision_id'] == accepted['graph_revision_id'] == final['graph_revision_id']
+    assert accepted['graph_state'] == 'ADMITTED' and final['graph_state'] == 'RELEASED'
+    before = {row['subtask_id']: stable_subtask(row) for row in accepted['subtasks']}
+    after = {row['subtask_id']: stable_subtask(row) for row in final['subtasks']}
+    assert before == after and len(after) == 4
+    assert len({row['task_run_id'] for row in after.values()}) == 4
+    roles = sorted((row['operator_uid'], row['subtask_index'], row['input_stream_id'] is None)
+                   for row in after.values())
+    assert roles == [('A', 0, True), ('B', 0, False), ('C', 0, False), ('C', 1, False)]
+    assert all(row['physical_epoch'] == row['run_count'] == 1 for row in after.values())
+    assert all(row['state_type'] == 'COMPLETED' and row['physical_slot_released'] is True for row in final['subtasks'])
+    channel_ids = {row['id'] for row in final['channels']}
+    assert len(channel_ids) == 7 and channel_ids == {row['id'] for row in accepted['channels']}
+    assert {row['output_stream_id'] for row in after.values()} <= channel_ids
+    assert {row['input_stream_id'] for row in after.values() if row['input_stream_id']} <= channel_ids
+    assert all(row['state'] == 'COMPLETED' and row['last_sequence'] == row['tail_sequence'] == row['producer_position'] == count for row in final['channels'])
+    assert len(accepted['consumers']) == 3
+    assert all(row['completed_through'] == count and row['attempt'] == 1 and row['inflight_sequence'] is None for row in accepted['consumers'])
+    for consumer in accepted['consumers']:
+        subtask = after[consumer['subtask_id']]
+        assert consumer['task_run_id'] == subtask['task_run_id'] and consumer['input_stream_id'] == subtask['input_stream_id']
+    grant_ids = {row['id'] for row in final['grants']}
+    launch_ids = {row['id'] for row in final['launches']}
+    assert len(grant_ids) == len(launch_ids) == 4
+    assert grant_ids == {row['id'] for row in accepted['grants']}
+    assert launch_ids == {row['id'] for row in accepted['launches']}
+    grant_mapping = {row['subtask_id']: (row['id'], row['child_process_id'], row['process_start_ticks'], row['physical_epoch']) for row in final['grants']}
+    before_grants = {row['subtask_id']: (row['id'], row['child_process_id'], row['process_start_ticks'], row['physical_epoch']) for row in accepted['grants']}
+    assert grant_mapping == before_grants and set(grant_mapping) == set(after)
+    for row in final['launches']:
+        grant = grant_mapping[row['subtask_id']]
+        assert row['child_process_id'] == grant[1]
+        assert row['planned_physical_epoch'] == grant[3] == 1
+        assert row['state'] == 'CLOSED' and row['close_proof_kind'] == 'DEATH'
+    assert all(row['state'] == 'RETIRED' for row in final['grants'])
+    assert len({row['child_process_id'] for row in final['grants']}) == 4
+    assert load(base / 'coordinator-retirement.json') == {'authority_state': 'RELEASED', 'launch_states': ['RELEASED'], 'snapshot_state': 'RELEASED'}
+    health = load(base / 'worker-health.json')
+    assert health['strict_all_errors'] is True and health['errors'] == health['rejected'] == []
+    return {'count': count, 'flow_id': observed['flow_run_id'], 'graph_id': final['graph_revision_id'],
+            'task_run_count': 4, 'subtasks': 4, 'distinct_operator_uids_observed': 3,
+            'operator_uid_index_input_shape': roles, 'grants': 4, 'launches': 4,
+            'unique_child_PIDs': 4, 'channels': 7, 'accepted_consumers': 3,
+            'final_released_slot_flags': 4, 'epoch': 1, 'run_count': 1,
+            'registered_worker_ids_observed': len(observed['worker_ids']),
+            'stable_subtask_task_input_output_mapping': after,
+            'stable_grant_mapping': grant_mapping, 'stable_channel_ids': sorted(channel_ids),
+            'stable_launch_ids': sorted(launch_ids), 'graph_final': 'RELEASED'}
+
+
+def main():
+    index_path = CI / 'verify-index.json'
+    assert sha(index_path) == 'd2b0d5d44dd18b1482019ed2dcb4fc921a2f3781d075ba4dbca0e33f3c8f0aa2'
+    index = load(index_path)
+    for record in index['files']:
+        path = CI / record['file']
+        assert sha(path) == record['sha256'] and path.stat().st_size == record['bytes']
+    provenance = load(CI / 'provenance.json')
+    archive = load(CI / 'archive-and-file-bindings.json')
+    assert index['head_sha'] == provenance['head_sha'] == archive['head_sha'] == HEAD
+    assert index['artifact_id'] == provenance['artifact_id'] == archive['artifact_id'] == 13468885878
+    assert index['job_id'] == provenance['job_id'] == archive['job_id'] == 127620262780
+    assert any('Artifact ID 13468885878' in row['text'] for row in provenance['upload_binding'])
+    assert archive['raw_zip_sha256'] == index['raw_zip_sha256'] == 'e9310a650e4e3be850edb1a54a6930f40907f83eee4055b83a416abe4f807e09'
+    local_receipt_path = PRINCIPAL / 'principal-async5000-full-history-readonly-supplement-v1.json'
+    assert sha(local_receipt_path) == '108b5510774a55dff46f34622f295fc03f539894dff8fbe8daf323a4e6fc5f23'
+    sql_receipt_path = PRINCIPAL / 'principal-observer-metadata-readonly-audit-v1.json'
+    assert sha(sql_receipt_path) == '0e8a1d836ac39ea4adc5c453c745c30cd4403e9fc16b94b3f70cab5e00293eff'
+    local_receipt = load(local_receipt_path)
+    assert local_receipt['head'] == HEAD
+    source_before = load(TRIAL / 'source-before.json')
+    source_after = load(TRIAL / 'source-after.json')
+    assert source_before == source_after and len(source_before) == 1600
+    for record in archive['source_bindings']:
+        raw = subprocess.check_output(['git', 'show', HEAD + ':' + record['path']], cwd=REPO)
+        assert hashlib.sha256(raw).hexdigest() == record['sha256']
+        assert source_before[record['path']]['sha256'] == record['sha256']
+        blob = subprocess.check_output(['git', 'rev-parse', HEAD + ':' + record['path']], cwd=REPO, text=True).strip()
+        assert blob == record['git_blob']
+    helper_record = next(row for row in archive['source_bindings'] if row['path'] == 'tests/test_native_stream_dag_execution_http.py')
+    assert helper_record['sha256'] == 'f1fc5195ba28c269655b1711c3d3cb64ae2eb4c38682d1d27b6ee004b1039cf7'
+    helper = subprocess.check_output(['git', 'show', HEAD + ':' + helper_record['path']], cwd=REPO, text=True)
+    function = next(row for row in ast.parse(helper).body if isinstance(row, ast.AsyncFunctionDef) and row.name == 'test_public_dag_bounded_volume_postgres')
+    helper_function = ast.get_source_segment(helper, function)
+    assert 'mode="normal"' in helper_function and 'count=count' in helper_function and 'asynchronous=asynchronous' in helper_function
+    small = case(CI, 500); large = case(LOCAL, 5000)
+    fields = ['task_run_count', 'subtasks', 'distinct_operator_uids_observed', 'operator_uid_index_input_shape',
+              'grants', 'launches', 'unique_child_PIDs', 'channels', 'accepted_consumers',
+              'final_released_slot_flags', 'epoch', 'run_count', 'registered_worker_ids_observed']
+    comparisons = {key: {'async500': small[key], 'async5000': large[key], 'equal': small[key] == large[key]} for key in fields}
+    assert all(row['equal'] for row in comparisons.values())
+    progress = [json.loads(line) for line in (LOCAL / 'progress.jsonl').read_text().splitlines()]
+    assert len(progress) == local_receipt['full_progress_records'] == 1968
+    for row in progress:
+        snapshot = row['snapshot']
+        assert snapshot['graph_revision_id'] == large['graph_id'] and snapshot['task_run_count'] == 4
+        assert {part['id'] for part in snapshot['channels']} == set(large['stable_channel_ids'])
+        assert {part['subtask_id'] for part in snapshot['subtasks']} == set(large['stable_subtask_task_input_output_mapping'])
+        assert {part['id'] for part in snapshot['grants']} <= {value[0] for value in large['stable_grant_mapping'].values()}
+        assert {part['id'] for part in snapshot['launches']} <= set(large['stable_launch_ids'])
+    derived = load(CI / 'derived-observables.json')
+    assert derived['source_fixture_trace_aggregate']['exact_range_1_to_500'] is True
+    assert derived['source_fixture_trace_aggregate']['unique_positions'] == 500
+    codes = derived['api_status_log_aggregate']['codes']
+    assert sum(codes.values()) == derived['api_status_log_aggregate']['matched_status_lines'] == 7388
+    assert sum(value for code, value in codes.items() if code.startswith('5')) == 0
+    assert derived['retry_observability']['actual_http_retry_count'] is None
+    suite = ET.parse(CI / 'native-runtime-case.xml').getroot().find('testsuite')
+    assert suite is not None and [suite.get(key) for key in ['tests', 'errors', 'failures', 'skipped']] == ['1', '0', '0', '0']
+    artifact_paths = [index_path] + [CI / row['file'] for row in index['files']]
+    artifact_paths += [local_receipt_path, sql_receipt_path, TRIAL / 'native5000-receipt-v1.json', TRIAL / 'source-before.json', TRIAL / 'source-after.json']
+    artifact_paths += [LOCAL / name for name in ['accepted-cursors.json', 'final-progress.json', 'observations.json', 'progress.jsonl', 'coordinator-retirement.json', 'worker-health.json']]
+    artifact_paths += [pathlib.Path(__file__)]
+    output = {
+        'schema': 'principal-d906-same-profile-async500-vs5000-observed-counts-v1',
+        'recorded_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        'reviewer': '/root/etl_principal_recovery2',
+        'verdict': 'ASYNC500_TO_5000_OBSERVED_EXECUTION_METADATA_COUNTS_CONSTANT',
+        'support_scope': 'Scoped evidence supporting A43-04 for the observed asynchronous normal-DAG500/5000 pair only',
+        'source_head': HEAD, 'profile': {'asynchronous': True, 'mode': 'normal', 'c_exchange': 'broadcast', 'operator_shape': 'A1 SOURCE, B1 OPERATOR, C2 OPERATOR'},
+        'source_bindings_personally_Git_and_local_hold_reconciled': archive['source_bindings'],
+        'bound_helper_function_source': helper_function,
+        'comparisons': comparisons, 'async500': small, 'async5000': large,
+        'within_case_stability': {'async500': 'Accepted-cursors snapshot at500 versus final-progress snapshot; no complete CI progress history retained here', 'async5000': 'All1968 retained progress snapshots plus accepted/final, prior independent108b supplement and26live MVCC samples'},
+        'actual_case_results': {'CI_async500': {'tests': 1, 'seconds': suite.get('time'), 'job_id': index['job_id'], 'artifact_id': index['artifact_id']}, 'local_async5000': {'tests': 1, 'seconds': local_receipt['pytest_seconds']}},
+        'CI_observations_requiring_original_collector_trust': {'source_positions': derived['source_fixture_trace_aggregate'], 'calls': derived['fixture_calls_aggregate'], 'birth_markers': derived['physical_counts']['birth_marker_records'], 'API_5xx': derived['api_status_log_aggregate']},
+        'artifacts': [bind(path) for path in artifact_paths],
+        'limits': [
+            'This independently replays retained metadata/hashes, not a second runtime execution or a fresh ZIP download',
+            'CI raw logs/ZIP/source/call/birth/progress JSONL are not retained in this public directory; their aggregates are source-hash bound collector evidence, not personally recomputed raw traces',
+            'CI within-run stable IDs are directly crosschecked between accepted500 and final snapshots only; transient between-snapshot allocations are not disproved',
+            'UUIDs/PIDs are scoped to each run and are never required equal across the two runs',
+            'Distinct operator UIDs/role shape are observed; actual CI OperatorRun/port/edge/assignment-epoch/assigned-worker/SQL allocation rows were not captured and are not inferred',
+            'Four final physical_slot_released flags do not establish CI physical/tag allocation row cardinality or identity',
+            'Local SQL26samples add only local observed allocation/assignment/lease facts; no SQL500 or external KV lease backend comparison is claimed',
+            'HTTP retry counters unavailable; run_count/physical_epoch1 and retry-keyword observations are not zero HTTP retry proof',
+            'CI API5xx0 derives from7388 retained status-log snapshot lines aggregate, not worker-health metadata or a complete HTTP trace',
+            'CI4CPU8GiB/Python3.12.14 and local run are different hosts/resources; timings are functional observations, no throughput/latency/SLO/forecast comparison',
+            'The unchanged helper uses existing count-dependent750/840 versus3960/4080 deadlines; no timeout was changed',
+            'This later supplement does not rewrite historical comparison-pending receipts or any closed5k index',
+            'No all-four5000/full19/NI2-014/27percent readiness acceptance or full A43-04 completion is inferred',
+        ],
+        'new_runtime_bodies': 0, 'new_DB_connections': 0, 'project_imports': 0,
+        'repository_or_prior_index_changes': 0, 'epoch2_earned_percent_unchanged': 15,
+    }
+    destination = HERE / 'principal-same-profile-counts-audit-v1.json'
+    with destination.open('x') as handle:
+        json.dump(output, handle, sort_keys=True, indent=2)
+        handle.write('\n')
+    destination.chmod(0o600)
+    print(json.dumps({'receipt': str(destination), 'sha256': sha(destination), 'verdict': output['verdict'], 'comparisons': len(comparisons)}))
+
+
+if __name__ == '__main__':
+    main()

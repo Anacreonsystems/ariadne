@@ -1,0 +1,192 @@
+"""Real protected Prefect TCP metadata publication through the paired SDK."""
+
+from collections.abc import AsyncGenerator, Callable
+from typing import Any
+from uuid import uuid4
+
+import httpx
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from prefect._internal.stream_execution import (
+    StreamExecutionContext,
+    stream_execution_context,
+)
+from prefect.client.orchestration import PrefectClient, SyncPrefectClient
+from prefect.client.orchestration._streams.client import StreamRequestError
+from prefect.client.schemas.streams import StreamExecutionCredentials
+from prefect.server.database import PrefectDBInterface, orm_models
+from prefect.settings import (
+    PREFECT_CLIENT_CSRF_SUPPORT_ENABLED,
+    PREFECT_SERVER_API_AUTH_STRING,
+    PREFECT_SERVER_CSRF_PROTECTION_ENABLED,
+    temporary_settings,
+)
+from prefect.testing.fixtures import hosted_api_server as hosted_api_fixture
+from tests.server.api.test_stream_dags import deployed_dag_request, topology_counts
+from tests.server.models.test_stream_dags import dag_request
+
+pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
+
+
+@pytest.fixture
+async def dag_postgres17_backend(db: PrefectDBInterface, session: AsyncSession) -> None:
+    if db.dialect.name != "postgresql":
+        pytest.skip("DAG metadata publication requires PostgreSQL 17")
+    connection = await session.connection()
+    if connection.dialect.server_version_info[0] != 17:
+        pytest.skip("DAG metadata publication requires PostgreSQL 17")
+
+
+@pytest.fixture
+def dag_sqlite_backend(db: PrefectDBInterface) -> None:
+    if db.dialect.name != "sqlite":
+        pytest.skip("This control verifies the SQLite backend refusal")
+
+
+@pytest.fixture(scope="module")
+async def hosted_api_server(
+    unused_tcp_port_factory: Callable[[], int], test_database_connection_url: str
+) -> AsyncGenerator[str, None]:
+    with temporary_settings(
+        {
+            PREFECT_SERVER_API_AUTH_STRING: "native-dag:test",
+            PREFECT_SERVER_CSRF_PROTECTION_ENABLED: False,
+        }
+    ):
+        server = hosted_api_fixture.__wrapped__(
+            unused_tcp_port_factory, test_database_connection_url
+        )
+        try:
+            yield await server.__anext__()
+        finally:
+            await server.aclose()
+
+
+@pytest.mark.parametrize(
+    "shape,physical_count,leaves",
+    [("branched", 4, ["B", "C"]), ("linear_rebalance", 5, ["B"]), ("chain", 6, ["C"])],
+)
+@pytest.mark.parametrize("synchronous", [True, False])
+@pytest.mark.usefixtures("dag_postgres17_backend")
+async def test_postgres_sdk_seal_read_replay_publish_only_stable_metadata(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    deployment: orm_models.Deployment,
+    hosted_api_server: str,
+    synchronous: bool,
+    shape: str,
+    physical_count: int,
+    leaves: list[str],
+):
+    assert db.dialect.name == "postgresql"
+    private_key = b"s" * 32
+    public_key = (
+        Ed25519PrivateKey.from_private_bytes(private_key)
+        .public_key()
+        .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        .hex()
+    )
+    async with httpx.AsyncClient(
+        base_url=hosted_api_server,
+        auth=("native-dag", "test"),
+        timeout=30,
+    ) as api:
+        request, headers = await deployed_dag_request(
+            db, session, api, deployment, event_public_key=public_key
+        )
+    if shape != "branched":
+        request_body = request.model_dump(mode="json")
+        generic = dag_request(
+            request.flow_run_id,
+            source_p=2,
+            branch_p=3 if shape == "linear_rebalance" else 2,
+        ).model_dump(mode="json")
+        request_body["operators"] = generic["operators"]
+        request_body["edges"] = generic["edges"]
+        if shape == "linear_rebalance":
+            request_body["operators"] = request_body["operators"][:2]
+            request_body["operators"][1]["parallelism"] = 3
+            request_body["operators"][1]["parameters"] = [{}, {}, {}]
+            request_body["edges"] = request_body["edges"][:1]
+            request_body["edges"][0]["exchange"] = "rebalance"
+        else:
+            request_body["edges"][1].update(
+                edge_uid="B-C", producer_operator_uid="B", exchange="forward"
+            )
+        request = type(request).model_validate(request_body)
+    credentials = StreamExecutionCredentials(
+        generation=int(headers["X-Prefect-Stream-Execution-Generation"]),
+        holder_id=headers["X-Prefect-Stream-Execution-Holder"],
+        capability=headers["X-Prefect-Stream-Execution-Capability"],
+    )
+    execution = StreamExecutionContext(
+        flow_run_id=request.flow_run_id,
+        generation=credentials.generation,
+        holder_id=credentials.holder_id,
+        capability=credentials.capability,
+        api_url=hosted_api_server,
+        event_private_key=private_key,
+    )
+    httpx_settings: dict[str, Any] = {"auth": ("native-dag", "test")}
+    with temporary_settings({PREFECT_CLIENT_CSRF_SUPPORT_ENABLED: False}):
+        with stream_execution_context(execution):
+            if synchronous:
+                with SyncPrefectClient(
+                    hosted_api_server, httpx_settings=httpx_settings
+                ) as client:
+                    sealed = client.seal_stream_dag(**request.model_dump())
+                    replay = client.seal_stream_dag(**request.model_dump())
+                    read = client.read_stream_dag(graph_revision_id=sealed.id)
+            else:
+                async with PrefectClient(
+                    hosted_api_server, httpx_settings=httpx_settings
+                ) as client:
+                    sealed = await client.seal_stream_dag(**request.model_dump())
+                    replay = await client.seal_stream_dag(**request.model_dump())
+                    read = await client.read_stream_dag(graph_revision_id=sealed.id)
+    assert sealed.model_dump(mode="json") == replay.model_dump(mode="json")
+    assert sealed.model_dump(mode="json") == read.model_dump(mode="json")
+    assert sealed.state == "SEALED" and sealed.execution_ready is False
+    assert len(sealed.subtasks) == physical_count
+    assert len({row.manifest.task_run_id for row in sealed.subtasks}) == physical_count
+    assert sealed.leaf_operator_uids == leaves
+    assert all(
+        row.assigned_worker_id is None and not row.physical_slot_reserved
+        for row in sealed.subtasks
+    )
+    counts = await topology_counts(db)
+    assert counts["task_run"] == physical_count
+    assert counts["stream_record"] == 0
+    assert counts["stream_subtask_grant"] == 0
+    assert counts["stream_physical_slot_allocation"] == 0
+    assert credentials.capability not in sealed.model_dump_json()
+
+
+@pytest.mark.parametrize("synchronous", [True, False])
+@pytest.mark.usefixtures("dag_sqlite_backend")
+async def test_sqlite_sdk_public_dag_metadata_fails_closed(
+    db: PrefectDBInterface, hosted_api_server: str, synchronous: bool
+):
+    assert db.dialect.name == "sqlite"
+    request = dag_request(uuid4())
+    httpx_settings: dict[str, Any] = {"auth": ("native-dag", "test")}
+    with temporary_settings({PREFECT_CLIENT_CSRF_SUPPORT_ENABLED: False}):
+        if synchronous:
+            with SyncPrefectClient(
+                hosted_api_server, httpx_settings=httpx_settings
+            ) as client:
+                with pytest.raises(StreamRequestError) as error:
+                    client.seal_stream_dag(**request.model_dump())
+        else:
+            async with PrefectClient(
+                hosted_api_server, httpx_settings=httpx_settings
+            ) as client:
+                with pytest.raises(StreamRequestError) as error:
+                    await client.seal_stream_dag(**request.model_dump())
+    assert error.value.code == "UNSUPPORTED_BACKEND"
+    assert error.value.status_code == 422
+    assert error.value.retryable is False
+    assert not any((await topology_counts(db)).values())

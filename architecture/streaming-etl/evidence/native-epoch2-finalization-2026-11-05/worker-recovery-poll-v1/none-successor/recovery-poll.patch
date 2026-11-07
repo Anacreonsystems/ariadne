@@ -1,0 +1,216 @@
+--- a/src/prefect/workers/_native.py
++++ b/src/prefect/workers/_native.py
+@@ -12,6 +12,7 @@
+ import anyio
+ 
+ from prefect._internal.stream_execution import stream_execution_context
++from prefect.client.orchestration._streams.client import StreamRequestError
+ from prefect.flows import load_flow_from_flow_run
+ from prefect.runner._flow_run_executor import FlowRunExecutorContext
+ from prefect.runner._hook_runner import HookRunner
+@@ -196,11 +197,26 @@
+         raise StreamProtocolError("Native recovery requires a registered worker")
+     # Host identity is checked again immediately before any signal is sent.
+     host, _, _ = linux_process_identity(os.getpid())
+-    candidates = await worker.client.read_native_stream_recovery_candidates(
+-        worker_id=worker.backend_id,
+-        work_pool_id=worker.work_pool.id,
+-        host_id=host,
+-    )
++    try:
++        candidates = await worker.client.read_native_stream_recovery_candidates(
++            worker_id=worker.backend_id,
++            work_pool_id=worker.work_pool.id,
++            host_id=host,
++        )
++    except StreamRequestError as error:
++        status_code: int | None = getattr(error, "status_code", None)
++        if (
++            error.code != "HTTP_ERROR"
++            or status_code is None
++            or not 500 <= status_code < 600
++        ):
++            raise
++        worker._logger.warning(
++            "Native recovery discovery is temporarily unavailable (HTTP %s); "
++            "retrying on the next poll",
++            status_code,
++        )
++        return []
+     submitted: list[Any] = []
+     for candidate in candidates:
+         if candidate.flow_run_id in worker._native_active_run_ids:
+--- a/tests/workers/test_native_recovery_poll.py
++++ b/tests/workers/test_native_recovery_poll.py
+@@ -0,0 +1,171 @@
++"""Recovery discovery keeps transient server failures out of worker teardown."""
++
++import logging
++import threading
++import unittest
++from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++from types import SimpleNamespace
++from typing import Any
++from unittest.mock import AsyncMock
++from uuid import uuid4
++
++import httpx
++
++from prefect.client.orchestration import PrefectClient
++from prefect.client.orchestration._streams.client import StreamRequestError
++from prefect.settings import PREFECT_CLIENT_MAX_RETRIES, temporary_settings
++from prefect.workers._native import recover_native_process_runs
++
++
++def worker_for(client: Any) -> SimpleNamespace:
++    acquired: list[Any] = []
++    scheduled: list[tuple[Any, ...]] = []
++
++    def schedule(*args: Any) -> None:
++        scheduled.append(args)
++
++    return SimpleNamespace(
++        backend_id=uuid4(),
++        work_pool=SimpleNamespace(id=uuid4()),
++        client=client,
++        _logger=logging.getLogger(__name__),
++        _native_active_run_ids={uuid4()},
++        _limiter=SimpleNamespace(acquire_on_behalf_of_nowait=acquired.append),
++        _runs_task_group=SimpleNamespace(start_soon=schedule),
++        acquired=acquired,
++        scheduled=scheduled,
++    )
++
++
++class TestNativeRecoveryPoll(unittest.IsolatedAsyncioTestCase):
++    async def test_untyped_server_failure_defers_then_next_poll_submits_once(self):
++        for status in (500, 502, 503, 504, 599):
++            with self.subTest(status=status):
++                candidate = SimpleNamespace(flow_run_id=uuid4())
++                discovery = AsyncMock(
++                    side_effect=[
++                        StreamRequestError(
++                            "HTTP_ERROR", "Unavailable", status_code=status
++                        ),
++                        [candidate],
++                        [candidate],
++                    ]
++                )
++                worker = worker_for(
++                    SimpleNamespace(read_native_stream_recovery_candidates=discovery)
++                )
++                active = set(worker._native_active_run_ids)
++                with self.assertLogs(__name__, level="WARNING") as logged:
++                    self.assertEqual(await recover_native_process_runs(worker), [])
++                self.assertIn(str(status), logged.output[0])
++                self.assertEqual(worker._native_active_run_ids, active)
++                self.assertFalse(worker.acquired)
++                self.assertFalse(worker.scheduled)
++                self.assertEqual(await recover_native_process_runs(worker), [candidate])
++                self.assertEqual(worker.acquired, [candidate.flow_run_id])
++                self.assertEqual(len(worker.scheduled), 1)
++                self.assertEqual(await recover_native_process_runs(worker), [])
++                self.assertEqual(len(worker.scheduled), 1)
++                self.assertEqual(discovery.await_count, 3)
++
++    async def test_typed_and_nonserver_failures_still_escape(self):
++        # Fault injection includes an absent HTTP status despite the SDK hint.
++        cases: list[tuple[str, Any]] = [
++            ("SUBTASK_FENCED", 500),
++            ("SUBTASK_SCOPE_DENIED", 403),
++            ("IDENTITY_CONFLICT", 409),
++            ("EXECUTION_PROFILE_NOT_READY", 422),
++            ("UNSUPPORTED_PROFILE", 500),
++            ("UNPROTECTED_API", 401),
++            ("HTTP_ERROR", 401),
++            ("HTTP_ERROR", 403),
++            ("HTTP_ERROR", 404),
++            ("HTTP_ERROR", 409),
++            ("HTTP_ERROR", 422),
++            ("HTTP_ERROR", 499),
++            ("HTTP_ERROR", 600),
++            ("HTTP_ERROR", None),
++        ]
++        for code, status in cases:
++            with self.subTest(code=code, status=status):
++                failure = StreamRequestError(
++                    code, "Refused", retryable=True, status_code=status
++                )
++                worker = worker_for(
++                    SimpleNamespace(
++                        read_native_stream_recovery_candidates=AsyncMock(
++                            side_effect=failure
++                        )
++                    )
++                )
++                active = set(worker._native_active_run_ids)
++                with self.assertRaises(StreamRequestError) as raised:
++                    await recover_native_process_runs(worker)
++                self.assertIs(raised.exception, failure)
++                self.assertEqual(worker._native_active_run_ids, active)
++                self.assertFalse(worker.acquired)
++                self.assertFalse(worker.scheduled)
++
++    async def test_transport_failure_is_not_reclassified_as_server_failure(self):
++        failure = httpx.ReadTimeout("Unknown request outcome")
++        worker = worker_for(
++            SimpleNamespace(
++                read_native_stream_recovery_candidates=AsyncMock(side_effect=failure)
++            )
++        )
++        with self.assertRaises(httpx.ReadTimeout) as raised:
++            await recover_native_process_runs(worker)
++        self.assertIs(raised.exception, failure)
++
++    async def test_real_sdk_plain_http500_then_success_keeps_poll_callable(self):
++        requests: list[str] = []
++
++        class Handler(BaseHTTPRequestHandler):
++            def do_GET(self) -> None:
++                requests.append(self.path)
++                status, body = (
++                    (500, b'{"detail":"Temporary failure"}')
++                    if len(requests) == 1
++                    else (200, b"[]")
++                )
++                self.send_response(status)
++                self.send_header("Content-Type", "application/json")
++                self.send_header("Content-Length", str(len(body)))
++                self.end_headers()
++                self.wfile.write(body)
++
++            def log_message(self, format: str, *args: Any) -> None:
++                pass
++
++        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
++        thread = threading.Thread(target=server.serve_forever, daemon=True)
++        thread.start()
++        try:
++            with temporary_settings({PREFECT_CLIENT_MAX_RETRIES: 0}):
++                async with PrefectClient(
++                    f"http://127.0.0.1:{server.server_port}/api",
++                    httpx_settings={"trust_env": False},
++                ) as client:
++                    worker = worker_for(client)
++                    active = set(worker._native_active_run_ids)
++                    with self.assertLogs(__name__, level="WARNING"):
++                        self.assertEqual(await recover_native_process_runs(worker), [])
++                    self.assertEqual(len(requests), 1)
++                    self.assertEqual(await recover_native_process_runs(worker), [])
++                    self.assertEqual(len(requests), 2)
++                    self.assertEqual(worker._native_active_run_ids, active)
++                    self.assertFalse(worker.acquired)
++                    self.assertFalse(worker.scheduled)
++                    self.assertTrue(
++                        all(
++                            path.startswith(
++                                "/api/streams/v1/deployments/replacements/candidates?"
++                            )
++                            for path in requests
++                        )
++                    )
++        finally:
++            server.shutdown()
++            server.server_close()
++            thread.join(timeout=5)
++        self.assertFalse(thread.is_alive())

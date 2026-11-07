@@ -1,0 +1,29 @@
+from pathlib import Path
+from urllib.parse import urlsplit,urlunsplit
+import asyncio,collections,datetime,hashlib,json,re,time
+import asyncpg
+B=Path('/tmp/native-ni012-restored-principal-2026-11-05/source-835b8c21c83e');config=json.loads(Path('/tmp/native-ni012-runtime-test-env.json').read_text());u=urlsplit(config['admin_dsn']);known=['StreamRequestError','TimeoutError','ReadTimeout','HTTPStatusError','CancelledError','DeadlockDetectedError','QueryCanceledError','DBAPIError','ConnectionResetError']
+async def inspect(t):
+ database=json.loads((t/'database.json').read_text())['name']+'_tests_master';dsn=urlunsplit((u.scheme,u.netloc,'/'+database,u.query,''));c=await asyncpg.connect(dsn,timeout=3,command_timeout=5)
+ try:
+  tasks=[dict(x) for x in await c.fetch('SELECT o.operator_uid,p.subtask_index,t.id AS task_run_id,t.run_count,t.state_type,p.physical_epoch FROM stream_physical_subtask p JOIN stream_operator_run o ON o.id=p.operator_run_id JOIN task_run t ON t.id=p.task_run_id ORDER BY o.operator_uid,p.subtask_index')]
+  states=[]
+  for task in tasks:
+   for x in await c.fetch('SELECT id,name,type,timestamp,message FROM task_run_state WHERE task_run_id=$1 ORDER BY timestamp,id',task['task_run_id']):
+    x=dict(x);message=x.pop('message') or '';x['message_sha256']=hashlib.sha256(message.encode()).hexdigest();x['exception_classes_present']=[v for v in known if v in message];x['operator_uid']=task['operator_uid'];x['subtask_index']=task['subtask_index'];states.append(x)
+  frontier={name:[dict(x) for x in await c.fetch(sql)] for name,sql in {'flows':'SELECT id,state_type FROM flow_run ORDER BY id','graphs':'SELECT id,state FROM stream_graph_revision ORDER BY id','consumers':'SELECT subtask_id,completed_through,inflight_sequence FROM stream_consumer ORDER BY id','slots':'SELECT subtask_id,released FROM stream_physical_slot_allocation ORDER BY subtask_id'}.items()}
+ finally:await c.close()
+ calls=[]
+ for p in sorted((t/'pytest').rglob('calls-*.jsonl')):
+  entries=[json.loads(x) for x in p.read_text().splitlines()];byattempt={}
+  for attempt in sorted({x['attempt'] for x in entries}):
+   group=[x for x in entries if x['attempt']==attempt];byattempt[str(attempt)]={'calls':len(group),'first_sequence':group[0]['sequence'],'last_sequence':group[-1]['sequence'],'first_monotonic_ns':group[0]['monotonic_ns'],'last_monotonic_ns':group[-1]['monotonic_ns'],'pids':sorted({x['pid'] for x in group}),'task_run_ids':sorted({x['task_run_id'] for x in group})}
+  duplicate={str(k):n for k,n in collections.Counter(x['sequence'] for x in entries).items() if n>1};calls.append({'trace':str(p.relative_to(t)),'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'by_attempt':byattempt,'duplicated_sequences':duplicate})
+ logs=[]
+ for p in sorted(t.rglob('*.log')):
+  raw=p.read_bytes();text=raw.decode(errors='replace');logs.append({'path':str(p.relative_to(t)),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),'exception_class_text_mentions':{x:text.count(x) for x in known if x in text},'retrying_word_mentions':text.lower().count('retrying'),'awaiting_retry_word_mentions':text.count('AwaitingRetry'),'retry_notification_line_timestamps':[re.match(r'\D*(\d{2}:\d{2}:\d{2}(?:\.\d+)?)',re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',line)).group(1) for line in text.splitlines() if 'Retry ' in line and re.match(r'\D*(\d{2}:\d{2}:\d{2}(?:\.\d+)?)',re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',line))]})
+ return {'trial':t.name,'database':database,'tasks':tasks,'states':states,'calls':calls,'logs':logs,'post_stop_frontier':frontier}
+async def main():
+ rows=await asyncio.gather(*(inspect(t) for t in sorted(B.glob('run-*'))));r={'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'head':'835b8c21c83e4d0a2d95ddc6abe0b06fb9d75db5','status':'CONTROLLED_RED_RETRY_AND_STATE_DIAGNOSIS','cases':rows,'qualification':'Actual owned persisted Task state events, business trace attempts and log class mentions. SQL/message text excluded. Retained metadata after controlled stop is not successful platform cleanup.'};p=B/('retry-state-diagnosis-'+str(time.monotonic_ns())+'.json');p.write_text(json.dumps(r,indent=2,sort_keys=True,default=str)+'\n');p.chmod(0o600)
+ print(json.dumps({'receipt':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'summary':[{'trial':x['trial'],'tasks':x['tasks'],'nonfirst_body_attempts':[y for y in x['calls'] if set(y['by_attempt'])!={'1'}],'retry_states':[y for y in x['states'] if y['name'] in ['AwaitingRetry','Retrying'] or y['exception_classes_present']],'log_classes':[{k:y[k] for k in ['path','exception_class_text_mentions','retry_notification_line_timestamps']} for y in x['logs']]} for x in rows]},default=str))
+asyncio.run(main())

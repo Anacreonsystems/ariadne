@@ -1,0 +1,102 @@
+"""One proven provisioning-only hook; all remaining native fixtures stay real."""
+import hashlib
+import inspect
+import json
+import os
+from pathlib import Path
+import sys
+from urllib.parse import urlsplit
+import pytest
+ROOT = Path("/tmp/ariadne-native-5000-diagnosis-v1")
+CONFTEST_PATH = str(ROOT / "tests/conftest.py")
+PROVISIONER_NAME = "generate_test_database_connection_url"
+_provisioning_invocations = 0
+_original_body_calls = 0
+_previous_profile = None
+_fixture_proof = {}
+
+def guard_original_provisioning(frame, event, arg):
+    global _original_body_calls
+    if event != "call":
+        return
+    code = frame.f_code
+    if code.co_name != PROVISIONER_NAME:
+        return
+    if code.co_filename != CONFTEST_PATH:
+        return
+    _original_body_calls += 1
+    raise RuntimeError("Original destructive provisioning body is prohibited")
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config):
+    global _previous_profile
+    _previous_profile = sys.getprofile()
+    if _previous_profile is not None:
+        raise RuntimeError("Unexpected existing call guard/profile callback")
+    sys.setprofile(guard_original_provisioning)
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    callback_stable = sys.getprofile() is guard_original_provisioning
+    sys.setprofile(_previous_profile)
+    proof = {**_fixture_proof, "hook_invocations": _provisioning_invocations,
+        "original_provisioning_body_calls": _original_body_calls,
+        "original_body_guard_active_during_session": True,
+        "guard_callback_stable_at_sessionfinish": callback_stable,
+        "override_asset_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "guard_only_no_cprofile_no_timing_collection": True}
+    (Path(os.environ["PURGE_TRIAL"])/"provisioning-proof.json").write_text(json.dumps(proof,indent=2,sort_keys=True)+"\n")
+    if _provisioning_invocations != 1 or _original_body_calls != 0 or not callback_stable:
+        raise RuntimeError("Provisioning override proof failed")
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_fixture_setup(fixturedef: pytest.FixtureDef, request: pytest.FixtureRequest):
+    global _provisioning_invocations, _fixture_proof
+    if fixturedef.argname != "generate_test_database_connection_url":
+        return None
+    # Ownership-only provisioning: the launcher already created this fresh PG17
+    # DB. Bypass the default generator's FORCE/DROP lifecycle so a failure's real
+    # test database is retained. All migrations, sessions, clients, hosted server,
+    # and test bodies use their unchanged repository fixtures.
+    original = inspect.unwrap(fixturedef.func)
+    if (
+        fixturedef.scope != "session"
+        or original.__module__ != "tests.conftest"
+        or Path(inspect.getsourcefile(original)).resolve() != ROOT / "tests/conftest.py"
+        or original.__name__ != "generate_test_database_connection_url"
+    ):
+        raise RuntimeError("Original provisioning fixture identity/scope differs")
+    if request.getfixturevalue("worker_id") != "master":
+        raise RuntimeError("Diagnostic provisioning requires explicit -n0")
+    url = os.environ["PREFECT_SERVER_DATABASE_CONNECTION_URL"]
+    parsed = urlsplit(url)
+    database = os.environ["PURGE_DBNAME"]
+    creation = json.loads((Path(os.environ["PURGE_TRIAL"]) / "database-creation.json").read_text())
+    pg_valid = (parsed.scheme == "postgresql+asyncpg" and parsed.hostname in {"localhost","127.0.0.1","::1"} and parsed.port == 55436 and parsed.path == "/"+database and creation == {"database":database,"server_major":17,"created_fresh":True,"existing_database_reused":False})
+    sqlite_file = Path(os.environ["PURGE_TRIAL"])/"retained.sqlite"
+    sqlite_valid = (parsed.scheme == "sqlite+aiosqlite" and Path(parsed.path).resolve()==sqlite_file.resolve() and sqlite_file.is_file() and sqlite_file.stat().st_size==0 and creation=={"database":database,"backend":"sqlite","created_fresh":True,"existing_database_reused":False})
+    if not (pg_valid or sqlite_valid):
+        raise RuntimeError("Provisioning URI differs from exact freshly owned PG17/SQLite allowlist")
+    _provisioning_invocations += 1
+    if _provisioning_invocations != 1:
+        raise RuntimeError("Provisioning hook called more than once")
+    _fixture_proof = {
+        "argname": fixturedef.argname,
+        "module": original.__module__,
+        "scope": fixturedef.scope,
+        "worker_id": "master",
+        "original_fixture_sha256": hashlib.sha256(inspect.getsource(original).encode()).hexdigest(),
+        "fixture_source_file_sha256": hashlib.sha256((ROOT / "tests/conftest.py").read_bytes()).hexdigest(),
+        "precreated_fresh_pg17_allowlist_validated": True,
+        "cached_result_uses_fixture_cache_key": True,
+    }
+    fixturedef.cached_result = (url, fixturedef.cache_key(request), None)
+    return url
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(items):
+    observed=[item.nodeid for item in items]
+    expected=json.loads(os.environ["PURGE_NODES"])
+    if observed != expected:
+        raise RuntimeError("Exact ordered purge regression nodes differ")
+    (Path(os.environ["PURGE_TRIAL"])/"collection.json").write_text(json.dumps({"nodeids":observed,"count":len(observed)})+"\n")

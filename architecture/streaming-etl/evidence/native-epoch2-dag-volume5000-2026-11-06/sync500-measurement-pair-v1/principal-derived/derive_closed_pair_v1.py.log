@@ -1,0 +1,138 @@
+"""Stdlib-only reconciliation of two already closed diagnostic trials."""
+import hashlib
+import json
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
+
+BASE = Path('/tmp/native-sync500-measurement-candidate-18124-v2')
+OUT = Path(__file__).resolve().parent
+ROOT = Path('/tmp/ariadne-native-5000-diagnosis-v1')
+TRIALS = {'control': BASE / 'control-90b809fb', 'instrumented': BASE / 'instrumented-e494873a'}
+sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+load = lambda p: json.loads(p.read_text())
+write = lambda p, v: p.write_text(json.dumps(v, indent=2, sort_keys=True) + '\n')
+METRICS = ('plan_calls', 'plan_elapsed_ns', 'plan_thread_cpu_ns', 'dag_plan_calls', 'dag_plan_inclusive_wall_ns')
+SQL = ('cursor_execute_before', 'cursor_execute_after', 'cursor_execute_error', 'executemany_dispatches', 'client_observed_elapsed_ns')
+PUBLIC = ('diagnostic-receipt-v1.json', 'source-before.json', 'source-after.json', 'external-assets.json', 'auxiliary-source-bindings.json', 'publication-before.json', 'publication-after.json', 'resources-before.json', 'resources-after.json', 'subreaper-proof.json', 'provisioning-proof.json', 'original-provisioning-binding.json', 'database-creation.json', 'database-closure.json', 'command.json', 'process.json', 'process-closure.json', 'reaping-proof.json', 'pytest-exit', 'pytest-exit.json', 'import-audit.json', 'drift.json', 'body-wider-health-audit.json', 'collection.json', 'measurement-config.json', 'measurement-audit.json', 'api-owner.json', 'api-selected.json', 'api-fixture-binding.json', 'api-exits.json', 'api-measurement-complete.json', 'cpu-sampling-coverage.json', 'process-cpu-samples.jsonl', 'pytest.public.xml')
+
+def ref(p):
+    return {'path': str(p), 'sha256': sha(p), 'bytes': p.stat().st_size}
+
+def sql_totals(bucket):
+    return {key: sum(entry[key] for entry in bucket['sql'].values()) for key in SQL}
+
+def closed(mode, trial):
+    r = load(trial / 'diagnostic-receipt-v1.json')
+    assert r['mode'] == mode and r['status'] == 'DIAGNOSTIC_CASE_PASS_DB_RETAINED'
+    assert r['runtime_STOPPED'] and r['pytest_exit'] == 0 and not r['harness_errors']
+    assert not r['source_drift'] and not r['import_audit']['mismatches']
+    assert r['database']['retained'] and r['database']['sessions'] == []
+    assert r['adopted_reaping']['waitpid_echild_success']
+    assert load(trial / 'source-before.json') == load(trial / 'source-after.json')
+    assert load(trial / 'publication-before.json') == load(trial / 'publication-after.json')
+    assert not any(r['body_wider_health']['wider_health'].values())
+    assert r['body_wider_health']['failed_checks'] == []
+    assert r['provisioning_proof_valid'] and r['provisioning_proof']['hook_invocations'] == 1
+    assert r['provisioning_proof']['original_provisioning_body_calls'] == 0
+    assert r['collection']['nodeids'] == ['tests/test_native_stream_dag_execution_http.py::test_public_dag_bounded_volume_postgres[False-500]']
+    assert r['budgets'] == {'wait': 750, 'observe': 840, 'pytest': 900}
+    assert not list(trial.glob('*inconclusive.json'))
+    api = load(trial / 'api-measurement-complete.json')
+    for other in ('api-owner.json', 'api-selected.json'):
+        value = load(trial / other)
+        for key in ('pid', 'start_ticks', 'factory', 'fd', 'header', 'argv'):
+            assert value[key] == api['selection'][key]
+    fixture = load(trial / 'api-fixture-binding.json')
+    for key in ('pid', 'start_ticks', 'factory', 'fd', 'header'):
+        assert fixture[key] == api['selection'][key]
+    exits = load(trial / 'api-exits.json')
+    assert len(exits) == 1 and exits[0]['returncode'] in (-15, 0)
+    identities = dict(r['process_closure']['observed_pid_start_pairs'])
+    sub = r['subreaper_proof']
+    identities[str(sub['runner_pid'])] = sub['runner_start_ticks']
+    identities[str(sub['parent_pid'])] = sub['parent_start_ticks']
+    observed = []
+    for pid, ticks in identities.items():
+        try:
+            fields = Path('/proc', str(pid), 'stat').read_text().rsplit(')', 1)[1].split()
+        except FileNotFoundError:
+            fields = None
+        same = fields is not None and fields[19] == str(ticks)
+        observed.append({'pid': int(pid), 'start_ticks': str(ticks), 'same_identity_remaining': same})
+    assert not any(row['same_identity_remaining'] for row in observed)
+    return r, api, observed
+
+def main():
+    manifest = load(BASE / 'preparation-manifest-v2.json')
+    assets = {name: sha(BASE / name) for name in manifest['assets']}
+    assert all(value == manifest['assets'][name]['sha256'] for name, value in assets.items())
+    records = {mode: closed(mode, trial) for mode, trial in TRIALS.items()}
+    control, control_api, control_pids = records['control']
+    treatment, treatment_api, treatment_pids = records['instrumented']
+    assert control['assets'] == treatment['assets'] == assets
+    assert load(TRIALS['control'] / 'source-after.json') == load(TRIALS['instrumented'] / 'source-after.json')
+    assert load(TRIALS['control'] / 'publication-after.json') == load(TRIALS['instrumented'] / 'publication-after.json')
+    hold = load(BASE / 'ROOT_AUTHORIZED_INSTRUMENTED_HOLD.json')
+    assert hold['previous_control_stop']['path'] == str(TRIALS['control'] / 'diagnostic-receipt-v1.json')
+    assert hold['previous_control_stop']['sha256'] == sha(TRIALS['control'] / 'diagnostic-receipt-v1.json')
+    source = load(TRIALS['instrumented'] / 'source-after.json')
+    publication = load(TRIALS['instrumented'] / 'publication-after.json')
+    assert len(source) == 1600 and len(publication['declared_public_candidate_files']) == 636
+    assert all(sha(ROOT / name) == row['sha256'] and (ROOT / name).stat().st_size == row['bytes'] for name, row in source.items())
+    assert all(sha(ROOT / name) == row['sha256'] and (ROOT / name).stat().st_size == row['bytes'] for name, row in publication['declared_public_candidate_files'].items())
+    m = load(TRIALS['instrumented'] / 'api-measurements.json')
+    assert m['status'] == 'MEASUREMENT_COMPLETE' and m['instrumentation_errors'] == []
+    assert m['unfinished_sql_dispatches'] == 0 and m['request_count'] == len(m['requests'])
+    assert sha(TRIALS['instrumented'] / 'api-measurements.json') == treatment_api['measurement']['sha256']
+    assert control_api['measurement'] == {'status': 'CONTROL_PROCESS_COUNTERS_ONLY'}
+    assert not (TRIALS['control'] / 'api-measurements.json').exists()
+    summary = {}
+    histograms = defaultdict(Counter)
+    fingerprints = defaultdict(Counter)
+    buckets = [m['outside_request'], *m['requests']]
+    for bucket in buckets:
+        for fingerprint, entry in bucket['sql'].items():
+            assert len(fingerprint) == 64 and all(c in '0123456789abcdef' for c in fingerprint)
+            assert entry['cursor_execute_before'] == entry['cursor_execute_after'] + entry['cursor_execute_error']
+            fingerprints[fingerprint].update({key: entry[key] for key in SQL})
+    for row in m['requests']:
+        key = json.dumps([row['method'], row['route'], row['status']], separators=(',', ':'))
+        total = summary.setdefault(key, {'requests': 0, 'empty_dag_consumer_reads': 0, 'nonempty_dag_consumer_reads': 0, 'sql_cursor_execute_before': 0, 'sql_cursor_execute_after': 0, 'sql_cursor_execute_error': 0, **{name: 0 for name in METRICS}})
+        total['requests'] += 1
+        total['empty_dag_consumer_reads'] += int(row['empty_dag_consumer_read'] is True)
+        total['nonempty_dag_consumer_reads'] += int(row['empty_dag_consumer_read'] is False)
+        for name in METRICS:
+            total[name] += row[name]
+        for name in ('before', 'after', 'error'):
+            total['sql_cursor_execute_' + name] += sum(x['cursor_execute_' + name] for x in row['sql'].values())
+        histograms[key][sum(x['cursor_execute_before'] for x in row['sql'].values())] += 1
+    assert summary == m['route_summary']
+    groups = []
+    for key, value in summary.items():
+        method, route, status = json.loads(key)
+        groups.append({'method': method, 'route_template': route, 'status': status, **value, 'dispatches_per_request_histogram': dict(sorted(histograms[key].items()))})
+    total_sql = {key: sum(sql_totals(bucket)[key] for bucket in buckets) for key in SQL}
+    total_plan = {key: sum(bucket[key] for bucket in buckets) for key in METRICS}
+    derived = {'schema': 'closed-api-dispatch-plan-request-reconciliation-v1', 'source_metrics': ref(TRIALS['instrumented'] / 'api-measurements.json'), 'request_count': m['request_count'], 'route_status_groups': len(groups), 'route_summary_recomputed_from_every_request_matches': True, 'SQL_event_balance_every_bucket': True, 'SQL_dispatch_totals': total_sql, 'SQL_distinct_statement_shape_SHA256': len(fingerprints), 'outside_ASGI_context_SQL': sql_totals(m['outside_request']), 'plan_metrics_total': total_plan, 'outside_ASGI_context_plan': {key: m['outside_request'][key] for key in METRICS}, 'route_groups_by_dispatch_count': sorted(groups, key=lambda row: row['sql_cursor_execute_before'], reverse=True), 'top20_fingerprints_by_dispatch_count': [{'statement_shape_SHA256': key, **dict(value)} for key, value in sorted(fingerprints.items(), key=lambda item: item[1]['cursor_execute_before'], reverse=True)[:20]], 'scope_limits': ['Counts are selected API SQLAlchemy Engine DBAPI dispatch attempts, not all PostgreSQL statements or server query counts.', 'Client-observed SQL spans include driver/network/server/scheduling and overlap concurrent work; not DB CPU, pure SQL latency, locks or critical path.', 'Request bucket is ASGI ContextVar lifetime and can include awaited/inherited background work until row closes; outside means absent/closed request context.', 'Only synchronous getter has thread CPU accounting. dag_plan span is inclusive across awaits and overlaps request/SQL spans; no disjoint sum or CPU attribution.', 'Plan getter returns mutable original DTO freshly each call; no caching/reuse or proof/lifecycle changes were installed.', 'Control and treatment resources differ from CI; observations establish no CI cause, throughput/SLO, 5000 forecast or optimization acceptance.']}
+    write(OUT / 'derived-api-counts-v1.json', derived)
+    files = {mode + '/' + name: ref(trial / name) for mode, trial in TRIALS.items() for name in PUBLIC}
+    files['instrumented/api-measurements.json'] = ref(TRIALS['instrumented'] / 'api-measurements.json')
+    for name in manifest['assets']:
+        files['shared-assets/' + name] = ref(BASE / name)
+    for name in ('preparation-manifest-v2.json', 'ROOT_AUTHORIZED_CONTROL_HOLD.json', 'ROOT_AUTHORIZED_INSTRUMENTED_HOLD.json', 'README.md', 'preparation-attempts.json', 'v2-count-correction.patch'):
+        files['preparation/' + name] = ref(BASE / name)
+    reviews = Path('/tmp/native-sync500-measurement-control-principal-review-18124-v2')
+    for name in ('principal-CONTROL-source-review-v2.json', 'principal-INSTRUMENTED-source-review-v1.json', 'principal-personal-CONTROL-closed-review-v1.json'):
+        files['principal-review/' + name] = ref(reviews / name)
+    files['principal-derived/derive_closed_pair_v1.py'] = ref(Path(__file__))
+    files['principal-derived/derived-api-counts-v1.json'] = ref(OUT / 'derived-api-counts-v1.json')
+    write(OUT / 'public-allowlist-v1.json', {'schema': 'closed-pair-regular-file-public-allowlist-v1', 'files': files, 'private_exclusions': ['Private pytest stdout/XML, raw API/worker logs, private selector/config/env/credentials/capabilities/tokens, pycache/temp files; no recursive copying.'], 'qualification': 'Exact regular files only. No secret-bearing private captures were read for this public packaging audit. Source/control provenance and pre-execution defects stay qualified; no historical receipt rewritten.'})
+    receipt = {'schema': 'principal-personally-executed-sync500-control-instrumented-pair-v1', 'recorded_at': datetime.now(timezone.utc).isoformat(), 'reviewer': '/root/etl_principal_recovery2', 'verdict': 'PERSONAL_FUNCTIONAL_DIAGNOSTIC_PAIR_AND_CAPTURE_VALID_ALL_OWNED_RUNTIME_STOPPED', 'runtime_STOPPED': True, 'source1600_current_and_both_trials_equal': True, 'publication636_current_and_both_trials_equal': True, 'shared9asset_SHA256': assets, 'derived_metrics': ref(OUT / 'derived-api-counts-v1.json'), 'public_allowlist': ref(OUT / 'public-allowlist-v1.json'), 'public_regular_files': len(files), 'phases': {}, 'limitations': derived['scope_limits'] + ['Native test body/assertions/original750/840/900 budgets unchanged; one fresh retained PG17 DB per phase/provisionhook1/originalbody0/no master DB/drop/terminate/manual release.', 'Actual sessions[] comes from each closed driver catalog check; Principal performed no additional DB queries.', 'Local quota4/affinity0..4/16GiB differs from hosted CI quota4/affinity0..3/8GiB; paired times are observed diagnostic timings, not exact instrumentation overhead.', 'Original CI sync5000 wait3960 Timeout remains RED, underlying slowdown remains UNKNOWN. No NI014/27percent/NI020 acceptance credit.', 'Pre-execution v1 field/range defects remain unexecuted and preserved. No runtime retries or source changes.', 'All grill-me/spec-first variants excluded; conflict scan incomplete.']}
+    for mode, (native, api, pids) in records.items():
+        receipt['phases'][mode] = {'native_receipt': ref(TRIALS[mode] / 'diagnostic-receipt-v1.json'), 'actual_tool_session': 3084 if mode == 'control' else 20918, 'actual_tool_exit': 0, 'JUnit': native['body_wider_health']['pytest_suite'], 'source_drift': [], 'import_observations': native['import_audit']['rows'], 'import_mismatches': [], 'harness_errors': [], 'health_counts': {k: len(v) for k, v in native['body_wider_health']['wider_health'].items()}, 'provisioning_hook_calls': 1, 'original_provisioning_body_calls': 0, 'native_waitpid_ECHILD': True, 'identity_closed_checks_including_runner_parent': pids, 'database_retained': True, 'database_sessions_at_driver_check': [], 'API_process_counter': {key: api[key] for key in ('process_rusage_user_seconds', 'process_rusage_system_seconds', 'process_elapsed_seconds', 'serve_elapsed_seconds', 'serve_process_rusage_user_delta_seconds', 'serve_process_rusage_system_delta_seconds', 'maxrss_kib')}, 'API_selection_PID_starttick': {'pid': api['selection']['pid'], 'start_ticks': api['selection']['start_ticks']}, 'CPU_sampling_coverage': load(TRIALS[mode] / 'cpu-sampling-coverage.json')}
+    write(OUT / 'principal-pair-closed-review-v1.json', receipt)
+    print(json.dumps({'receipt': ref(OUT / 'principal-pair-closed-review-v1.json'), 'verdict': receipt['verdict'], 'public_allowlist': receipt['public_allowlist'], 'derived_metrics': receipt['derived_metrics'], 'public_regular_files': len(files), 'requests': m['request_count'], 'SQL_dispatch_totals': total_sql, 'plan_metrics_total': total_plan}))
+
+if __name__ == '__main__':
+    main()

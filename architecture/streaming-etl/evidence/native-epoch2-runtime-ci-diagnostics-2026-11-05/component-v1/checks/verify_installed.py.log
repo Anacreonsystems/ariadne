@@ -1,0 +1,61 @@
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+
+BASE=Path('/tmp/native-ni013-runtime-diagnostics-apply-v1')
+spec=importlib.util.spec_from_file_location('diagnostics',Path('/tmp/ariadne-native-5000-diagnosis-v1/scripts/native_runtime_diagnostics.py'));module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+checks=[]
+for name,raw in [
+ ('observations.json', b'{"PREFECT_API_AUTH_STRING":"platform-auth-secret"}'),
+ ('worker-left.log', b'PREFECT_SERVER_API_AUTH_STRING="platform-auth-secret"\n'),
+ ('progress.jsonl', b'{"PREFECT_API_AUTH_STRING":"platform-auth-secret'),
+ ('worker-left.log', b'PREFECT_SERVER_API_AUTH_STRING="platform-auth-secret\nnext line')
+]:
+ cleaned,counts,lossy=module.redact_bytes(raw,name)
+ assert b'platform-auth-secret' not in cleaned
+checks.append('actual-platform-auth-string-json-log-and-truncation-redacted')
+for name,raw in [('progress.jsonl',b'{"password":"truncated-secret'),('worker-left.log',b'password="truncated-secret\nnext line')]:
+ cleaned,counts,lossy=module.redact_bytes(raw,name)
+ assert b'truncated-secret' not in cleaned
+checks.append('truncated-quoted-credential-redacted')
+with tempfile.TemporaryDirectory(prefix='native-diagnostic-copy-') as scratch:
+ root=Path(scratch);raw=root/'raw';raw.mkdir();case=raw/'case';case.mkdir()
+ content={'url':'postgresql+asyncpg://alice:secreturl@localhost/db','Authorization':'Bearer authsecret','nested':{'PREFECT_API_KEY':'assignmentsecret','grant_id':'public-id'},'message':'PASSWORD=plainsecret'}
+ (case/'observations.json').write_text(json.dumps(content)+'\n')
+ (case/'progress.jsonl').write_text(json.dumps(content)+'\n'+json.dumps({'tick':1})+'\n')
+ (case/'worker-left.log').write_text('url=https://alice:logsecret@localhost/path\nAuthorization: Bearer headersecret\nPREFECT_API_KEY="quotedsecret"\npassword=unquotedsecret\n')
+ (case/'A-0.pid.json').write_text('{"pid": 123, "task_run_id": "visible"}\n')
+ (case/('api-'+('a'*32)+'.log')).write_text('PREFECT_API_AUTH_STRING=api-auth-secret\nAuthorization: Bearer api-header-secret\n')
+ for name in ['environment.json','config.json','credentials.json','private-key.pem','native_dag_example.py','document-1.json','.env','api-unrelated.log']:(case/name).write_text('DO-NOT-EXPORT')
+ outside=root/'outside-secret';outside.write_text('DO-NOT-EXPORT-SYMLINK');(case/'worker-right.log').symlink_to(outside)
+ paths=[p for p in raw.rglob('*') if p.is_file() and not p.is_symlink()]
+ before={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+ destination=root/'copies';manifest=module.collect(raw,destination)
+ assert manifest['copy_count']==5;checks.append('explicit-allowlist-and-symlink-exclusion')
+ assert before=={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths};checks.append('raw-files-byte-identical-after-copy')
+ for entry in manifest['files']:
+  source=raw/entry['source_relative_path'];target=destination/entry['copy_relative_path']
+  assert hashlib.sha256(source.read_bytes()).hexdigest()==entry['source_sha256']
+  assert hashlib.sha256(target.read_bytes()).hexdigest()==entry['copy_sha256']
+ all_copies='\n'.join(p.read_text() for p in (destination/'files').rglob('*') if p.is_file())
+ for secret in ['secreturl','authsecret','assignmentsecret','plainsecret','logsecret','headersecret','quotedsecret','unquotedsecret','api-auth-secret','api-header-secret','DO-NOT-EXPORT']:assert secret not in all_copies,secret
+ checks.append('url-authorization-and-credential-redaction')
+ assert (destination/'files/case'/('api-'+('a'*32)+'.log')).is_file()
+ checks.append('exact-api-32hex-log-selected-and-redacted')
+ d=json.loads((destination/'files/case/observations.json').read_text());assert d['nested']['grant_id']=='public-id';assert d['nested']['PREFECT_API_KEY']=='[REDACTED]'
+ for line in (destination/'files/case/progress.jsonl').read_text().splitlines():json.loads(line)
+ checks.append('redacted-json-and-jsonl-stay-readable')
+ assert (destination/'files/case/A-0.pid.json').read_bytes()==(case/'A-0.pid.json').read_bytes();checks.append('unredacted-allowed-file-stays-byte-identical')
+ resources=json.loads((destination/'resources-after.json').read_text());assert resources['phase']=='after-runtime-command' and 'memory.events' in resources['cgroup'];checks.append('actual-post-command-cgroup-snapshot')
+ try:module.collect(raw,raw/'nested-copy')
+ except ValueError:pass
+ else:raise AssertionError('collector accepted destination under raw')
+ try:module.collect(raw,destination)
+ except FileExistsError:pass
+ else:raise AssertionError('collector overwrote existing copies')
+ checks.append('raw-overwrite-and-copy-overwrite-refused')
+ empty=module.collect(root/'missing',root/'empty-copy');assert empty['copy_count']==0 and not empty['source_directory_present'];checks.append('missing-directory-recorded-without-acceptance-claim')
+report={'status':'PASS','checks':checks,'count':len(checks),'scope':'Actual file-copy/redaction/resource operations on temporary fixtures; no ETL runtime or database body.'}
+(BASE/'verification.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))

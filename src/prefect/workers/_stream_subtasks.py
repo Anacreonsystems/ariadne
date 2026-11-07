@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid5
 
 import anyio
@@ -37,6 +37,9 @@ from prefect.runner._starter_native import (
     linux_process_identity,
 )
 from prefect.streams import StreamProtocolError
+
+if TYPE_CHECKING:
+    from prefect.workers._stream_dag_subtasks import NativeDAGSubtaskSupervisor
 
 
 class _SubtaskCleanupRequired(StreamProtocolError):
@@ -276,6 +279,18 @@ class NativeStreamSubtaskSupervisor:
         self._scope: anyio.CancelScope | None = None
         self._stopping = False
         self._warnings: set[tuple[UUID | None, str]] = set()
+        self._dag_supervisor: NativeDAGSubtaskSupervisor | None = None
+
+    def enable_dag(self) -> None:
+        """Compose the optional DAG protocol under this single process owner."""
+        if self._dag_supervisor is None:
+            from prefect.workers._stream_dag_subtasks import NativeDAGSubtaskSupervisor
+
+            self._dag_supervisor = NativeDAGSubtaskSupervisor(
+                self.worker,
+                principal=self.principal,
+                other_live_children=self._local_live_children,
+            )
 
     def stop(self) -> None:
         self._stopping = True
@@ -317,17 +332,23 @@ class NativeStreamSubtaskSupervisor:
                             # server. Its existing protocol remains usable;
                             # the new profile will refuse admission there.
                             return
+                    if self._dag_supervisor is not None:
+                        await self._dag_supervisor.poll()
                     await anyio.sleep(METADATA_POLL_INTERVAL_SECONDS)
         finally:
             # Shutdown never invents a server stop receipt. If the worker exits
             # during live execution, its slots remain fenced until a separately
             # supported verified recovery protocol resolves them.
             with anyio.CancelScope(shield=True):
-                for run in self.runs.values():
-                    children = [run.child, run.death.child if run.death else None]
-                    for child in children:
-                        if child is not None:
-                            await run_sync(child.close)
+                try:
+                    if self._dag_supervisor is not None:
+                        await self._dag_supervisor.close()
+                finally:
+                    for run in self.runs.values():
+                        children = [run.child, run.death.child if run.death else None]
+                        for child in children:
+                            if child is not None:
+                                await run_sync(child.close)
             self._scope = None
 
     async def _drive_safely(self, item: s.StreamWorkerAssignment) -> None:
@@ -410,11 +431,18 @@ class NativeStreamSubtaskSupervisor:
         }
         return _ManagedSubtask(item, credentials, claim)
 
-    def _live_children(self) -> int:
+    def _local_live_children(self) -> int:
         return sum(
             child is not None and child.process.poll() is None
             for run in self.runs.values()
             for child in (run.child, run.death.child if run.death else None)
+        )
+
+    def _live_children(self) -> int:
+        return self._local_live_children() + (
+            self._dag_supervisor.live_children()
+            if self._dag_supervisor is not None
+            else 0
         )
 
     async def _drive(self, item: s.StreamWorkerAssignment) -> None:

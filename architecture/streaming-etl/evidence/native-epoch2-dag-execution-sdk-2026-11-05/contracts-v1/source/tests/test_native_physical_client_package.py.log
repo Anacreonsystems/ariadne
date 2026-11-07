@@ -1,0 +1,228 @@
+"""Build both stripped client distributions and probe their real HTTP boundary.
+
+This package component proof complements the existing live PostgreSQL package
+test; it does not replace the two-worker native runtime acceptance gate.
+"""
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from tarfile import open as open_tar
+from typing import Any
+from zipfile import ZipFile
+
+import pytest
+
+
+def _source_manifest(repository: Path) -> dict[str, str]:
+    manifest = {}
+    for directory in ("src/prefect", "client", "tools"):
+        for path in sorted((repository / directory).rglob("*")):
+            if (
+                not path.is_file()
+                or "__pycache__" in path.parts
+                or path.suffix == ".pyc"
+            ):
+                continue
+            manifest[str(path.relative_to(repository))] = hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+    manifest["LICENSE"] = hashlib.sha256(
+        (repository / "LICENSE").read_bytes()
+    ).hexdigest()
+    return manifest
+
+
+def _command(
+    command: list[str],
+    directory: Path,
+    environment: dict[str, str],
+    log: Path,
+    timeout: int,
+) -> None:
+    completed = subprocess.run(
+        command,
+        cwd=directory,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    log.write_text(completed.stdout + completed.stderr)
+    assert completed.returncode == 0, log.read_text()[-30000:]
+
+
+@pytest.fixture(scope="module")
+def physical_client_distributions(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> dict[str, Any]:
+    repository = Path(__file__).resolve().parents[1]
+    root = tmp_path_factory.mktemp("physical-client-distributions")
+    seed, stage, distributions = (
+        root / name for name in ("seed", "stage", "distributions")
+    )
+    seed.mkdir()
+    before = _source_manifest(repository)
+    for directory in ("src/prefect", "client", "tools"):
+        shutil.copytree(
+            repository / directory,
+            seed / directory,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+    shutil.copy(repository / "LICENSE", seed / "LICENSE")
+    after = _source_manifest(repository)
+    assert before == after, (
+        "Source changed during package snapshot; coordinate a new read-only snapshot"
+    )
+    assert _source_manifest(seed) == before
+    (root / "source-manifest.json").write_text(
+        json.dumps(before, sort_keys=True, indent=2) + "\n"
+    )
+    stage.mkdir()
+    environment = {**os.environ, "TMPDIR": str(stage)}
+    _command(
+        ["bash", str(seed / "client/build_client.sh")],
+        seed,
+        environment,
+        root / "prepare.log",
+        30,
+    )
+    _command(
+        [
+            "uv",
+            "build",
+            "--wheel",
+            "--sdist",
+            "--out-dir",
+            str(distributions),
+            str(stage),
+        ],
+        root,
+        os.environ.copy(),
+        root / "build.log",
+        180,
+    )
+    (wheel,) = distributions.glob("*.whl")
+    (source,) = distributions.glob("*.tar.gz")
+    probe = root / "physical_client_probe.py"
+    shutil.copy(
+        repository / "tests/fixtures/native_physical_client_package_probe.py", probe
+    )
+    return {
+        "root": root,
+        "repository": repository,
+        "wheel": wheel,
+        "source": source,
+        "probe": probe,
+        "manifest": before,
+    }
+
+
+@pytest.mark.parametrize("distribution", ["wheel", "source"])
+def test_stripped_distribution_has_physical_dtos_and_scoped_http(
+    physical_client_distributions: dict[str, Any], distribution: str
+):
+    artifacts = physical_client_distributions
+    artifact = artifacts[distribution]
+    if distribution == "wheel":
+        with ZipFile(artifact) as archive:
+            names = archive.namelist()
+    else:
+        with open_tar(artifact) as archive:
+            names = [
+                "/".join(name.split("/")[2:])
+                for name in archive.getnames()
+                if "/src/" in name
+            ]
+    for module in (
+        "prefect/client/schemas/stream_subtasks.py",
+        "prefect/client/schemas/stream_routes.py",
+        "prefect/client/schemas/stream_dag_executions.py",
+        "prefect/_internal/stream_key_wire.py",
+        "prefect/_internal/stream_routed_storage.py",
+        "prefect/_internal/stream_execution.py",
+        "prefect/_internal/stream_event_auth.py",
+        "prefect/_internal/stream_partitioned.py",
+        "prefect/_internal/stream_subtask_entrypoint.py",
+        "prefect/workers/process.py",
+        "prefect/workers/_stream_subtasks.py",
+    ):
+        assert module in names
+    for prefix in (
+        "prefect/server/database/",
+        "prefect/server/models/",
+        "prefect/server/schemas/",
+        "prefect/server/services/",
+    ):
+        assert not any(name.startswith(prefix) for name in names)
+    working = artifacts["root"] / distribution
+    working.mkdir()
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key
+        not in {
+            "PYTHONPATH",
+            "PREFECT_API_KEY",
+            "PREFECT_API_AUTH_STRING",
+            "PREFECT_SERVER_API_AUTH_STRING",
+            "PREFECT_SERVER_DATABASE_CONNECTION_URL",
+            "PREFECT_API_DATABASE_CONNECTION_URL",
+            "PREFECT_PROFILES_PATH",
+        }
+    }
+    environment.update(
+        PREFECT_HOME=str(working / "home"), PREFECT_SERVER_EPHEMERAL_ENABLED="false"
+    )
+    log = working / "probe.log"
+    command = [
+        "uv",
+        "run",
+        "--isolated",
+        "--no-project",
+        "--python",
+        sys.executable,
+        "--with",
+        str(artifact),
+        str(artifacts["probe"]),
+        str(artifacts["repository"]),
+    ]
+    _command(command, working, environment, log, 240)
+    lines = [line for line in log.read_text().splitlines() if line.startswith("{")]
+    assert lines
+    result = json.loads(lines[-1])
+    assert result == {
+        "verdict": "PASS_STRIPPED_DISTRIBUTION_COMPONENT",
+        "http_requests": 4,
+        "offscope_denied_before_transport": True,
+        "server_only_imports_blocked": True,
+        "business_calls": 0,
+        "routed_key_variants_validated": 5,
+        "routed_adapter_constructed": True,
+        "routed_execution": False,
+        "native_acceptance": False,
+    }
+    (working / "receipt.json").write_text(
+        json.dumps(
+            {
+                "command": command,
+                "distribution": distribution,
+                "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                "probe_sha256": hashlib.sha256(
+                    artifacts["probe"].read_bytes()
+                ).hexdigest(),
+                "source_manifest_sha256": hashlib.sha256(
+                    json.dumps(
+                        artifacts["manifest"], sort_keys=True, separators=(",", ":")
+                    ).encode()
+                ).hexdigest(),
+                "result": result,
+            },
+            indent=2,
+        )
+        + "\n"
+    )

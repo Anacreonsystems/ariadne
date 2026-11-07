@@ -1,0 +1,125 @@
+"""One proven provisioning-only hook; all remaining native fixtures stay real."""
+import hashlib
+import inspect
+import json
+import os
+from pathlib import Path
+import sys
+from urllib.parse import urlsplit
+import pytest
+ROOT = Path("/tmp/ariadne-native-5000-diagnosis-v1")
+CONFTEST_PATH = str(ROOT / "tests/conftest.py")
+PROVISIONER_NAME = "generate_test_database_connection_url"
+SELECTION = json.loads((Path(__file__).resolve().parent / "selectors-v1.json").read_text())
+NODES = set(SELECTION["native_nodes"].values())
+_provisioning_invocations = 0
+_original_body_calls = 0
+_previous_profile = None
+_fixture_proof = {}
+
+def guard_original_provisioning(frame, event, arg):
+    global _original_body_calls
+    if event != "call":
+        return
+    code = frame.f_code
+    if code.co_name != PROVISIONER_NAME:
+        return
+    if code.co_filename != CONFTEST_PATH:
+        return
+    _original_body_calls += 1
+    raise RuntimeError("Original destructive provisioning body is prohibited")
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config):
+    global _previous_profile
+    _previous_profile = sys.getprofile()
+    if _previous_profile is not None:
+        raise RuntimeError("Unexpected existing call guard/profile callback")
+    sys.setprofile(guard_original_provisioning)
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    callback_stable = sys.getprofile() is guard_original_provisioning
+    sys.setprofile(_previous_profile)
+    proof = {**_fixture_proof, "hook_invocations": _provisioning_invocations,
+        "original_provisioning_body_calls": _original_body_calls,
+        "original_body_guard_active_during_session": True,
+        "guard_callback_stable_at_sessionfinish": callback_stable,
+        "override_asset_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "guard_only_no_cprofile_no_timing_collection": True}
+    (Path(os.environ["NATIVE_P2BRIDGE_TRIAL"])/"provisioning-proof.json").write_text(json.dumps(proof,indent=2,sort_keys=True)+"\n")
+    if _provisioning_invocations != 1 or _original_body_calls != 0 or not callback_stable:
+        raise RuntimeError("Provisioning override proof failed")
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_fixture_setup(fixturedef: pytest.FixtureDef, request: pytest.FixtureRequest):
+    global _provisioning_invocations, _fixture_proof
+    if fixturedef.argname != "generate_test_database_connection_url":
+        return None
+    # Ownership-only provisioning: the launcher already created this fresh PG17
+    # DB. Bypass the default generator's FORCE/DROP lifecycle so a failure's real
+    # test database is retained. All migrations, sessions, clients, hosted server,
+    # and test bodies use their unchanged repository fixtures.
+    original = inspect.unwrap(fixturedef.func)
+    if (
+        fixturedef.scope != "session"
+        or original.__module__ != "tests.conftest"
+        or Path(inspect.getsourcefile(original)).resolve() != ROOT / "tests/conftest.py"
+        or original.__name__ != "generate_test_database_connection_url"
+    ):
+        raise RuntimeError("Original provisioning fixture identity/scope differs")
+    if request.getfixturevalue("worker_id") != "master":
+        raise RuntimeError("Diagnostic provisioning requires explicit -n0")
+    url = os.environ["PREFECT_SERVER_DATABASE_CONNECTION_URL"]
+    parsed = urlsplit(url)
+    database = os.environ["NATIVE_P2BRIDGE_DBNAME"]
+    creation = json.loads((Path(os.environ["NATIVE_P2BRIDGE_TRIAL"]) / "database-creation.json").read_text())
+    if (
+        parsed.scheme != "postgresql+asyncpg"
+        or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
+        or parsed.port != 55436
+        or parsed.path != "/" + database
+        or creation != {"database": database, "server_major": 17, "created_fresh": True, "existing_database_reused": False}
+    ):
+        raise RuntimeError("Provisioning URI is not the precreated fresh PG17 allowlist")
+    _provisioning_invocations += 1
+    if _provisioning_invocations != 1:
+        raise RuntimeError("Provisioning hook called more than once")
+    _fixture_proof = {
+        "argname": fixturedef.argname,
+        "module": original.__module__,
+        "scope": fixturedef.scope,
+        "worker_id": "master",
+        "original_fixture_sha256": hashlib.sha256(inspect.getsource(original).encode()).hexdigest(),
+        "fixture_source_file_sha256": hashlib.sha256((ROOT / "tests/conftest.py").read_bytes()).hexdigest(),
+        "precreated_fresh_pg17_allowlist_validated": True,
+        "cached_result_uses_fixture_cache_key": True,
+    }
+    fixturedef.cached_result = (url, fixturedef.cache_key(request), None)
+    return url
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(items):
+    requested=json.loads(os.environ["NATIVE_P2BRIDGE_SELECTORS"])
+    observed=[item.nodeid for item in items]
+    if os.environ["NATIVE_P2BRIDGE_PHASE"] == "pg_selected":
+        counts={selector:0 for selector in requested}
+        for item in items:
+            selector=item.nodeid.split("[",1)[0]
+            if selector not in counts:
+                raise RuntimeError("Unrequested PG selector collected")
+            counts[selector]+=1
+        if counts != {selector:SELECTION["pg_selector_case_counts"][selector] for selector in requested}:
+            raise RuntimeError("PG source-bound selector/parametrization count differs")
+        expanded={node for node in SELECTION["pg_expected_expanded_nodeids"] if node.split("[",1)[0] in requested}
+        if set(observed)!=expanded or len(observed)!=len(set(observed)):
+            raise RuntimeError("Exact static PG expanded nodeids differ from actual collection")
+        marker=None
+    else:
+        if len(observed)!=1 or observed[0] not in NODES or observed!=requested:
+            raise RuntimeError("Exact existing DAG8doc visibility control node differs")
+        timeout=list(items[0].iter_markers("timeout"))
+        if len(timeout)!=1 or timeout[0].args!=(300,):
+            raise RuntimeError("Original fault500 pytest300 marker differs")
+        counts={requested[0]:1};marker=300
+    (Path(os.environ["NATIVE_P2BRIDGE_TRIAL"])/"collection.json").write_text(json.dumps({"count":len(observed),"nodeids":observed,"selector_counts":counts,"requested_selectors":requested,"pytest_timeout_marker":marker},indent=2,sort_keys=True)+"\n")

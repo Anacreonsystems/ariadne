@@ -1,0 +1,38 @@
+--- a/.github/workflows/python-tests.yaml
++++ b/.github/workflows/python-tests.yaml
+@@ -623,7 +623,7 @@
+         run: >-
+           uv run pytest tests/test_native_partitioned_stream_http.py
+           -k 'not 5000' -vv --durations=11
+-          --basetemp=native-physical-runtime-work --junitxml=native-physical-runtime.xml
++          --basetemp="$RUNNER_TEMP/native-physical-runtime-work" --junitxml=native-physical-runtime.xml
+       - name: Require successful cases without conditional skips
+         run: |
+           uv run python - <<'PY'
+@@ -678,7 +678,7 @@
+         if: always() && matrix.database == 'postgres:17' && steps.physical-dependencies.outcome == 'success'
+         run: >-
+           uv run --no-sync python scripts/native_runtime_diagnostics.py
+-          --source native-physical-runtime-work --destination native-physical-runtime-diagnostics
++          --source "$RUNNER_TEMP/native-physical-runtime-work" --destination native-physical-runtime-diagnostics
+       - name: Preserve physical stream results
+         if: always()
+         uses: actions/upload-artifact@v7
+@@ -1009,7 +1009,7 @@
+           NATIVE_RUNTIME_NODE: ${{ matrix.node }}
+         run: >-
+           uv run pytest "$NATIVE_RUNTIME_NODE" -vv --durations=1
+-          --basetemp=native-runtime-work --junitxml=native-runtime-case.xml
++          --basetemp="$RUNNER_TEMP/native-runtime-work" --junitxml=native-runtime-case.xml
+       - name: Require that exact case to pass without skips
+         env:
+           NATIVE_RUNTIME_NODE: ${{ matrix.node }}
+@@ -1033,7 +1033,7 @@
+         if: always() && steps.runtime-dependencies.outcome == 'success'
+         run: >-
+           uv run --no-sync python scripts/native_runtime_diagnostics.py
+-          --source native-runtime-work --destination native-runtime-diagnostics
++          --source "$RUNNER_TEMP/native-runtime-work" --destination native-runtime-diagnostics
+       - name: Preserve native runtime case results
+         if: always()
+         uses: actions/upload-artifact@v7

@@ -1,0 +1,19 @@
+from pathlib import Path
+from urllib.parse import urlsplit
+import collections,datetime,hashlib,json,re,time
+B=Path('/tmp/native-ni012-restored-principal-2026-11-05/source-835b8c21c83e');rows=[]
+for t in sorted(B.glob('run-*')):
+ files=[]
+ for p in sorted(t.rglob('*.log')):
+  raw=p.read_bytes();s=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',raw.decode(errors='replace'));endpoints=collections.Counter();classes=collections.Counter(re.findall(r'\b([A-Za-z_]\w*(?:\.\w+)*(?:Error|Exception))\s*:',s));frames=collections.Counter(re.findall(r'(/workspace/ariadne/src/prefect/[^\s"\']+\.py)["\']?,?\s*(?::|, line )\s*(\d+)',s))
+  for line in s.splitlines():
+   statuses=re.findall(r'HTTP/\d(?:\.\d)?["\s]+(5\d\d)\b',line,re.I)
+   if not statuses:continue
+   m=re.search(r'\b(GET|POST|PATCH|PUT|DELETE)\s+([^\s"\']+)',line)
+   if m:
+    target=m[2];path=urlsplit(target).path if target.startswith(('http://','https://')) else target.split('?',1)[0];path=re.sub(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}','{uuid}',path)
+    endpoints.update(m[1]+' '+path+' '+code for code in statuses)
+  files.append({'path':str(p.relative_to(t)),'prefix_bytes':len(raw),'prefix_sha256':hashlib.sha256(raw).hexdigest(),'http5xx_endpoint_counts':dict(endpoints),'exception_class_mentions':dict(classes),'owned_code_frame_counts':{'%s:%s'%key:value for key,value in frames.most_common(30)}})
+ rows.append({'trial':t.name,'logs':files})
+r={'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'head':'835b8c21c83e4d0a2d95ddc6abe0b06fb9d75db5','status':'PRE_STOP_DIAGNOSTIC_NOT_ACCEPTANCE','cases':rows,'qualification':'Per-file text mentions and templated endpoint counts; not deduplicated incidents. No raw SQL, URLs, credentials, messages or private log text printed.'};p=B/('endpoint-errors-before-stop-'+str(time.monotonic_ns())+'.json');p.write_text(json.dumps(r,indent=2,sort_keys=True)+'\n');p.chmod(0o600)
+print(json.dumps({'receipt':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'cases':[{'trial':x['trial'],'endpoints':{k:sum(y['http5xx_endpoint_counts'].get(k,0) for y in x['logs']) for k in {k for y in x['logs'] for k in y['http5xx_endpoint_counts']}},'exception_classes':{k:sum(y['exception_class_mentions'].get(k,0) for y in x['logs']) for k in {k for y in x['logs'] for k in y['exception_class_mentions']}}} for x in rows]}))

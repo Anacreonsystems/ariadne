@@ -1,0 +1,34 @@
+"""Read-only exact realPG62 JUnit reconciliation; no DB connection."""
+import json
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+
+def inspect(trial: Path, phase: str, expected_count: int) -> dict:
+    failures = []
+    def check(value, message):
+        if not value:
+            failures.append(message)
+    try:
+        suites = ET.parse(trial / "pytest.private.xml").findall(".//testsuite")
+    except (OSError, ET.ParseError):
+        suites = []
+        failures.append("pytest XML missing/invalid")
+    check(phase == "pg_selected" and expected_count == 62, "exact PG62 phase")
+    check(len(suites) == 1, "exactly one pytest suite")
+    suite = suites[0].attrib if suites else {}
+    check(suite.get("tests") == "62" and suite.get("failures") == "0" and suite.get("errors") == "0" and suite.get("skipped") == "1", "61 real PG PASS and exactly one SQLite backend skip")
+    cases = list(suites[0].findall("testcase")) if suites else []
+    skipped = [case for case in cases if case.find("skipped") is not None]
+    check(len(cases) == 62 and len(skipped) == 1, "actual testcase/skip counts")
+    if len(skipped) == 1:
+        case = skipped[0]
+        skip = case.find("skipped")
+        check(case.get("classname") == "tests.server.models.test_stream_routes" and case.get("name") == "test_sqlite_discovery_authorization_refuses_before_any_mutation", "only exact SQLite-only node skipped")
+        check(skip is not None and skip.get("type") == "pytest.skip" and skip.get("message") == "SQLite backend-refusal control", "exact unchanged backend guard skip reason/type")
+    try:
+        creation = json.loads((trial / "database-creation.json").read_text())
+    except (OSError, ValueError):
+        creation = {}
+    check(creation.get("server_major") == 17 and creation.get("created_fresh") is True and creation.get("existing_database_reused") is False, "actual own fresh PostgreSQL17 proof")
+    return {"status": "BODY_AND_WIDER_HEALTH_PASS" if not failures else "PG_SELECTOR_RED", "pytest_suite": suite, "failed_checks": failures, "wider_health": {}, "expected_backend_skip": {"nodeid": "tests/server/models/test_stream_routes.py::test_sqlite_discovery_authorization_refuses_before_any_mutation", "reason": "SQLite backend-refusal control", "required_backend": "postgresql17"}, "qualification": "Exact 61 passing PG cases and one SQLite-only case skipped by its unchanged real backend fixture. All other skips/errors/failures reject. Real fixtures/clear_db remain unchanged; retained DB does not promise all postterminal rows. No nativeSDK/processworkload/performance acceptance inferred from this group."}

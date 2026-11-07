@@ -66,6 +66,11 @@ class ProcessJobConfiguration(BaseJobConfiguration):
 
     _command_configured: bool = PrivateAttr(default=False)
 
+    @property
+    def command_configured(self) -> bool:
+        """Whether the caller supplied the engine command before preparation."""
+        return self._command_configured
+
     @field_validator("working_dir")
     @classmethod
     def validate_working_dir(cls, v: Path | str | None) -> Path | None:
@@ -196,6 +201,7 @@ class ProcessWorker(
             from prefect.workers._stream_subtasks import NativeStreamSubtaskSupervisor
 
             supervisor = NativeStreamSubtaskSupervisor(self)
+            supervisor.enable_dag()
             self._stream_subtask_supervisor = supervisor
             self._runs_task_group.start_soon(supervisor.run)
 
@@ -227,7 +233,7 @@ class ProcessWorker(
             warnings.simplefilter("ignore", DeprecationWarning)
             async with FlowRunExecutorContext() as ctx:
                 workspace_root = Path(working_dir).resolve()
-                if configuration._command_configured:
+                if configuration.command_configured:
                     starter = EngineCommandStarter(
                         command=configuration.command,
                         cwd=workspace_root,

@@ -1,0 +1,283 @@
+"""Paired lifecycle SDK against protected TCP/real database, without mocks."""
+
+import dataclasses
+import inspect
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager, nullcontext
+from typing import Any
+from uuid import UUID, uuid4, uuid5
+
+import httpx
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from prefect._internal.stream_execution import (
+    StreamExecutionContext,
+    stream_execution_context,
+)
+from prefect._internal.stream_route_plan import graph_routing_digest
+from prefect.client.orchestration import PrefectClient, SyncPrefectClient
+from prefect.client.orchestration._streams.client import StreamRequestError
+from prefect.server.database import PrefectDBInterface, orm_models
+from prefect.settings import PREFECT_CLIENT_CSRF_SUPPORT_ENABLED, temporary_settings
+from tests.server.api.test_stream_dags import deployed_dag_request
+from tests.server.api.test_stream_routes import route_snapshot
+from tests.test_native_dag_client_http import hosted_api_server as frozen_hosted_fixture
+
+pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
+hosted_api_server = frozen_hosted_fixture
+
+
+@pytest.fixture(autouse=True)
+async def execution_backend(
+    request: pytest.FixtureRequest, db: PrefectDBInterface, session: AsyncSession
+) -> None:
+    if "_postgres" in request.node.name:
+        if db.dialect.name != "postgresql":
+            pytest.skip("This lifecycle transport control requires PostgreSQL 17")
+        connection = await session.connection()
+        if connection.dialect.server_version_info[0] != 17:
+            pytest.skip("This lifecycle transport control requires PostgreSQL 17")
+    elif "_sqlite" in request.node.name and db.dialect.name != "sqlite":
+        pytest.skip("This control verifies the SQLite capability refusal")
+
+
+@asynccontextmanager
+async def sdk_client(
+    endpoint: str,
+    synchronous: bool,
+    authority: StreamExecutionContext | None,
+    *,
+    login: str = "native-dag:test",
+    bodies: list[bytes] | None = None,
+) -> AsyncGenerator[PrefectClient | SyncPrefectClient, None]:
+    def observe(request: httpx.Request) -> None:
+        if bodies is not None and request.url.path.endswith("/abort-preview"):
+            bodies.append(request.content)
+
+    async def observe_async(request: httpx.Request) -> None:
+        observe(request)
+
+    settings: dict[str, Any] = {
+        "event_hooks": {"request": [observe if synchronous else observe_async]}
+    }
+    with (
+        temporary_settings({PREFECT_CLIENT_CSRF_SUPPORT_ENABLED: False}),
+        stream_execution_context(authority) if authority is not None else nullcontext(),
+    ):
+        if synchronous:
+            with SyncPrefectClient(
+                endpoint, auth_string=login, httpx_settings=settings
+            ) as client:
+                yield client
+        else:
+            async with PrefectClient(
+                endpoint, auth_string=login, httpx_settings=settings
+            ) as client:
+                yield client
+
+
+async def call(
+    client: PrefectClient | SyncPrefectClient, name: str, **kwargs: Any
+) -> Any:
+    result = getattr(client, name)(**kwargs)
+    return await result if inspect.isawaitable(result) else result
+
+
+async def enrolled_preview(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    deployment: orm_models.Deployment,
+    endpoint: str,
+    synchronous: bool,
+) -> tuple[Any, StreamExecutionContext]:
+    private = b"s" * 32
+    public = (
+        Ed25519PrivateKey.from_private_bytes(private)
+        .public_key()
+        .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        .hex()
+    )
+    async with httpx.AsyncClient(
+        base_url=endpoint, auth=("native-dag", "test"), timeout=30
+    ) as api:
+        request, headers = await deployed_dag_request(
+            db, session, api, deployment, event_public_key=public
+        )
+    authority = StreamExecutionContext(
+        flow_run_id=request.flow_run_id,
+        generation=int(headers["X-Prefect-Stream-Execution-Generation"]),
+        holder_id=UUID(headers["X-Prefect-Stream-Execution-Holder"]),
+        capability=headers["X-Prefect-Stream-Execution-Capability"],
+        api_url=endpoint,
+        event_private_key=private,
+    )
+    async with sdk_client(endpoint, synchronous, authority) as client:
+        plan = await call(client, "seal_stream_dag", **request.model_dump())
+    return plan, authority
+
+
+@pytest.mark.parametrize("synchronous", [True, False])
+async def test_sdk_ack_exact_replay_and_current_projection_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    deployment: orm_models.Deployment,
+    hosted_api_server: str,
+    synchronous: bool,
+):
+    plan, authority = await enrolled_preview(
+        db, session, deployment, hosted_api_server, synchronous
+    )
+    bodies: list[bytes] = []
+    operation = uuid5(plan.id, "prefect-stream-dag-abort-preview-v1")
+    kwargs = dict(
+        graph_revision_id=plan.id,
+        operation_id=operation,
+        graph_digest=plan.graph_digest,
+        routing_digest=graph_routing_digest(plan.graph_digest),
+    )
+    before = await route_snapshot(db)
+    async with sdk_client(
+        hosted_api_server, synchronous, authority, bodies=bodies
+    ) as client:
+        preview = await call(
+            client, "read_stream_dag_execution", graph_revision_id=plan.id
+        )
+        assert preview.phase == "PREVIEW" and preview.counts.total == 4
+        assert preview.counts.physical_slots_remaining == 0
+        assert await route_snapshot(db) == before
+        accepted = await call(client, "abort_stream_dag_preview", **kwargs)
+    assert accepted.receipt.operation_id == operation
+    assert accepted.receipt.graph_revision_id == plan.id
+    assert accepted.receipt.kind == "ABORT_PREVIEW"
+    assert accepted.execution.phase == "TERMINAL"
+    assert (
+        accepted.execution.terminal_state == "FAILED"
+        and accepted.execution.cleanup_complete
+    )
+    assert accepted.execution.control.kind == "PREVIEW_ABORT"
+    assert (
+        accepted.execution.counts.physical_slots_remaining
+        == accepted.execution.counts.tags_remaining
+        == 0
+    )
+    async with db.session_context() as check:
+        stored = await check.get(db.StreamDAGLifecycleOperation, operation)
+        assert stored is not None
+        assert stored.accepted_receipt == accepted.receipt.model_dump(mode="json")
+        flow = await check.get(db.FlowRun, plan.flow_run_id)
+        assert flow is not None and flow.state_type.value == "RUNNING"
+    after = await route_snapshot(db)
+    # A fresh SDK instance retries the exact request against the stored receipt.
+    async with sdk_client(
+        hosted_api_server, synchronous, authority, bodies=bodies
+    ) as client:
+        replay = await call(client, "abort_stream_dag_preview", **kwargs)
+        current = await call(
+            client, "read_stream_dag_execution", graph_revision_id=plan.id
+        )
+        with pytest.raises(StreamRequestError) as late:
+            await call(
+                client,
+                "cancel_stream_dag",
+                **(
+                    kwargs
+                    | {
+                        "operation_id": uuid5(plan.id, "prefect-stream-dag-cancel-v1"),
+                        "reason": "after terminal",
+                    }
+                ),
+            )
+    assert late.value.code == "TERMINAL_CONFLICT" and not late.value.retryable
+    assert bodies[0] == bodies[1] and len(bodies) == 2
+    assert accepted.receipt.model_dump(mode="json") == replay.receipt.model_dump(
+        mode="json"
+    )
+    assert current.model_dump(mode="json") == replay.execution.model_dump(mode="json")
+    assert current.phase != preview.phase
+    assert authority.capability not in replay.model_dump_json()
+    assert authority.capability.encode() not in bodies[0]
+    assert await route_snapshot(db) == after
+
+
+@pytest.mark.parametrize("synchronous", [True, False])
+@pytest.mark.parametrize("scope", ["missing", "forged", "stale", "login"])
+async def test_sdk_authority_before_lifecycle_lookup_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    deployment: orm_models.Deployment,
+    hosted_api_server: str,
+    synchronous: bool,
+    scope: str,
+):
+    plan, authority = await enrolled_preview(
+        db, session, deployment, hosted_api_server, synchronous
+    )
+    supplied = None if scope == "missing" else authority
+    if scope == "forged":
+        supplied = dataclasses.replace(authority, capability="f" * 64)
+    elif scope == "stale":
+        supplied = dataclasses.replace(authority, generation=authority.generation + 1)
+    login = "wrong:credentials" if scope == "login" else "native-dag:test"
+    expected = (
+        "HTTP_ERROR"
+        if scope == "login"
+        else "EXECUTION_BINDING_REQUIRED"
+        if scope == "missing"
+        else "STALE_EXECUTION"
+    )
+    before = await route_snapshot(db)
+    async with sdk_client(
+        hosted_api_server, synchronous, supplied, login=login
+    ) as client:
+        for method in ("read_stream_dag_execution", "abort_stream_dag_preview"):
+            kwargs = dict(graph_revision_id=plan.id)
+            if method != "read_stream_dag_execution":
+                kwargs.update(
+                    operation_id=uuid5(plan.id, "prefect-stream-dag-abort-preview-v1"),
+                    graph_digest=plan.graph_digest,
+                    routing_digest=graph_routing_digest(plan.graph_digest),
+                )
+            with pytest.raises(StreamRequestError) as refused:
+                await call(client, method, **kwargs)
+            assert refused.value.code == expected
+            assert refused.value.status_code == (401 if scope == "login" else 409)
+            assert not refused.value.retryable
+    assert await route_snapshot(db) == before
+
+
+@pytest.mark.parametrize("synchronous", [True, False])
+async def test_sdk_lifecycle_capability_fails_closed_sqlite(
+    db: PrefectDBInterface,
+    hosted_api_server: str,
+    synchronous: bool,
+):
+    graph_id = uuid4()
+    before = await route_snapshot(db)
+    async with sdk_client(hosted_api_server, synchronous, None) as client:
+        for action, method in (
+            ("start", "start_stream_dag"),
+            ("activate", "activate_stream_dag"),
+            ("abort-preview", "abort_stream_dag_preview"),
+            ("cancel", "cancel_stream_dag"),
+            ("fail", "fail_stream_dag"),
+            ("execution", "read_stream_dag_execution"),
+        ):
+            kwargs: dict[str, Any] = dict(graph_revision_id=graph_id)
+            if action != "execution":
+                kwargs.update(
+                    operation_id=uuid5(graph_id, f"prefect-stream-dag-{action}-v1"),
+                    graph_digest="a" * 64,
+                    routing_digest=graph_routing_digest("a" * 64),
+                )
+            if action == "cancel":
+                kwargs["reason"] = "SQLite refuses execution"
+            if action == "fail":
+                kwargs["failure_kind"] = "START_EXCEPTION"
+            with pytest.raises(StreamRequestError) as refused:
+                await call(client, method, **kwargs)
+            assert refused.value.code == "UNSUPPORTED_BACKEND"
+            assert refused.value.status_code == 422 and not refused.value.retryable
+    assert await route_snapshot(db) == before

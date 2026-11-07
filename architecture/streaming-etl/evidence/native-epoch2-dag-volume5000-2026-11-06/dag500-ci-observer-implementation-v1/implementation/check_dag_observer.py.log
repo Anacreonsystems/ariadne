@@ -1,0 +1,124 @@
+"""Pure telemetry/dispatch checks: no project imports, DB, application or CI."""
+import ast
+import copy
+import json
+import os
+from pathlib import Path
+import time
+
+ROOT=Path('/tmp/ariadne-native-5000-diagnosis-v1')
+BASE=Path(__file__).resolve().parent
+old=ast.parse((BASE/'native_progress.py.before').read_text())
+new=ast.parse((ROOT/'scripts/native_progress.py').read_text())
+for name in ('processes','effects','summarize'):
+    before=next(n for n in old.body if isinstance(n,ast.FunctionDef) and n.name==name)
+    after=next(n for n in new.body if isinstance(n,ast.FunctionDef) and n.name==name)
+    assert ast.dump(before,include_attributes=False)==ast.dump(after,include_attributes=False),name
+selected=[]
+for node in new.body:
+    if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id in {'SQL','DAG_SQL','DAG_LOCATE'} for t in node.targets):selected.append(node)
+    elif isinstance(node,ast.FunctionDef) and node.name in {'summarize','summarize_dag','record_dag_cpu_windows'}:selected.append(node)
+ns={'time':time,'os':os,'STARTED':time.monotonic(),'LAST_VECTOR':None,'LAST_ADVANCED':time.monotonic(),'DAG_CPU_WINDOWS':{}}
+exec(compile(ast.Module(body=selected,type_ignores=[]),'<isolated telemetry pure functions>','exec'),ns)
+assert all(query.lstrip().upper().startswith('SELECT') and '$1' in query and '$2' in query and 'FOR UPDATE' not in query.upper() and 'FOR SHARE' not in query.upper() for query in ns['DAG_SQL'].values())
+assert 'failure_message' not in '\n'.join(ns['DAG_SQL'].values())
+assert 'o.first_cause' in ns['DAG_SQL']['control'] and 'current_control_operation_id' in ns['DAG_SQL']['control']
+assert 's.message' in ns['DAG_SQL']['flow_state']
+sample={'owned_flow_id':'flow','owned_graph_id':'graph','flows':[{'expected_count':'500','state_type':'RUNNING'}],
+        'tasks':[{'id':str(i),'operator_uid':role,'producer_position':500,'task_state':'COMPLETED','output_state':'COMPLETED','physical_slot_released':False,'assigned_worker_id':'worker'+str(i%2)} for i,role in enumerate(['A','B','C','C'])],
+        'consumers':[{'subtask_id':str(i),'completed_through':500} for i in range(3)],'partitions':[{}]*7}
+summary=ns['summarize_dag'](sample)
+assert summary['source_accepted_positions']==500 and summary['consumer_accepted_sequences']==1500 and summary['all_data_observed'] is True
+assert summary['partition_count']==7 and len(summary['worker_ids'])==2
+assert summary['failure_kind']==summary['requested_actions']==summary['flow_state_message']=='UNKNOWN'
+incomplete=copy.deepcopy(sample);incomplete['consumers'][0]['completed_through']=499
+assert ns['summarize_dag'](incomplete)['all_data_observed'] is False
+p2_wrong=copy.deepcopy(sample)
+for row,value in zip(p2_wrong['consumers'],[166,167,167]):row['completed_through']=value
+assert ns['summarize_dag'](p2_wrong)['consumer_accepted_sequences']==500 and ns['summarize_dag'](p2_wrong)['all_data_observed'] is False
+cleaned=copy.deepcopy(sample);cleaned['flows'][0]['state_type']='COMPLETED';cleaned['consumers']=[]
+assert ns['summarize_dag'](cleaned)['phase_candidate']=='FLOW_TERMINAL' and ns['summarize_dag'](cleaned)['all_data_observed'] is False
+failed=copy.deepcopy(sample);failed['flows'][0]['state_type']='FAILED';failed['control']=[{'failure_kind':'RUNTIME_FAILURE','first_cause':'{"kind":"RUNTIME_FAILURE"}','effective_control_kind':'FAIL'}];failed['actions']=[{'kind':'FAIL','operation_id':'request'}];failed['flow_state']=[{'message':'owned literal message'}]
+assert ns['summarize_dag'](failed)['failure_kind']=='RUNTIME_FAILURE' and ns['summarize_dag'](failed)['flow_state_message']=='owned literal message'
+missing=copy.deepcopy(failed);missing['control']=[];missing['flow_state']=[{'message':None}]
+assert ns['summarize_dag'](missing)['failure_kind']=='UNKNOWN' and ns['summarize_dag'](missing)['flow_state_message']=='UNKNOWN'
+window=[{'pid':7,'start_ticks':10,'cpu_ticks':100,'command':'owned'}]
+ns['record_dag_cpu_windows'](window,1000);window[0]['cpu_ticks']=150;ns['record_dag_cpu_windows'](window,2000)
+assert ns['DAG_CPU_WINDOWS'][(7,10)]['observed_cpu_delta_seconds']==50/os.sysconf('SC_CLK_TCK')
+window[0]['start_ticks']=11;window[0]['cpu_ticks']=3;ns['record_dag_cpu_windows'](window,3000)
+assert ns['DAG_CPU_WINDOWS'][(7,11)]['observed_cpu_delta_seconds']==0
+receipt={'status':'PURE_OBSERVER_CHECKS_PASS','P2_three_function_AST_unchanged':True,'DAG_500_requires3distinct500cursors_notaggregate500':True,'cleanup_absence_not_backfilled':True,'literal_control_message_or_UNKNOWN':True,'PID_reuse_not_joined_intoCPUwindow':True,'SQL_bound_readonly_shape':True,'app_DB_CI_project_imports_executed':False}
+(BASE/'pure-observer-checks.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+print(json.dumps(receipt))
+
+# Execute only the extracted observer coroutine with in-memory transport doubles.
+# This qualifies fail-closed telemetry paths; it does not qualify SQL on PostgreSQL.
+import asyncio
+import tempfile
+import threading
+from types import SimpleNamespace
+from urllib.parse import urlsplit, urlunsplit
+
+coroutine=next(n for n in new.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='sample_dag')
+ns.update({'asyncio':asyncio,'json':json,'urlsplit':urlsplit,'urlunsplit':urlunsplit,'PROFILE':'partitioned-dag-v1',
+           'DAG_ACTIVE_CONNECTIONS':0,'DAG_UNCONFIRMED_CLOSES':0,'DAG_SCOPE':None,'SAMPLES':0,
+           'STOP':threading.Event(),'processes':lambda:[],'dag_effects':lambda:[],'save':lambda *args:None})
+exec(compile(ast.Module(body=[coroutine],type_ignores=[]),'<isolated observer coroutine>','exec'),ns)
+class Connection:
+    def __init__(self,fail=None,close_fail=False):self.fail=fail;self.close_fail=close_fail;self.closed=False
+    def get_server_version(self):return SimpleNamespace(major=17)
+    def get_server_pid(self):return 17
+    def is_closed(self):return self.closed
+    async def fetch(self,query,*scope):
+        if query==ns['DAG_LOCATE']:return [{'id':'graph','flow_run_id':'flow'}]
+        family=next(name for name,value in ns['DAG_SQL'].items() if value==query)
+        if family==self.fail:raise RuntimeError('synthetic fetch failure')
+        if family=='flows':return [{'id':'flow','graph_id':'graph','profile':'partitioned-dag-v1','expected_count':'500','state_type':'RUNNING'}]
+        return []
+    async def close(self):
+        if self.close_fail:raise RuntimeError('synthetic close failure')
+        self.closed=True
+async def exercise(fail=None,close_fail=False):
+    connection=Connection(fail,close_fail)
+    async def connect(*args,**kwargs):return connection
+    ns.update({'asyncpg':SimpleNamespace(connect=connect),'DAG_SCOPE':None,'DAG_ACTIVE_CONNECTIONS':0,'DAG_UNCONFIRMED_CLOSES':0,'STOP':threading.Event()})
+    old_url=os.environ.get('PREFECT_SERVER_DATABASE_CONNECTION_URL')
+    os.environ['PREFECT_SERVER_DATABASE_CONNECTION_URL']='postgresql://example.invalid/unit'
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            ns['OUTPUT']=Path(folder)
+            await ns['sample_dag']('pure-double')
+            result=json.loads((Path(folder)/'timeline.jsonl').read_text())
+    finally:
+        if old_url is None:os.environ.pop('PREFECT_SERVER_DATABASE_CONNECTION_URL',None)
+        else:os.environ['PREFECT_SERVER_DATABASE_CONNECTION_URL']=old_url
+    return result
+success=asyncio.run(exercise())
+assert success['complete_owned_sample'] is True and set(success['completed_query_families'])==set(ns['DAG_SQL'])
+partial=asyncio.run(exercise('control'))
+assert partial['complete_owned_sample'] is False and 'observer_error' in partial and 'control' not in partial['completed_query_families']
+assert partial['observer_connection_closed'] is True and ns['DAG_ACTIVE_CONNECTIONS']==0
+unclosed=asyncio.run(exercise(close_fail=True))
+assert unclosed['complete_owned_sample'] is False and 'observer_close_error' in unclosed and ns['STOP'].is_set() and ns['DAG_UNCONFIRMED_CLOSES']==1
+receipt.update({'in_memory_transport_full_family_success':True,'partial_family_failure_cannot_qualify':True,'close_failure_cannot_qualify_and_stops_observer':True,'pure_transport_doubles_are_not_PG_SQL_evidence':True})
+(BASE/'pure-observer-checks.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+
+# A REQUEST made while sleeping must wake the DAG observer before cadence;
+# PAUSED must be set before DONE acknowledges fixture teardown.
+collector=next(n for n in new.body if isinstance(n,ast.FunctionDef) and n.name=='collect_dag')
+exec(compile(ast.Module(body=[collector],type_ignores=[]),'<isolated DAG loop>','exec'),ns)
+ns.update({name:threading.Event() for name in ('STOP','REQUEST','PAUSED')})
+sampled=threading.Event()
+async def benign_sample(reason):sampled.set()
+class Ack:
+    def __init__(self):self.event=threading.Event();self.paused_at_ack=False
+    def set(self):self.paused_at_ack=ns['PAUSED'].is_set();self.event.set()
+ack=Ack();ns.update({'DONE':ack,'sample_dag':benign_sample})
+thread=threading.Thread(target=ns['collect_dag']);thread.start()
+assert sampled.wait(1)
+ns['REQUEST'].set()
+assert ack.event.wait(1) and ack.paused_at_ack
+ns['STOP'].set();ns['REQUEST'].set();thread.join(1)
+assert not thread.is_alive()
+receipt.update({'DAG_REQUEST_interrupts_cadence_wait':True,'PAUSED_precedes_checkpoint_acknowledgment':True,'DAG_STOP_wakes_waited_thread':True})
+(BASE/'pure-observer-checks.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')

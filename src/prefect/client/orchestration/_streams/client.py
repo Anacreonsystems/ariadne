@@ -10,10 +10,14 @@ from prefect._internal.stream_event_auth import (
     canonical_physical_event_witness,
     verify_task_event,
 )
-from prefect._internal.stream_execution import get_stream_subtask_execution
+from prefect._internal.stream_execution import (
+    DAGSubtaskExecutionContext,
+    get_stream_subtask_execution,
+)
 from prefect.client.orchestration.base import HTTP_METHODS, BaseAsyncClient, BaseClient
 from prefect.client.orchestration.routes import ServerRoutes
 from prefect.client.schemas import native_deployments as native_schemas
+from prefect.client.schemas import stream_dag_executions as dag_execution_schemas
 from prefect.client.schemas import stream_dags as dag_schemas
 from prefect.client.schemas import stream_routes as route_schemas
 from prefect.client.schemas import stream_subtasks as subtask_schemas
@@ -214,8 +218,814 @@ def _subtask_event_result(
     return result
 
 
+def _dag_lifecycle_ack(result: object, expected: dict[str, object]) -> None:
+    """Check immutable identities without confusing current progress with the ACK."""
+    for path, value in expected.items():
+        actual = result
+        for field in path.split("."):
+            actual = getattr(actual, field)
+        if actual != value:
+            raise StreamRequestError(
+                "IDENTITY_CONFLICT", "DAG response does not match its request"
+            )
+
+
+def _dag_child_ack(
+    result: object,
+    *,
+    subtask_id: UUID | None = None,
+    intent: object = None,
+    stream_role: Literal["input", "output"] | None = None,
+) -> None:
+    """Bind scoped responses to the current grant; Task attempts are not epochs."""
+    execution = get_stream_subtask_execution()
+    if not isinstance(execution, DAGSubtaskExecutionContext):
+        return
+    expected: dict[str, object] = {}
+    if isinstance(result, dag_execution_schemas.StreamDAGSubtaskBootstrap):
+        expected = {
+            "flow_run_id": execution.flow_run_id,
+            "assignment.id": execution.subtask_id,
+            "assignment.graph_revision_id": execution.graph_revision_id,
+            "assignment.current_grant_id": execution.grant_id,
+            "assignment.physical_epoch": execution.physical_epoch,
+            "assignment.assignment_epoch": execution.assignment_epoch,
+            "assignment.input_stream_id": execution.input_stream_id,
+            "assignment.manifest.stream_id": execution.output_stream_id,
+            "assignment.manifest.manifest_digest": execution.manifest_digest,
+            "grant.id": execution.grant_id,
+            "grant.holder_id": execution.holder_id,
+            "grant.scope_digest": execution.scope_digest,
+            "grant.event_key_id": execution.event_key_id,
+            "grant.child_process_id": execution.child_process_id,
+            "grant.process_start_ticks": execution.process_start_ticks,
+            "task_run.id": execution.task_run_id,
+        }
+    elif isinstance(
+        result,
+        (
+            dag_execution_schemas.StreamDAGBootstrapReadyResult,
+            dag_execution_schemas.StreamDAGActivationObservation,
+        ),
+    ):
+        expected = {
+            "graph_revision_id": execution.graph_revision_id,
+            "subtask_id": execution.subtask_id,
+            "grant_id": execution.grant_id,
+            "physical_epoch": execution.physical_epoch,
+        }
+    elif isinstance(result, schemas.SourceAdmission):
+        expected = {
+            "binding.flow_run_id": execution.flow_run_id,
+            "binding.stream_id": execution.output_stream_id,
+            "binding.task_run_id": execution.task_run_id,
+            "binding.owner_id": execution.holder_id,
+        }
+    elif isinstance(result, schemas.ConsumerBinding):
+        expected = {
+            "flow_run_id": execution.flow_run_id,
+            "input_stream_id": execution.input_stream_id,
+            "output_stream_id": execution.output_stream_id,
+            "owner_id": execution.holder_id,
+        }
+    elif isinstance(result, schemas.StreamInfo):
+        expected = {"flow_run_id": execution.flow_run_id}
+        if stream_role is not None:
+            expected["id"] = (
+                execution.input_stream_id
+                if stream_role == "input"
+                else execution.output_stream_id
+            )
+        if result.id not in {execution.input_stream_id, execution.output_stream_id}:
+            raise StreamRequestError(
+                "IDENTITY_CONFLICT", "DAG stream is outside its assignment"
+            )
+    elif isinstance(result, schemas.StreamDelivery) and isinstance(
+        intent, dag_execution_schemas.StreamDAGConsumerReadRequest
+    ):
+        expected = {
+            "token.flow_run_id": intent.binding.flow_run_id,
+            "token.input_stream_id": intent.binding.input_stream_id,
+            "token.output_stream_id": intent.binding.output_stream_id,
+            "token.consumer_id": intent.binding.consumer_id,
+            "token.owner_id": intent.binding.owner_id,
+            "token.owner_epoch": intent.binding.owner_epoch,
+            "token.attempt": intent.binding.attempt,
+        }
+    if subtask_id is not None and subtask_id != execution.subtask_id:
+        raise StreamRequestError(
+            "IDENTITY_CONFLICT", "DAG response targets another subtask"
+        )
+    _dag_lifecycle_ack(result, expected)
+
+
 class StreamClient(BaseClient):
     """Native data-plane methods; credentials belong to the owning client."""
+
+    def start_stream_dag(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        routing_digest: str,
+    ) -> dag_execution_schemas.StreamDAGOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGStartRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "routing_digest": routing_digest,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/{graph_id}/start",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.graph_revision_id": graph_revision_id,
+                "receipt.kind": "START",
+                "execution.graph_revision_id": graph_revision_id,
+                "execution.graph_digest": intent.graph_digest,
+                "execution.routing_digest": intent.routing_digest,
+            },
+        )
+        return result
+
+    def activate_stream_dag(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        routing_digest: str,
+    ) -> dag_execution_schemas.StreamDAGOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGActivateRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "routing_digest": routing_digest,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/{graph_id}/activate",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.graph_revision_id": graph_revision_id,
+                "receipt.kind": "ACTIVATE",
+                "execution.activation_operation_id": intent.operation_id,
+                "execution.graph_revision_id": graph_revision_id,
+                "execution.graph_digest": intent.graph_digest,
+                "execution.routing_digest": intent.routing_digest,
+            },
+        )
+        return result
+
+    def abort_stream_dag_preview(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        routing_digest: str,
+    ) -> dag_execution_schemas.StreamDAGOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGAbortPreviewRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "routing_digest": routing_digest,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/{graph_id}/abort-preview",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.graph_revision_id": graph_revision_id,
+                "receipt.kind": "ABORT_PREVIEW",
+                "execution.graph_revision_id": graph_revision_id,
+                "execution.graph_digest": intent.graph_digest,
+                "execution.routing_digest": intent.routing_digest,
+            },
+        )
+        return result
+
+    def cancel_stream_dag(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        routing_digest: str,
+        reason: str,
+    ) -> dag_execution_schemas.StreamDAGOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGCancelRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "routing_digest": routing_digest,
+                "reason": reason,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/{graph_id}/cancel",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.graph_revision_id": graph_revision_id,
+                "receipt.kind": "CANCEL",
+                "execution.graph_revision_id": graph_revision_id,
+                "execution.graph_digest": intent.graph_digest,
+                "execution.routing_digest": intent.routing_digest,
+            },
+        )
+        return result
+
+    def fail_stream_dag(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        routing_digest: str,
+        failure_kind: Literal[
+            "FLOW_SCOPE_EXCEPTION",
+            "START_EXCEPTION",
+            "START_TIMEOUT",
+            "COORDINATOR_ERROR",
+        ],
+    ) -> dag_execution_schemas.StreamDAGOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGFailRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "routing_digest": routing_digest,
+                "failure_kind": failure_kind,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/{graph_id}/fail",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.graph_revision_id": graph_revision_id,
+                "receipt.kind": "FAIL",
+                "execution.graph_revision_id": graph_revision_id,
+                "execution.graph_digest": intent.graph_digest,
+                "execution.routing_digest": intent.routing_digest,
+            },
+        )
+        return result
+
+    def read_stream_dag_execution(
+        self,
+        *,
+        graph_revision_id: UUID,
+    ) -> dag_execution_schemas.StreamDAGExecution:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v2/dags/{graph_id}/execution",
+            path_params={"graph_id": graph_revision_id},
+        )
+        result = dag_execution_schemas.StreamDAGExecution.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(result, {"graph_revision_id": graph_revision_id})
+        return result
+
+    def read_stream_dag_subtask_bootstrap(
+        self,
+        *,
+        subtask_id: UUID,
+    ) -> dag_execution_schemas.StreamDAGSubtaskBootstrap:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v2/dags/subtasks/{subtask_id}/bootstrap",
+            path_params={"subtask_id": subtask_id},
+        )
+        result = dag_execution_schemas.StreamDAGSubtaskBootstrap.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(result, {"assignment.id": subtask_id})
+        _dag_child_ack(result, subtask_id=subtask_id)
+        return result
+
+    def read_stream_dag_subtask_activation(
+        self,
+        *,
+        subtask_id: UUID,
+    ) -> dag_execution_schemas.StreamDAGActivationObservation:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v2/dags/subtasks/{subtask_id}/activation",
+            path_params={"subtask_id": subtask_id},
+        )
+        result = dag_execution_schemas.StreamDAGActivationObservation.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(result, {"subtask_id": subtask_id})
+        _dag_child_ack(result, subtask_id=subtask_id)
+        return result
+
+    def mark_stream_dag_subtask_bootstrap_ready(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        bootstrap_digest: str,
+        signature: str,
+    ) -> dag_execution_schemas.StreamDAGBootstrapReadyResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGBootstrapReadyRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "bootstrap_digest": bootstrap_digest,
+                "signature": signature,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/subtasks/{subtask_id}/bootstrap-ready",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGBootstrapReadyResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "operation_id": intent.operation_id,
+                "bootstrap_digest": intent.bootstrap_digest,
+                "subtask_id": subtask_id,
+            },
+        )
+        _dag_child_ack(result, subtask_id=subtask_id, intent=intent)
+        return result
+
+    def read_stream_dag_input_status(
+        self,
+        *,
+        subtask_id: UUID,
+    ) -> schemas.StreamInfo:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v2/dags/subtasks/{subtask_id}/input/status",
+            path_params={"subtask_id": subtask_id},
+        )
+        result = schemas.StreamInfo.model_validate(response.json())
+        _dag_child_ack(result, subtask_id=subtask_id, stream_role="input")
+        return result
+
+    def read_stream_dag_output_status(
+        self,
+        *,
+        subtask_id: UUID,
+    ) -> schemas.StreamInfo:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        response = self._stream_request(
+            "GET",
+            "/streams/v2/dags/subtasks/{subtask_id}/output/status",
+            path_params={"subtask_id": subtask_id},
+        )
+        result = schemas.StreamInfo.model_validate(response.json())
+        _dag_child_ack(result, subtask_id=subtask_id, stream_role="output")
+        return result
+
+    def open_stream_dag_source(
+        self,
+        *,
+        context: dict[str, Any],
+    ) -> schemas.SourceAdmission:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGSourceOpenRequest.model_validate(
+            {"context": context}
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/sources/open",
+            json=payload,
+        )
+        result = schemas.SourceAdmission.model_validate(response.json())
+        _dag_child_ack(result, intent=intent)
+        return result
+
+    def open_stream_dag_consumer(
+        self,
+        *,
+        context: dict[str, Any],
+    ) -> schemas.ConsumerBinding:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGConsumerOpenRequest.model_validate(
+            {"context": context}
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/consumers/open",
+            json=payload,
+        )
+        result = schemas.ConsumerBinding.model_validate(response.json())
+        _dag_child_ack(result, intent=intent)
+        return result
+
+    def read_stream_dag_consumer(
+        self,
+        *,
+        context: dict[str, Any],
+        binding: dict[str, Any],
+    ) -> schemas.StreamDelivery | None:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGConsumerReadRequest.model_validate(
+            {"context": context, "binding": binding}
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/consumers/read",
+            json=payload,
+        )
+        if response.json() is None:
+            return None
+        result = schemas.StreamDelivery.model_validate(response.json())
+        _dag_child_ack(result, intent=intent)
+        return result
+
+    def finish_stream_dag_source(
+        self,
+        *,
+        operation_id: UUID,
+        context: dict[str, Any],
+        binding: dict[str, Any],
+        expected_position: int,
+    ) -> dag_execution_schemas.StreamDAGProducerFinishReceipt:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGSourceFinishRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "context": context,
+                "binding": binding,
+                "expected_position": expected_position,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/sources/finish",
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGProducerFinishReceipt.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "operation_id": intent.operation_id,
+                "graph_revision_id": intent.context.graph_revision_id,
+                "producer_subtask_id": intent.context.producer_subtask_id,
+                "producer_stream_id": intent.binding.stream_id,
+                "kind": "SOURCE_EOF",
+                "accepted_source_position": intent.expected_position,
+            },
+        )
+        _dag_child_ack(result, intent=intent)
+        return result
+
+    def finish_stream_dag_consumer(
+        self,
+        *,
+        operation_id: UUID,
+        context: dict[str, Any],
+        binding: dict[str, Any],
+    ) -> dag_execution_schemas.StreamDAGProducerFinishReceipt:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGConsumerFinishRequest.model_validate(
+            {"operation_id": operation_id, "context": context, "binding": binding}
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/consumers/finish",
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGProducerFinishReceipt.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "operation_id": intent.operation_id,
+                "graph_revision_id": intent.context.graph_revision_id,
+                "producer_subtask_id": intent.context.producer_subtask_id,
+                "producer_stream_id": intent.binding.output_stream_id,
+                "kind": "CONSUMER_EOF",
+            },
+        )
+        _dag_child_ack(result, intent=intent)
+        return result
+
+    def poll_worker_stream_dag_subtasks(
+        self,
+        *,
+        worker_id: UUID,
+        principal: dict[str, Any],
+        active_subtask_ids: list[UUID] | None = None,
+        limit: int = 64,
+    ) -> list[dag_execution_schemas.StreamDAGWorkerAssignment]:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGWorkerPollRequest.model_validate(
+            {
+                "principal": principal,
+                "active_subtask_ids": []
+                if active_subtask_ids is None
+                else active_subtask_ids,
+                "limit": limit,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/workers/{worker_id}/poll",
+            path_params={"worker_id": worker_id},
+            json=payload,
+        )
+        result = TypeAdapter(
+            list[dag_execution_schemas.StreamDAGWorkerAssignment]
+        ).validate_python(response.json())
+        if len({row.assignment.id for row in result}) != len(result) or any(
+            row.assignment.assigned_worker_id != worker_id for row in result
+        ):
+            raise StreamRequestError(
+                "IDENTITY_CONFLICT",
+                "DAG worker poll contains a foreign or repeated assignment",
+            )
+        return result
+
+    def abort_worker_stream_dag_startup(
+        self,
+        *,
+        worker_id: UUID,
+        graph_revision_id: UUID,
+        principal: dict[str, Any],
+        start_operation_id: UUID,
+        graph_digest: str,
+        routing_digest: str,
+    ) -> dag_execution_schemas.StreamDAGWorkerStartupAbortResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = (
+            dag_execution_schemas.StreamDAGWorkerStartupAbortRequest.model_validate(
+                {
+                    "principal": principal,
+                    "start_operation_id": start_operation_id,
+                    "graph_digest": graph_digest,
+                    "routing_digest": routing_digest,
+                }
+            )
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/workers/{worker_id}/graphs/{graph_id}/startup-abort",
+            path_params={"worker_id": worker_id, "graph_id": graph_revision_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGWorkerStartupAbortResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "execution.graph_revision_id": graph_revision_id,
+                "execution.graph_digest": intent.graph_digest,
+                "execution.routing_digest": intent.routing_digest,
+            },
+        )
+        return result
+
+    def prepare_worker_stream_dag_launch(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        operation_id: UUID,
+        start_operation_id: UUID,
+        replacement_operation_id: UUID | None = None,
+    ) -> dag_execution_schemas.StreamDAGLaunchOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGLaunchPrepareRequest.model_validate(
+            {
+                "principal": principal,
+                "operation_id": operation_id,
+                "start_operation_id": start_operation_id,
+                "replacement_operation_id": replacement_operation_id,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/prepare",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGLaunchOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.kind": "PREPARE",
+                "current.subtask_id": subtask_id,
+                "current.worker_id": worker_id,
+                "current.start_operation_id": intent.start_operation_id,
+                "current.replacement_operation_id": intent.replacement_operation_id,
+            },
+        )
+        return result
+
+    def record_worker_stream_dag_launch(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        operation_id: UUID,
+        launch_attempt_id: UUID,
+        child_process_id: int,
+        process_start_ticks: int,
+        local_journal_digest: str,
+    ) -> dag_execution_schemas.StreamDAGLaunchOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGLaunchRecordRequest.model_validate(
+            {
+                "principal": principal,
+                "operation_id": operation_id,
+                "child_process_id": child_process_id,
+                "process_start_ticks": process_start_ticks,
+                "local_journal_digest": local_journal_digest,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/{launch_attempt_id}/record",
+            path_params={
+                "worker_id": worker_id,
+                "subtask_id": subtask_id,
+                "launch_attempt_id": launch_attempt_id,
+            },
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGLaunchOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.kind": "RECORD",
+                "current.id": launch_attempt_id,
+                "current.subtask_id": subtask_id,
+                "current.worker_id": worker_id,
+                "current.child_process_id": intent.child_process_id,
+                "current.process_start_ticks": intent.process_start_ticks,
+                "current.local_journal_digest": intent.local_journal_digest,
+            },
+        )
+        return result
+
+    def close_worker_stream_dag_launch(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        operation_id: UUID,
+        launch_attempt_id: UUID,
+        proof: dict[str, Any],
+    ) -> dag_execution_schemas.StreamDAGLaunchCloseReceipt:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGLaunchCloseRequest.model_validate(
+            {"principal": principal, "operation_id": operation_id, "proof": proof}
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/{launch_attempt_id}/close",
+            path_params={
+                "worker_id": worker_id,
+                "subtask_id": subtask_id,
+                "launch_attempt_id": launch_attempt_id,
+            },
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGLaunchCloseReceipt.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "operation_id": intent.operation_id,
+                "launch_attempt_id": launch_attempt_id,
+                "subtask_id": subtask_id,
+                "proof_kind": intent.proof.kind,
+            },
+        )
+        return result
+
+    def stop_worker_stream_dag_subtask(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        operation_id: UUID,
+        control_operation_id: UUID,
+    ) -> dag_execution_schemas.StreamDAGStopReceipt:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGWorkerStopRequest.model_validate(
+            {
+                "principal": principal,
+                "operation_id": operation_id,
+                "control_operation_id": control_operation_id,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = self._stream_request(
+            "POST",
+            "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/stop",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGStopReceipt.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "operation_id": intent.operation_id,
+                "control_operation_id": intent.control_operation_id,
+                "subtask_id": subtask_id,
+            },
+        )
+        return result
 
     def _stream_request(
         self, method: HTTP_METHODS, path: ServerRoutes, **kwargs: Any
@@ -2049,6 +2859,711 @@ class StreamClient(BaseClient):
 
 class StreamAsyncClient(BaseAsyncClient):
     """Native data-plane methods; credentials belong to the owning client."""
+
+    async def start_stream_dag(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        routing_digest: str,
+    ) -> dag_execution_schemas.StreamDAGOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGStartRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "routing_digest": routing_digest,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/{graph_id}/start",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.graph_revision_id": graph_revision_id,
+                "receipt.kind": "START",
+                "execution.graph_revision_id": graph_revision_id,
+                "execution.graph_digest": intent.graph_digest,
+                "execution.routing_digest": intent.routing_digest,
+            },
+        )
+        return result
+
+    async def activate_stream_dag(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        routing_digest: str,
+    ) -> dag_execution_schemas.StreamDAGOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGActivateRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "routing_digest": routing_digest,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/{graph_id}/activate",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.graph_revision_id": graph_revision_id,
+                "receipt.kind": "ACTIVATE",
+                "execution.activation_operation_id": intent.operation_id,
+                "execution.graph_revision_id": graph_revision_id,
+                "execution.graph_digest": intent.graph_digest,
+                "execution.routing_digest": intent.routing_digest,
+            },
+        )
+        return result
+
+    async def abort_stream_dag_preview(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        routing_digest: str,
+    ) -> dag_execution_schemas.StreamDAGOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGAbortPreviewRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "routing_digest": routing_digest,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/{graph_id}/abort-preview",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.graph_revision_id": graph_revision_id,
+                "receipt.kind": "ABORT_PREVIEW",
+                "execution.graph_revision_id": graph_revision_id,
+                "execution.graph_digest": intent.graph_digest,
+                "execution.routing_digest": intent.routing_digest,
+            },
+        )
+        return result
+
+    async def cancel_stream_dag(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        routing_digest: str,
+        reason: str,
+    ) -> dag_execution_schemas.StreamDAGOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGCancelRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "routing_digest": routing_digest,
+                "reason": reason,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/{graph_id}/cancel",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.graph_revision_id": graph_revision_id,
+                "receipt.kind": "CANCEL",
+                "execution.graph_revision_id": graph_revision_id,
+                "execution.graph_digest": intent.graph_digest,
+                "execution.routing_digest": intent.routing_digest,
+            },
+        )
+        return result
+
+    async def fail_stream_dag(
+        self,
+        *,
+        graph_revision_id: UUID,
+        operation_id: UUID,
+        graph_digest: str,
+        routing_digest: str,
+        failure_kind: Literal[
+            "FLOW_SCOPE_EXCEPTION",
+            "START_EXCEPTION",
+            "START_TIMEOUT",
+            "COORDINATOR_ERROR",
+        ],
+    ) -> dag_execution_schemas.StreamDAGOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGFailRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "graph_digest": graph_digest,
+                "routing_digest": routing_digest,
+                "failure_kind": failure_kind,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/{graph_id}/fail",
+            path_params={"graph_id": graph_revision_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.graph_revision_id": graph_revision_id,
+                "receipt.kind": "FAIL",
+                "execution.graph_revision_id": graph_revision_id,
+                "execution.graph_digest": intent.graph_digest,
+                "execution.routing_digest": intent.routing_digest,
+            },
+        )
+        return result
+
+    async def read_stream_dag_execution(
+        self,
+        *,
+        graph_revision_id: UUID,
+    ) -> dag_execution_schemas.StreamDAGExecution:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v2/dags/{graph_id}/execution",
+            path_params={"graph_id": graph_revision_id},
+        )
+        result = dag_execution_schemas.StreamDAGExecution.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(result, {"graph_revision_id": graph_revision_id})
+        return result
+
+    async def read_stream_dag_subtask_bootstrap(
+        self,
+        *,
+        subtask_id: UUID,
+    ) -> dag_execution_schemas.StreamDAGSubtaskBootstrap:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v2/dags/subtasks/{subtask_id}/bootstrap",
+            path_params={"subtask_id": subtask_id},
+        )
+        result = dag_execution_schemas.StreamDAGSubtaskBootstrap.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(result, {"assignment.id": subtask_id})
+        _dag_child_ack(result, subtask_id=subtask_id)
+        return result
+
+    async def read_stream_dag_subtask_activation(
+        self,
+        *,
+        subtask_id: UUID,
+    ) -> dag_execution_schemas.StreamDAGActivationObservation:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v2/dags/subtasks/{subtask_id}/activation",
+            path_params={"subtask_id": subtask_id},
+        )
+        result = dag_execution_schemas.StreamDAGActivationObservation.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(result, {"subtask_id": subtask_id})
+        _dag_child_ack(result, subtask_id=subtask_id)
+        return result
+
+    async def mark_stream_dag_subtask_bootstrap_ready(
+        self,
+        *,
+        subtask_id: UUID,
+        operation_id: UUID,
+        bootstrap_digest: str,
+        signature: str,
+    ) -> dag_execution_schemas.StreamDAGBootstrapReadyResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGBootstrapReadyRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "bootstrap_digest": bootstrap_digest,
+                "signature": signature,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/subtasks/{subtask_id}/bootstrap-ready",
+            path_params={"subtask_id": subtask_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGBootstrapReadyResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "operation_id": intent.operation_id,
+                "bootstrap_digest": intent.bootstrap_digest,
+                "subtask_id": subtask_id,
+            },
+        )
+        _dag_child_ack(result, subtask_id=subtask_id, intent=intent)
+        return result
+
+    async def read_stream_dag_input_status(
+        self,
+        *,
+        subtask_id: UUID,
+    ) -> schemas.StreamInfo:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v2/dags/subtasks/{subtask_id}/input/status",
+            path_params={"subtask_id": subtask_id},
+        )
+        result = schemas.StreamInfo.model_validate(response.json())
+        _dag_child_ack(result, subtask_id=subtask_id, stream_role="input")
+        return result
+
+    async def read_stream_dag_output_status(
+        self,
+        *,
+        subtask_id: UUID,
+    ) -> schemas.StreamInfo:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        response = await self._stream_request(
+            "GET",
+            "/streams/v2/dags/subtasks/{subtask_id}/output/status",
+            path_params={"subtask_id": subtask_id},
+        )
+        result = schemas.StreamInfo.model_validate(response.json())
+        _dag_child_ack(result, subtask_id=subtask_id, stream_role="output")
+        return result
+
+    async def open_stream_dag_source(
+        self,
+        *,
+        context: dict[str, Any],
+    ) -> schemas.SourceAdmission:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGSourceOpenRequest.model_validate(
+            {"context": context}
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/sources/open",
+            json=payload,
+        )
+        result = schemas.SourceAdmission.model_validate(response.json())
+        _dag_child_ack(result, intent=intent)
+        return result
+
+    async def open_stream_dag_consumer(
+        self,
+        *,
+        context: dict[str, Any],
+    ) -> schemas.ConsumerBinding:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGConsumerOpenRequest.model_validate(
+            {"context": context}
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/consumers/open",
+            json=payload,
+        )
+        result = schemas.ConsumerBinding.model_validate(response.json())
+        _dag_child_ack(result, intent=intent)
+        return result
+
+    async def read_stream_dag_consumer(
+        self,
+        *,
+        context: dict[str, Any],
+        binding: dict[str, Any],
+    ) -> schemas.StreamDelivery | None:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGConsumerReadRequest.model_validate(
+            {"context": context, "binding": binding}
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/consumers/read",
+            json=payload,
+        )
+        if response.json() is None:
+            return None
+        result = schemas.StreamDelivery.model_validate(response.json())
+        _dag_child_ack(result, intent=intent)
+        return result
+
+    async def finish_stream_dag_source(
+        self,
+        *,
+        operation_id: UUID,
+        context: dict[str, Any],
+        binding: dict[str, Any],
+        expected_position: int,
+    ) -> dag_execution_schemas.StreamDAGProducerFinishReceipt:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGSourceFinishRequest.model_validate(
+            {
+                "operation_id": operation_id,
+                "context": context,
+                "binding": binding,
+                "expected_position": expected_position,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/sources/finish",
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGProducerFinishReceipt.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "operation_id": intent.operation_id,
+                "graph_revision_id": intent.context.graph_revision_id,
+                "producer_subtask_id": intent.context.producer_subtask_id,
+                "producer_stream_id": intent.binding.stream_id,
+                "kind": "SOURCE_EOF",
+                "accepted_source_position": intent.expected_position,
+            },
+        )
+        _dag_child_ack(result, intent=intent)
+        return result
+
+    async def finish_stream_dag_consumer(
+        self,
+        *,
+        operation_id: UUID,
+        context: dict[str, Any],
+        binding: dict[str, Any],
+    ) -> dag_execution_schemas.StreamDAGProducerFinishReceipt:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGConsumerFinishRequest.model_validate(
+            {"operation_id": operation_id, "context": context, "binding": binding}
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/consumers/finish",
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGProducerFinishReceipt.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "operation_id": intent.operation_id,
+                "graph_revision_id": intent.context.graph_revision_id,
+                "producer_subtask_id": intent.context.producer_subtask_id,
+                "producer_stream_id": intent.binding.output_stream_id,
+                "kind": "CONSUMER_EOF",
+            },
+        )
+        _dag_child_ack(result, intent=intent)
+        return result
+
+    async def poll_worker_stream_dag_subtasks(
+        self,
+        *,
+        worker_id: UUID,
+        principal: dict[str, Any],
+        active_subtask_ids: list[UUID] | None = None,
+        limit: int = 64,
+    ) -> list[dag_execution_schemas.StreamDAGWorkerAssignment]:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGWorkerPollRequest.model_validate(
+            {
+                "principal": principal,
+                "active_subtask_ids": []
+                if active_subtask_ids is None
+                else active_subtask_ids,
+                "limit": limit,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/workers/{worker_id}/poll",
+            path_params={"worker_id": worker_id},
+            json=payload,
+        )
+        result = TypeAdapter(
+            list[dag_execution_schemas.StreamDAGWorkerAssignment]
+        ).validate_python(response.json())
+        if len({row.assignment.id for row in result}) != len(result) or any(
+            row.assignment.assigned_worker_id != worker_id for row in result
+        ):
+            raise StreamRequestError(
+                "IDENTITY_CONFLICT",
+                "DAG worker poll contains a foreign or repeated assignment",
+            )
+        return result
+
+    async def abort_worker_stream_dag_startup(
+        self,
+        *,
+        worker_id: UUID,
+        graph_revision_id: UUID,
+        principal: dict[str, Any],
+        start_operation_id: UUID,
+        graph_digest: str,
+        routing_digest: str,
+    ) -> dag_execution_schemas.StreamDAGWorkerStartupAbortResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = (
+            dag_execution_schemas.StreamDAGWorkerStartupAbortRequest.model_validate(
+                {
+                    "principal": principal,
+                    "start_operation_id": start_operation_id,
+                    "graph_digest": graph_digest,
+                    "routing_digest": routing_digest,
+                }
+            )
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/workers/{worker_id}/graphs/{graph_id}/startup-abort",
+            path_params={"worker_id": worker_id, "graph_id": graph_revision_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGWorkerStartupAbortResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "execution.graph_revision_id": graph_revision_id,
+                "execution.graph_digest": intent.graph_digest,
+                "execution.routing_digest": intent.routing_digest,
+            },
+        )
+        return result
+
+    async def prepare_worker_stream_dag_launch(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        operation_id: UUID,
+        start_operation_id: UUID,
+        replacement_operation_id: UUID | None = None,
+    ) -> dag_execution_schemas.StreamDAGLaunchOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGLaunchPrepareRequest.model_validate(
+            {
+                "principal": principal,
+                "operation_id": operation_id,
+                "start_operation_id": start_operation_id,
+                "replacement_operation_id": replacement_operation_id,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/prepare",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGLaunchOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.kind": "PREPARE",
+                "current.subtask_id": subtask_id,
+                "current.worker_id": worker_id,
+                "current.start_operation_id": intent.start_operation_id,
+                "current.replacement_operation_id": intent.replacement_operation_id,
+            },
+        )
+        return result
+
+    async def record_worker_stream_dag_launch(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        operation_id: UUID,
+        launch_attempt_id: UUID,
+        child_process_id: int,
+        process_start_ticks: int,
+        local_journal_digest: str,
+    ) -> dag_execution_schemas.StreamDAGLaunchOperationResult:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGLaunchRecordRequest.model_validate(
+            {
+                "principal": principal,
+                "operation_id": operation_id,
+                "child_process_id": child_process_id,
+                "process_start_ticks": process_start_ticks,
+                "local_journal_digest": local_journal_digest,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/{launch_attempt_id}/record",
+            path_params={
+                "worker_id": worker_id,
+                "subtask_id": subtask_id,
+                "launch_attempt_id": launch_attempt_id,
+            },
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGLaunchOperationResult.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "receipt.operation_id": intent.operation_id,
+                "receipt.kind": "RECORD",
+                "current.id": launch_attempt_id,
+                "current.subtask_id": subtask_id,
+                "current.worker_id": worker_id,
+                "current.child_process_id": intent.child_process_id,
+                "current.process_start_ticks": intent.process_start_ticks,
+                "current.local_journal_digest": intent.local_journal_digest,
+            },
+        )
+        return result
+
+    async def close_worker_stream_dag_launch(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        operation_id: UUID,
+        launch_attempt_id: UUID,
+        proof: dict[str, Any],
+    ) -> dag_execution_schemas.StreamDAGLaunchCloseReceipt:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGLaunchCloseRequest.model_validate(
+            {"principal": principal, "operation_id": operation_id, "proof": proof}
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/{launch_attempt_id}/close",
+            path_params={
+                "worker_id": worker_id,
+                "subtask_id": subtask_id,
+                "launch_attempt_id": launch_attempt_id,
+            },
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGLaunchCloseReceipt.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "operation_id": intent.operation_id,
+                "launch_attempt_id": launch_attempt_id,
+                "subtask_id": subtask_id,
+                "proof_kind": intent.proof.kind,
+            },
+        )
+        return result
+
+    async def stop_worker_stream_dag_subtask(
+        self,
+        *,
+        worker_id: UUID,
+        subtask_id: UUID,
+        principal: dict[str, Any],
+        operation_id: UUID,
+        control_operation_id: UUID,
+    ) -> dag_execution_schemas.StreamDAGStopReceipt:
+        """Execute the dedicated DAG protocol with a frozen request body."""
+        intent = dag_execution_schemas.StreamDAGWorkerStopRequest.model_validate(
+            {
+                "principal": principal,
+                "operation_id": operation_id,
+                "control_operation_id": control_operation_id,
+            }
+        )
+        payload = intent.model_dump(mode="json")
+        response = await self._stream_request(
+            "POST",
+            "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/stop",
+            path_params={"worker_id": worker_id, "subtask_id": subtask_id},
+            json=payload,
+        )
+        result = dag_execution_schemas.StreamDAGStopReceipt.model_validate(
+            response.json()
+        )
+        _dag_lifecycle_ack(
+            result,
+            {
+                "operation_id": intent.operation_id,
+                "control_operation_id": intent.control_operation_id,
+                "subtask_id": subtask_id,
+            },
+        )
+        return result
 
     async def _stream_request(
         self, method: HTTP_METHODS, path: ServerRoutes, **kwargs: Any

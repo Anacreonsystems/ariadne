@@ -1,0 +1,156 @@
+"""File-only Principal audit of the CLOSED personal sync5000 and own SQL."""
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+BASE = Path('/tmp/native-principal-dag5000-18124-v1')
+TRIAL = BASE / 'sync-v2/sync5000-00da848f'
+SQLBASE = Path('/tmp/native-principal-dag5000-metadata-observer-18124-v1')
+SQL = SQLBASE / 'sync5000'
+FIXTURE = TRIAL / 'pytest/test_public_dag_bounded_volume0'
+
+
+def load(path):
+    return json.loads(path.read_text())
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def bind(path):
+    return {'path': str(path), 'sha256': sha(path), 'bytes': path.stat().st_size}
+
+
+native_path = TRIAL / 'native5000-receipt-v2.json'
+assert sha(native_path) == '1e6eb5ee4057c30bef75c70379459167b2f907402799e0f694036ff8cb327979'
+native = load(native_path)
+assert native['phase'] == 'sync5000' and native['runtime_STOPPED']
+assert native['status'] == 'NATIVE_DAG5000_PASS_DB_RETAINED' and native['pytest_exit'] == 0
+assert not native['harness_errors'] and not native['source_drift'] and not native['import_audit']['mismatches']
+assert native['source_files'] == 1600 and native['import_audit']['rows'] == 3884
+assert load(TRIAL / 'source-before.json') == load(TRIAL / 'source-after.json')
+assert not native['process_closure']['remaining_same_identity_live']
+assert not native['process_closure']['remaining_same_identity_zombies']
+assert native['adopted_reaping']['waitpid_echild_success']
+assert native['database']['retained'] and native['database']['sessions'] == []
+assert native['provisioning_proof_valid'] and native['provisioning_proof']['hook_invocations'] == 1
+assert native['provisioning_proof']['original_provisioning_body_calls'] == 0
+assert native['body_wider_health']['status'] == 'BODY_AND_WIDER_HEALTH_PASS'
+assert not any(native['body_wider_health']['wider_health'].values())
+assert all(x['calls'] == x['documents'] == 5000 and x['processes'] == x['task_runs'] == 1
+           for x in native['body_wider_health']['business'].values())
+stop = load(SQL / 'live-observer-STOP-receipt-v1.json')
+assert stop['status'] == 'LIVE_DB_OBSERVER_STOPPED_NO_MORE_CONNECTIONS' and stop['outstanding_connections'] == 0
+captures = []
+for ref in stop['samples']:
+    path = Path(ref['path'])
+    assert path.parent == SQL and sha(path) == ref['sha256']
+    captures.append((path, load(path)))
+assert len(captures) == 28
+captures.sort(key=lambda item: item[1]['started_monotonic_ns'])
+final_path = SQL / 'final-sample-159107356425897.json'
+assert sha(final_path) == 'e57100ff2a234470f34fe9f4b7d027536e4f7cd7f1db04682e86ba3e9a89a83b'
+final = load(final_path)
+all_captures = captures + [(final_path, final)]
+for _, data in all_captures:
+    assert data['status'] == 'ACTUAL_READONLY_MVCC_CAPTURE' and data['connection_closed']
+    assert data['readonly'] and not data['explicit_row_locks']
+    assert data['database_context']['read_only'] == 'on'
+    assert data['database_context']['server_version'].startswith('17')
+    assert data['metadata_query_families'] == 19 and data['phase'] == 'sync5000'
+    assert data['head'] == native['head'] and data['trial'] == str(TRIAL)
+    assert data['flow_id'] == final['flow_id'] and data['graph_id'] == final['graph_id']
+    assert all(data['counts'][name] == len(rows) for name, rows in data['metadata'].items())
+mutable = {
+    'scope': {'state', 'terminal_operation_id', 'flow_state'},
+    'flow_lease': {'state_id', 'state_type', 'deployment_active_slots'},
+    'tasks': {'state_type'}, 'subtasks': {'physical_slot_released'},
+    'partitions': {'state', 'last_sequence', 'tail_sequence', 'producer_position', 'released'},
+    'physical_slots': {'released', 'release_operation_id', 'released_at'},
+    'tag_allocations': {'released'}, 'assigned_workers': {'status'},
+    'limits': {'active_slots'}, 'grants': {'state'}, 'launches': {'state'},
+    'authority': {'state'}, 'coordinator_launches': {'state'},
+    'consumers': {'completed_through', 'inflight_sequence', 'delivery_present'},
+}
+
+
+def projection(data, family):
+    return sorted(json.dumps({key: val for key, val in row.items() if key not in mutable.get(family, set())}, sort_keys=True)
+                  for row in data['metadata'][family])
+
+
+for family in set(final['metadata']) - {'lease_history', 'consumers'}:
+    assert all(projection(data, family) == projection(captures[0][1], family) for _, data in all_captures), family
+assert all(projection(data, 'consumers') == projection(captures[0][1], 'consumers') for _, data in captures)
+intervals = [(right[1]['started_monotonic_ns'] - left[1]['started_monotonic_ns']) / 1e9
+             for left, right in zip(captures, captures[1:])]
+assert min(intervals) >= 65
+m = final['metadata']
+assert all(final['literal_release_checks'].values())
+assert m['scope'][0]['state'] == 'RELEASED' and m['scope'][0]['flow_state'] == 'COMPLETED'
+assert m['authority'][0]['state'] == m['coordinator_launches'][0]['state'] == 'RELEASED'
+assert len(m['tasks']) == 4 and all(x['state_type'] == 'COMPLETED' and x['run_count'] == 1 for x in m['tasks'])
+assert len(m['physical_slots']) == 4 and all(x['released'] and x['release_operation_id'] and x['released_at'] for x in m['physical_slots'])
+assert len(m['tag_allocations']) == 4 and all(x['released'] for x in m['tag_allocations'])
+assert len(m['limits']) == 2 and all(x['active_slots'] == 0 for x in m['limits'])
+assert m['flow_lease'][0]['deployment_active_slots'] == 0
+assert len(m['partitions']) == 7 and all(x['released'] and x['state'] == 'COMPLETED'
+    and x['last_sequence'] == x['tail_sequence'] == x['producer_position'] == 5000 for x in m['partitions'])
+assert not m['consumers']
+leases = [{x['lease_id'] for x in data['metadata']['lease_history'] if x['lease_id']} for _, data in all_captures]
+assert all(ids == leases[0] and len(ids) == 1 for ids in leases)
+accepted = load(FIXTURE / 'accepted-cursors.json')
+assert len(accepted['consumers']) == 3 and all(x['completed_through'] == 5000 and x['inflight_sequence'] is None for x in accepted['consumers'])
+history = [json.loads(line)['snapshot'] for line in (FIXTURE / 'progress.jsonl').read_text().splitlines()]
+for family, key, count in [('subtasks','subtask_id',4),('grants','id',4),('launches','id',4),('channels','id',7)]:
+    rows = [data for data in history if len(data.get(family, [])) == count]
+    reference = {x[key] for x in rows[0][family]}
+    assert all({x[key] for x in data[family]} == reference for data in rows)
+    assert all(len(data.get(family, [])) <= count for data in history)
+task_sets = [{x['task_run_id'] for x in data.get('subtasks', [])} for data in history if data.get('task_run_count') == 4]
+assert all(ids == task_sets[0] for ids in task_sets)
+assert all(data.get('task_run_count', 0) <= 4 for data in history)
+assert all(x.get('run_count', 0) <= 1 and x.get('physical_epoch', 0) <= 1 for data in history for x in data.get('subtasks', []))
+manifest = load(SQLBASE / 'preparation-manifest-v1.json')
+source_refs = []
+for root in [Path('/workspace/ariadne'), Path('/tmp/ariadne-native-5000-diagnosis-v1')]:
+    for ref in manifest['source_bindings']:
+        path = root / ref['path']; assert sha(path) == ref['sha256']; source_refs.append(bind(path))
+inputs = [bind(path) for path, _ in all_captures]
+inputs += [bind(path) for path in [native_path, TRIAL/'command.json', TRIAL/'source-before.json', TRIAL/'source-after.json',
+    FIXTURE/'progress.jsonl', FIXTURE/'accepted-cursors.json', FIXTURE/'final-progress.json', FIXTURE/'observations.json',
+    FIXTURE/'coordinator-retirement.json', FIXTURE/'worker-health.json', SQL/'live-observer-STOP-receipt-v1.json',
+    SQL/'live-observer-reap-proof-v1.json', TRIAL/'principal-extra-actors-reap-proof-v1.json',
+    BASE/'principal-sync5000-all-actors-STOP-adapter-v1.json', Path(__file__), SQLBASE/'preparation-manifest-v1.json']]
+inputs += [bind(SQLBASE/ref['path']) for ref in manifest['artifacts']]
+record = {'schema':'principal-closed-personal-sync5000-source-and-metadata-audit-v1',
+    'recorded_at':datetime.now(timezone.utc).isoformat(), 'status':'PASS_PERSONAL_SDK5000_AND_INDEPENDENT_19FAMILY_SQL_RELEASE',
+    'head':native['head'], 'trial':str(TRIAL), 'personal_actual_SDK_test_execution':True,
+    'new_tests_DBqueries_projectimports_by_this_file_audit':0, 'repository_changes':0,
+    'pytest_exit':0, 'native_tool_exit':0, 'SQL_observer_tool_exit':0, 'file_observer_tool_exit':0, 'final_SQL_tool_exit':0,
+    'junit_suite':native['body_wider_health']['pytest_suite'], 'exact_effects':15000,
+    'source_files':1600, 'source_drift':[], 'actual_import_rows':3884, 'import_mismatches':[],
+    'full_author_direct_PG_progress_records':len(history), 'full_progress_ID_sets_stable_at_full_count':True,
+    'actual_independent_live19_samples':28, 'first_independent_SQL_cursors':captures[0][1]['sql_cursors'],
+    'last_independent_SQL_cursors':captures[-1][1]['sql_cursors'], 'minimum_live_interval_seconds':min(intervals),
+    'immutable_mapping17families_stable_including_final':True, 'Consumer_owner_mapping_stable_in28live':True,
+    'all29_readonly_capture_connections_closed':True, 'final_counts':final['counts'],
+    'final_literal_checks':final['literal_release_checks'], 'persisted_distinct_lease_UUID_count':1,
+    'source_bindings_personally_rehashed_both_checkouts':source_refs, 'closed_inputs':inputs,
+    'limitations':[
+        'Actual personal SDK/TCP/OS/PG17 execution in this receipt is this one sync5000 only; prior personal async5000 is a separate receipt; no P2 run or completed NI2-014/fullunion/readiness credit from this receipt.',
+        'First own SQL frontier211/215/216 was before500; no activation-time or exact500 snapshot was captured or reconstructed.',
+        '19families including Consumer are each in one independent repeatable-read read-only transaction. Author progress/accepted snapshots are separate direct-PG ordinary multi-SELECT observations, not API reads or our atomic snapshots.',
+        'Discrete snapshots do not prove every intervening transition. Full retained author history only covers fields its unchanged helper selects.',
+        'Final independent Consumer rows are absent after cleanup; this does not prove retained literal5000 Consumer cursors. Author accepted snapshot has three literal5000 cursors separately.',
+        'Flow persisted lease UUID and SQL counters only; external KV lease backend and actual HTTP retry counter not inspected or inferred.',
+        'Native driver zero-session check predates finalSQL; final readonly connectionclosed is recorded, not a new post-final session-count query.',
+        'All original source/tests/budgets unchanged; only one provision-only fixture override; original destructive provisioning body0. Fresh DB retained, no drop/terminate/admin repair.',
+        'No throughput/SLO/CI-cause/5000forecast claim. All grill-me/spec-first excluded; conflict scan incomplete.',
+    ]}
+path = BASE / 'principal-personal-sync5000-closed-audit-v1.json'
+with path.open('x') as stream:
+    json.dump(record, stream, indent=2, sort_keys=True); stream.write('\n')
+print(json.dumps({'path':str(path),'sha256':sha(path),'status':record['status'],'closed_input_hashes':len(inputs),'full_history_records':len(history)}))

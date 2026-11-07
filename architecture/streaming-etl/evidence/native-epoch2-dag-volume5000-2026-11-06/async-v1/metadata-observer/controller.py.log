@@ -1,0 +1,36 @@
+"""Root-authorized <=1/min current-owned-trial read-only metadata sampling."""
+import datetime,hashlib,json,os,pathlib,subprocess,sys,time
+BASE=pathlib.Path('/tmp/native-async5000-metadata-observer-d906-v1');TRIAL=pathlib.Path('/tmp/native-n2-2-volume5000-preparation-recovery2-v1/async5000-7644c487');FIXTURE=TRIAL/'pytest/test_public_dag_bounded_volume0'
+def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def ticks(pid):return pathlib.Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()[19]
+def write(p,x):
+ with p.open('x') as f:f.write(json.dumps(x,indent=2,sort_keys=True)+'\n')
+ p.chmod(0o600)
+os.umask(0o077)
+identity={'observer_controller_pid':os.getpid(),'observer_controller_start_ticks':ticks(os.getpid()),'native_pytest_pid':376654,'native_pytest_start_ticks':'14451472','script_sha256':sha(BASE/'controller.py'),'oneshot_sha256':sha(BASE/'observer_v2.py'),'sql_sha256':sha(BASE/'queries.json'),'scope':'CURRENT_OWNED_async5000-7644c487_ONLY','sampling_min_seconds':65,'no_db_connections_in_controller':True}
+write(BASE/'controller-identity.json',identity);print(json.dumps({'status':'OBSERVER_CONTROLLER_RUNNING',**identity}),flush=True)
+reason='UNKNOWN';last_summary=None
+try:
+ while True:
+  if (BASE/'STOP_REQUESTED').exists():reason='ROOT_STOP_REQUESTED';break
+  if (TRIAL/'exit').exists():reason='NATIVE_TEST_STOPPED_NO_MORE_DB_QUERIES';break
+  try:
+   if ticks(376654)!='14451472':reason='NATIVE_PID_IDENTITY_CHANGED_NO_MORE_DB_QUERIES';break
+  except FileNotFoundError:reason='NATIVE_PID_GONE_NO_MORE_DB_QUERIES';break
+  progress=json.loads((FIXTURE/'progress.jsonl').read_text().splitlines()[-1]);cursors=[v['completed_through'] for v in progress['snapshot'].get('consumers',[])]
+  if (FIXTURE/'all-cursors-observed').exists() or (len(cursors)==3 and min(cursors)>=4900):reason='PRE_TERMINAL_4900_OR_ALL_CURSORS_MARKER';break
+  previous=list(BASE.glob('sample-*.json'));latest=max([json.loads(p.read_text())['started_monotonic_ns'] for p in previous],default=0)
+  if time.monotonic_ns()-latest>=65_000_000_000:
+   result=subprocess.run([sys.executable,str(BASE/'observer_v2.py')],cwd='/workspace/ariadne',capture_output=True,text=True)
+   try:last_summary=json.loads(result.stdout.strip().splitlines()[-1])
+   except (ValueError,IndexError):last_summary={'status':'CAPTURE_HARNESS_INCONCLUSIVE','exit':result.returncode}
+   print(json.dumps(last_summary),flush=True)
+   if result.returncode or last_summary['status']!='ACTUAL_READONLY_MVCC_CAPTURE':reason='FAIL_CLOSED_'+last_summary['status'];break
+  time.sleep(10)
+except Exception as error:reason='FAIL_CLOSED_'+type(error).__name__
+finally:
+ samples=[]
+ for p in sorted(BASE.glob('sample-*.json')):
+  x=json.loads(p.read_text());samples.append({'path':str(p),'sha256':sha(p),'status':x['status'],'read_only':x.get('database_context',{}).get('read_only'),'backend_pid':x.get('database_context',{}).get('backend_pid'),'connection_closed':x.get('connection_closed','v1_finally_await_close_completed_before_success_stdout'),'cursors':[v['completed_through'] for v in x['progress_record']['snapshot'].get('consumers',[])]})
+ receipt={'schema':'current-owned-async5000-mvcc-observer-stop-v1','status':'DB_OBSERVER_STOPPED_NO_MORE_CONNECTIONS','recorded_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'reason':reason,'identity':identity,'samples':samples,'last_summary':last_summary,'outstanding_capture_process':None,'controller_database_connections':0,'scope':'Only exactownednative_ni012_runtime_v5_e033736e_tests_master Flow8830e565-b6b0-4404-87f5-d5000173b2a7','limitations':['FirstactualPGcapturewas692/690/694, not a retroactive500 checkpoint','No SQL finalization-after-release guarantee; observer stops beforeteardown','Flow concurrency lease backend outsidePG not inspected; only persisted state leaseUUID+deploymentcounter observed','No normal500-workloadbaseline substituted; old7d99 not credited']}
+ p=BASE/'observer-STOP-receipt-v1.json';write(p,receipt);print(json.dumps({'status':receipt['status'],'reason':reason,'receipt':str(p),'sha256':sha(p),'samples':len(samples)}),flush=True)

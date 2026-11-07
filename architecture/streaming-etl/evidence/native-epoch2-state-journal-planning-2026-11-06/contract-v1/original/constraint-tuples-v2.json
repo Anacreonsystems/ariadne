@@ -1,0 +1,757 @@
+{
+  "schema": "ni020a-proposed-constraint-tuples-v2",
+  "status": "PLANNING_NOT_EXECUTED",
+  "source_head": "d906ceca414baeac825ce472e0b78cd1dcae3363",
+  "types": {
+    "ids": "UUID",
+    "digests": "lowercasehex64",
+    "counters": "signedBIGINT withAPIoverflowguard",
+    "postimages": "existing stream_value_JSON"
+  },
+  "existing_table_additions": [
+    {
+      "table": "stream_operator_run",
+      "unique": [
+        "id",
+        "graph_revision_id",
+        "profile",
+        "role"
+      ]
+    },
+    {
+      "table": "stream_physical_subtask",
+      "unique": [
+        "id",
+        "graph_revision_id",
+        "operator_run_id",
+        "assignment_epoch",
+        "subtask_index"
+      ]
+    },
+    {
+      "table": "stream_record",
+      "unique": [
+        "id",
+        "graph_revision_id",
+        "stream_id",
+        "sequence"
+      ]
+    },
+    {
+      "table": "stream_route_receipt",
+      "unique": [
+        "id",
+        "graph_revision_id",
+        "consumer_id",
+        "input_sequence",
+        "kind",
+        "semantic_digest",
+        "input_reference_record_id",
+        "input_payload_record_id",
+        "input_payload_value_digest"
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "name": "stream_state_owner",
+      "columns": {
+        "ids": "id,graph_revision_id,flow_run_id,operator_run_id,origin_subtask_id",
+        "immutable": "profile=partitioned-dag-v2,role=OPERATOR,origin_assignment_epoch=1,origin_partition_index,state_uid,compatibility_digest",
+        "frontier": "accepted_ordinal,accepted_version,accepted_state_digest,accepted_chain_root",
+        "quota": "max_batches,max_retained_bytes,max_postimage_bytes,max_batch_metadata_bytes=4096,retained_batch_count,retained_bytes,reserved_count,reserved_bytes"
+      },
+      "pk": [
+        "id"
+      ],
+      "unique": [
+        [
+          "id",
+          "graph_revision_id"
+        ],
+        [
+          "id",
+          "graph_revision_id",
+          "flow_run_id"
+        ],
+        [
+          "id",
+          "graph_revision_id",
+          "origin_subtask_id"
+        ],
+        [
+          "graph_revision_id",
+          "origin_assignment_epoch",
+          "operator_run_id",
+          "state_uid",
+          "origin_partition_index"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "graph_revision_id",
+            "flow_run_id"
+          ],
+          "target": "stream_graph_revision",
+          "target_columns": [
+            "id",
+            "flow_run_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "operator_run_id",
+            "graph_revision_id",
+            "profile",
+            "role"
+          ],
+          "target": "stream_operator_run",
+          "target_columns": [
+            "id",
+            "graph_revision_id",
+            "profile",
+            "role"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "origin_subtask_id",
+            "graph_revision_id",
+            "operator_run_id",
+            "origin_assignment_epoch",
+            "origin_partition_index"
+          ],
+          "target": "stream_physical_subtask",
+          "target_columns": [
+            "id",
+            "graph_revision_id",
+            "operator_run_id",
+            "assignment_epoch",
+            "subtask_index"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        }
+      ],
+      "checks": [
+        "profile=partitioned-dag-v2 AND role=OPERATOR AND origin_assignment_epoch=1",
+        "origin_partition_index BETWEEN 0 AND 15; state_uid ASCII Identifier length1..64",
+        "accepted_version=accepted_ordinal AND retained_batch_count=accepted_ordinal",
+        "all progress/usage counters signed BIGINT nonnegative",
+        "retained_batch_count+reserved_count<=max_batches",
+        "retained_bytes+reserved_bytes<=max_retained_bytes",
+        "reserved_count IN (0,1); reserved_bytes IN (0,max_postimage_bytes+4096)",
+        "digest fields lowercasehex64"
+      ]
+    },
+    {
+      "name": "stream_state_owner_binding",
+      "columns": {
+        "ids": "owner_id,graph_revision_id,origin_subtask_id,subtask_id",
+        "immutable020a": "assignment_epoch=1,current=true"
+      },
+      "pk": [
+        "owner_id"
+      ],
+      "unique": [
+        [
+          "owner_id",
+          "graph_revision_id",
+          "subtask_id"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "owner_id",
+            "graph_revision_id",
+            "origin_subtask_id"
+          ],
+          "target": "stream_state_owner",
+          "target_columns": [
+            "id",
+            "graph_revision_id",
+            "origin_subtask_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "subtask_id",
+            "graph_revision_id"
+          ],
+          "target": "stream_physical_subtask",
+          "target_columns": [
+            "id",
+            "graph_revision_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        }
+      ],
+      "checks": [
+        "subtask_id=origin_subtask_id AND assignment_epoch=1",
+        "binding row has no physical grant/attempt in its logical key; no transfer in020a"
+      ]
+    },
+    {
+      "name": "stream_state_owner_input",
+      "columns": {
+        "ids": "id,owner_id,graph_revision_id,origin_subtask_id,input_port_id,edge_id,edge_partition_id,consumer_id,input_stream_id",
+        "immutable": "input_port_uid,subscriber_uid",
+        "cursor": "accepted_data_sequence,accepted_log_position"
+      },
+      "pk": [
+        "id"
+      ],
+      "unique": [
+        [
+          "id",
+          "owner_id",
+          "graph_revision_id",
+          "consumer_id",
+          "input_stream_id"
+        ],
+        [
+          "owner_id"
+        ],
+        [
+          "id",
+          "owner_id",
+          "graph_revision_id",
+          "input_port_id",
+          "consumer_id",
+          "input_stream_id"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "owner_id",
+            "graph_revision_id",
+            "origin_subtask_id"
+          ],
+          "target": "stream_state_owner",
+          "target_columns": [
+            "id",
+            "graph_revision_id",
+            "origin_subtask_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "edge_partition_id",
+            "graph_revision_id",
+            "edge_id",
+            "origin_subtask_id",
+            "input_stream_id",
+            "consumer_id"
+          ],
+          "target": "stream_graph_edge_partition",
+          "target_columns": [
+            "id",
+            "graph_revision_id",
+            "edge_id",
+            "target_subtask_id",
+            "stream_id",
+            "subscriber_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "edge_id",
+            "graph_revision_id",
+            "subscriber_uid",
+            "input_port_id"
+          ],
+          "target": "stream_graph_edge",
+          "target_columns": [
+            "id",
+            "graph_revision_id",
+            "subscriber_uid",
+            "consumer_port_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "input_port_id",
+            "graph_revision_id",
+            "input_port_uid"
+          ],
+          "target": "stream_graph_port",
+          "target_columns": [
+            "id",
+            "graph_revision_id",
+            "port_uid"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        }
+      ],
+      "checks": [
+        "accepted_data_sequence>=0 AND accepted_log_position>=accepted_data_sequence",
+        "consumer_id is sealed subscriber ID; no Consumer FK here because row may not yet exist at seal",
+        "one input per owner in020a; multi-input changes this explicit profile constraint"
+      ]
+    },
+    {
+      "name": "stream_partition_log",
+      "columns": {
+        "ids": "graph_revision_id,flow_run_id,stream_id,data_record_id",
+        "ordering": "log_position,data_sequence,entry_kind=DATA"
+      },
+      "pk": [
+        "stream_id",
+        "log_position"
+      ],
+      "unique": [
+        [
+          "data_record_id"
+        ],
+        [
+          "stream_id",
+          "data_sequence"
+        ],
+        [
+          "stream_id",
+          "log_position",
+          "data_sequence",
+          "data_record_id"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "graph_revision_id",
+            "flow_run_id"
+          ],
+          "target": "stream_graph_revision",
+          "target_columns": [
+            "id",
+            "flow_run_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "stream_id",
+            "flow_run_id"
+          ],
+          "target": "stream_partition",
+          "target_columns": [
+            "id",
+            "flow_run_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "data_record_id",
+            "graph_revision_id",
+            "stream_id",
+            "data_sequence"
+          ],
+          "target": "stream_record",
+          "target_columns": [
+            "id",
+            "graph_revision_id",
+            "stream_id",
+            "sequence"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        }
+      ],
+      "checks": [
+        "entry_kind=DATA; log_position=data_sequence AND data_sequence>0",
+        "no BARRIER/cut columns or rows enabled in020a; later024a paired migration must change the shape under explicit feature admission"
+      ]
+    },
+    {
+      "name": "stream_state_batch",
+      "columns": {
+        "ids": "id,owner_id,input_id,graph_revision_id,flow_run_id,input_port_id,consumer_id,input_stream_id,input_reference_id,input_payload_id,route_receipt_id,reservation_id",
+        "order": "input_sequence,input_log_position,apply_ordinal,before_version,after_version",
+        "hashes": "compatibility_digest,before_state_digest,after_state_digest,previous_chain_root,chain_root,batch_digest,route_semantic_digest,route_outcome_digest,input_payload_digest",
+        "payload": "kind,postimage(stream_value_JSON),charged_bytes",
+        "audit_nonsemantic": "author_task_run_id,author_grant_id,author_physical_epoch,author_task_run_count,author_subtask_id"
+      },
+      "pk": [
+        "id"
+      ],
+      "unique": [
+        [
+          "owner_id",
+          "apply_ordinal"
+        ],
+        [
+          "input_id",
+          "input_sequence"
+        ],
+        [
+          "route_receipt_id"
+        ],
+        [
+          "reservation_id"
+        ],
+        [
+          "id",
+          "owner_id",
+          "graph_revision_id"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "owner_id",
+            "graph_revision_id",
+            "flow_run_id"
+          ],
+          "target": "stream_state_owner",
+          "target_columns": [
+            "id",
+            "graph_revision_id",
+            "flow_run_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "input_id",
+            "owner_id",
+            "graph_revision_id",
+            "input_port_id",
+            "consumer_id",
+            "input_stream_id"
+          ],
+          "target": "stream_state_owner_input",
+          "target_columns": [
+            "id",
+            "owner_id",
+            "graph_revision_id",
+            "input_port_id",
+            "consumer_id",
+            "input_stream_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "input_stream_id",
+            "input_log_position",
+            "input_sequence",
+            "input_reference_id"
+          ],
+          "target": "stream_partition_log",
+          "target_columns": [
+            "stream_id",
+            "log_position",
+            "data_sequence",
+            "data_record_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "route_receipt_id",
+            "graph_revision_id",
+            "consumer_id",
+            "input_sequence",
+            "kind",
+            "route_semantic_digest",
+            "input_reference_id",
+            "input_payload_id",
+            "input_payload_digest"
+          ],
+          "target": "stream_route_receipt",
+          "target_columns": [
+            "id",
+            "graph_revision_id",
+            "consumer_id",
+            "input_sequence",
+            "kind",
+            "semantic_digest",
+            "input_reference_record_id",
+            "input_payload_record_id",
+            "input_payload_value_digest"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "author_grant_id",
+            "author_subtask_id",
+            "author_physical_epoch"
+          ],
+          "target": "stream_subtask_grant",
+          "target_columns": [
+            "id",
+            "subtask_id",
+            "physical_epoch"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "author_subtask_id",
+            "graph_revision_id",
+            "author_task_run_id"
+          ],
+          "target": "stream_physical_subtask",
+          "target_columns": [
+            "id",
+            "graph_revision_id",
+            "task_run_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        }
+      ],
+      "checks": [
+        "apply_ordinal=after_version AND after_version=before_version+1 AND before_version>=0",
+        "kind IN (YIELD,RETURN); payload/key/RETURN shapes validated by same versioned terminal engine",
+        "charged_bytes>0 AND actualcanonicalpacket=charged_bytes; cap before acceptance",
+        "physical author fields excluded from logical batch digest and logical ID",
+        "no FK to mutable current reservation slot; UNIQUE reservation_id proves one conversion"
+      ]
+    },
+    {
+      "name": "stream_state_reservation",
+      "columns": {
+        "ids": "owner_id,graph_revision_id,input_id,consumer_id,input_stream_id,reservation_id,input_reference_id",
+        "held": "phase=NONE|HELD,input_sequence,before_version,before_state_digest,before_chain_root,reserved_bytes,delivery_id,current_task_run_count"
+      },
+      "pk": [
+        "owner_id"
+      ],
+      "unique": [
+        [
+          "reservation_id"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "owner_id",
+            "graph_revision_id"
+          ],
+          "target": "stream_state_owner",
+          "target_columns": [
+            "id",
+            "graph_revision_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "input_id",
+            "owner_id",
+            "graph_revision_id",
+            "consumer_id",
+            "input_stream_id"
+          ],
+          "target": "stream_state_owner_input",
+          "target_columns": [
+            "id",
+            "owner_id",
+            "graph_revision_id",
+            "consumer_id",
+            "input_stream_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        }
+      ],
+      "checks": [
+        "NONE=>reservation_id/input fieldsNULL,reserved_bytes=0; HELD=>logicalinputfieldsnonNULL,reserved_bytes=S+4096",
+        "one slot perowner; held identity remains across newdelivery/localretry/physicalreplacement",
+        "metadata encoded bound4096, never rawpostimage"
+      ]
+    },
+    {
+      "name": "stream_state_restore_attempt",
+      "columns": {
+        "ids": "id,owner_id,graph_revision_id,subtask_id,grant_id,task_run_id",
+        "frozen": "physical_epoch,bootstrap_digest,prestart_task_run_count,prestart_state_id,prestart_state_type,target_digest,target_ordinal,target_version,target_state_digest,target_chain_root,target_input_cursor,genesis_digest",
+        "bounded_mutable": "phase,last_page_from,last_page_through,last_page_digest,ready_witness"
+      },
+      "pk": [
+        "id"
+      ],
+      "unique": [
+        [
+          "owner_id",
+          "grant_id"
+        ],
+        [
+          "id",
+          "owner_id",
+          "grant_id"
+        ]
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "owner_id",
+            "graph_revision_id",
+            "subtask_id"
+          ],
+          "target": "stream_state_owner_binding",
+          "target_columns": [
+            "owner_id",
+            "graph_revision_id",
+            "subtask_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "grant_id",
+            "subtask_id",
+            "physical_epoch"
+          ],
+          "target": "stream_subtask_grant",
+          "target_columns": [
+            "id",
+            "subtask_id",
+            "physical_epoch"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "subtask_id",
+            "graph_revision_id",
+            "task_run_id"
+          ],
+          "target": "stream_physical_subtask",
+          "target_columns": [
+            "id",
+            "graph_revision_id",
+            "task_run_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        }
+      ],
+      "checks": [
+        "prestart_state_type IN (PENDING,SCHEDULED); prestart_task_run_count>=0, notepochderived",
+        "phase IN (MATERIALIZING,READY,FENCED)",
+        "no mutable target; metadata packet cap8192; one perphysicalgrant=>max64 perowner; no perpage rows"
+      ]
+    },
+    {
+      "name": "stream_state_cache",
+      "columns": {
+        "ids": "owner_id,graph_revision_id,restore_id,grant_id",
+        "derived": "phase=UNMATERIALIZED|MATERIALIZING|READY,verified_ordinal,state_digest,chain_root,postimage(stream_value_JSON)"
+      },
+      "pk": [
+        "owner_id"
+      ],
+      "unique": [],
+      "foreign_keys": [
+        {
+          "columns": [
+            "owner_id",
+            "graph_revision_id"
+          ],
+          "target": "stream_state_owner",
+          "target_columns": [
+            "id",
+            "graph_revision_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        },
+        {
+          "columns": [
+            "restore_id",
+            "owner_id",
+            "grant_id"
+          ],
+          "target": "stream_state_restore_attempt",
+          "target_columns": [
+            "id",
+            "owner_id",
+            "grant_id"
+          ],
+          "ondelete": "RESTRICT",
+          "deferred": false
+        }
+      ],
+      "checks": [
+        "UNMATERIALIZED=>restore/grantNULL; materializing/ready=>nonNULLexactrestore",
+        "postimage<=S; metadata<=4096",
+        "READY afterbusiness mayhaveverified_ordinal>frozenRestoreTarget; currentOwner/cache compare governsread",
+        "no authoritative accepted progress inthis row"
+      ]
+    }
+  ],
+  "newFKdefer_policy": "RESTRICT immediate unless explicitly shown; no new deferredstateFK",
+  "terminal_delete_order": [
+    "stream_state_cache",
+    "stream_state_restore_attempt",
+    "stream_state_reservation",
+    "stream_state_batch",
+    "stream_partition_log",
+    "stream_state_owner_input",
+    "stream_state_owner_binding",
+    "stream_state_owner",
+    "existing StreamRecord REFERENCE rows (existing deferred input-reference FK remains deferred)",
+    "existing StreamCompletion",
+    "existing StreamRouteReceipt",
+    "existing StreamConsumer",
+    "remaining existing StreamRecord PAYLOAD rows",
+    "existing verified allocation/submission/partition release"
+  ],
+  "no_online_gc": true,
+  "no_opaque_json_rescale": true,
+  "review_note": "DDL creation/type/index/foreignkeynegative roundtrips are required before enabling code; these tuples are a proposed exactcontract, not executed SQL.",
+  "cleanup_guards": {
+    "all_paths": [
+      "unadmittedzero-processpreviewabort",
+      "startupabort",
+      "cancel/failure stoppedcontrol",
+      "normalcompletedgraph"
+    ],
+    "before_new_cleanup": "Existing exact currentGraph UPDATE fence plus existing exact process-closure proof (or zero-process preview proof); neverdeleteacceptedstatewhilelive",
+    "new_log_dependency": "StateBatch pins StreamPartitionLog; StreamPartitionLog RESTRICTpins StreamRecord. Deletebatch beforelog, log before ANY existingrecord/reference delete.",
+    "negative_falsifier": "UnderownedrealPGcase skiplogdeletion and assertimmediateFKrejectsrecorddelete. Properv2finalizer succeeds allnormal/abort/cancelpaths afterclosure; noearlydataGC."
+  },
+  "accepted_verification": [
+    "batch.after_state_digest == SHA256(canonical(batch.postimage)) == receipt.managed_state_digest",
+    "batch.route_outcome_digest == receipt.outcome_digest == verifiedcanonicalstoredoutcome digest",
+    "batch.route_semantic_digest == receipt.semantic_digest",
+    "batchgraph/owner/inputlineage/sequence/reference/payload/kind exactFKtuple; actualretainedroute/payload/reference proof rechecked",
+    "batchlogicaldigest/previouschainroot/chainroot verifiedcontiguously; ownerfrontier matched onlyafterallrequiredordinals",
+    "receiptwithoutbatch orbatchwithoutreceipt failsSTATE_HISTORY_INCOMPLETE; neverfreshreaccept/replaybody"
+  ],
+  "wire_storage_name_mapping": {
+    "owner_uid": "stored state_uid exactlysameASCIIIdentifier bytes, no normalization",
+    "input_reference_id": "existing receipt.input_reference_record_id",
+    "input_payload_id": "existing receipt.input_payload_record_id"
+  }
+}

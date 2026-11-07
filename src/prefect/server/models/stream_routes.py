@@ -28,7 +28,6 @@ from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.models.stream_executions import require_execution
 from prefect.server.models.stream_subtask_authority import (
     require_physical_backend,
-    require_subtask,
 )
 from prefect.server.models.streams import (
     canonical_stream_payload,
@@ -127,15 +126,19 @@ async def require_dag_route_execution(
     db: PrefectDBInterface,
     request: RouteRequest,
     execution: RouteCredentials,
-) -> NoReturn:
-    """Authenticate current callers before the common NI2-012 execution fence."""
+) -> s.StreamDAGRouteOutcome:
+    """Dispatch only exact scoped DAG children; Flow holders keep the fence."""
     if isinstance(execution, StreamSubtaskCredentials):
-        await require_subtask(
-            session,
-            db,
-            execution,
-            subtask_id=request.context.producer_subtask_id,
-            flow_run_id=request.binding.flow_run_id,
+        # The lifecycle service reuses this module's transaction store; defer
+        # this inverse edge solely to break that genuine import cycle.
+        from prefect.server.models import stream_dag_executions
+
+        if isinstance(request, s.StreamDAGSourceAppendRequest):
+            return await stream_dag_executions.append_stream_dag_source(
+                session, db, request, execution
+            )
+        return await stream_dag_executions.complete_stream_dag_consumer(
+            session, db, request, execution
         )
     else:
         plan = await stream_dags.read_dag_plan(

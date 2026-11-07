@@ -1,0 +1,974 @@
+﻿2026-11-05T17:37:55.7699682Z Current runner version: '2.338.2'
+2026-11-05T17:37:55.7722512Z Runner name: 'anacreon-runners-runner-ltxbt'
+2026-11-05T17:37:55.7724272Z Runner group name: 'default'
+2026-11-05T17:37:55.7726028Z Machine name: 'anacreon-runners-runner-ltxbt'
+2026-11-05T17:37:55.7731597Z ##[group]GITHUB_TOKEN Permissions
+2026-11-05T17:37:55.7738777Z Actions: write
+2026-11-05T17:37:55.7739800Z Contents: read
+2026-11-05T17:37:55.7740917Z Metadata: read
+2026-11-05T17:37:55.7741893Z ##[endgroup]
+2026-11-05T17:37:55.7749047Z Secret source: Actions
+2026-11-05T17:37:55.7750708Z Cache mode: write
+2026-11-05T17:37:55.7752282Z Prepare workflow directory
+2026-11-05T17:37:55.8957942Z Prepare all required actions
+2026-11-05T17:37:55.9120121Z Getting action download info
+2026-11-05T17:37:56.6886879Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-11-05T17:37:57.5680807Z Download action repository 'astral-sh/setup-uv@v10.0.1' (SHA:20cfd1bf945f4377ade1205e4dbc17946fc9a30d)
+2026-11-05T17:37:58.5684828Z Download action repository 'actions/setup-node@v7' (SHA:949feb2413d6458794dcd2491c4babbbce0c15c1)
+2026-11-05T17:37:59.6903349Z Download action repository 'actions/upload-artifact@v7' (SHA:cf430e030ddbb5b0abf93d22962f4752f3646cd9)
+2026-11-05T17:38:00.7690443Z Complete job name: Native DAG execution - python:3.12, sqlite
+2026-11-05T17:38:00.9009871Z ##[group]Checking docker version
+2026-11-05T17:38:00.9040781Z ##[command]/usr/bin/docker version --format '{{.Server.APIVersion}}'
+2026-11-05T17:38:00.9729445Z '1.56'
+2026-11-05T17:38:00.9759846Z Docker daemon API version: '1.56'
+2026-11-05T17:38:00.9761022Z ##[command]/usr/bin/docker version --format '{{.Client.APIVersion}}'
+2026-11-05T17:38:01.0371117Z '1.56'
+2026-11-05T17:38:01.0416058Z Docker client API version: '1.56'
+2026-11-05T17:38:01.0433936Z ##[endgroup]
+2026-11-05T17:38:01.0439244Z ##[group]Clean up resources from previous jobs
+2026-11-05T17:38:01.0453477Z ##[command]/usr/bin/docker ps --all --quiet --no-trunc --filter "label=9acd14"
+2026-11-05T17:38:01.1044633Z ##[command]/usr/bin/docker network prune --force --filter "label=9acd14"
+2026-11-05T17:38:01.1563831Z ##[endgroup]
+2026-11-05T17:38:01.1564685Z ##[group]Create local container network
+2026-11-05T17:38:01.1593311Z ##[command]/usr/bin/docker network create --label 9acd14 github_network_07983bda4ecb407b9b8d8b4a1cf3670f
+2026-11-05T17:38:01.2907506Z 8ce10f133830eeca3a64d632115e469fedec748ff6611996194a3cf36de08c05
+2026-11-05T17:38:01.2958950Z ##[endgroup]
+2026-11-05T17:38:01.3027344Z ##[group]Starting postgres service container
+2026-11-05T17:38:01.3079085Z ##[command]/usr/bin/docker pull postgres:17
+2026-11-05T17:38:02.6785533Z 17: Pulling from library/postgres
+2026-11-05T17:38:03.4101446Z ceeafc939069: Pulling fs layer
+2026-11-05T17:38:03.4135892Z 37fb86c2a767: Pulling fs layer
+2026-11-05T17:38:03.4142695Z 56c5b61c6d2b: Pulling fs layer
+2026-11-05T17:38:03.4144069Z c2f4b34f5119: Pulling fs layer
+2026-11-05T17:38:03.4147122Z d717e9509665: Pulling fs layer
+2026-11-05T17:38:03.4148037Z 046371a447cc: Pulling fs layer
+2026-11-05T17:38:03.4148947Z c97a680633a2: Pulling fs layer
+2026-11-05T17:38:03.4149810Z f0f18338e0da: Pulling fs layer
+2026-11-05T17:38:03.4150721Z 0eab0a63b06d: Pulling fs layer
+2026-11-05T17:38:03.4151701Z 9de238338a9a: Pulling fs layer
+2026-11-05T17:38:03.4152989Z 275aa943d416: Pulling fs layer
+2026-11-05T17:38:03.4167044Z 5760334e16b5: Pulling fs layer
+2026-11-05T17:38:03.4169114Z d35c08e535dc: Pulling fs layer
+2026-11-05T17:38:03.4170219Z 4f0fb6572de8: Pulling fs layer
+2026-11-05T17:38:03.6815825Z 4f0fb6572de8: Download complete
+2026-11-05T17:38:03.6817793Z ceeafc939069: Download complete
+2026-11-05T17:38:03.9749275Z f0f18338e0da: Download complete
+2026-11-05T17:38:04.2727844Z c2f4b34f5119: Download complete
+2026-11-05T17:38:04.4733847Z 275aa943d416: Download complete
+2026-11-05T17:38:04.5774611Z 046371a447cc: Download complete
+2026-11-05T17:38:04.6715391Z 0eab0a63b06d: Download complete
+2026-11-05T17:38:04.6717754Z 37fb86c2a767: Download complete
+2026-11-05T17:38:04.8823324Z 5760334e16b5: Download complete
+2026-11-05T17:38:04.8847950Z c97a680633a2: Download complete
+2026-11-05T17:38:05.0709213Z d35c08e535dc: Download complete
+2026-11-05T17:38:05.1693236Z d717e9509665: Download complete
+2026-11-05T17:38:05.2686319Z 56c5b61c6d2b: Download complete
+2026-11-05T17:38:05.5745165Z b40edbb0adb6: Download complete
+2026-11-05T17:38:05.6685331Z b9ed2b0f585a: Download complete
+2026-11-05T17:38:06.9763758Z 37fb86c2a767: Pull complete
+2026-11-05T17:38:06.9804755Z 56c5b61c6d2b: Pull complete
+2026-11-05T17:38:07.4707121Z 9de238338a9a: Download complete
+2026-11-05T17:38:07.4711028Z c2f4b34f5119: Pull complete
+2026-11-05T17:38:07.5740217Z d717e9509665: Pull complete
+2026-11-05T17:38:08.0716097Z 046371a447cc: Pull complete
+2026-11-05T17:38:08.1712539Z c97a680633a2: Pull complete
+2026-11-05T17:38:08.2707935Z f0f18338e0da: Pull complete
+2026-11-05T17:38:08.2723413Z 0eab0a63b06d: Pull complete
+2026-11-05T17:38:13.6741567Z 275aa943d416: Pull complete
+2026-11-05T17:38:13.6755103Z 5760334e16b5: Pull complete
+2026-11-05T17:38:13.6773645Z d35c08e535dc: Pull complete
+2026-11-05T17:38:13.6775840Z 9de238338a9a: Pull complete
+2026-11-05T17:38:13.7458874Z 4f0fb6572de8: Pull complete
+2026-11-05T17:38:13.7497876Z ceeafc939069: Pull complete
+2026-11-05T17:38:13.7500314Z Digest: sha256:748a18a54d3842d43bc156f0840d78029b8d349e0feca98c12b9c4ce3404a6b3
+2026-11-05T17:38:13.7502789Z Status: Downloaded newer image for postgres:17
+2026-11-05T17:38:13.7533248Z docker.io/library/postgres:17
+2026-11-05T17:38:13.7708951Z ##[command]/usr/bin/docker create --name 9813061559b8469caf4669215640f98e_postgres17_9d29b6 --label 9acd14 --network github_network_07983bda4ecb407b9b8d8b4a1cf3670f --network-alias postgres -p 5432/tcp --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 -e "POSTGRES_USER=prefect" -e "POSTGRES_PASSWORD=prefect" -e "POSTGRES_DB=prefect" -e GITHUB_ACTIONS=true -e CI=true postgres:17
+2026-11-05T17:38:14.6510419Z f6c9692356728b45b85571fe2568fa39b26af4f96361261af0fe991e7e445a69
+2026-11-05T17:38:14.6657576Z ##[command]/usr/bin/docker start f6c9692356728b45b85571fe2568fa39b26af4f96361261af0fe991e7e445a69
+2026-11-05T17:38:15.0841485Z f6c9692356728b45b85571fe2568fa39b26af4f96361261af0fe991e7e445a69
+2026-11-05T17:38:15.0939382Z ##[command]/usr/bin/docker ps --all --filter id=f6c9692356728b45b85571fe2568fa39b26af4f96361261af0fe991e7e445a69 --filter status=running --no-trunc --format "{{.ID}} {{.Status}}"
+2026-11-05T17:38:15.1852816Z f6c9692356728b45b85571fe2568fa39b26af4f96361261af0fe991e7e445a69 Up Less than a second (health: starting)
+2026-11-05T17:38:15.1939395Z ##[command]/usr/bin/docker port f6c9692356728b45b85571fe2568fa39b26af4f96361261af0fe991e7e445a69
+2026-11-05T17:38:15.2602891Z 5432/tcp -> 0.0.0.0:32768
+2026-11-05T17:38:15.2631438Z 5432/tcp -> [::]:32768
+2026-11-05T17:38:15.2739841Z ##[endgroup]
+2026-11-05T17:38:15.2762999Z ##[group]Waiting for all services to be ready
+2026-11-05T17:38:15.2790282Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" f6c9692356728b45b85571fe2568fa39b26af4f96361261af0fe991e7e445a69
+2026-11-05T17:38:15.3577407Z starting
+2026-11-05T17:38:15.3670437Z postgres service is starting, waiting 2 seconds before checking again.
+2026-11-05T17:38:17.3671869Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" f6c9692356728b45b85571fe2568fa39b26af4f96361261af0fe991e7e445a69
+2026-11-05T17:38:17.4350921Z starting
+2026-11-05T17:38:17.4463091Z postgres service is starting, waiting 3 seconds before checking again.
+2026-11-05T17:38:21.1843177Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" f6c9692356728b45b85571fe2568fa39b26af4f96361261af0fe991e7e445a69
+2026-11-05T17:38:21.2364848Z starting
+2026-11-05T17:38:21.2398965Z postgres service is starting, waiting 7 seconds before checking again.
+2026-11-05T17:38:28.7719229Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" f6c9692356728b45b85571fe2568fa39b26af4f96361261af0fe991e7e445a69
+2026-11-05T17:38:28.8230211Z healthy
+2026-11-05T17:38:28.8271510Z postgres service is healthy.
+2026-11-05T17:38:28.8274035Z ##[endgroup]
+2026-11-05T17:38:28.9658545Z ##[group]Run actions/checkout@v7
+2026-11-05T17:38:28.9660480Z with:
+2026-11-05T17:38:28.9661084Z   persist-credentials: false
+2026-11-05T17:38:28.9661908Z   fetch-depth: 0
+2026-11-05T17:38:28.9662808Z   filter: blob:none
+2026-11-05T17:38:28.9663564Z   repository: Anacreonsystems/ariadne
+2026-11-05T17:38:28.9674195Z   token: ***
+2026-11-05T17:38:28.9674849Z   ssh-strict: true
+2026-11-05T17:38:28.9675516Z   ssh-user: git
+2026-11-05T17:38:28.9676104Z   clean: true
+2026-11-05T17:38:28.9676746Z   sparse-checkout-cone-mode: true
+2026-11-05T17:38:28.9677544Z   fetch-tags: false
+2026-11-05T17:38:28.9678174Z   show-progress: true
+2026-11-05T17:38:28.9678784Z   lfs: false
+2026-11-05T17:38:28.9679361Z   submodules: false
+2026-11-05T17:38:28.9680095Z   set-safe-directory: true
+2026-11-05T17:38:28.9680864Z   allow-unsafe-pr-checkout: false
+2026-11-05T17:38:28.9683971Z env:
+2026-11-05T17:38:28.9684561Z   PY_COLORS: 1
+2026-11-05T17:38:28.9696608Z   NATIVE_DAG_TEST_EXCLUSIONS: --ignore=tests/client/test_stream_dag_executions.py --ignore=tests/client/test_stream_dag_launches.py --ignore=tests/test_stream_graph_execution_contracts.py --ignore=tests/test_native_dag_execution_client_http.py --ignore=tests/server/schemas/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_launches.py --ignore=tests/server/database/test_stream_dag_execution_migrations.py --ignore=tests/server/api/test_stream_dag_executions.py --ignore=tests/server/api/test_stream_dag_launches.py --ignore=tests/test_stream_dag_execution.py --ignore=tests/test_stream_dag_bootstrap.py --ignore=tests/test_native_stream_dag_execution_http.py --ignore=tests/workers/test_stream_dag_subtasks.py --ignore=tests/workers/test_stream_dag_launches.py --ignore=tests/workers/test_stream_dag_bootstrap.py
+2026-11-05T17:38:28.9709283Z   UV_PYTHON_PREFERENCE: only-managed
+2026-11-05T17:38:28.9710203Z ##[endgroup]
+2026-11-05T17:38:29.2829714Z Syncing repository: Anacreonsystems/ariadne
+2026-11-05T17:38:29.2834408Z ##[group]Getting Git version info
+2026-11-05T17:38:29.2835308Z Working directory is '/home/runner/_work/ariadne/ariadne'
+2026-11-05T17:38:29.2838323Z [command]/usr/bin/git version
+2026-11-05T17:38:29.2838733Z git version 2.56.0
+2026-11-05T17:38:29.2840460Z ##[endgroup]
+2026-11-05T17:38:29.2878225Z Temporarily overriding HOME='/home/runner/_work/_temp/60815ef6-f567-410c-996d-db6fd75037aa' before making global git config changes
+2026-11-05T17:38:29.2895809Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-05T17:38:29.2898198Z [command]/usr/bin/git config --global --add safe.directory /home/runner/_work/ariadne/ariadne
+2026-11-05T17:38:29.3022871Z Deleting the contents of '/home/runner/_work/ariadne/ariadne'
+2026-11-05T17:38:29.3027204Z ##[group]Determining repository object format
+2026-11-05T17:38:29.3029408Z ##[endgroup]
+2026-11-05T17:38:29.3030281Z ##[group]Initializing the repository
+2026-11-05T17:38:29.3041059Z [command]/usr/bin/git init /home/runner/_work/ariadne/ariadne
+2026-11-05T17:38:29.3167236Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-05T17:38:29.3189482Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-11-05T17:38:29.3204944Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-11-05T17:38:29.3206311Z hint: call:
+2026-11-05T17:38:29.3207042Z hint:
+2026-11-05T17:38:29.3207712Z hint: 	git config --global init.defaultBranch <name>
+2026-11-05T17:38:29.3208418Z hint:
+2026-11-05T17:38:29.3209133Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-05T17:38:29.3210509Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-05T17:38:29.3211642Z hint:
+2026-11-05T17:38:29.3212994Z hint: 	git branch -m <name>
+2026-11-05T17:38:29.3213544Z hint:
+2026-11-05T17:38:29.3214468Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-11-05T17:38:29.3217239Z Initialized empty Git repository in /home/runner/_work/ariadne/ariadne/.git/
+2026-11-05T17:38:29.3220357Z [command]/usr/bin/git remote add origin https://github.com/Anacreonsystems/ariadne
+2026-11-05T17:38:29.3278969Z ##[endgroup]
+2026-11-05T17:38:29.3280237Z ##[group]Disabling automatic garbage collection
+2026-11-05T17:38:29.3285117Z [command]/usr/bin/git config --local gc.auto 0
+2026-11-05T17:38:29.3366952Z ##[endgroup]
+2026-11-05T17:38:29.3368801Z ##[group]Setting up auth
+2026-11-05T17:38:29.3369506Z Removing SSH command configuration
+2026-11-05T17:38:29.3379438Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-05T17:38:29.3474536Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-05T17:38:29.4053122Z Removing HTTP extra header
+2026-11-05T17:38:29.4065355Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-05T17:38:29.4164885Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-05T17:38:29.4779992Z Removing includeIf entries pointing to credentials config files
+2026-11-05T17:38:29.4781666Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-05T17:38:29.4877538Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-05T17:38:29.5588576Z [command]/usr/bin/git config --file /home/runner/_work/_temp/git-credentials-7eb3d860-d444-4047-a317-2f9f66242a2a.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-05T17:38:29.5703983Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/_work/ariadne/ariadne/.git.path /home/runner/_work/_temp/git-credentials-7eb3d860-d444-4047-a317-2f9f66242a2a.config
+2026-11-05T17:38:29.5803536Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/_work/ariadne/ariadne/.git/worktrees/*.path /home/runner/_work/_temp/git-credentials-7eb3d860-d444-4047-a317-2f9f66242a2a.config
+2026-11-05T17:38:29.5890750Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-7eb3d860-d444-4047-a317-2f9f66242a2a.config
+2026-11-05T17:38:29.5967271Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-7eb3d860-d444-4047-a317-2f9f66242a2a.config
+2026-11-05T17:38:29.6046995Z ##[endgroup]
+2026-11-05T17:38:29.6047653Z ##[group]Fetching the repository
+2026-11-05T17:38:29.6066210Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --filter=blob:none origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +455e3cfa26d2c276d577d986ab3af541b369d6c6:refs/remotes/pull/25/merge
+2026-11-05T17:38:33.0083402Z From https://github.com/Anacreonsystems/ariadne
+2026-11-05T17:38:33.0085353Z  * [new branch]          main                                     -> origin/main
+2026-11-05T17:38:33.0087291Z  * [new branch]          native-prefect-epoch-1                   -> origin/native-prefect-epoch-1
+2026-11-05T17:38:33.0089033Z  * [new branch]          native-stream-storage                    -> origin/native-stream-storage
+2026-11-05T17:38:33.0091183Z  * [new branch]          native-stream-task-contract              -> origin/native-stream-task-contract
+2026-11-05T17:38:33.0093177Z  * [new branch]          streaming-etl-adrs                       -> origin/streaming-etl-adrs
+2026-11-05T17:38:33.0094768Z  * [new branch]          streaming-soak-arc                       -> origin/streaming-soak-arc
+2026-11-05T17:38:33.0097248Z  * [new branch]          streaming-soak-execution                 -> origin/streaming-soak-execution
+2026-11-05T17:38:33.0099567Z  * [new ref]             455e3cfa26d2c276d577d986ab3af541b369d6c6 -> pull/25/merge
+2026-11-05T17:38:33.0106501Z ##[endgroup]
+2026-11-05T17:38:33.0110417Z ##[group]Determining the checkout info
+2026-11-05T17:38:33.0111657Z ##[endgroup]
+2026-11-05T17:38:33.0142720Z [command]/usr/bin/git sparse-checkout disable
+2026-11-05T17:38:33.0242214Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-05T17:38:33.0324983Z ##[group]Checking out the ref
+2026-11-05T17:38:33.0333596Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/25/merge
+2026-11-05T17:41:19.3954607Z Updating files:   0% (1/12601)
+2026-11-05T17:41:19.4219241Z Updating files:   1% (127/12601)
+2026-11-05T17:41:19.4530847Z Updating files:   2% (253/12601)
+2026-11-05T17:41:19.5075421Z Updating files:   3% (379/12601)
+2026-11-05T17:41:19.6084486Z Updating files:   4% (505/12601)
+2026-11-05T17:41:19.6475579Z Updating files:   5% (631/12601)
+2026-11-05T17:41:19.6757238Z Updating files:   6% (757/12601)
+2026-11-05T17:41:19.8308553Z Updating files:   7% (883/12601)
+2026-11-05T17:41:19.9168489Z Updating files:   8% (1009/12601)
+2026-11-05T17:41:19.9425183Z Updating files:   9% (1135/12601)
+2026-11-05T17:41:19.9697301Z Updating files:  10% (1261/12601)
+2026-11-05T17:41:20.0169584Z Updating files:  11% (1387/12601)
+2026-11-05T17:41:20.0697605Z Updating files:  12% (1513/12601)
+2026-11-05T17:41:20.0790822Z Updating files:  12% (1616/12601)
+2026-11-05T17:41:20.1231390Z Updating files:  13% (1639/12601)
+2026-11-05T17:41:20.1409952Z Updating files:  14% (1765/12601)
+2026-11-05T17:41:20.2223042Z Updating files:  15% (1891/12601)
+2026-11-05T17:41:20.2868087Z Updating files:  16% (2017/12601)
+2026-11-05T17:41:20.3079738Z Updating files:  17% (2143/12601)
+2026-11-05T17:41:20.3232685Z Updating files:  18% (2269/12601)
+2026-11-05T17:41:20.3426534Z Updating files:  19% (2395/12601)
+2026-11-05T17:41:20.3579919Z Updating files:  20% (2521/12601)
+2026-11-05T17:41:20.3753571Z Updating files:  21% (2647/12601)
+2026-11-05T17:41:20.3928283Z Updating files:  22% (2773/12601)
+2026-11-05T17:41:20.4245986Z Updating files:  23% (2899/12601)
+2026-11-05T17:41:20.4458272Z Updating files:  24% (3025/12601)
+2026-11-05T17:41:20.4646649Z Updating files:  25% (3151/12601)
+2026-11-05T17:41:20.5028261Z Updating files:  26% (3277/12601)
+2026-11-05T17:41:20.5354646Z Updating files:  27% (3403/12601)
+2026-11-05T17:41:20.5592347Z Updating files:  28% (3529/12601)
+2026-11-05T17:41:20.5923086Z Updating files:  29% (3655/12601)
+2026-11-05T17:41:20.7152450Z Updating files:  30% (3781/12601)
+2026-11-05T17:41:20.7373049Z Updating files:  31% (3907/12601)
+2026-11-05T17:41:20.8065310Z Updating files:  32% (4033/12601)
+2026-11-05T17:41:20.8226989Z Updating files:  33% (4159/12601)
+2026-11-05T17:41:20.8392533Z Updating files:  34% (4285/12601)
+2026-11-05T17:41:20.8662147Z Updating files:  35% (4411/12601)
+2026-11-05T17:41:20.8870194Z Updating files:  36% (4537/12601)
+2026-11-05T17:41:20.9004979Z Updating files:  37% (4663/12601)
+2026-11-05T17:41:20.9208052Z Updating files:  38% (4789/12601)
+2026-11-05T17:41:20.9559276Z Updating files:  39% (4915/12601)
+2026-11-05T17:41:20.9862949Z Updating files:  40% (5041/12601)
+2026-11-05T17:41:20.9984593Z Updating files:  41% (5167/12601)
+2026-11-05T17:41:21.0085319Z Updating files:  42% (5293/12601)
+2026-11-05T17:41:21.0913307Z Updating files:  43% (5419/12601)
+2026-11-05T17:41:21.1447177Z Updating files:  43% (5472/12601)
+2026-11-05T17:41:21.1636206Z Updating files:  44% (5545/12601)
+2026-11-05T17:41:21.1798322Z Updating files:  45% (5671/12601)
+2026-11-05T17:41:21.2310269Z Updating files:  46% (5797/12601)
+2026-11-05T17:41:21.2460456Z Updating files:  47% (5923/12601)
+2026-11-05T17:41:21.2589104Z Updating files:  48% (6049/12601)
+2026-11-05T17:41:21.2811780Z Updating files:  49% (6175/12601)
+2026-11-05T17:41:21.3184672Z Updating files:  50% (6301/12601)
+2026-11-05T17:41:21.3491216Z Updating files:  51% (6427/12601)
+2026-11-05T17:41:21.3756221Z Updating files:  52% (6553/12601)
+2026-11-05T17:41:21.4045343Z Updating files:  53% (6679/12601)
+2026-11-05T17:41:21.4345008Z Updating files:  54% (6805/12601)
+2026-11-05T17:41:21.4608913Z Updating files:  55% (6931/12601)
+2026-11-05T17:41:21.5377119Z Updating files:  56% (7057/12601)
+2026-11-05T17:41:21.6019195Z Updating files:  57% (7183/12601)
+2026-11-05T17:41:21.6142131Z Updating files:  58% (7309/12601)
+2026-11-05T17:41:21.6268155Z Updating files:  59% (7435/12601)
+2026-11-05T17:41:21.6391712Z Updating files:  60% (7561/12601)
+2026-11-05T17:41:21.6513644Z Updating files:  61% (7687/12601)
+2026-11-05T17:41:21.6607265Z Updating files:  62% (7813/12601)
+2026-11-05T17:41:21.6719780Z Updating files:  63% (7939/12601)
+2026-11-05T17:41:21.6866180Z Updating files:  64% (8065/12601)
+2026-11-05T17:41:21.7837149Z Updating files:  65% (8191/12601)
+2026-11-05T17:41:21.8567687Z Updating files:  66% (8317/12601)
+2026-11-05T17:41:21.8746431Z Updating files:  67% (8443/12601)
+2026-11-05T17:41:21.8906283Z Updating files:  68% (8569/12601)
+2026-11-05T17:41:21.9070302Z Updating files:  69% (8695/12601)
+2026-11-05T17:41:21.9383224Z Updating files:  70% (8821/12601)
+2026-11-05T17:41:21.9527087Z Updating files:  71% (8947/12601)
+2026-11-05T17:41:21.9645960Z Updating files:  72% (9073/12601)
+2026-11-05T17:41:21.9791125Z Updating files:  73% (9199/12601)
+2026-11-05T17:41:21.9955600Z Updating files:  74% (9325/12601)
+2026-11-05T17:41:22.0123118Z Updating files:  75% (9451/12601)
+2026-11-05T17:41:22.0221210Z Updating files:  76% (9577/12601)
+2026-11-05T17:41:22.0317241Z Updating files:  77% (9703/12601)
+2026-11-05T17:41:22.0470579Z Updating files:  78% (9829/12601)
+2026-11-05T17:41:22.0627689Z Updating files:  79% (9955/12601)
+2026-11-05T17:41:22.0692235Z Updating files:  80% (10081/12601)
+2026-11-05T17:41:22.0807943Z Updating files:  80% (10135/12601)
+2026-11-05T17:41:22.0950369Z Updating files:  81% (10207/12601)
+2026-11-05T17:41:22.1105948Z Updating files:  82% (10333/12601)
+2026-11-05T17:41:22.1323257Z Updating files:  83% (10459/12601)
+2026-11-05T17:41:22.1546759Z Updating files:  84% (10585/12601)
+2026-11-05T17:41:22.1778512Z Updating files:  85% (10711/12601)
+2026-11-05T17:41:22.1953691Z Updating files:  86% (10837/12601)
+2026-11-05T17:41:22.2071580Z Updating files:  87% (10963/12601)
+2026-11-05T17:41:22.2190512Z Updating files:  88% (11089/12601)
+2026-11-05T17:41:22.2301821Z Updating files:  89% (11215/12601)
+2026-11-05T17:41:22.2410333Z Updating files:  90% (11341/12601)
+2026-11-05T17:41:22.2516557Z Updating files:  91% (11467/12601)
+2026-11-05T17:41:22.2634816Z Updating files:  92% (11593/12601)
+2026-11-05T17:41:22.2744239Z Updating files:  93% (11719/12601)
+2026-11-05T17:41:22.2854437Z Updating files:  94% (11845/12601)
+2026-11-05T17:41:22.2958874Z Updating files:  95% (11971/12601)
+2026-11-05T17:41:22.3058373Z Updating files:  96% (12097/12601)
+2026-11-05T17:41:22.3171769Z Updating files:  97% (12223/12601)
+2026-11-05T17:41:22.3331487Z Updating files:  98% (12349/12601)
+2026-11-05T17:41:22.3488545Z Updating files:  99% (12475/12601)
+2026-11-05T17:41:22.3490393Z Updating files: 100% (12601/12601)
+2026-11-05T17:41:22.3491416Z Updating files: 100% (12601/12601), done.
+2026-11-05T17:41:22.3864757Z Note: switching to 'refs/remotes/pull/25/merge'.
+2026-11-05T17:41:22.3865599Z 
+2026-11-05T17:41:22.3866907Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-11-05T17:41:22.3868205Z changes and commit them, and you can discard any commits you make in this
+2026-11-05T17:41:22.3869426Z state without impacting any branches by switching back to a branch.
+2026-11-05T17:41:22.3870204Z 
+2026-11-05T17:41:22.3872636Z If you want to create a new branch to retain commits you create, you may
+2026-11-05T17:41:22.3873907Z do so (now or later) by using -c with the switch command. Example:
+2026-11-05T17:41:22.3874831Z 
+2026-11-05T17:41:22.3892922Z   git switch -c <new-branch-name>
+2026-11-05T17:41:22.3894182Z 
+2026-11-05T17:41:22.3895763Z Or undo this operation with:
+2026-11-05T17:41:22.3896772Z 
+2026-11-05T17:41:22.3897389Z   git switch -
+2026-11-05T17:41:22.3897765Z 
+2026-11-05T17:41:22.3898916Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-11-05T17:41:22.3899954Z 
+2026-11-05T17:41:22.3901070Z HEAD is now at 455e3cfa2 Merge 6a3ee28278de22b04ff4895f7abc2551f13b1cda into 1500d8eecfbacea0610cb7ee09ca3f3fdbed1f45
+2026-11-05T17:41:22.4027661Z ##[endgroup]
+2026-11-05T17:41:22.4127087Z [command]/usr/bin/git log -1 --format=%H
+2026-11-05T17:41:22.4202776Z 455e3cfa26d2c276d577d986ab3af541b369d6c6
+2026-11-05T17:41:22.4228215Z ##[group]Removing auth
+2026-11-05T17:41:22.4229408Z Removing SSH command configuration
+2026-11-05T17:41:22.4254349Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-05T17:41:22.4320131Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-05T17:41:22.4917831Z Removing HTTP extra header
+2026-11-05T17:41:22.4928313Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-05T17:41:22.5003107Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-05T17:41:22.5602956Z Removing includeIf entries pointing to credentials config files
+2026-11-05T17:41:22.5612734Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-05T17:41:22.5677403Z includeif.gitdir:/home/runner/_work/ariadne/ariadne/.git.path
+2026-11-05T17:41:22.5679140Z includeif.gitdir:/home/runner/_work/ariadne/ariadne/.git/worktrees/*.path
+2026-11-05T17:41:22.5681064Z includeif.gitdir:/github/workspace/.git.path
+2026-11-05T17:41:22.5682334Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-05T17:41:22.5695522Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/_work/ariadne/ariadne/.git.path
+2026-11-05T17:41:22.5752374Z /home/runner/_work/_temp/git-credentials-7eb3d860-d444-4047-a317-2f9f66242a2a.config
+2026-11-05T17:41:22.5774508Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/_work/ariadne/ariadne/.git.path \/home\/runner\/_work\/_temp\/git\-credentials\-7eb3d860\-d444\-4047\-a317\-2f9f66242a2a\.config
+2026-11-05T17:41:22.5857051Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/_work/ariadne/ariadne/.git/worktrees/*.path
+2026-11-05T17:41:22.5916987Z /home/runner/_work/_temp/git-credentials-7eb3d860-d444-4047-a317-2f9f66242a2a.config
+2026-11-05T17:41:22.5933501Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/_work/ariadne/ariadne/.git/worktrees/*.path \/home\/runner\/_work\/_temp\/git\-credentials\-7eb3d860\-d444\-4047\-a317\-2f9f66242a2a\.config
+2026-11-05T17:41:22.6036860Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-11-05T17:41:22.6092263Z /github/runner_temp/git-credentials-7eb3d860-d444-4047-a317-2f9f66242a2a.config
+2026-11-05T17:41:22.6131727Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-7eb3d860\-d444\-4047\-a317\-2f9f66242a2a\.config
+2026-11-05T17:41:22.6205115Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-05T17:41:22.6255913Z /github/runner_temp/git-credentials-7eb3d860-d444-4047-a317-2f9f66242a2a.config
+2026-11-05T17:41:22.6273889Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-7eb3d860\-d444\-4047\-a317\-2f9f66242a2a\.config
+2026-11-05T17:41:22.6354349Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-05T17:41:22.6985052Z Removing credentials config '/home/runner/_work/_temp/git-credentials-7eb3d860-d444-4047-a317-2f9f66242a2a.config'
+2026-11-05T17:41:22.7021732Z ##[endgroup]
+2026-11-05T17:41:22.7684351Z ##[group]Run astral-sh/setup-uv@v10.0.1
+2026-11-05T17:41:22.7685108Z with:
+2026-11-05T17:41:22.7685696Z   python-version: 3.12.14
+2026-11-05T17:41:22.7686459Z   enable-cache: true
+2026-11-05T17:41:22.7687138Z   activate-environment: false
+2026-11-05T17:41:22.7687684Z   no-project: false
+2026-11-05T17:41:22.7688555Z   working-directory: /home/runner/_work/ariadne/ariadne
+2026-11-05T17:41:22.7697418Z   github-token: ***
+2026-11-05T17:41:22.7699341Z   cache-dependency-glob: **/*requirements*.txt
+**/*requirements*.in
+**/*constraints*.txt
+**/*constraints*.in
+**/pyproject.toml
+**/uv.lock
+**/*.py.lock
+
+2026-11-05T17:41:22.7701359Z   restore-cache: true
+2026-11-05T17:41:22.7702152Z   save-cache: true
+2026-11-05T17:41:22.7702705Z   prune-cache: false
+2026-11-05T17:41:22.7703264Z   cache-python: false
+2026-11-05T17:41:22.7704220Z   ignore-nothing-to-cache: false
+2026-11-05T17:41:22.7705152Z   ignore-empty-workdir: false
+2026-11-05T17:41:22.7705890Z   download-from-astral-mirror: true
+2026-11-05T17:41:22.7706773Z   add-problem-matchers: true
+2026-11-05T17:41:22.7707549Z   quiet: false
+2026-11-05T17:41:22.7708191Z   resolution-strategy: highest
+2026-11-05T17:41:22.7708904Z env:
+2026-11-05T17:41:22.7709427Z   PY_COLORS: 1
+2026-11-05T17:41:22.7715325Z   NATIVE_DAG_TEST_EXCLUSIONS: --ignore=tests/client/test_stream_dag_executions.py --ignore=tests/client/test_stream_dag_launches.py --ignore=tests/test_stream_graph_execution_contracts.py --ignore=tests/test_native_dag_execution_client_http.py --ignore=tests/server/schemas/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_launches.py --ignore=tests/server/database/test_stream_dag_execution_migrations.py --ignore=tests/server/api/test_stream_dag_executions.py --ignore=tests/server/api/test_stream_dag_launches.py --ignore=tests/test_stream_dag_execution.py --ignore=tests/test_stream_dag_bootstrap.py --ignore=tests/test_native_stream_dag_execution_http.py --ignore=tests/workers/test_stream_dag_subtasks.py --ignore=tests/workers/test_stream_dag_launches.py --ignore=tests/workers/test_stream_dag_bootstrap.py
+2026-11-05T17:41:22.7721616Z   UV_PYTHON_PREFERENCE: only-managed
+2026-11-05T17:41:22.7722846Z ##[endgroup]
+2026-11-05T17:41:23.2018586Z Trying to find version for uv in: /home/runner/_work/ariadne/ariadne/uv.toml
+2026-11-05T17:41:23.2020989Z Could not find file: /home/runner/_work/ariadne/ariadne/uv.toml
+2026-11-05T17:41:23.2023362Z Trying to find version for uv in: /home/runner/_work/ariadne/ariadne/pyproject.toml
+2026-11-05T17:41:23.2036260Z Found version for uv in /home/runner/_work/ariadne/ariadne/pyproject.toml: >=0.6.15
+2026-11-05T17:41:23.2045488Z Found minimum version specifier, using latest version
+2026-11-05T17:41:23.2050163Z Fetching manifest data from https://raw.githubusercontent.com/astral-sh/versions/main/v1/uv.ndjson ...
+2026-11-05T17:41:23.3977685Z Downloading uv from "https://releases.astral.sh/github/uv/releases/download/0.13.7/uv-x86_64-unknown-linux-gnu.tar.gz" ...
+2026-11-05T17:41:24.3812925Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/_work/_temp/62859b72-8119-4c41-9e46-e4e395512293 -f /home/runner/_work/_temp/70ebda62-aa68-4020-891d-6cbe2770fa95
+2026-11-05T17:41:24.9571873Z Added /home/runner/.local/bin to the path
+2026-11-05T17:41:24.9576212Z Added /home/runner/_work/_tool/uv/0.13.7/x86_64 to the path
+2026-11-05T17:41:24.9579261Z Set UV_PYTHON_INSTALL_DIR to /home/runner/.local/share/uv/python
+2026-11-05T17:41:24.9580145Z Added /home/runner/.local/share/uv/python to the path
+2026-11-05T17:41:24.9581738Z Set UV_PYTHON to 3.12.14
+2026-11-05T17:41:24.9629316Z Set UV_CACHE_DIR to /home/runner/.cache/uv
+2026-11-05T17:41:24.9630192Z Successfully installed uv version 0.13.7
+2026-11-05T17:41:24.9636641Z Searching files using cache dependency glob: /home/runner/_work/ariadne/ariadne/**/*requirements*.txt,/home/runner/_work/ariadne/ariadne/**/*requirements*.in,/home/runner/_work/ariadne/ariadne/**/*constraints*.txt,/home/runner/_work/ariadne/ariadne/**/*constraints*.in,/home/runner/_work/ariadne/ariadne/**/pyproject.toml,/home/runner/_work/ariadne/ariadne/**/uv.lock,/home/runner/_work/ariadne/ariadne/**/*.py.lock
+2026-11-05T17:41:26.3776085Z /home/runner/_work/ariadne/ariadne/architecture/streaming-etl/evidence/native-epoch2-p2-renewal-diagnosis-2026-11-05/correction-v1/unit/source/uv.lock
+2026-11-05T17:41:27.2974251Z /home/runner/_work/ariadne/ariadne/architecture/streaming-etl/prototypes/ci_soak/pyproject.toml
+2026-11-05T17:41:27.3016225Z /home/runner/_work/ariadne/ariadne/architecture/streaming-etl/prototypes/ci_soak/uv.lock
+2026-11-05T17:41:27.3354260Z /home/runner/_work/ariadne/ariadne/client/pyproject.toml
+2026-11-05T17:41:27.6925560Z /home/runner/_work/ariadne/ariadne/pyproject.toml
+2026-11-05T17:41:27.7025154Z /home/runner/_work/ariadne/ariadne/scripts/proxy-test/requirements.txt
+2026-11-05T17:41:27.8014729Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-aws/pyproject.toml
+2026-11-05T17:41:27.8217321Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-azure/pyproject.toml
+2026-11-05T17:41:27.8298088Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-bitbucket/pyproject.toml
+2026-11-05T17:41:27.8375647Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-dask/pyproject.toml
+2026-11-05T17:41:27.8468284Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-databricks/pyproject.toml
+2026-11-05T17:41:27.8584272Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-dbt/pyproject.toml
+2026-11-05T17:41:27.8790077Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-docker/pyproject.toml
+2026-11-05T17:41:27.8855036Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-docker/tests/test-project/requirements.txt
+2026-11-05T17:41:27.8912104Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-email/pyproject.toml
+2026-11-05T17:41:27.9028664Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-gcp/pyproject.toml
+2026-11-05T17:41:27.9225338Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-github/pyproject.toml
+2026-11-05T17:41:27.9483479Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-gitlab/pyproject.toml
+2026-11-05T17:41:27.9586380Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-kubernetes/integration_tests/pyproject.toml
+2026-11-05T17:41:27.9853016Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-kubernetes/pyproject.toml
+2026-11-05T17:41:27.9936086Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-ray/pyproject.toml
+2026-11-05T17:41:27.9994800Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-redis/pyproject.toml
+2026-11-05T17:41:28.0035289Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-shell/pyproject.toml
+2026-11-05T17:41:28.0156501Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-slack/pyproject.toml
+2026-11-05T17:41:28.0364174Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-snowflake/pyproject.toml
+2026-11-05T17:41:28.0498657Z /home/runner/_work/ariadne/ariadne/src/integrations/prefect-sqlalchemy/pyproject.toml
+2026-11-05T17:41:28.3614878Z /home/runner/_work/ariadne/ariadne/tests/docker/contexts/requirements/requirements.txt
+2026-11-05T17:41:29.1146265Z /home/runner/_work/ariadne/ariadne/uv.lock
+2026-11-05T17:41:29.1247725Z Found 28 files to hash.
+2026-11-05T17:41:29.1410165Z Trying to restore cache from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.14-2030f5aeeedfc1d6f002722222e6f300f128b4be5b9961c07d91f2950f42c84c
+2026-11-05T17:41:29.6585015Z Cache hit for: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.14-2030f5aeeedfc1d6f002722222e6f300f128b4be5b9961c07d91f2950f42c84c
+2026-11-05T17:41:31.2863054Z Received 0 of 228675148 (0.0%), 0.0 MBs/sec
+2026-11-05T17:41:32.2879769Z Received 25165824 of 228675148 (11.0%), 12.0 MBs/sec
+2026-11-05T17:41:33.2903894Z Received 67108864 of 228675148 (29.3%), 21.3 MBs/sec
+2026-11-05T17:41:34.2904358Z Received 121634816 of 228675148 (53.2%), 29.0 MBs/sec
+2026-11-05T17:41:35.2909433Z Received 150994944 of 228675148 (66.0%), 28.8 MBs/sec
+2026-11-05T17:41:36.2918042Z Received 197132288 of 228675148 (86.2%), 31.3 MBs/sec
+2026-11-05T17:41:36.9903032Z Received 228675148 of 228675148 (100.0%), 32.5 MBs/sec
+2026-11-05T17:41:36.9904247Z Cache Size: ~218 MB (228675148 B)
+2026-11-05T17:41:37.0053428Z [command]/usr/bin/tar -xf /home/runner/_work/_temp/036b8e30-8aa3-45c2-95cd-8566b9ad1d85/cache.tgz -P -C /home/runner/_work/ariadne/ariadne -z
+2026-11-05T17:41:49.0949878Z Cache restored successfully
+2026-11-05T17:41:49.1620705Z cache restored from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.14-2030f5aeeedfc1d6f002722222e6f300f128b4be5b9961c07d91f2950f42c84c
+2026-11-05T17:41:49.4004950Z ##[group]Run actions/setup-node@v7
+2026-11-05T17:41:49.4005934Z with:
+2026-11-05T17:41:49.4006650Z   node-version-file: ui-v2/.nvmrc
+2026-11-05T17:41:49.4007317Z   check-latest: false
+2026-11-05T17:41:49.4018296Z   token: ***
+2026-11-05T17:41:49.4019032Z   package-manager-cache: true
+2026-11-05T17:41:49.4019614Z env:
+2026-11-05T17:41:49.4019915Z   PY_COLORS: 1
+2026-11-05T17:41:49.4033701Z   NATIVE_DAG_TEST_EXCLUSIONS: --ignore=tests/client/test_stream_dag_executions.py --ignore=tests/client/test_stream_dag_launches.py --ignore=tests/test_stream_graph_execution_contracts.py --ignore=tests/test_native_dag_execution_client_http.py --ignore=tests/server/schemas/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_launches.py --ignore=tests/server/database/test_stream_dag_execution_migrations.py --ignore=tests/server/api/test_stream_dag_executions.py --ignore=tests/server/api/test_stream_dag_launches.py --ignore=tests/test_stream_dag_execution.py --ignore=tests/test_stream_dag_bootstrap.py --ignore=tests/test_native_stream_dag_execution_http.py --ignore=tests/workers/test_stream_dag_subtasks.py --ignore=tests/workers/test_stream_dag_launches.py --ignore=tests/workers/test_stream_dag_bootstrap.py
+2026-11-05T17:41:49.4041540Z   UV_PYTHON_PREFERENCE: only-managed
+2026-11-05T17:41:49.4046531Z   UV_PYTHON_INSTALL_DIR: /home/runner/.local/share/uv/python
+2026-11-05T17:41:49.4047297Z   UV_PYTHON: 3.12.14
+2026-11-05T17:41:49.4047908Z   UV_CACHE_DIR: /home/runner/.cache/uv
+2026-11-05T17:41:49.4048370Z ##[endgroup]
+2026-11-05T17:41:49.9189867Z Node version file is not JSON file
+2026-11-05T17:41:49.9241561Z Node version file is not TOML file
+2026-11-05T17:41:49.9293863Z Resolved ui-v2/.nvmrc as 24.20.0
+2026-11-05T17:41:49.9490683Z Attempting to download 24.20.0...
+2026-11-05T17:41:51.4188236Z Acquiring 24.20.0 - x64 from https://github.com/actions/node-versions/releases/download/24.20.0-33034074684/node-24.20.0-linux-x64.tar.gz
+2026-11-05T17:41:53.2360782Z Extracting ...
+2026-11-05T17:41:53.2697085Z [command]/usr/bin/tar xz --strip 1 --warning=no-unknown-keyword --overwrite -C /home/runner/_work/_temp/3b59305d-3b11-4118-b96b-995aca10bd1d -f /home/runner/_work/_temp/59994304-b1c0-4e0f-ba6d-1e397a05b92f
+2026-11-05T17:41:55.5696038Z Adding to the cache ...
+2026-11-05T17:41:59.9968125Z ##[group]Environment details
+2026-11-05T17:42:00.3350989Z node: v24.20.0
+2026-11-05T17:42:00.3352084Z npm: 11.19.0
+2026-11-05T17:42:00.3352997Z yarn: 
+2026-11-05T17:42:00.3355629Z ##[endgroup]
+2026-11-05T17:42:00.3896649Z ##[group]Run uv sync --locked --python 3.12.14
+2026-11-05T17:42:00.3898164Z [36;1muv sync --locked --python 3.12.14[0m
+2026-11-05T17:42:00.3934960Z shell: /usr/bin/bash -e {0}
+2026-11-05T17:42:00.3935458Z env:
+2026-11-05T17:42:00.3935833Z   PY_COLORS: 1
+2026-11-05T17:42:00.3944481Z   NATIVE_DAG_TEST_EXCLUSIONS: --ignore=tests/client/test_stream_dag_executions.py --ignore=tests/client/test_stream_dag_launches.py --ignore=tests/test_stream_graph_execution_contracts.py --ignore=tests/test_native_dag_execution_client_http.py --ignore=tests/server/schemas/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_launches.py --ignore=tests/server/database/test_stream_dag_execution_migrations.py --ignore=tests/server/api/test_stream_dag_executions.py --ignore=tests/server/api/test_stream_dag_launches.py --ignore=tests/test_stream_dag_execution.py --ignore=tests/test_stream_dag_bootstrap.py --ignore=tests/test_native_stream_dag_execution_http.py --ignore=tests/workers/test_stream_dag_subtasks.py --ignore=tests/workers/test_stream_dag_launches.py --ignore=tests/workers/test_stream_dag_bootstrap.py
+2026-11-05T17:42:00.3959740Z   UV_PYTHON_PREFERENCE: only-managed
+2026-11-05T17:42:00.3960672Z   UV_PYTHON_INSTALL_DIR: /home/runner/.local/share/uv/python
+2026-11-05T17:42:00.3961517Z   UV_PYTHON: 3.12.14
+2026-11-05T17:42:00.3962333Z   UV_CACHE_DIR: /home/runner/.cache/uv
+2026-11-05T17:42:00.3962960Z ##[endgroup]
+2026-11-05T17:42:01.1387107Z Downloading cpython-3.12.14-linux-x86_64-gnu (download) (32.7MiB)
+2026-11-05T17:42:08.4588807Z  Downloaded cpython-3.12.14-linux-x86_64-gnu (download)
+2026-11-05T17:42:08.9253858Z Using CPython 3.12.14
+2026-11-05T17:42:08.9255052Z Creating virtual environment at: .venv
+2026-11-05T17:42:08.9587326Z Resolved 358 packages in 12ms
+2026-11-05T17:42:08.9995081Z    Building prefect @ file:///home/runner/_work/ariadne/ariadne
+2026-11-05T17:42:11.8681869Z       Built prefect @ file:///home/runner/_work/ariadne/ariadne
+2026-11-05T17:42:11.8723074Z Prepared 1 package in 2.87s
+2026-11-05T17:42:11.8745052Z warning: Failed to hardlink files; falling back to full copy. This may lead to degraded performance.
+2026-11-05T17:42:11.8747691Z          If the cache and target directories are on different filesystems, hardlinking may not be supported.
+2026-11-05T17:42:11.8749810Z          If this is intentional, set `export UV_LINK_MODE=copy` or use `--link-mode=copy` to suppress this warning.
+2026-11-05T17:42:20.8028999Z Installed 222 packages in 8.93s
+2026-11-05T17:42:20.8053076Z  + aiosqlite==0.22.1
+2026-11-05T17:42:20.8054292Z  + alembic==1.18.5
+2026-11-05T17:42:20.8055219Z  + amplitude-analytics==1.2.3
+2026-11-05T17:42:20.8056275Z  + annotated-doc==0.0.4
+2026-11-05T17:42:20.8057302Z  + annotated-types==0.7.0
+2026-11-05T17:42:20.8058350Z  + anyio==4.14.2
+2026-11-05T17:42:20.8059151Z  + apprise==1.13.0
+2026-11-05T17:42:20.8059959Z  + asgi-lifespan==2.1.0
+2026-11-05T17:42:20.8060997Z  + asgiref==3.11.0
+2026-11-05T17:42:20.8061837Z  + ast-serialize==0.6.0
+2026-11-05T17:42:20.8062831Z  + asttokens==3.0.1
+2026-11-05T17:42:20.8063604Z  + asyncpg==0.31.0
+2026-11-05T17:42:20.8064366Z  + attrs==25.4.0
+2026-11-05T17:42:20.8065038Z  + babel==2.17.0
+2026-11-05T17:42:20.8065689Z  + backrefs==6.1
+2026-11-05T17:42:20.8066524Z  + beartype==0.22.9
+2026-11-05T17:42:20.8067243Z  + boto3==1.42.19
+2026-11-05T17:42:20.8068040Z  + botocore==1.42.19
+2026-11-05T17:42:20.8073765Z  + burner-redis==0.1.7
+2026-11-05T17:42:20.8074402Z  + cachetools==7.1.6
+2026-11-05T17:42:20.8075160Z  + cairocffi==1.7.1
+2026-11-05T17:42:20.8076139Z  + cairosvg==2.9.1
+2026-11-05T17:42:20.8076891Z  + certifi==2026.1.4
+2026-11-05T17:42:20.8077466Z  + cffi==2.0.0
+2026-11-05T17:42:20.8078210Z  + cfgv==3.5.0
+2026-11-05T17:42:20.8078789Z  + charset-normalizer==3.4.4
+2026-11-05T17:42:20.8079558Z  + click==8.4.2
+2026-11-05T17:42:20.8080452Z  + cloudpickle==3.1.2
+2026-11-05T17:42:20.8081431Z  + codespell==2.4.3
+2026-11-05T17:42:20.8082304Z  + colorama==0.4.6
+2026-11-05T17:42:20.8084289Z  + coolname==5.0.0
+2026-11-05T17:42:20.8085144Z  + coverage==7.13.1
+2026-11-05T17:42:20.8085727Z  + cronsim==2.7
+2026-11-05T17:42:20.8086476Z  + cryptography==50.0.0
+2026-11-05T17:42:20.8087341Z  + cssselect2==0.8.0
+2026-11-05T17:42:20.8088209Z  + cyclopts==4.22.2
+2026-11-05T17:42:20.8088989Z  + dataclasses-json==0.5.7
+2026-11-05T17:42:20.8089803Z  + dateparser==1.4.1
+2026-11-05T17:42:20.8090617Z  + decorator==5.2.1
+2026-11-05T17:42:20.8091363Z  + defusedxml==0.7.1
+2026-11-05T17:42:20.8092253Z  + distlib==0.4.0
+2026-11-05T17:42:20.8093541Z  + docker==7.2.0
+2026-11-05T17:42:20.8094334Z  + docstring-parser==0.17.0
+2026-11-05T17:42:20.8095178Z  + docutils==0.22.4
+2026-11-05T17:42:20.8095756Z  + exceptiongroup==1.3.1
+2026-11-05T17:42:20.8096634Z  + execnet==2.1.2
+2026-11-05T17:42:20.8097365Z  + executing==2.2.1
+2026-11-05T17:42:20.8097855Z  + fastapi==0.141.1
+2026-11-05T17:42:20.8098392Z  + filelock==3.25.2
+2026-11-05T17:42:20.8099170Z  + fsspec==2026.7.0
+2026-11-05T17:42:20.8100115Z  + ghp-import==2.1.0
+2026-11-05T17:42:20.8100798Z  + googleapis-common-protos==1.72.0
+2026-11-05T17:42:20.8101363Z  + graphviz==0.21
+2026-11-05T17:42:20.8101845Z  + greenlet==3.3.0
+2026-11-05T17:42:20.8134116Z  + griffe==2.1.0
+2026-11-05T17:42:20.8135066Z  + griffecli==2.1.0
+2026-11-05T17:42:20.8135890Z  + griffelib==2.1.0
+2026-11-05T17:42:20.8136658Z  + grpcio==1.76.0
+2026-11-05T17:42:20.8137523Z  + h11==0.16.0
+2026-11-05T17:42:20.8138266Z  + h2==4.4.1
+2026-11-05T17:42:20.8138932Z  + hpack==4.2.0
+2026-11-05T17:42:20.8139466Z  + httpcore==1.0.9
+2026-11-05T17:42:20.8140075Z  + httpx==0.28.1
+2026-11-05T17:42:20.8140663Z  + humanize==4.16.0
+2026-11-05T17:42:20.8141483Z  + hyperframe==6.1.0
+2026-11-05T17:42:20.8142408Z  + identify==2.6.16
+2026-11-05T17:42:20.8143166Z  + idna==3.15
+2026-11-05T17:42:20.8144030Z  + iniconfig==2.3.0
+2026-11-05T17:42:20.8144809Z  + ipython==8.39.0
+2026-11-05T17:42:20.8145526Z  + jedi==0.19.2
+2026-11-05T17:42:20.8146532Z  + jinja2==3.1.6
+2026-11-05T17:42:20.8147472Z  + jinja2-humanize-extension==0.4.0
+2026-11-05T17:42:20.8148608Z  + jmespath==1.0.1
+2026-11-05T17:42:20.8149381Z  + jsonpatch==1.33
+2026-11-05T17:42:20.8150143Z  + jsonpointer==3.0.0
+2026-11-05T17:42:20.8151065Z  + jsonschema==4.26.0
+2026-11-05T17:42:20.8152197Z  + jsonschema-specifications==2025.9.1
+2026-11-05T17:42:20.8153192Z  + libcst==1.8.6
+2026-11-05T17:42:20.8154047Z  + librt==0.13.0
+2026-11-05T17:42:20.8154847Z  + mako==1.4.2
+2026-11-05T17:42:20.8155311Z  + markdown==3.10
+2026-11-05T17:42:20.8155805Z  + markdown-it-py==3.0.0
+2026-11-05T17:42:20.8156380Z  + markupsafe==3.0.3
+2026-11-05T17:42:20.8157222Z  + marshmallow==3.26.2
+2026-11-05T17:42:20.8158062Z  + marshmallow-enum==1.5.1
+2026-11-05T17:42:20.8159040Z  + matplotlib-inline==0.2.1
+2026-11-05T17:42:20.8159767Z  + mdurl==0.1.2
+2026-11-05T17:42:20.8160356Z  + mergedeep==1.3.4
+2026-11-05T17:42:20.8161100Z  + mkdocs==1.6.1
+2026-11-05T17:42:20.8161786Z  + mkdocs-autorefs==1.4.3
+2026-11-05T17:42:20.8162702Z  + mkdocs-gen-files==0.6.1
+2026-11-05T17:42:20.8163340Z  + mkdocs-get-deps==0.2.0
+2026-11-05T17:42:20.8163889Z  + mkdocs-material==9.7.7
+2026-11-05T17:42:20.8164630Z  + mkdocs-material-extensions==1.3.1
+2026-11-05T17:42:20.8165212Z  + mkdocstrings==1.0.0
+2026-11-05T17:42:20.8166077Z  + mkdocstrings-python==2.0.1
+2026-11-05T17:42:20.8166869Z  + moto==5.2.2
+2026-11-05T17:42:20.8167418Z  + mypy==2.3.0
+2026-11-05T17:42:20.8168138Z  + mypy-extensions==1.1.0
+2026-11-05T17:42:20.8168922Z  + nodeenv==1.10.0
+2026-11-05T17:42:20.8169733Z  + numpy==2.4.1
+2026-11-05T17:42:20.8170538Z  + oauthlib==4.0.0
+2026-11-05T17:42:20.8171096Z  + opentelemetry-api==1.44.0
+2026-11-05T17:42:20.8172300Z  + opentelemetry-distro==0.65b0
+2026-11-05T17:42:20.8173134Z  + opentelemetry-exporter-otlp==1.44.0
+2026-11-05T17:42:20.8174052Z  + opentelemetry-exporter-otlp-proto-common==1.44.0
+2026-11-05T17:42:20.8174852Z  + opentelemetry-exporter-otlp-proto-grpc==1.44.0
+2026-11-05T17:42:20.8175676Z  + opentelemetry-exporter-otlp-proto-http==1.44.0
+2026-11-05T17:42:20.8176721Z  + opentelemetry-instrumentation==0.65b0
+2026-11-05T17:42:20.8178706Z  + opentelemetry-instrumentation-logging==0.65b0
+2026-11-05T17:42:20.8180280Z  + opentelemetry-instrumentation-system-metrics==0.65b0
+2026-11-05T17:42:20.8181494Z  + opentelemetry-proto==1.44.0
+2026-11-05T17:42:20.8182630Z  + opentelemetry-sdk==1.44.0
+2026-11-05T17:42:20.8183501Z  + opentelemetry-semantic-conventions==0.65b0
+2026-11-05T17:42:20.8184441Z  + opentelemetry-test-utils==0.65b0
+2026-11-05T17:42:20.8185343Z  + orjson==3.11.9
+2026-11-05T17:42:20.8186018Z  + packaging==26.3
+2026-11-05T17:42:20.8186719Z  + paginate==0.5.7
+2026-11-05T17:42:20.8188124Z  + parso==0.8.5
+2026-11-05T17:42:20.8188926Z  + pathspec==1.0.4
+2026-11-05T17:42:20.8189799Z  + pendulum==3.1.0
+2026-11-05T17:42:20.8190795Z  + pexpect==4.9.0
+2026-11-05T17:42:20.8191589Z  + pillow==12.3.0
+2026-11-05T17:42:20.8192623Z  + platformdirs==4.5.1
+2026-11-05T17:42:20.8193503Z  + pluggy==1.6.0
+2026-11-05T17:42:20.8194284Z  + pre-commit==4.6.1
+2026-11-05T17:42:20.8195601Z  + prefect==3.6.24+22303.g455e3cfa2 (from file:///home/runner/_work/ariadne/ariadne)
+2026-11-05T17:42:20.8197034Z  + prometheus-client==0.26.0
+2026-11-05T17:42:20.8197788Z  + prompt-toolkit==3.0.52
+2026-11-05T17:42:20.8198702Z  + properdocs==1.6.7
+2026-11-05T17:42:20.8199577Z  + protobuf==6.33.5
+2026-11-05T17:42:20.8200445Z  + psutil==7.2.1
+2026-11-05T17:42:20.8201293Z  + ptyprocess==0.7.0
+2026-11-05T17:42:20.8201894Z  + pure-eval==0.2.3
+2026-11-05T17:42:20.8202562Z  + py-key-value-aio==0.3.0
+2026-11-05T17:42:20.8203249Z  + py-key-value-shared==0.3.0
+2026-11-05T17:42:20.8204115Z  + pycparser==2.23
+2026-11-05T17:42:20.8204921Z  + pydantic==2.13.4
+2026-11-05T17:42:20.8205636Z  + pydantic-core==2.46.4
+2026-11-05T17:42:20.8206529Z  + pydantic-extra-types==2.11.1
+2026-11-05T17:42:20.8207220Z  + pydantic-settings==2.14.2
+2026-11-05T17:42:20.8207814Z  + pydocket==0.23.1
+2026-11-05T17:42:20.8208416Z  + pygments==2.20.0
+2026-11-05T17:42:20.8208968Z  + pymdown-extensions==11.0.1
+2026-11-05T17:42:20.8209495Z  + pyre-check==0.9.23
+2026-11-05T17:42:20.8210128Z  + pyre-extensions==0.0.32
+2026-11-05T17:42:20.8210919Z  + pyright==1.1.411
+2026-11-05T17:42:20.8211662Z  + pytest==9.1.1
+2026-11-05T17:42:20.8212546Z  + pytest-asyncio==1.4.0
+2026-11-05T17:42:20.8213057Z  + pytest-cov==7.1.0
+2026-11-05T17:42:20.8213625Z  + pytest-env==1.6.0
+2026-11-05T17:42:20.8214348Z  + pytest-flakefinder==1.1.0
+2026-11-05T17:42:20.8215189Z  + pytest-split==0.11.0
+2026-11-05T17:42:20.8215850Z  + pytest-timeout==2.4.0
+2026-11-05T17:42:20.8216373Z  + pytest-xdist==3.8.0
+2026-11-05T17:42:20.8217090Z  + python-dateutil==2.9.0.post0
+2026-11-05T17:42:20.8218091Z  + python-discovery==1.6.1
+2026-11-05T17:42:20.8218733Z  + python-dotenv==1.2.2
+2026-11-05T17:42:20.8219336Z  + python-json-logger==4.0.0
+2026-11-05T17:42:20.8219791Z  + python-slugify==9.0.0
+2026-11-05T17:42:20.8220519Z  + pytz==2026.3.post1
+2026-11-05T17:42:20.8220896Z  + pyyaml==6.0.3
+2026-11-05T17:42:20.8221733Z  + pyyaml-env-tag==1.1
+2026-11-05T17:42:20.8222687Z  + readchar==4.2.2
+2026-11-05T17:42:20.8223378Z  + redis==8.1.0
+2026-11-05T17:42:20.8223955Z  + referencing==0.37.0
+2026-11-05T17:42:20.8224799Z  + regex==2025.11.3
+2026-11-05T17:42:20.8225517Z  + requests==2.33.0
+2026-11-05T17:42:20.8226670Z  + requests-oauthlib==2.0.0
+2026-11-05T17:42:20.8227659Z  + responses==0.25.8
+2026-11-05T17:42:20.8272639Z  + respx==0.23.1
+2026-11-05T17:42:20.8273363Z  + rfc3339-validator==0.1.4
+2026-11-05T17:42:20.8274142Z  + rich==15.0.0
+2026-11-05T17:42:20.8274900Z  + rich-rst==1.3.2
+2026-11-05T17:42:20.8275838Z  + rpds-py==0.30.0
+2026-11-05T17:42:20.8276615Z  + ruamel-yaml==0.19.1
+2026-11-05T17:42:20.8277535Z  + ruamel-yaml-clib==0.2.15
+2026-11-05T17:42:20.8278254Z  + ruff==0.16.2
+2026-11-05T17:42:20.8278991Z  + s3transfer==0.16.0
+2026-11-05T17:42:20.8279774Z  + semver==3.0.4
+2026-11-05T17:42:20.8280698Z  + setuptools==83.0.0
+2026-11-05T17:42:20.8281397Z  + shellingham==1.5.4
+2026-11-05T17:42:20.8282598Z  + six==1.17.0
+2026-11-05T17:42:20.8283352Z  + sniffio==1.3.1
+2026-11-05T17:42:20.8284112Z  + sqlalchemy==2.0.45
+2026-11-05T17:42:20.8285669Z  + stack-data==0.6.3
+2026-11-05T17:42:20.8286738Z  + starlette==1.3.1
+2026-11-05T17:42:20.8287579Z  + tabulate==0.9.0
+2026-11-05T17:42:20.8288419Z  + testslide==2.7.1
+2026-11-05T17:42:20.8289313Z  + text-unidecode==1.3
+2026-11-05T17:42:20.8290291Z  + time-machine==3.2.0
+2026-11-05T17:42:20.8291107Z  + tinycss2==1.5.1
+2026-11-05T17:42:20.8292323Z  + toml==0.10.2
+2026-11-05T17:42:20.8293085Z  + traitlets==5.14.3
+2026-11-05T17:42:20.8293935Z  + ty==0.0.10
+2026-11-05T17:42:20.8294658Z  + typeguard==2.13.3
+2026-11-05T17:42:20.8295392Z  + typer==0.20.1
+2026-11-05T17:42:20.8297063Z  + types-cachetools==7.0.0.20260713
+2026-11-05T17:42:20.8298182Z  + types-dateparser==1.4.1.20260617
+2026-11-05T17:42:20.8299183Z  + types-pyyaml==6.0.12.20260724
+2026-11-05T17:42:20.8300263Z  + typing-extensions==4.16.0
+2026-11-05T17:42:20.8301128Z  + typing-inspect==0.9.0
+2026-11-05T17:42:20.8302116Z  + typing-inspection==0.4.2
+2026-11-05T17:42:20.8302930Z  + typsht==0.0.1a5
+2026-11-05T17:42:20.8303710Z  + tzdata==2025.3
+2026-11-05T17:42:20.8304449Z  + tzlocal==5.3.1
+2026-11-05T17:42:20.8305163Z  + uncalled-for==0.3.2
+2026-11-05T17:42:20.8306125Z  + urllib3==2.8.0
+2026-11-05T17:42:20.8306810Z  + uv==0.12.0
+2026-11-05T17:42:20.8307511Z  + uvicorn==0.52.0
+2026-11-05T17:42:20.8308307Z  + vale==3.13.0.0
+2026-11-05T17:42:20.8309042Z  + virtualenv==21.7.13
+2026-11-05T17:42:20.8309783Z  + watchdog==6.0.0
+2026-11-05T17:42:20.8310595Z  + watchfiles==1.2.0
+2026-11-05T17:42:20.8311246Z  + wcwidth==0.2.14
+2026-11-05T17:42:20.8312153Z  + webencodings==0.5.1
+2026-11-05T17:42:20.8312925Z  + websockets==16.1.1
+2026-11-05T17:42:20.8313758Z  + werkzeug==3.1.9
+2026-11-05T17:42:20.8314475Z  + whenever==0.10.3
+2026-11-05T17:42:20.8315215Z  + wrapt==1.17.3
+2026-11-05T17:42:20.8315943Z  + xmltodict==1.0.2
+2026-11-05T17:42:20.8316610Z  + yamllint==1.38.0
+2026-11-05T17:42:20.8660519Z ##[group]Run uv run pytest tests/client/test_stream_dag_executions.py tests/client/test_stream_dag_launches.py tests/server/schemas/test_stream_dag_executions.py tests/test_stream_graph_execution_contracts.py tests/test_stream_dag_execution.py tests/test_stream_dag_bootstrap.py tests/workers/test_stream_dag_subtasks.py tests/workers/test_stream_dag_launches.py tests/workers/test_stream_dag_bootstrap.py -q --junitxml=native-dag-contract.xml
+2026-11-05T17:42:20.8669422Z [36;1muv run pytest tests/client/test_stream_dag_executions.py tests/client/test_stream_dag_launches.py tests/server/schemas/test_stream_dag_executions.py tests/test_stream_graph_execution_contracts.py tests/test_stream_dag_execution.py tests/test_stream_dag_bootstrap.py tests/workers/test_stream_dag_subtasks.py tests/workers/test_stream_dag_launches.py tests/workers/test_stream_dag_bootstrap.py -q --junitxml=native-dag-contract.xml[0m
+2026-11-05T17:42:20.8698671Z shell: /usr/bin/bash -e {0}
+2026-11-05T17:42:20.8699537Z env:
+2026-11-05T17:42:20.8700256Z   PY_COLORS: 1
+2026-11-05T17:42:20.8709793Z   NATIVE_DAG_TEST_EXCLUSIONS: --ignore=tests/client/test_stream_dag_executions.py --ignore=tests/client/test_stream_dag_launches.py --ignore=tests/test_stream_graph_execution_contracts.py --ignore=tests/test_native_dag_execution_client_http.py --ignore=tests/server/schemas/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_launches.py --ignore=tests/server/database/test_stream_dag_execution_migrations.py --ignore=tests/server/api/test_stream_dag_executions.py --ignore=tests/server/api/test_stream_dag_launches.py --ignore=tests/test_stream_dag_execution.py --ignore=tests/test_stream_dag_bootstrap.py --ignore=tests/test_native_stream_dag_execution_http.py --ignore=tests/workers/test_stream_dag_subtasks.py --ignore=tests/workers/test_stream_dag_launches.py --ignore=tests/workers/test_stream_dag_bootstrap.py
+2026-11-05T17:42:20.8720674Z   UV_PYTHON_PREFERENCE: only-managed
+2026-11-05T17:42:20.8721626Z   UV_PYTHON_INSTALL_DIR: /home/runner/.local/share/uv/python
+2026-11-05T17:42:20.8722836Z   UV_PYTHON: 3.12.14
+2026-11-05T17:42:20.8723501Z   UV_CACHE_DIR: /home/runner/.cache/uv
+2026-11-05T17:42:20.8724249Z ##[endgroup]
+2026-11-05T17:43:37.4740604Z [32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 15%]
+2026-11-05T17:43:50.1906818Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 31%]
+2026-11-05T17:44:04.1779541Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 47%]
+2026-11-05T17:44:15.9917165Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 62%]
+2026-11-05T17:44:27.8433147Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 78%]
+2026-11-05T17:44:41.5291306Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m [ 93%]
+2026-11-05T17:44:56.5004710Z [0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m             [100%][0m
+2026-11-05T17:44:56.5011293Z [32m[32m[1m459 passed[0m, [32m[1m33 subtests passed[0m[32m in 130.55s (0:02:10)[0m[0m
+2026-11-05T17:44:59.1712391Z ##[group]Run uv run pytest tests/server/models/test_stream_dag_executions.py tests/server/models/test_stream_dag_launches.py tests/server/api/test_stream_dag_executions.py tests/server/api/test_stream_dag_launches.py tests/server/database/test_stream_dag_execution_migrations.py tests/test_native_dag_execution_client_http.py tests/test_native_stream_dag_execution_http.py -k 'not postgres' -q --junitxml=native-dag-sqlite.xml
+2026-11-05T17:44:59.1720915Z [36;1muv run pytest tests/server/models/test_stream_dag_executions.py tests/server/models/test_stream_dag_launches.py tests/server/api/test_stream_dag_executions.py tests/server/api/test_stream_dag_launches.py tests/server/database/test_stream_dag_execution_migrations.py tests/test_native_dag_execution_client_http.py tests/test_native_stream_dag_execution_http.py -k 'not postgres' -q --junitxml=native-dag-sqlite.xml[0m
+2026-11-05T17:44:59.1750553Z shell: /usr/bin/bash -e {0}
+2026-11-05T17:44:59.1751258Z env:
+2026-11-05T17:44:59.1756796Z   PY_COLORS: 1
+2026-11-05T17:44:59.1764121Z   NATIVE_DAG_TEST_EXCLUSIONS: --ignore=tests/client/test_stream_dag_executions.py --ignore=tests/client/test_stream_dag_launches.py --ignore=tests/test_stream_graph_execution_contracts.py --ignore=tests/test_native_dag_execution_client_http.py --ignore=tests/server/schemas/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_launches.py --ignore=tests/server/database/test_stream_dag_execution_migrations.py --ignore=tests/server/api/test_stream_dag_executions.py --ignore=tests/server/api/test_stream_dag_launches.py --ignore=tests/test_stream_dag_execution.py --ignore=tests/test_stream_dag_bootstrap.py --ignore=tests/test_native_stream_dag_execution_http.py --ignore=tests/workers/test_stream_dag_subtasks.py --ignore=tests/workers/test_stream_dag_launches.py --ignore=tests/workers/test_stream_dag_bootstrap.py
+2026-11-05T17:44:59.1773443Z   UV_PYTHON_PREFERENCE: only-managed
+2026-11-05T17:44:59.1774588Z   UV_PYTHON_INSTALL_DIR: /home/runner/.local/share/uv/python
+2026-11-05T17:44:59.1775736Z   UV_PYTHON: 3.12.14
+2026-11-05T17:44:59.1776590Z   UV_CACHE_DIR: /home/runner/.cache/uv
+2026-11-05T17:44:59.1777482Z ##[endgroup]
+2026-11-05T17:48:11.6679618Z [32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m              [100%][0m
+2026-11-05T17:48:11.6686993Z [32m[32m[1m59 passed[0m, [33m52 deselected[0m[32m in 177.34s (0:02:57)[0m[0m
+2026-11-05T17:48:14.6766606Z ##[group]Run uv run python - <<'PY'
+2026-11-05T17:48:14.6768399Z [36;1muv run python - <<'PY'[0m
+2026-11-05T17:48:14.6769265Z [36;1mimport os[0m
+2026-11-05T17:48:14.6769818Z [36;1mimport shlex[0m
+2026-11-05T17:48:14.6770354Z [36;1mimport xml.etree.ElementTree as ET[0m
+2026-11-05T17:48:14.6771089Z [36;1mfrom pathlib import Path[0m
+2026-11-05T17:48:14.6772209Z [36;1m[0m
+2026-11-05T17:48:14.6773107Z [36;1mimport yaml[0m
+2026-11-05T17:48:14.6773888Z [36;1m[0m
+2026-11-05T17:48:14.6774635Z [36;1mworkflow = yaml.safe_load(Path(".github/workflows/python-tests.yaml").read_text())[0m
+2026-11-05T17:48:14.6777717Z [36;1mdeclared = {}[0m
+2026-11-05T17:48:14.6779039Z [36;1mfor step in workflow["jobs"]["run-stream-dag-execution-tests"]["steps"]:[0m
+2026-11-05T17:48:14.6780127Z [36;1m    command = step.get("run", "").strip()[0m
+2026-11-05T17:48:14.6781010Z [36;1m    if not command.startswith("uv run pytest "):[0m
+2026-11-05T17:48:14.6782299Z [36;1m        continue[0m
+2026-11-05T17:48:14.6783541Z [36;1m    arguments = shlex.split(command)[0m
+2026-11-05T17:48:14.6785208Z [36;1m    report = next(arg.split("=", 1)[1] for arg in arguments if arg.startswith("--junitxml="))[0m
+2026-11-05T17:48:14.6786852Z [36;1m    declared[report] = {[0m
+2026-11-05T17:48:14.6787928Z [36;1m        arg.split("::", 1)[0][:-3].replace("/", ".")[0m
+2026-11-05T17:48:14.6789250Z [36;1m        for arg in arguments[0m
+2026-11-05T17:48:14.6790518Z [36;1m        if arg.startswith("tests/") and arg.split("::", 1)[0].endswith(".py")[0m
+2026-11-05T17:48:14.6791497Z [36;1m    }[0m
+2026-11-05T17:48:14.6793390Z [36;1mreports = ["native-dag-contract.xml"][0m
+2026-11-05T17:48:14.6794293Z [36;1mif os.environ["NATIVE_DAG_DATABASE"] == "postgres:17":[0m
+2026-11-05T17:48:14.6795096Z [36;1m    reports.append("native-dag-server.xml")[0m
+2026-11-05T17:48:14.6795922Z [36;1melse:[0m
+2026-11-05T17:48:14.6796830Z [36;1m    reports.append("native-dag-sqlite.xml")[0m
+2026-11-05T17:48:14.6797809Z [36;1mfor report in reports:[0m
+2026-11-05T17:48:14.6798485Z [36;1m    cases = ET.parse(report).findall(".//testcase")[0m
+2026-11-05T17:48:14.6799319Z [36;1m    assert cases, f"DAG cases were not collected: {report}"[0m
+2026-11-05T17:48:14.6800190Z [36;1m    classnames = {case.get("classname", "") for case in cases}[0m
+2026-11-05T17:48:14.6801178Z [36;1m    missing = {[0m
+2026-11-05T17:48:14.6802432Z [36;1m        module for module in declared[report][0m
+2026-11-05T17:48:14.6803457Z [36;1m        if not any(name == module or name.startswith(module + ".") for name in classnames)[0m
+2026-11-05T17:48:14.6804287Z [36;1m    }[0m
+2026-11-05T17:48:14.6805072Z [36;1m    assert not missing, f"DAG modules were silently deselected: {report}: {missing}"[0m
+2026-11-05T17:48:14.6806650Z [36;1m    identities = {(case.get("classname"), case.get("name")) for case in cases}[0m
+2026-11-05T17:48:14.6808146Z [36;1m    assert len(identities) == len(cases), f"DAG cases were duplicated: {report}"[0m
+2026-11-05T17:48:14.6810144Z [36;1m    assert not any(case.find(tag) is not None for case in cases for tag in ("skipped", "failure", "error")), f"DAG cases did not all pass: {report}"[0m
+2026-11-05T17:48:14.6811412Z [36;1m    print(f"{report}: {len(cases)} cases passed without skips")[0m
+2026-11-05T17:48:14.6812293Z [36;1mPY[0m
+2026-11-05T17:48:14.6835982Z shell: /usr/bin/bash -e {0}
+2026-11-05T17:48:14.6836661Z env:
+2026-11-05T17:48:14.6837114Z   PY_COLORS: 1
+2026-11-05T17:48:14.6846532Z   NATIVE_DAG_TEST_EXCLUSIONS: --ignore=tests/client/test_stream_dag_executions.py --ignore=tests/client/test_stream_dag_launches.py --ignore=tests/test_stream_graph_execution_contracts.py --ignore=tests/test_native_dag_execution_client_http.py --ignore=tests/server/schemas/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_launches.py --ignore=tests/server/database/test_stream_dag_execution_migrations.py --ignore=tests/server/api/test_stream_dag_executions.py --ignore=tests/server/api/test_stream_dag_launches.py --ignore=tests/test_stream_dag_execution.py --ignore=tests/test_stream_dag_bootstrap.py --ignore=tests/test_native_stream_dag_execution_http.py --ignore=tests/workers/test_stream_dag_subtasks.py --ignore=tests/workers/test_stream_dag_launches.py --ignore=tests/workers/test_stream_dag_bootstrap.py
+2026-11-05T17:48:14.6855224Z   UV_PYTHON_PREFERENCE: only-managed
+2026-11-05T17:48:14.6862323Z   UV_PYTHON_INSTALL_DIR: /home/runner/.local/share/uv/python
+2026-11-05T17:48:14.6863654Z   UV_PYTHON: 3.12.14
+2026-11-05T17:48:14.6864469Z   UV_CACHE_DIR: /home/runner/.cache/uv
+2026-11-05T17:48:14.6866185Z   NATIVE_DAG_DATABASE: sqlite
+2026-11-05T17:48:14.6866998Z ##[endgroup]
+2026-11-05T17:48:15.0503152Z native-dag-contract.xml: 459 cases passed without skips
+2026-11-05T17:48:15.0531077Z Traceback (most recent call last):
+2026-11-05T17:48:15.0532641Z   File "<stdin>", line 34, in <module>
+2026-11-05T17:48:15.0534922Z AssertionError: DAG modules were silently deselected: native-dag-sqlite.xml: {'tests.server.models.test_stream_dag_launches'}
+2026-11-05T17:48:15.0886359Z ##[error]Process completed with exit code 1.
+2026-11-05T17:48:15.1212110Z ##[group]Run actions/upload-artifact@v7
+2026-11-05T17:48:15.1213022Z with:
+2026-11-05T17:48:15.1213533Z   name: native-dag-execution-0
+2026-11-05T17:48:15.1214411Z   path: native-dag-*.xml
+native-dag-types.json
+native-dag-types.stderr.log
+
+2026-11-05T17:48:15.1215423Z   if-no-files-found: error
+2026-11-05T17:48:15.1216252Z   compression-level: 6
+2026-11-05T17:48:15.1216807Z   overwrite: false
+2026-11-05T17:48:15.1217396Z   include-hidden-files: false
+2026-11-05T17:48:15.1217969Z   archive: true
+2026-11-05T17:48:15.1218424Z env:
+2026-11-05T17:48:15.1218914Z   PY_COLORS: 1
+2026-11-05T17:48:15.1227337Z   NATIVE_DAG_TEST_EXCLUSIONS: --ignore=tests/client/test_stream_dag_executions.py --ignore=tests/client/test_stream_dag_launches.py --ignore=tests/test_stream_graph_execution_contracts.py --ignore=tests/test_native_dag_execution_client_http.py --ignore=tests/server/schemas/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_executions.py --ignore=tests/server/models/test_stream_dag_launches.py --ignore=tests/server/database/test_stream_dag_execution_migrations.py --ignore=tests/server/api/test_stream_dag_executions.py --ignore=tests/server/api/test_stream_dag_launches.py --ignore=tests/test_stream_dag_execution.py --ignore=tests/test_stream_dag_bootstrap.py --ignore=tests/test_native_stream_dag_execution_http.py --ignore=tests/workers/test_stream_dag_subtasks.py --ignore=tests/workers/test_stream_dag_launches.py --ignore=tests/workers/test_stream_dag_bootstrap.py
+2026-11-05T17:48:15.1236526Z   UV_PYTHON_PREFERENCE: only-managed
+2026-11-05T17:48:15.1237391Z   UV_PYTHON_INSTALL_DIR: /home/runner/.local/share/uv/python
+2026-11-05T17:48:15.1238235Z   UV_PYTHON: 3.12.14
+2026-11-05T17:48:15.1238784Z   UV_CACHE_DIR: /home/runner/.cache/uv
+2026-11-05T17:48:15.1239401Z ##[endgroup]
+2026-11-05T17:48:15.5409396Z With the provided path, there will be 2 files uploaded
+2026-11-05T17:48:15.5420696Z Artifact name is valid!
+2026-11-05T17:48:15.5422537Z Root directory input is valid!
+2026-11-05T17:48:16.1638079Z Uploading artifact: native-dag-execution-0.zip
+2026-11-05T17:48:16.1727370Z Beginning upload of artifact content to blob storage
+2026-11-05T17:48:16.8156754Z Uploaded bytes 9136
+2026-11-05T17:48:16.9594871Z Finished uploading artifact content to blob storage!
+2026-11-05T17:48:16.9625477Z SHA256 digest of uploaded artifact is 49d90af51e6ff63bdcdc90ae805c832fad9bf41fa3b856a6989fdba56ab7ed8b
+2026-11-05T17:48:16.9649078Z Finalizing artifact upload
+2026-11-05T17:48:17.8312377Z Artifact native-dag-execution-0 successfully finalized. Artifact ID 13437988843
+2026-11-05T17:48:17.8314621Z Artifact native-dag-execution-0 has been successfully uploaded! Final size is 9136 bytes. Artifact ID is 13437988843
+2026-11-05T17:48:17.8329350Z Artifact download URL: https://github.com/Anacreonsystems/ariadne/actions/runs/42071413034/artifacts/13437988843
+2026-11-05T17:48:17.9155967Z Post job cleanup.
+2026-11-05T17:48:18.1559327Z [command]/usr/bin/git version
+2026-11-05T17:48:18.1655102Z git version 2.56.0
+2026-11-05T17:48:18.1751565Z Temporarily overriding HOME='/home/runner/_work/_temp/587320fa-151d-471d-a0f3-2c4d36e663d4' before making global git config changes
+2026-11-05T17:48:18.1754877Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-05T17:48:18.1761714Z [command]/usr/bin/git config --global --add safe.directory /home/runner/_work/ariadne/ariadne
+2026-11-05T17:48:18.1839810Z Removing SSH command configuration
+2026-11-05T17:48:18.1861187Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-05T17:48:18.1974213Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-05T17:48:18.2668090Z Removing HTTP extra header
+2026-11-05T17:48:18.2680439Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-05T17:48:18.2778360Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-05T17:48:18.3449349Z Removing includeIf entries pointing to credentials config files
+2026-11-05T17:48:18.3463582Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-05T17:48:18.3545841Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-05T17:48:18.4543461Z Print service container logs: 9813061559b8469caf4669215640f98e_postgres17_9d29b6
+2026-11-05T17:48:18.4556995Z ##[command]/usr/bin/docker logs --details f6c9692356728b45b85571fe2568fa39b26af4f96361261af0fe991e7e445a69
+2026-11-05T17:48:18.5212952Z  The files belonging to this database system will be owned by user "postgres".
+2026-11-05T17:48:18.5214935Z  This user must also own the server process.
+2026-11-05T17:48:18.5218333Z  
+2026-11-05T17:48:18.5219164Z  The database cluster will be initialized with locale "en_US.utf8".
+2026-11-05T17:48:18.5222834Z  The default database encoding has accordingly been set to "UTF8".
+2026-11-05T17:48:18.5226058Z  The default text search configuration will be set to "english".
+2026-11-05T17:48:18.5227087Z  
+2026-11-05T17:48:18.5227731Z  Data page checksums are disabled.
+2026-11-05T17:48:18.5229155Z  
+2026-11-05T17:48:18.5231763Z  fixing permissions on existing directory /var/lib/postgresql/data ... ok
+2026-11-05T17:48:18.5235985Z  creating subdirectories ... ok
+2026-11-05T17:48:18.5236900Z  selecting dynamic shared memory implementation ... posix
+2026-11-05T17:48:18.5242854Z  initdb: warning: enabling "trust" authentication for local connections
+2026-11-05T17:48:18.5247017Z  initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+2026-11-05T17:48:18.5248786Z  selecting default "max_connections" ... 100
+2026-11-05T17:48:18.5249823Z  selecting default "shared_buffers" ... 128MB
+2026-11-05T17:48:18.5250847Z  selecting default time zone ... Etc/UTC
+2026-11-05T17:48:18.5251581Z  creating configuration files ... ok
+2026-11-05T17:48:18.5252735Z  running bootstrap script ... ok
+2026-11-05T17:48:18.5253589Z  performing post-bootstrap initialization ... ok
+2026-11-05T17:48:18.5254409Z  syncing data to disk ... ok
+2026-11-05T17:48:18.5255042Z  
+2026-11-05T17:48:18.5256577Z  
+2026-11-05T17:48:18.5257289Z  Success. You can now start the database server using:
+2026-11-05T17:48:18.5258097Z  
+2026-11-05T17:48:18.5258715Z      pg_ctl -D /var/lib/postgresql/data -l logfile start
+2026-11-05T17:48:18.5259487Z  
+2026-11-05T17:48:18.5261253Z  waiting for server to start....2026-11-05 17:38:16.801 UTC [48] LOG:  starting PostgreSQL 17.11 (Debian 17.11-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-05T17:48:18.5264207Z  2026-11-05 17:38:16.806 UTC [48] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-11-05T17:48:18.5266057Z  2026-11-05 17:38:16.816 UTC [51] LOG:  database system was shut down at 2026-11-05 17:38:16 UTC
+2026-11-05T17:48:18.5267571Z  2026-11-05 17:38:16.827 UTC [48] LOG:  database system is ready to accept connections
+2026-11-05T17:48:18.5268541Z   done
+2026-11-05T17:48:18.5269018Z  server started
+2026-11-05T17:48:18.5270652Z  2026-11-05 17:38:17.453 UTC [1] LOG:  starting PostgreSQL 17.11 (Debian 17.11-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-05T17:48:18.5274057Z  2026-11-05 17:38:17.454 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+2026-11-05T17:48:18.5275478Z  2026-11-05 17:38:17.454 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+2026-11-05T17:48:18.5277165Z  2026-11-05 17:38:17.459 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-11-05T17:48:18.5278632Z  2026-11-05 17:38:17.470 UTC [64] LOG:  database system was shut down at 2026-11-05 17:38:17 UTC
+2026-11-05T17:48:18.5280077Z  2026-11-05 17:38:17.481 UTC [1] LOG:  database system is ready to accept connections
+2026-11-05T17:48:18.5281345Z  2026-11-05 17:38:25.221 UTC [75] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5282735Z  2026-11-05 17:38:35.374 UTC [83] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5283762Z  2026-11-05 17:38:45.511 UTC [91] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5284794Z  2026-11-05 17:38:55.644 UTC [100] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5286877Z  2026-11-05 17:39:05.778 UTC [107] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5288111Z  2026-11-05 17:39:15.900 UTC [115] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5288948Z  CREATE DATABASE
+2026-11-05T17:48:18.5289439Z  
+2026-11-05T17:48:18.5289929Z  
+2026-11-05T17:48:18.5290776Z  /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+2026-11-05T17:48:18.5291792Z  
+2026-11-05T17:48:18.5295102Z  waiting for server to shut down....2026-11-05 17:38:17.184 UTC [48] LOG:  received fast shutdown request
+2026-11-05T17:48:18.5298932Z  2026-11-05 17:38:17.189 UTC [48] LOG:  aborting any active transactions
+2026-11-05T17:48:18.5300553Z  2026-11-05 17:38:17.199 UTC [48] LOG:  background worker "logical replication launcher" (PID 54) exited with exit code 1
+2026-11-05T17:48:18.5302273Z  2026-11-05 17:38:17.199 UTC [49] LOG:  shutting down
+2026-11-05T17:48:18.5303507Z  2026-11-05 17:38:17.204 UTC [49] LOG:  checkpoint starting: shutdown immediate
+2026-11-05T17:48:18.5306738Z  2026-11-05 17:38:17.277 UTC [49] LOG:  checkpoint complete: wrote 925 buffers (5.6%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.058 s, sync=0.008 s, total=0.078 s; sync files=301, longest=0.005 s, average=0.001 s; distance=4256 kB, estimate=4256 kB; lsn=0/19179A0, redo lsn=0/19179A0
+2026-11-05T17:48:18.5309738Z  2026-11-05 17:38:17.289 UTC [48] LOG:  database system is shut down
+2026-11-05T17:48:18.5310602Z   done
+2026-11-05T17:48:18.5311061Z  server stopped
+2026-11-05T17:48:18.5311566Z  
+2026-11-05T17:48:18.5312498Z  PostgreSQL init process complete; ready for start up.
+2026-11-05T17:48:18.5313301Z  
+2026-11-05T17:48:18.5314178Z  2026-11-05 17:39:26.050 UTC [124] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5315301Z  2026-11-05 17:39:36.190 UTC [132] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5316483Z  2026-11-05 17:39:46.341 UTC [140] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5317560Z  2026-11-05 17:39:56.474 UTC [149] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5318711Z  2026-11-05 17:40:06.676 UTC [156] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5319855Z  2026-11-05 17:40:16.884 UTC [164] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5320942Z  2026-11-05 17:40:27.084 UTC [173] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5323428Z  2026-11-05 17:40:37.212 UTC [181] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5324655Z  2026-11-05 17:40:48.383 UTC [189] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5325824Z  2026-11-05 17:40:58.512 UTC [197] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5326930Z  2026-11-05 17:41:08.635 UTC [205] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5328288Z  2026-11-05 17:41:18.791 UTC [213] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5329355Z  2026-11-05 17:41:28.961 UTC [221] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5330430Z  2026-11-05 17:41:39.109 UTC [228] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5332662Z  2026-11-05 17:41:49.294 UTC [237] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5333650Z  2026-11-05 17:41:59.458 UTC [245] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5334689Z  2026-11-05 17:42:09.596 UTC [253] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5335904Z  2026-11-05 17:42:19.751 UTC [262] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5338702Z  2026-11-05 17:42:29.925 UTC [270] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5340202Z  2026-11-05 17:42:40.105 UTC [278] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5341063Z  2026-11-05 17:42:50.250 UTC [286] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5341877Z  2026-11-05 17:43:00.438 UTC [294] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5343117Z  2026-11-05 17:43:10.592 UTC [302] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5345104Z  2026-11-05 17:43:17.563 UTC [62] LOG:  checkpoint starting: time
+2026-11-05T17:48:18.5346029Z  2026-11-05 17:43:20.729 UTC [311] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5349180Z  2026-11-05 17:43:22.013 UTC [62] LOG:  checkpoint complete: wrote 47 buffers (0.3%); 0 WAL file(s) added, 0 removed, 0 recycled; write=4.432 s, sync=0.003 s, total=4.451 s; sync files=12, longest=0.002 s, average=0.001 s; distance=278 kB, estimate=278 kB; lsn=0/195D300, redo lsn=0/195D2A8
+2026-11-05T17:48:18.5351443Z  2026-11-05 17:43:30.886 UTC [319] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5352641Z  2026-11-05 17:43:41.055 UTC [326] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5353652Z  2026-11-05 17:43:51.208 UTC [334] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5354374Z  2026-11-05 17:44:01.391 UTC [341] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5355444Z  2026-11-05 17:44:11.542 UTC [349] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5356506Z  2026-11-05 17:44:21.683 UTC [359] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5357214Z  2026-11-05 17:44:31.841 UTC [367] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5359261Z  2026-11-05 17:44:42.037 UTC [375] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5360316Z  2026-11-05 17:44:52.222 UTC [383] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5361216Z  2026-11-05 17:45:02.464 UTC [390] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5362458Z  2026-11-05 17:45:12.660 UTC [398] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5363573Z  2026-11-05 17:45:22.878 UTC [406] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5364591Z  2026-11-05 17:45:33.041 UTC [414] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5365783Z  2026-11-05 17:45:43.202 UTC [422] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5367613Z  2026-11-05 17:45:53.332 UTC [431] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5368615Z  2026-11-05 17:46:03.494 UTC [439] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5369667Z  2026-11-05 17:46:13.651 UTC [447] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5370787Z  2026-11-05 17:46:23.781 UTC [456] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5371465Z  2026-11-05 17:46:33.917 UTC [464] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5372353Z  2026-11-05 17:46:44.060 UTC [472] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5373029Z  2026-11-05 17:46:54.203 UTC [481] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5373676Z  2026-11-05 17:47:04.339 UTC [489] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5374341Z  2026-11-05 17:47:14.474 UTC [497] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5374992Z  2026-11-05 17:47:24.611 UTC [506] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5375993Z  2026-11-05 17:47:34.764 UTC [514] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5377048Z  2026-11-05 17:47:44.902 UTC [522] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5378119Z  2026-11-05 17:47:55.071 UTC [531] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5380071Z  2026-11-05 17:48:05.213 UTC [539] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5381108Z  2026-11-05 17:48:15.368 UTC [546] FATAL:  role "root" does not exist
+2026-11-05T17:48:18.5400476Z Stop and remove container: 9813061559b8469caf4669215640f98e_postgres17_9d29b6
+2026-11-05T17:48:18.5411376Z ##[command]/usr/bin/docker rm --force f6c9692356728b45b85571fe2568fa39b26af4f96361261af0fe991e7e445a69
+2026-11-05T17:48:20.1611434Z f6c9692356728b45b85571fe2568fa39b26af4f96361261af0fe991e7e445a69
+2026-11-05T17:48:20.1672629Z Remove container network: github_network_07983bda4ecb407b9b8d8b4a1cf3670f
+2026-11-05T17:48:20.1683673Z ##[command]/usr/bin/docker network rm github_network_07983bda4ecb407b9b8d8b4a1cf3670f
+2026-11-05T17:48:20.3104922Z github_network_07983bda4ecb407b9b8d8b4a1cf3670f
+2026-11-05T17:48:20.3334377Z Cleaning up orphan processes

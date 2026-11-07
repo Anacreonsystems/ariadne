@@ -1,0 +1,26 @@
+"""Pytest outcome plus new diagnostic-file oracle; original test owns its guards."""
+import json
+from pathlib import Path
+import xml.etree.ElementTree as ET
+from uuid import UUID
+
+
+def inspect(trial:Path,phase:str,expected_count:int)->dict:
+    failures=[]
+    def check(value,message):
+        if not value:failures.append(message)
+    try:suites=ET.parse(trial/'pytest.private.xml').findall('.//testsuite')
+    except (OSError,ET.ParseError):suites=[]
+    check(len(suites)==1,'one actual pytest suite')
+    suite=suites[0].attrib if suites else {}
+    check(suite.get('tests')=='1' and all(suite.get(k)=='0' for k in ('failures','errors','skipped')),'one existing real DAG control PASS withoutskip')
+    files=list((trial/'pytest').rglob('dag-flow-failure.json'));diagnostic={}
+    if phase=='intentional_failure':
+        check(len(files)==1,'intentional Flow failure retained one capture')
+        if len(files)==1:
+            diagnostic=json.loads(files[0].read_text())
+            check(diagnostic.get('exception_type')=='builtins.ValueError','original ValueError retained')
+            check(diagnostic.get('graph_revision_id') is not None,'sealed graph UUID retained')
+            if diagnostic.get('graph_revision_id') is not None:UUID(diagnostic['graph_revision_id'])
+    else:check(not files,'normal async control writes no failure capture')
+    return {'status':'BODY_AND_WIDER_HEALTH_PASS' if not failures else 'NATIVE_BODY_OR_CAPTURE_RED','pytest_suite':suite,'failed_checks':failures,'failure_diagnostic':diagnostic,'qualification':'Original existing8doc DAG test owns all unchanged domain/terminal/PID/worker-health assertions. This audit adds only the new failurefile presence/type/UUID oracle or normal-path absence. Intentional FlowFAILED is expected for False-failure; no injected real SDK timeout or independent additional domain/health scan is claimed.'}

@@ -1,0 +1,24 @@
+import hashlib,json,marshal,os,sys,time
+_seen=set()
+_root='/workspace/ariadne/src/prefect/'
+_directory='/tmp/native-ni012-personal-user-retry-d504c70/run-sync-user-retry-befeaa85/audit'
+
+def _audit(event,args):
+    if event!='exec' or not args:
+        return
+    code=args[0]
+    path=getattr(code,'co_filename','')
+    if not isinstance(path,str) or not path.startswith(_root) or not path.endswith('.py') or path in _seen:
+        return
+    _seen.add(path)
+    try:
+        with open(path,'rb') as source:
+            digest=hashlib.sha256(source.read()).hexdigest()
+        item={'pid':os.getpid(),'parent':os.getppid(),'monotonic_ns':time.monotonic_ns(),'path':path,'source_sha256':digest,'code_sha256':hashlib.sha256(marshal.dumps(code)).hexdigest()}
+        payload=(json.dumps(item,sort_keys=True)+'\n').encode()
+        descriptor=os.open(_directory+'/'+str(os.getpid())+'.jsonl',os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
+        try: os.write(descriptor,payload)
+        finally: os.close(descriptor)
+    except OSError:
+        pass
+sys.addaudithook(_audit)

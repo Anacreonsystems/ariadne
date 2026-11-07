@@ -3,6 +3,7 @@
 import asyncio
 import atexit
 import json
+import math
 import os
 import sys
 import time
@@ -79,6 +80,19 @@ if (
         raise SystemExit(73)
 
 
+def _wait_for_replacement(target: Path) -> None:
+    # This fixture and its parent test share one host's monotonic clock.
+    deadline = float((target / "replacement-observation-deadline").read_text())
+    if not math.isfinite(deadline) or deadline <= 0:
+        raise ValueError("Invalid replacement observation deadline")
+    while not (target / "replacement-started").exists():
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                "Replacement did not start before the case observation deadline"
+            )
+        time.sleep(0.02)
+
+
 @task(
     version="native-partitioned-v1",
     retries=2,
@@ -102,13 +116,7 @@ def partitioned_source(
                 str(time.monotonic_ns())
             )
     if fault in {"operator-loss-200", "operator-before-yield-200"}:
-        deadline = time.monotonic() + 90
-        while not (target / "replacement-started").exists():
-            if time.monotonic() > deadline:
-                raise TimeoutError(
-                    "Replacement did not start while healthy sources waited"
-                )
-            time.sleep(0.02)
+        _wait_for_replacement(target)
 
 
 @task(

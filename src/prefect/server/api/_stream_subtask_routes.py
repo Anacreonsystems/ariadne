@@ -21,16 +21,31 @@ _DATA_POST = frozenset(
         "outputs/fail",
     )
 )
+_DAG_DATA_POST = frozenset(
+    "/streams/v2/dags/" + path
+    for path in (
+        "sources/open",
+        "sources/append",
+        "sources/finish",
+        "consumers/open",
+        "consumers/read",
+        "consumers/complete",
+        "consumers/finish",
+    )
+)
 
 
 def subtask_route_allowed(method: str, path: str) -> bool:
     if method == "POST":
         return (
             path in _DATA_POST
+            or path in _DAG_DATA_POST
             or re.fullmatch(
                 rf"/streams/v2/subtasks/{_UUID}/(?:events|lease/renew|lease/release)",
                 path,
             )
+            is not None
+            or re.fullmatch(rf"/streams/v2/dags/subtasks/{_UUID}/bootstrap-ready", path)
             is not None
         )
     if method == "GET":
@@ -38,6 +53,11 @@ def subtask_route_allowed(method: str, path: str) -> bool:
             re.fullmatch(rf"/streams/v1/{_UUID}(?:/prefix)?", path) is not None
             or re.fullmatch(
                 rf"/streams/v2/subtasks/{_UUID}/(?:bootstrap|task-run)", path
+            )
+            is not None
+            or re.fullmatch(
+                rf"/streams/v2/dags/subtasks/{_UUID}/(?:bootstrap|activation|(?:input|output)/status)",
+                path,
             )
             is not None
         )

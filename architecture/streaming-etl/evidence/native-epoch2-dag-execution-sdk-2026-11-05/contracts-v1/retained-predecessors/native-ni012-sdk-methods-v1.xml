@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="47" time="0.595" timestamp="2026-11-05T10:28:54.226970+00:00" hostname="f8abb611283c"><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-poll_worker_stream_dag_subtasks]" time="0.006" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-abort_worker_stream_dag_startup]" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-prepare_worker_stream_dag_launch]" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-record_worker_stream_dag_launch]" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-close_worker_stream_dag_launch]" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-stop_worker_stream_dag_subtask]" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-read_stream_dag_subtask_bootstrap]" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-read_stream_dag_subtask_activation]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-mark_stream_dag_subtask_bootstrap_ready]" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-read_stream_dag_input_status]" time="0.003"><failure message="AssertionError: assert {'id': '0a76c...: 'OPEN', ...} == {'id': '0a76c...: 'OPEN', ...}&#10;  &#10;  Omitting 11 identical items, use -vv to show&#10;  Differing items:&#10;  {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000, 'max_state_bytes': 16384, ...}} != {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000}}&#10;  Use -v to get more diff">method = 'read_stream_dag_input_status', asynchronous = False
+
+    @pytest.mark.parametrize("method", WORKER_METHODS + CHILD_METHODS)
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_exact_worker_child_methods(method: str, asynchronous: bool):
+        kwargs, response, path, body = wire_case(method)
+        seen: list[bytes] = []
+    
+        def handler(request: httpx.Request) -&gt; httpx.Response:
+            assert request.url.path == path
+            assert request.method == ("GET" if body is None else "POST")
+            seen.append(request.content)
+            return httpx.Response(200, json=response)
+    
+        if asynchronous:
+            async with httpx.AsyncClient(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamAsyncClient(http)
+                result = await getattr(client, method)(**kwargs)
+                await getattr(client, method)(**kwargs)
+        else:
+            with httpx.Client(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamClient(http)
+                result = getattr(client, method)(**kwargs)
+                getattr(client, method)(**kwargs)
+        assert seen[0] == seen[1]
+        assert (json.loads(seen[0]) if seen[0] else None) == body
+        assert inspect.signature(getattr(StreamClient, method)) == inspect.signature(
+            getattr(StreamAsyncClient, method)
+        )
+        if method != "read_stream_dag_subtask_bootstrap":
+&gt;           assert (
+                [row.model_dump(mode="json") for row in result]
+                if isinstance(result, list)
+                else result.model_dump(mode="json")
+            ) == response
+E           AssertionError: assert {'id': '0a76c...: 'OPEN', ...} == {'id': '0a76c...: 'OPEN', ...}
+E             
+E             Omitting 11 identical items, use -vv to show
+E             Differing items:
+E             {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000, 'max_state_bytes': 16384, ...}} != {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000}}
+E             Use -v to get more diff
+
+tests/client/test_stream_dag_launches.py:418: AssertionError</failure></testcase><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-read_stream_dag_output_status]" time="0.003"><failure message="AssertionError: assert {'id': '4fcac...: 'OPEN', ...} == {'id': '4fcac...: 'OPEN', ...}&#10;  &#10;  Omitting 11 identical items, use -vv to show&#10;  Differing items:&#10;  {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000, 'max_state_bytes': 16384, ...}} != {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000}}&#10;  Use -v to get more diff">method = 'read_stream_dag_output_status', asynchronous = False
+
+    @pytest.mark.parametrize("method", WORKER_METHODS + CHILD_METHODS)
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_exact_worker_child_methods(method: str, asynchronous: bool):
+        kwargs, response, path, body = wire_case(method)
+        seen: list[bytes] = []
+    
+        def handler(request: httpx.Request) -&gt; httpx.Response:
+            assert request.url.path == path
+            assert request.method == ("GET" if body is None else "POST")
+            seen.append(request.content)
+            return httpx.Response(200, json=response)
+    
+        if asynchronous:
+            async with httpx.AsyncClient(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamAsyncClient(http)
+                result = await getattr(client, method)(**kwargs)
+                await getattr(client, method)(**kwargs)
+        else:
+            with httpx.Client(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamClient(http)
+                result = getattr(client, method)(**kwargs)
+                getattr(client, method)(**kwargs)
+        assert seen[0] == seen[1]
+        assert (json.loads(seen[0]) if seen[0] else None) == body
+        assert inspect.signature(getattr(StreamClient, method)) == inspect.signature(
+            getattr(StreamAsyncClient, method)
+        )
+        if method != "read_stream_dag_subtask_bootstrap":
+&gt;           assert (
+                [row.model_dump(mode="json") for row in result]
+                if isinstance(result, list)
+                else result.model_dump(mode="json")
+            ) == response
+E           AssertionError: assert {'id': '4fcac...: 'OPEN', ...} == {'id': '4fcac...: 'OPEN', ...}
+E             
+E             Omitting 11 identical items, use -vv to show
+E             Differing items:
+E             {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000, 'max_state_bytes': 16384, ...}} != {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000}}
+E             Use -v to get more diff
+
+tests/client/test_stream_dag_launches.py:418: AssertionError</failure></testcase><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-open_stream_dag_source]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-open_stream_dag_consumer]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-read_stream_dag_consumer]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-finish_stream_dag_source]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[False-finish_stream_dag_consumer]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-poll_worker_stream_dag_subtasks]" time="0.004" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-abort_worker_stream_dag_startup]" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-prepare_worker_stream_dag_launch]" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-record_worker_stream_dag_launch]" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-close_worker_stream_dag_launch]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-stop_worker_stream_dag_subtask]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-read_stream_dag_subtask_bootstrap]" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-read_stream_dag_subtask_activation]" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-mark_stream_dag_subtask_bootstrap_ready]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-read_stream_dag_input_status]" time="0.003"><failure message="AssertionError: assert {'id': '42555...: 'OPEN', ...} == {'id': '42555...: 'OPEN', ...}&#10;  &#10;  Omitting 11 identical items, use -vv to show&#10;  Differing items:&#10;  {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000, 'max_state_bytes': 16384, ...}} != {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000}}&#10;  Use -v to get more diff">method = 'read_stream_dag_input_status', asynchronous = True
+
+    @pytest.mark.parametrize("method", WORKER_METHODS + CHILD_METHODS)
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_exact_worker_child_methods(method: str, asynchronous: bool):
+        kwargs, response, path, body = wire_case(method)
+        seen: list[bytes] = []
+    
+        def handler(request: httpx.Request) -&gt; httpx.Response:
+            assert request.url.path == path
+            assert request.method == ("GET" if body is None else "POST")
+            seen.append(request.content)
+            return httpx.Response(200, json=response)
+    
+        if asynchronous:
+            async with httpx.AsyncClient(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamAsyncClient(http)
+                result = await getattr(client, method)(**kwargs)
+                await getattr(client, method)(**kwargs)
+        else:
+            with httpx.Client(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamClient(http)
+                result = getattr(client, method)(**kwargs)
+                getattr(client, method)(**kwargs)
+        assert seen[0] == seen[1]
+        assert (json.loads(seen[0]) if seen[0] else None) == body
+        assert inspect.signature(getattr(StreamClient, method)) == inspect.signature(
+            getattr(StreamAsyncClient, method)
+        )
+        if method != "read_stream_dag_subtask_bootstrap":
+&gt;           assert (
+                [row.model_dump(mode="json") for row in result]
+                if isinstance(result, list)
+                else result.model_dump(mode="json")
+            ) == response
+E           AssertionError: assert {'id': '42555...: 'OPEN', ...} == {'id': '42555...: 'OPEN', ...}
+E             
+E             Omitting 11 identical items, use -vv to show
+E             Differing items:
+E             {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000, 'max_state_bytes': 16384, ...}} != {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000}}
+E             Use -v to get more diff
+
+tests/client/test_stream_dag_launches.py:418: AssertionError</failure></testcase><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-read_stream_dag_output_status]" time="0.003"><failure message="AssertionError: assert {'id': '64be0...: 'OPEN', ...} == {'id': '64be0...: 'OPEN', ...}&#10;  &#10;  Omitting 11 identical items, use -vv to show&#10;  Differing items:&#10;  {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000, 'max_state_bytes': 16384, ...}} != {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000}}&#10;  Use -v to get more diff">method = 'read_stream_dag_output_status', asynchronous = True
+
+    @pytest.mark.parametrize("method", WORKER_METHODS + CHILD_METHODS)
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_exact_worker_child_methods(method: str, asynchronous: bool):
+        kwargs, response, path, body = wire_case(method)
+        seen: list[bytes] = []
+    
+        def handler(request: httpx.Request) -&gt; httpx.Response:
+            assert request.url.path == path
+            assert request.method == ("GET" if body is None else "POST")
+            seen.append(request.content)
+            return httpx.Response(200, json=response)
+    
+        if asynchronous:
+            async with httpx.AsyncClient(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamAsyncClient(http)
+                result = await getattr(client, method)(**kwargs)
+                await getattr(client, method)(**kwargs)
+        else:
+            with httpx.Client(
+                base_url="http://test", transport=httpx.MockTransport(handler)
+            ) as http:
+                client = StreamClient(http)
+                result = getattr(client, method)(**kwargs)
+                getattr(client, method)(**kwargs)
+        assert seen[0] == seen[1]
+        assert (json.loads(seen[0]) if seen[0] else None) == body
+        assert inspect.signature(getattr(StreamClient, method)) == inspect.signature(
+            getattr(StreamAsyncClient, method)
+        )
+        if method != "read_stream_dag_subtask_bootstrap":
+&gt;           assert (
+                [row.model_dump(mode="json") for row in result]
+                if isinstance(result, list)
+                else result.model_dump(mode="json")
+            ) == response
+E           AssertionError: assert {'id': '64be0...: 'OPEN', ...} == {'id': '64be0...: 'OPEN', ...}
+E             
+E             Omitting 11 identical items, use -vv to show
+E             Differing items:
+E             {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000, 'max_state_bytes': 16384, ...}} != {'limits': {'max_records': 1000, 'max_bytes': 1000000, 'max_record_bytes': 1000}}
+E             Use -v to get more diff
+
+tests/client/test_stream_dag_launches.py:418: AssertionError</failure></testcase><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-open_stream_dag_source]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-open_stream_dag_consumer]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-read_stream_dag_consumer]" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-finish_stream_dag_source]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_exact_worker_child_methods[True-finish_stream_dag_consumer]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_valid_but_foreign_receipt_fails_closed[prepare_worker_stream_dag_launch]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_valid_but_foreign_receipt_fails_closed[record_worker_stream_dag_launch]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_valid_but_foreign_receipt_fails_closed[close_worker_stream_dag_launch]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_valid_but_foreign_receipt_fails_closed[stop_worker_stream_dag_subtask]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_valid_but_foreign_receipt_fails_closed[mark_stream_dag_subtask_bootstrap_ready]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_valid_but_foreign_receipt_fails_closed[finish_stream_dag_source]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_valid_but_foreign_receipt_fails_closed[finish_stream_dag_consumer]" time="0.002" /><testcase classname="tests.client.test_stream_dag_launches" name="test_worker_preview_control_is_not_an_assigned_control" time="0.003" /><testcase classname="tests.client.test_stream_dag_launches" name="test_stop_cannot_nominate_attempt_subset[attempt_ids]" time="0.000" /><testcase classname="tests.client.test_stream_dag_launches" name="test_stop_cannot_nominate_attempt_subset[grant_id]" time="0.000" /><testcase classname="tests.client.test_stream_dag_launches" name="test_stop_cannot_nominate_attempt_subset[death_witness]" time="0.000" /><testcase classname="tests.client.test_stream_dag_launches" name="test_stop_cannot_nominate_attempt_subset[unstarted]" time="0.000" /><testcase classname="tests.client.test_stream_dag_launches" name="test_prepare_does_not_accept_worker_selected_authority[expected_grant_id]" time="0.000" /><testcase classname="tests.client.test_stream_dag_launches" name="test_prepare_does_not_accept_worker_selected_authority[expected_physical_epoch]" time="0.000" /><testcase classname="tests.client.test_stream_dag_launches" name="test_prepare_does_not_accept_worker_selected_authority[attempt_index]" time="0.001" /></testsuite></testsuites>

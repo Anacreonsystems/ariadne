@@ -752,6 +752,9 @@ class StreamRecord(Base):
     size_bytes: Mapped[int]
 
     __table_args__: Any = (
+        # Parent-record cleanup probes these immediate RESTRICT foreign keys.
+        sa.Index("ix_stream_record__payload_record_id", "payload_record_id"),
+        sa.Index("ix_stream_record__route_receipt_id", "route_receipt_id"),
         sa.UniqueConstraint(
             "id",
             "graph_revision_id",
@@ -1058,6 +1061,15 @@ class StreamRouteReceipt(Base):
     outcome_size: Mapped[int]
 
     __table_args__: Any = (
+        # Bound both immediate payload checks and deferred reference checks.
+        sa.Index(
+            "ix_stream_route_receipt__input_payload_record_id",
+            "input_payload_record_id",
+        ),
+        sa.Index(
+            "ix_stream_route_receipt__input_reference_record_id",
+            "input_reference_record_id",
+        ),
         sa.UniqueConstraint("producer_stream_id", "producer_position"),
         sa.UniqueConstraint("payload_record_id"),
         sa.UniqueConstraint(
@@ -1281,6 +1293,380 @@ class StreamSubmission(Base):
     )
 
 
+class StreamDAGLifecycleOperation(Base):
+    """Immutable DAG actions, canonical controls and terminal outcome receipts."""
+
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "stream_dag_lifecycle_operation"
+
+    graph_revision_id: Mapped[uuid.UUID]
+    profile: Mapped[str] = mapped_column(
+        default="partitioned-dag-v1", server_default="partitioned-dag-v1"
+    )
+    flow_run_id: Mapped[uuid.UUID]
+    operation_id: Mapped[uuid.UUID]
+    kind: Mapped[str]
+    flow_generation: Mapped[int]
+    flow_holder_id: Mapped[uuid.UUID]
+    flow_run_run_count: Mapped[int]
+    request_digest: Mapped[str] = mapped_column(sa.String(64))
+    accepted_receipt: Mapped[dict[str, Any]] = mapped_column(JSON)
+    outcome_digest: Mapped[str] = mapped_column(sa.String(64))
+    state: Mapped[str]
+    effective_control_kind: Mapped[Optional[str]]
+    control_operation_id: Mapped[Optional[uuid.UUID]]
+    first_cause: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    subject_subtask_id: Mapped[Optional[uuid.UUID]]
+    source_event_id: Mapped[Optional[uuid.UUID]] = mapped_column(unique=True)
+    source_task_state_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        sa.ForeignKey("task_run_state.id", name="fk_dag_operation__source_state")
+    )
+    target_set_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    terminal_state: Mapped[Optional[str]]
+    terminal_outcome: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    completed_at: Mapped[Optional[DateTime]]
+
+    __table_args__: Any = (
+        sa.UniqueConstraint(
+            "id", "graph_revision_id", name="uq_dag_operation__id_graph"
+        ),
+        sa.UniqueConstraint(
+            "graph_revision_id",
+            "operation_id",
+            name="uq_dag_operation__graph_operation",
+        ),
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "profile"],
+            ["stream_graph_revision.id", "stream_graph_revision.profile"],
+            ondelete="CASCADE",
+            name="fk_dag_operation__graph_profile",
+        ),
+        sa.ForeignKeyConstraint(
+            ["graph_revision_id", "flow_run_id"],
+            ["stream_graph_revision.id", "stream_graph_revision.flow_run_id"],
+            name="fk_dag_operation__graph_flow",
+        ),
+        sa.ForeignKeyConstraint(
+            ["control_operation_id", "graph_revision_id"],
+            [
+                "stream_dag_lifecycle_operation.id",
+                "stream_dag_lifecycle_operation.graph_revision_id",
+            ],
+            name="fk_dag_operation__control_scope",
+        ),
+        sa.ForeignKeyConstraint(
+            ["subject_subtask_id", "graph_revision_id"],
+            ["stream_physical_subtask.id", "stream_physical_subtask.graph_revision_id"],
+            name="fk_dag_operation__subject_scope",
+        ),
+        sa.CheckConstraint(
+            "id = operation_id AND profile = 'partitioned-dag-v1'",
+            name="identity_valid",
+        ),
+        sa.CheckConstraint(
+            "kind IN ('START', 'ACTIVATE', 'ABORT_PREVIEW', 'CANCEL', 'FAIL', 'CONTROL', 'TASK_FAILURE', 'FINALIZE', 'SOURCE_FINISH', 'CONSUMER_FINISH')",
+            name="kind_valid",
+        ),
+        sa.CheckConstraint(
+            "flow_generation BETWEEN 1 AND 64 AND flow_run_run_count >= 1",
+            name="attempt_valid",
+        ),
+        sa.CheckConstraint(
+            "length(request_digest) = 64 AND length(outcome_digest) = 64 AND (target_set_digest IS NULL OR length(target_set_digest) = 64)",
+            name="digests_valid",
+        ),
+        sa.CheckConstraint(
+            "state IN ('ACCEPTED', 'STOPPING', 'COMPLETED') AND ((state = 'COMPLETED' AND completed_at IS NOT NULL) OR (state != 'COMPLETED' AND completed_at IS NULL))",
+            name="state_valid",
+        ),
+        sa.CheckConstraint(
+            "(kind = 'CONTROL' AND effective_control_kind IS NOT NULL AND effective_control_kind IN ('PREVIEW_ABORT', 'STARTUP_ABORT', 'FAIL', 'CANCEL') AND first_cause IS NOT NULL AND control_operation_id IS NULL AND target_set_digest IS NOT NULL) OR (kind != 'CONTROL' AND first_cause IS NULL)",
+            name="control_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(kind = 'FINALIZE' AND terminal_state IS NOT NULL AND terminal_state IN ('COMPLETED', 'FAILED', 'CANCELLED') AND terminal_outcome IS NOT NULL AND state = 'COMPLETED') OR (kind != 'FINALIZE' AND terminal_state IS NULL AND terminal_outcome IS NULL)",
+            name="terminal_shape_valid",
+        ),
+        sa.Index(
+            "uq_dag_operation__one_control",
+            "graph_revision_id",
+            unique=True,
+            postgresql_where=sa.text("kind = 'CONTROL'"),
+            sqlite_where=sa.text("kind = 'CONTROL'"),
+        ),
+        sa.Index(
+            "uq_dag_operation__one_finalize",
+            "graph_revision_id",
+            unique=True,
+            postgresql_where=sa.text("kind = 'FINALIZE'"),
+            sqlite_where=sa.text("kind = 'FINALIZE'"),
+        ),
+        sa.Index(
+            "uq_dag_operation__producer_finish",
+            "subject_subtask_id",
+            unique=True,
+            postgresql_where=sa.text("kind IN ('SOURCE_FINISH', 'CONSUMER_FINISH')"),
+            sqlite_where=sa.text("kind IN ('SOURCE_FINISH', 'CONSUMER_FINISH')"),
+        ),
+    )
+
+
+class StreamDAGLaunchAttempt(Base):
+    """One durably prepared process birth, recorded before cap-free import."""
+
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "stream_dag_launch_attempt"
+
+    graph_revision_id: Mapped[uuid.UUID]
+    subtask_id: Mapped[uuid.UUID]
+    task_run_id: Mapped[uuid.UUID]
+    start_operation_id: Mapped[uuid.UUID]
+    worker_id: Mapped[uuid.UUID]
+    work_pool_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("work_pool.id"))
+    host_id: Mapped[uuid.UUID]
+    boot_id: Mapped[uuid.UUID]
+    launcher_process_id: Mapped[int] = mapped_column(sa.BigInteger)
+    launcher_start_ticks: Mapped[int] = mapped_column(sa.BigInteger)
+    worker_generation_digest: Mapped[str] = mapped_column(sa.String(64))
+    flow_generation: Mapped[int]
+    flow_holder_id: Mapped[uuid.UUID]
+    flow_run_run_count: Mapped[int]
+    attempt_index: Mapped[int]
+    planned_physical_epoch: Mapped[int]
+    expected_grant_id: Mapped[Optional[uuid.UUID]]
+    expected_physical_epoch: Mapped[int]
+    replacement_operation_id: Mapped[Optional[uuid.UUID]]
+    grant_id: Mapped[Optional[uuid.UUID]] = mapped_column(unique=True)
+    registered_grant_id: Mapped[Optional[uuid.UUID]] = mapped_column(unique=True)
+    state: Mapped[str]
+    prepare_operation_id: Mapped[uuid.UUID]
+    prepare_request_digest: Mapped[str] = mapped_column(sa.String(64))
+    prepare_receipt: Mapped[dict[str, Any]] = mapped_column(JSON)
+    record_operation_id: Mapped[Optional[uuid.UUID]]
+    record_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    record_receipt: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    child_process_id: Mapped[Optional[int]]
+    process_start_ticks: Mapped[Optional[int]] = mapped_column(sa.BigInteger)
+    local_journal_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    close_operation_id: Mapped[Optional[uuid.UUID]]
+    close_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    close_proof_kind: Mapped[Optional[str]]
+    close_proof: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    close_receipt: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    closed_at: Mapped[Optional[DateTime]]
+
+    __table_args__: Any = (
+        sa.UniqueConstraint(
+            "subtask_id", "attempt_index", name="uq_dag_launch__subtask_index"
+        ),
+        sa.UniqueConstraint(
+            "subtask_id",
+            "prepare_operation_id",
+            name="uq_dag_launch__prepare_operation",
+        ),
+        sa.UniqueConstraint(
+            "subtask_id", "planned_physical_epoch", name="uq_dag_launch__planned_epoch"
+        ),
+        sa.ForeignKeyConstraint(
+            ["subtask_id", "graph_revision_id", "worker_id"],
+            [
+                "stream_physical_subtask.id",
+                "stream_physical_subtask.graph_revision_id",
+                "stream_physical_subtask.assigned_worker_id",
+            ],
+            name="fk_dag_launch__assignment",
+        ),
+        sa.ForeignKeyConstraint(
+            ["subtask_id", "graph_revision_id", "task_run_id"],
+            [
+                "stream_physical_subtask.id",
+                "stream_physical_subtask.graph_revision_id",
+                "stream_physical_subtask.task_run_id",
+            ],
+            name="fk_dag_launch__task_scope",
+        ),
+        sa.ForeignKeyConstraint(
+            ["start_operation_id", "graph_revision_id"],
+            [
+                "stream_dag_lifecycle_operation.id",
+                "stream_dag_lifecycle_operation.graph_revision_id",
+            ],
+            name="fk_dag_launch__start_scope",
+        ),
+        sa.ForeignKeyConstraint(
+            ["expected_grant_id", "subtask_id", "expected_physical_epoch"],
+            [
+                "stream_subtask_grant.id",
+                "stream_subtask_grant.subtask_id",
+                "stream_subtask_grant.physical_epoch",
+            ],
+            name="fk_dag_launch__expected_grant",
+        ),
+        sa.ForeignKeyConstraint(
+            ["subtask_id", "replacement_operation_id"],
+            [
+                "stream_subtask_replacement.subtask_id",
+                "stream_subtask_replacement.operation_id",
+            ],
+            name="fk_dag_launch__replacement_scope",
+        ),
+        sa.ForeignKeyConstraint(
+            ["grant_id", "subtask_id", "planned_physical_epoch"],
+            [
+                "stream_subtask_grant.id",
+                "stream_subtask_grant.subtask_id",
+                "stream_subtask_grant.physical_epoch",
+            ],
+            name="fk_dag_launch__grant_scope",
+        ),
+        sa.ForeignKeyConstraint(
+            [
+                "registered_grant_id",
+                "subtask_id",
+                "planned_physical_epoch",
+                "child_process_id",
+                "process_start_ticks",
+            ],
+            [
+                "stream_subtask_grant.id",
+                "stream_subtask_grant.subtask_id",
+                "stream_subtask_grant.physical_epoch",
+                "stream_subtask_grant.child_process_id",
+                "stream_subtask_grant.process_start_ticks",
+            ],
+            name="fk_dag_launch__registered_process",
+        ),
+        sa.CheckConstraint(
+            "attempt_index BETWEEN 1 AND 64 AND planned_physical_epoch BETWEEN 1 AND 64 AND expected_physical_epoch BETWEEN 0 AND 63 AND planned_physical_epoch = expected_physical_epoch + 1 AND flow_generation BETWEEN 1 AND 64 AND flow_run_run_count >= 1",
+            name="attempt_valid",
+        ),
+        sa.CheckConstraint(
+            "launcher_process_id > 0 AND launcher_start_ticks > 0 AND length(worker_generation_digest) = 64 AND length(prepare_request_digest) = 64",
+            name="launcher_valid",
+        ),
+        sa.CheckConstraint(
+            "(expected_grant_id IS NULL AND expected_physical_epoch = 0 AND replacement_operation_id IS NULL) OR (expected_grant_id IS NOT NULL AND expected_physical_epoch > 0 AND replacement_operation_id IS NOT NULL)",
+            name="replacement_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(child_process_id IS NULL AND process_start_ticks IS NULL AND record_operation_id IS NULL AND record_request_digest IS NULL AND record_receipt IS NULL) OR (child_process_id IS NOT NULL AND process_start_ticks IS NOT NULL AND child_process_id > 0 AND process_start_ticks > 0 AND record_operation_id IS NOT NULL AND record_request_digest IS NOT NULL AND length(record_request_digest) = 64 AND record_receipt IS NOT NULL AND local_journal_digest IS NOT NULL AND length(local_journal_digest) = 64)",
+            name="record_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(state = 'PREPARED' AND child_process_id IS NULL AND close_operation_id IS NULL) OR (state = 'PID_RECORDED' AND child_process_id IS NOT NULL AND close_operation_id IS NULL) OR (state = 'CLOSED' AND close_operation_id IS NOT NULL)",
+            name="state_valid",
+        ),
+        sa.CheckConstraint(
+            "(close_operation_id IS NULL AND close_request_digest IS NULL AND close_proof_kind IS NULL AND close_proof IS NULL AND close_receipt IS NULL AND closed_at IS NULL) OR (close_operation_id IS NOT NULL AND close_request_digest IS NOT NULL AND length(close_request_digest) = 64 AND close_proof_kind IS NOT NULL AND close_proof IS NOT NULL AND close_receipt IS NOT NULL AND closed_at IS NOT NULL AND ((close_proof_kind = 'DEATH' AND child_process_id IS NOT NULL) OR (close_proof_kind = 'CLOSED_UNSTARTED' AND child_process_id IS NULL AND local_journal_digest IS NOT NULL AND length(local_journal_digest) = 64)))",
+            name="close_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "registered_grant_id IS NULL OR (registered_grant_id = grant_id AND grant_id IS NOT NULL AND child_process_id IS NOT NULL AND record_operation_id IS NOT NULL AND state != 'PREPARED')",
+            name="registration_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "grant_id IS NULL OR (child_process_id IS NOT NULL AND process_start_ticks IS NOT NULL AND local_journal_digest IS NOT NULL AND record_operation_id IS NOT NULL AND state != 'PREPARED')",
+            name="grant_link_shape_valid",
+        ),
+        sa.Index("ix_dag_launch__target_state", "subtask_id", "state"),
+    )
+
+
+class StreamDAGControlTarget(Base):
+    """An admitted assignment retains capacity until its complete launch set closes."""
+
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "stream_dag_control_target"
+
+    graph_revision_id: Mapped[uuid.UUID]
+    control_operation_id: Mapped[uuid.UUID]
+    start_operation_id: Mapped[uuid.UUID]
+    subtask_id: Mapped[uuid.UUID]
+    task_run_id: Mapped[uuid.UUID]
+    worker_id: Mapped[uuid.UUID]
+    work_pool_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("work_pool.id"))
+    host_id: Mapped[uuid.UUID]
+    boot_id: Mapped[uuid.UUID]
+    launcher_process_id: Mapped[int] = mapped_column(sa.BigInteger)
+    launcher_start_ticks: Mapped[int] = mapped_column(sa.BigInteger)
+    worker_generation_digest: Mapped[str] = mapped_column(sa.String(64))
+    flow_generation: Mapped[int]
+    flow_holder_id: Mapped[uuid.UUID]
+    flow_run_run_count: Mapped[int]
+    grant_id: Mapped[Optional[uuid.UUID]]
+    physical_epoch: Mapped[int]
+    state: Mapped[str]
+    stop_operation_id: Mapped[Optional[uuid.UUID]]
+    stop_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    all_attempts_closed_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    stop_receipt: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    stopped_at: Mapped[Optional[DateTime]]
+
+    __table_args__: Any = (
+        sa.UniqueConstraint(
+            "control_operation_id", "subtask_id", name="uq_dag_target__control_subtask"
+        ),
+        sa.ForeignKeyConstraint(
+            ["control_operation_id", "graph_revision_id"],
+            [
+                "stream_dag_lifecycle_operation.id",
+                "stream_dag_lifecycle_operation.graph_revision_id",
+            ],
+            name="fk_dag_target__control_scope",
+        ),
+        sa.ForeignKeyConstraint(
+            ["start_operation_id", "graph_revision_id"],
+            [
+                "stream_dag_lifecycle_operation.id",
+                "stream_dag_lifecycle_operation.graph_revision_id",
+            ],
+            name="fk_dag_target__start_scope",
+        ),
+        sa.ForeignKeyConstraint(
+            ["subtask_id", "graph_revision_id", "worker_id"],
+            [
+                "stream_physical_subtask.id",
+                "stream_physical_subtask.graph_revision_id",
+                "stream_physical_subtask.assigned_worker_id",
+            ],
+            name="fk_dag_target__assignment",
+        ),
+        sa.ForeignKeyConstraint(
+            ["subtask_id", "graph_revision_id", "task_run_id"],
+            [
+                "stream_physical_subtask.id",
+                "stream_physical_subtask.graph_revision_id",
+                "stream_physical_subtask.task_run_id",
+            ],
+            name="fk_dag_target__task_scope",
+        ),
+        sa.ForeignKeyConstraint(
+            ["grant_id", "subtask_id", "physical_epoch"],
+            [
+                "stream_subtask_grant.id",
+                "stream_subtask_grant.subtask_id",
+                "stream_subtask_grant.physical_epoch",
+            ],
+            name="fk_dag_target__grant_scope",
+        ),
+        sa.CheckConstraint(
+            "flow_generation BETWEEN 1 AND 64 AND flow_run_run_count >= 1 AND launcher_process_id > 0 AND launcher_start_ticks > 0 AND length(worker_generation_digest) = 64",
+            name="worker_valid",
+        ),
+        sa.CheckConstraint(
+            "(grant_id IS NULL AND physical_epoch = 0) OR (grant_id IS NOT NULL AND physical_epoch BETWEEN 1 AND 64)",
+            name="grant_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(state = 'PENDING' AND stop_operation_id IS NULL AND stop_request_digest IS NULL AND all_attempts_closed_digest IS NULL AND stop_receipt IS NULL AND stopped_at IS NULL) OR (state = 'STOPPED' AND stop_operation_id IS NOT NULL AND stop_request_digest IS NOT NULL AND length(stop_request_digest) = 64 AND all_attempts_closed_digest IS NOT NULL AND length(all_attempts_closed_digest) = 64 AND stop_receipt IS NOT NULL AND stopped_at IS NOT NULL)",
+            name="stop_shape_valid",
+        ),
+    )
+
+
 class StreamGraphRevision(Base):
     """Immutable fixed-P2 topology; records remain in StreamPartition."""
 
@@ -1303,8 +1689,32 @@ class StreamGraphRevision(Base):
     abort_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
     abort_error: Mapped[Optional[str]] = mapped_column(sa.Text)
     placement_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    current_control_operation_id: Mapped[Optional[uuid.UUID]]
+    terminal_operation_id: Mapped[Optional[uuid.UUID]]
 
     __table_args__: Any = (
+        sa.ForeignKeyConstraint(
+            ["current_control_operation_id", "id"],
+            [
+                "stream_dag_lifecycle_operation.id",
+                "stream_dag_lifecycle_operation.graph_revision_id",
+            ],
+            use_alter=True,
+            name="fk_stream_graph__dag_control",
+        ),
+        sa.ForeignKeyConstraint(
+            ["terminal_operation_id", "id"],
+            [
+                "stream_dag_lifecycle_operation.id",
+                "stream_dag_lifecycle_operation.graph_revision_id",
+            ],
+            use_alter=True,
+            name="fk_stream_graph__dag_terminal",
+        ),
+        sa.CheckConstraint(
+            "profile = 'partitioned-dag-v1' OR (current_control_operation_id IS NULL AND terminal_operation_id IS NULL)",
+            name="dag_operations_profile_valid",
+        ),
         sa.UniqueConstraint("id", "profile"),
         sa.UniqueConstraint("id", "flow_run_id"),
         sa.UniqueConstraint("id", "admission_operation_id", "profile"),
@@ -1409,6 +1819,15 @@ class StreamPhysicalSubtask(Base):
 
     __table_args__: Any = (
         sa.UniqueConstraint(
+            "id", "graph_revision_id", name="uq_stream_subtask__id_graph"
+        ),
+        sa.UniqueConstraint(
+            "id",
+            "graph_revision_id",
+            "task_run_id",
+            name="uq_stream_subtask__id_graph_task",
+        ),
+        sa.UniqueConstraint(
             "id",
             "graph_revision_id",
             "task_run_id",
@@ -1479,8 +1898,37 @@ class StreamSubtaskGrant(Base):
     registration_operation_id: Mapped[Optional[uuid.UUID]]
     state: Mapped[str]
     last_renewed_at: Mapped[DateTime]
+    bootstrap_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    bootstrap_witness: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    bootstrap_ready_operation_id: Mapped[Optional[uuid.UUID]]
+    bootstrap_ready_request_digest: Mapped[Optional[str]] = mapped_column(sa.String(64))
+    bootstrap_ready_signature: Mapped[Optional[str]] = mapped_column(sa.String(128))
+    bootstrap_ready_at: Mapped[Optional[DateTime]]
+    bootstrap_ready_receipt: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
 
     __table_args__: Any = (
+        sa.UniqueConstraint(
+            "id",
+            "subtask_id",
+            "physical_epoch",
+            name="uq_stream_grant__id_subtask_epoch",
+        ),
+        sa.UniqueConstraint(
+            "id",
+            "subtask_id",
+            "physical_epoch",
+            "child_process_id",
+            "process_start_ticks",
+            name="uq_stream_grant__recorded_process",
+        ),
+        sa.CheckConstraint(
+            "(bootstrap_digest IS NULL AND bootstrap_witness IS NULL) OR (bootstrap_digest IS NOT NULL AND length(bootstrap_digest) = 64 AND bootstrap_witness IS NOT NULL)",
+            name="bootstrap_shape_valid",
+        ),
+        sa.CheckConstraint(
+            "(bootstrap_ready_operation_id IS NULL AND bootstrap_ready_request_digest IS NULL AND bootstrap_ready_signature IS NULL AND bootstrap_ready_at IS NULL AND bootstrap_ready_receipt IS NULL) OR (bootstrap_ready_operation_id IS NOT NULL AND bootstrap_ready_request_digest IS NOT NULL AND length(bootstrap_ready_request_digest) = 64 AND bootstrap_ready_signature IS NOT NULL AND length(bootstrap_ready_signature) = 128 AND bootstrap_ready_at IS NOT NULL AND bootstrap_ready_receipt IS NOT NULL AND bootstrap_digest IS NOT NULL AND child_process_id IS NOT NULL)",
+            name="bootstrap_ready_shape_valid",
+        ),
         sa.UniqueConstraint("subtask_id", "physical_epoch"),
         sa.UniqueConstraint("subtask_id", "operation_id"),
         sa.CheckConstraint("physical_epoch BETWEEN 1 AND 64", name="epoch_bounded"),

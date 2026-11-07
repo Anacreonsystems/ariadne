@@ -8,6 +8,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from prefect.server.database import PrefectDBInterface, orm_models
+from prefect.server.models import stream_dag_launches as dag
 from prefect.server.models import stream_subtasks as core
 from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.models.stream_subtask_authority import (
@@ -359,6 +360,23 @@ async def _authorize_worker_subtask(
     )
 
 
+async def _is_dag_subtask(
+    session: AsyncSession, db: PrefectDBInterface, subtask_id: UUID
+) -> bool:
+    """Locate an immutable profile; the selected service owns all authorization."""
+    return (
+        await session.scalar(
+            sa.select(db.StreamGraphRevision.profile)
+            .join(
+                db.StreamPhysicalSubtask,
+                db.StreamPhysicalSubtask.graph_revision_id == db.StreamGraphRevision.id,
+            )
+            .where(db.StreamPhysicalSubtask.id == subtask_id)
+        )
+        == "partitioned-dag-v1"
+    )
+
+
 async def claim_subtask(
     session: AsyncSession,
     db: PrefectDBInterface,
@@ -381,6 +399,8 @@ async def claim_subtask(
         launcher_process_id=request.launcher_process_id,
         launcher_start_ticks=request.launcher_start_ticks,
     )
+    if await _is_dag_subtask(session, db, subtask_id):
+        return await dag.claim_subtask(session, db, worker_id, subtask_id, request)
     scope = await _authorize_worker_subtask(
         session, db, worker_id, subtask_id, principal
     )
@@ -409,6 +429,8 @@ async def register_subtask(
     subtask_id: UUID,
     request: s.StreamWorkerRegistrationRequest,
 ) -> s.StreamSubtaskGrant:
+    if await _is_dag_subtask(session, db, subtask_id):
+        return await dag.register_subtask(session, db, worker_id, subtask_id, request)
     scope = await _authorize_worker_subtask(
         session, db, worker_id, subtask_id, request.principal
     )
@@ -424,6 +446,8 @@ async def renew_subtask(
     subtask_id: UUID,
     request: s.StreamWorkerRenewRequest,
 ) -> s.StreamSubtaskGrant:
+    if await _is_dag_subtask(session, db, subtask_id):
+        return await dag.renew_subtask(session, db, worker_id, subtask_id, request)
     scope = await _authorize_worker_subtask(
         session, db, worker_id, subtask_id, request.principal
     )
@@ -443,6 +467,10 @@ async def authorize_replacement(
     subtask_id: UUID,
     request: s.StreamWorkerReplacementAuthorizeRequest,
 ) -> s.StreamSubtaskReplacementAuthorization:
+    if await _is_dag_subtask(session, db, subtask_id):
+        return await dag.authorize_replacement(
+            session, db, worker_id, subtask_id, request
+        )
     scope = await _authorize_worker_subtask(
         session, db, worker_id, subtask_id, request.principal, terminal=True
     )
@@ -458,6 +486,10 @@ async def confirm_replacement(
     subtask_id: UUID,
     request: s.StreamWorkerReplacementConfirmRequest,
 ) -> s.StreamSubtaskGrant:
+    if await _is_dag_subtask(session, db, subtask_id):
+        return await dag.confirm_replacement(
+            session, db, worker_id, subtask_id, request
+        )
     scope = await _authorize_worker_subtask(
         session, db, worker_id, subtask_id, request.principal
     )
@@ -473,6 +505,10 @@ async def retire_verified_subtask(
     subtask_id: UUID,
     request: s.StreamWorkerVerifiedRetireRequest,
 ) -> s.StreamSubtaskVerifiedRetirement:
+    if await _is_dag_subtask(session, db, subtask_id):
+        return await dag.retire_verified_subtask(
+            session, db, worker_id, subtask_id, request
+        )
     scope = await _authorize_worker_subtask(
         session, db, worker_id, subtask_id, request.principal, terminal=True
     )

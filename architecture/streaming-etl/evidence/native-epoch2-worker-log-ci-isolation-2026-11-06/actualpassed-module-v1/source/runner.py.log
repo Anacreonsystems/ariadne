@@ -1,0 +1,279 @@
+"""One final Root-authorized full logging-module acceptance; no automatic retry."""
+
+from __future__ import annotations
+
+import ast
+import asyncio
+import fcntl
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import time
+from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
+import xml.etree.ElementTree as ET
+
+import support as s
+
+
+BASE = Path(__file__).resolve().parent
+ROOT = s.ROOT
+ASSETS = ("runner.py", "support.py", "logging_state_plugin.py", "startup-template.py.txt")
+_active = None
+
+
+class WholeActorDeadline(TimeoutError):
+    pass
+
+
+def main() -> int:
+    global _active
+    os.umask(0o077)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    assert head == s.EXPECTED_HEAD
+    assert s.sha(ROOT / "tests/test_logging.py") == s.EXPECTED_TEST_SHA
+    assert s.sha(ROOT / "tests/cli/test_config.py") == s.EXPECTED_CLI_SHA
+    before = s.source_snapshot()
+    assert "src/prefect/_build_info.py" in before and "src/prefect/_internal/analytics/_config.py" in before
+    conftest_source = (ROOT / "tests/conftest.py").read_text()
+    nodes = [node for node in ast.parse(conftest_source).body if isinstance(node, ast.AsyncFunctionDef) and node.name == "generate_test_database_connection_url"]
+    assert len(nodes) == 1
+    node = nodes[0]
+    assert len(node.decorator_list) == 1
+    assert ast.unparse(node.decorator_list[0]) == "pytest.fixture(scope='session', autouse=True)"
+    assert [argument.arg for argument in node.args.args] == ["worker_id"]
+    original_fixture = "".join(conftest_source.splitlines(keepends=True)[node.decorator_list[0].lineno - 1:node.end_lineno])
+    original_fixture_sha = s.hashlib.sha256(original_fixture.encode()).hexdigest()
+    assets = {name: s.sha(BASE / name) for name in ASSETS}
+    trial = BASE / ("trial-" + uuid4().hex[:8])
+    trial.mkdir(mode=0o700)
+    for name in ("audit", "startup", "temp"):
+        (trial / name).mkdir(mode=0o700)
+    s.write(trial / "source-before.json", before)
+    s.write(trial / "external-assets.json", assets)
+    s.write(trial / "original-provisioning-binding.json", {"path": "tests/conftest.py", "file_sha256": before["tests/conftest.py"], "fixture_source_sha256": original_fixture_sha, "scope": "session", "argname": node.name, "worker_id_expected": "master", "original_body_must_not_execute": True})
+    subreaper = s.enable_owned_subreaper()
+    subreaper["runner_source_sha256"] = assets["runner.py"]
+    # All preparatory subprocess calls were waited before enabling this actor.
+    # ECHILD verifies no old/unrelated child can enter waitpid(-1) after Popen.
+    try:
+        os.waitpid(-1, os.WNOHANG)
+    except ChildProcessError:
+        subreaper["waitpid_preflight_echild"] = True
+    else:
+        raise RuntimeError("waitpid preflight requires ECHILD before DB/Popen")
+    s.write(trial / "subreaper-proof.json", subreaper)
+    site = (BASE / "startup-template.py.txt").read_text().replace("SOURCE_ROOT", repr(str(ROOT / "src/prefect") + "/")).replace("TEST_ROOT", repr(str(ROOT / "tests") + "/")).replace("AUDIT_DIRECTORY", repr(str(trial / "audit")))
+    (trial / "startup/sitecustomize.py").write_text(site)
+
+    # Selector and endpoint values never enter public output or metadata.
+    config = json.loads(s.SELECTOR.read_text())
+    parsed = urlsplit(config["admin_dsn"])
+    assert parsed.hostname in {"localhost", "127.0.0.1", "::1"} and parsed.port == 55436
+    database = config["database_prefix"] + "_w4_" + uuid4().hex[:8]
+    creation = asyncio.run(s.create_owned(config, database))
+    s.write(trial / "database-creation.json", creation)
+    sqlalchemy_url = urlunsplit((config["sqlalchemy_scheme"], parsed.netloc, "/" + database, parsed.query, ""))
+    environment = os.environ.copy()
+    for key in list(environment):
+        if key.startswith("PREFECT_"):
+            environment.pop(key)
+    environment.update({
+        "PREFECT_SERVER_DATABASE_CONNECTION_URL": sqlalchemy_url,
+        "PREFECT_PLUGINS_ENABLED": "false", "DO_NOT_TRACK": "1",
+        "PATH": str(ROOT / ".venv/bin") + os.pathsep + environment.get("PATH", ""),
+        "UV_NO_SYNC": "1", "UV_PROJECT_ENVIRONMENT": str(ROOT / ".venv"),
+        "PYTHONPYCACHEPREFIX": str(trial / "pycache"),
+        "PYTHONPATH": os.pathsep.join((str(trial / "startup"), str(BASE), str(ROOT / "src"), str(ROOT))),
+        "TMPDIR": str(trial / "temp"),
+        "WORKER_LOGGING_DIAG_TRIAL": str(trial), "WORKER_LOGGING_DIAG_DBNAME": database,
+    })
+    command = ["uv", "run", "--no-sync", "--offline", "python", "-m", "pytest", s.PREDECESSOR, "tests/test_logging.py", "-n0", "-q", "-o", "addopts=", "--timeout=120", "-p", "logging_state_plugin", "-p", "no:cacheprovider", "--junitxml=" + str(trial / "pytest.private.xml"), "--basetemp=" + str(trial / "pytest")]
+    s.write(trial / "command.json", {"command": command, "cwd": str(ROOT), "head": head, "database": database, "private_selector_path": str(s.SELECTOR), "budget_seconds": {"per_test": 120, "whole_pytest_process_guard": 330, "outer": 360}, "candidate_patch_sha256": "89e45fbae54f521113ee4e5fd2df8d5eb8d146a689538567867347ab43370976", "only_authorized_test_change": "tests/test_logging.py", "provisioning_only_override": True, "drop_or_terminate_backend_allowed": False, "root_authorized_final_fullmodule_attempt": True})
+
+    process = None
+    pgid = None
+    identities: dict[int, str] = {}
+    pytest_exit = None
+    waited = False
+    timed_out = False
+    stop_events = []
+    harness_errors = []
+    reaping = None
+    direct_wait = None
+
+    def error(stage, exc):
+        harness_errors.append({"stage": stage, "exception_type": type(exc).__name__})
+
+    def capture(stage, callback, default=None):
+        try:
+            return callback()
+        except BaseException as exc:
+            error(stage, exc)
+            return default
+
+    def persist_wait():
+        nonlocal pytest_exit, waited, direct_wait
+        if process is None or waited:
+            return
+        value = process.wait(timeout=3)
+        pytest_exit = value
+        # This is the FIRST operation after wait: actual exit survives any
+        # subsequent metadata, import audit, reaping, or finalizer failure.
+        (trial / "pytest-exit").write_text(str(value) + "\n")
+        waited = True
+        s.write(trial / "pytest-exit.json", {"actual_popen_wait_returncode": value, "persisted_before_metadata_or_reaping": True})
+        direct_wait = {"pid": process.pid, "start_ticks": identities.get(process.pid), "popen_wait_completed": True, "returncode": value}
+
+    try:
+        with (trial / "pytest.private.log").open("xb") as output:
+            process = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+            pgid = process.pid
+            current = s.proc_state(process.pid)
+            if current is None:
+                raise RuntimeError("Direct child identity unavailable")
+            identities[process.pid] = current["start_ticks"]
+            _active = {"process": process, "pgid": pgid, "identities": identities}
+            s.write(trial / "process.json", {"pytest_pid": process.pid, "pytest_start_ticks": current["start_ticks"], "pgid": pgid, "runner_pid": os.getpid(), "runner_start_ticks": subreaper["runner_start_ticks"], "subreaper_verified_before_popen": True})
+            print(json.dumps({"status": "FINAL_WHOLE_MODULE151_RUNNING", "trial": str(trial), "pytest_pid": process.pid, "pytest_start_ticks": current["start_ticks"], "pgid": pgid, "runner_pid": os.getpid(), "subreaper_verified": True}), flush=True)
+            start = time.monotonic()
+            while process.poll() is None:
+                s.collect_group(pgid, identities)
+                if time.monotonic() - start > 330:
+                    timed_out = True
+                    stop_events.extend(s.bounded_stop(process, pgid, identities))
+                    break
+                time.sleep(0.2)
+            persist_wait()
+    except BaseException as exc:
+        error("pytest_or_process_metadata", exc)
+    finally:
+        # Each finalizer stage is independent. A metadata failure never erases
+        # actual pytest status or prevents source/import/JUnit/PID/DB evidence.
+        if process is not None:
+            if capture("process_poll_finally", process.poll) is None:
+                capture("stop_remaining_owned_process", lambda: stop_events.extend(s.bounded_stop(process, pgid, identities)))
+            capture("persist_actual_pytest_exit", persist_wait)
+
+        def audit_imports():
+            rows, mismatches = 0, []
+            for path in (trial / "audit").glob("*.jsonl"):
+                for line in path.read_text().splitlines():
+                    row = json.loads(line)
+                    rows += 1
+                    identities[row["pid"]] = str(row["start_ticks"])
+                    try:
+                        relative = str(Path(row["path"]).relative_to(ROOT))
+                    except ValueError:
+                        mismatches.append({"reason": "foreign Prefect import", "path": row["path"]})
+                        continue
+                    if before.get(relative) != row["source_sha256"]:
+                        mismatches.append({"reason": "source bytes differ or missing before binding", "path": relative})
+            if rows == 0:
+                mismatches.append({"reason": "no import observations"})
+            return {"rows": rows, "mismatches": mismatches}
+
+        imports = capture("import_audit", audit_imports, {"rows": 0, "mismatches": ["capture failed"]})
+        if waited:
+            reaping = capture("waitpid_owned_adopted", lambda: s.reap_owned_adopted(pgid, identities))
+        capture("write_reaping_proof", lambda: s.write(trial / "reaping-proof.json", {"direct_child_wait_first": direct_wait, "adopted": reaping, "timeout_stop_events": stop_events}))
+        _active = None
+
+        after = capture("source_after_snapshot", s.source_snapshot)
+        capture("write_source_after", lambda: s.write(trial / "source-after.json", after))
+        drift = sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name)) if after is not None else ["SOURCE_AFTER_UNAVAILABLE"]
+        after_head = capture("source_after_head", lambda: subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip())
+        if after_head != head:
+            drift.append("GIT_HEAD")
+        after_assets = capture("asset_after_hashes", lambda: {name: s.sha(BASE / name) for name in ASSETS})
+        if after_assets != assets:
+            drift.append("EXTERNAL_ASSETS")
+        if capture("startup_after_hash", lambda: (trial / "startup/sitecustomize.py").read_text()) != site:
+            drift.append("GENERATED_STARTUP")
+
+        def pid_closure():
+            live, zombies = [], []
+            for pid, ticks in identities.items():
+                current = s.proc_state(pid)
+                if current is not None and current["start_ticks"] == ticks:
+                    (zombies if current["state"] == "Z" else live).append(pid)
+            return {"observed_pid_start_pairs": identities, "remaining_same_identity_live": live, "remaining_same_identity_zombies": zombies}
+
+        closure = capture("known_pid_closure", pid_closure)
+        capture("write_pid_closure", lambda: s.write(trial / "process-closure.json", closure))
+        database_closure = capture("owned_database_zero_sessions", lambda: asyncio.run(s.owned_sessions(config, database)))
+        capture("write_database_closure", lambda: s.write(trial / "database-closure.json", database_closure))
+
+        def public_capture(private, public):
+            path = trial / private
+            if not path.exists():
+                raise FileNotFoundError("Expected private result capture is absent")
+            (trial / public).write_text(s.sanitize(path.read_text(errors="replace"), config, sqlalchemy_url))
+
+        capture("sanitize_stdout", lambda: public_capture("pytest.private.log", "pytest.log"))
+        capture("sanitize_junit", lambda: public_capture("pytest.private.xml", "pytest.xml"))
+
+        def junit_result():
+            cases = list(ET.parse(trial / "pytest.xml").iter("testcase"))
+            result = {"tests": len(cases), "failures": [], "errors": [], "skips": []}
+            for case in cases:
+                name = case.attrib.get("classname", "") + "::" + case.attrib.get("name", "")
+                for element, key in (("failure", "failures"), ("error", "errors"), ("skipped", "skips")):
+                    if case.find(element) is not None:
+                        result[key].append(name)
+            return result
+
+        junit = capture("parse_junit", junit_result)
+        proof = capture("read_provisioning_proof", lambda: json.loads((trial / "provisioning-proof.json").read_text()))
+        proof_valid = capture("validate_provisioning_proof", lambda: bool(proof and proof["hook_invocations"] == 1 and proof["original_provisioning_body_calls"] == 0 and proof["guard_callback_stable_at_sessionfinish"] is True and proof["original_fixture_sha256"] == original_fixture_sha and proof["override_asset_sha256"] == assets["logging_state_plugin.py"]), False)
+        collection = capture("read_collection", lambda: json.loads((trial / "collection.json").read_text()))
+        runtime_closed = bool(closure and not closure["remaining_same_identity_live"] and not closure["remaining_same_identity_zombies"] and database_closure and database_closure["sessions"] == [] and reaping and reaping["waitpid_echild_success"])
+        passed = bool(pytest_exit == 0 and waited and not timed_out and not harness_errors and not drift and not imports["mismatches"] and runtime_closed and proof_valid and collection and collection["count"] == 151 and junit and junit["tests"] == 151 and not junit["failures"] and not junit["errors"] and not junit["skips"])
+        receipt = {
+            "status": "WHOLE_LOGGING_MODULE151_PASS" if passed else "PYTEST_OR_HARNESS_RED",
+            "head": head, "pytest_exit": pytest_exit, "actual_exit_persisted_before_metadata": waited,
+            "harness_errors": harness_errors, "timed_out": timed_out, "junit": junit,
+            "source_files": len(before), "source_drift": drift, "import_audit": imports,
+            "process_closure": closure, "subreaper_proof": subreaper,
+            "direct_child_wait": direct_wait, "adopted_reaping": reaping,
+            "database": database_closure, "runtime_STOPPED": runtime_closed,
+            "provisioning_proof": proof, "provisioning_proof_valid": proof_valid,
+            "collection_count": collection["count"] if collection else None,
+            "candidate_test_sha256": s.EXPECTED_TEST_SHA,
+            "timeout_stop_events": stop_events, "retry": False,
+            "previous_v2_and_v3_qualifications_preserved": True,
+            "known_prior_orphan": {"pid": 384983, "start_ticks": "14778279", "status": "prior dead unreaped artifact excluded from this new actor; not touched"},
+            "historical_ci_gw0_order_proven": False,
+        }
+        s.write(trial / "receipt.json", receipt)
+        print(json.dumps({"status": receipt["status"], "trial": str(trial), "pytest_exit": pytest_exit, "harness_errors": harness_errors, "junit": junit, "source_drift": drift, "import_mismatches": imports["mismatches"], "runtime_STOPPED": runtime_closed, "process_closure": closure, "remaining_sessions": len(database_closure["sessions"]) if database_closure else None, "fresh_database_retained": database_closure["retained"] if database_closure else None}), flush=True)
+    return 0 if passed else (pytest_exit if pytest_exit else 90)
+
+
+def hard_deadline(signum, frame):
+    if _active is not None:
+        process, pgid, identities = _active["process"], _active["pgid"], _active["identities"]
+        if process.poll() is None:
+            if not s._timeout_sigint_attempted:
+                target = s.exact_owned_pytest_python(pgid, identities)
+                if target is not None:
+                    os.kill(target["pid"], signal.SIGINT)
+                    s._timeout_sigint_attempted = True
+            if s.owned_group_members(pgid, identities):
+                os.killpg(pgid, signal.SIGKILL)
+    raise WholeActorDeadline("Whole actor deadline reached")
+
+
+if __name__ == "__main__":
+    lock = os.open(BASE / "one-runtime.lock", os.O_WRONLY | os.O_CREAT, 0o600)
+    signal.signal(signal.SIGALRM, hard_deadline)
+    signal.alarm(360)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        code = main()
+    finally:
+        signal.alarm(0)
+        os.close(lock)
+    raise SystemExit(code)

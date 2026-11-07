@@ -206,12 +206,16 @@ class TestStreamGraphPublicContracts(unittest.TestCase):
                 with self.assertRaises(StreamProtocolError):
                     StreamInput(**{**valid, field: value})  # type: ignore[arg-type]
 
-    def test_sealed_handle_is_metadata_only(self):
+    def test_sealed_handle_has_explicit_lifecycle_without_implicit_execution(self):
         graph_id = uuid4()
         handle = SealedStreamGraph(graph_revision_id=graph_id, graph_digest="a" * 64)
         self.assertEqual(handle.graph_revision_id, graph_id)
         self.assertEqual(handle.profile, "partitioned-dag-v1")
-        for name in ("admit", "start", "wait", "partitions", "collect"):
+        for name in ("start", "abort_preview"):
+            with self.subTest(name=name):
+                self.assertTrue(callable(getattr(handle, name)))
+                self.assertFalse(hasattr(StreamGraph, name))
+        for name in ("admit", "wait", "partitions", "collect"):
             with self.subTest(name=name):
                 self.assertFalse(hasattr(handle, name))
                 self.assertFalse(hasattr(StreamGraph, name))

@@ -1,0 +1,196 @@
+"""Copy selected native runtime diagnostics without changing their raw sources."""
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+JSON_NAMES = {
+    "accepted-cursors.json",
+    "final-progress.json",
+    "phases.json",
+    "observations.json",
+    "case-observation.json",
+    "branch-cut-ready.json",
+    "branch-cut-observation.json",
+    "branch-loss.json",
+    "replacement-started.json",
+}
+LOG_NAMES = {"worker-left.log", "worker-right.log", "progress.jsonl"}
+RESOURCE_NAMES = (
+    "cpu.max",
+    "cpu.stat",
+    "memory.max",
+    "memory.current",
+    "memory.peak",
+    "memory.events",
+    "pids.current",
+    "pids.max",
+)
+SECRET_KEY = re.compile(
+    r"(?i)(?:.*[_-])?(?:authorization|password|passwd|secret|token|api[_-]?key|"
+    r"access[_-]?token|refresh[_-]?token|private[_-]?key|capability)\Z"
+)
+URL_USERINFO = re.compile(r"(?i)(\b[a-z][a-z0-9+.-]*://)[^\s/]*@")
+QUOTED = r"""(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')"""
+AUTHORIZATION = re.compile(
+    r"""(?im)(\b(?:proxy-)?authorization["']?\s*[:=]\s*)(""" + QUOTED + r"|[^\r\n]+)"
+)
+ASSIGNMENT = re.compile(
+    r"""(?i)(\b(?:[a-z0-9]+[_-])*(?:password|passwd|secret|token|api[_-]?key|"""
+    r"""access[_-]?token|refresh[_-]?token|private[_-]?key|capability)["']?\s*[:=]\s*)("""
+    + QUOTED
+    + r"""|[^\s,;}"']+)"""
+)
+
+
+def redact_text(value: str, counts: dict[str, int]) -> str:
+    for name, pattern in (
+        ("url_userinfo", URL_USERINFO),
+        ("authorization", AUTHORIZATION),
+        ("credential_assignment", ASSIGNMENT),
+    ):
+
+        def replace(match: re.Match[str]) -> str:
+            prefix = match.group(1)
+            if name == "url_userinfo":
+                return prefix + "[REDACTED]@"
+            raw = match.group(2)
+            quote = raw[0] if raw[:1] in {"'", '"'} else ""
+            return prefix + quote + "[REDACTED]" + quote
+
+        value, count = pattern.subn(replace, value)
+        counts[name] = counts.get(name, 0) + count
+    return value
+
+
+def redact_value(value: Any, counts: dict[str, int]) -> Any:
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            if SECRET_KEY.fullmatch(key):
+                result[key] = "[REDACTED]"
+                counts["credential_field"] = counts.get("credential_field", 0) + 1
+            else:
+                result[key] = redact_value(item, counts)
+        return result
+    if isinstance(value, list):
+        return [redact_value(item, counts) for item in value]
+    return redact_text(value, counts) if isinstance(value, str) else value
+
+
+def redact_bytes(raw: bytes, name: str) -> tuple[bytes, dict[str, int], bool]:
+    text = raw.decode("utf-8", errors="replace")
+    lossy = text.encode() != raw
+    counts: dict[str, int] = {}
+    try:
+        if name.endswith(".json"):
+            result = redact_value(json.loads(text), counts)
+            cleaned = json.dumps(result, indent=2) + "\n"
+        elif name.endswith(".jsonl"):
+            lines = []
+            for line in text.splitlines(keepends=True):
+                try:
+                    value = redact_value(json.loads(line), counts)
+                    lines.append(json.dumps(value) + "\n")
+                except json.JSONDecodeError:
+                    lines.append(redact_text(line, counts))
+            cleaned = "".join(lines)
+        else:
+            cleaned = redact_text(text, counts)
+    except json.JSONDecodeError:
+        cleaned = redact_text(text, counts)
+    return ((cleaned.encode() if sum(counts.values()) or lossy else raw), counts, lossy)
+
+
+def allowed(path: Path) -> bool:
+    return (
+        path.name in JSON_NAMES | LOG_NAMES
+        or re.fullmatch(r"[A-Za-z0-9_-]+\.pid\.json", path.name) is not None
+    )
+
+
+def resources() -> dict[str, Any]:
+    values = {}
+    errors = {}
+    for name in RESOURCE_NAMES:
+        try:
+            values[name] = (Path("/sys/fs/cgroup") / name).read_text()
+        except OSError as error:
+            errors[name] = type(error).__name__
+    return {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "monotonic_ns": time.monotonic_ns(),
+        "phase": "after-runtime-command",
+        "cpu_affinity": sorted(os.sched_getaffinity(0)),
+        "cgroup": values,
+        "unavailable": errors,
+    }
+
+
+def collect(source: Path, destination: Path) -> dict[str, Any]:
+    source = source.resolve()
+    destination = destination.resolve()
+    if destination == source or destination.is_relative_to(source):
+        raise ValueError("Diagnostic copies must be outside the raw runtime directory")
+    destination.mkdir(parents=True, exist_ok=False)
+    entries = []
+    for path in sorted(source.rglob("*")):
+        if path.is_symlink() or not path.is_file() or not allowed(path):
+            continue
+        if not path.resolve().is_relative_to(source):
+            continue
+        raw = path.read_bytes()
+        cleaned, counts, lossy = redact_bytes(raw, path.name)
+        relative = path.relative_to(source)
+        target = destination / "files" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(cleaned)
+        entries.append(
+            {
+                "source_relative_path": str(relative),
+                "copy_relative_path": str(target.relative_to(destination)),
+                "source_bytes": len(raw),
+                "copy_bytes": len(cleaned),
+                "source_sha256": hashlib.sha256(raw).hexdigest(),
+                "copy_sha256": hashlib.sha256(cleaned).hexdigest(),
+                "redactions": counts,
+                "invalid_utf8_replaced": lossy,
+            }
+        )
+    (destination / "resources-after.json").write_text(
+        json.dumps(resources(), indent=2) + "\n"
+    )
+    manifest = {
+        "schema": "ariadne-native-runtime-diagnostic-copies-v1",
+        "source_directory_present": source.is_dir(),
+        "raw_sources_modified": False,
+        "copy_count": len(entries),
+        "files": entries,
+        "allowlist": {
+            "json": sorted(JSON_NAMES),
+            "logs": sorted(LOG_NAMES),
+            "pid_filename_regex": r"[A-Za-z0-9_-]+\.pid\.json",
+        },
+        "scope": "Selected diagnostic copies and post-command resources; no execution acceptance claim",
+    }
+    (destination / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    return manifest
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--destination", type=Path, required=True)
+    args = parser.parse_args()
+    manifest = collect(args.source, args.destination)
+    print(f"Preserved {manifest['copy_count']} selected runtime diagnostic files")
+
+
+if __name__ == "__main__":
+    main()

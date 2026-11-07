@@ -141,6 +141,7 @@ def test_stripped_distribution_has_physical_dtos_and_scoped_http(
     for module in (
         "prefect/client/schemas/stream_subtasks.py",
         "prefect/client/schemas/stream_routes.py",
+        "prefect/client/schemas/stream_dag_executions.py",
         "prefect/_internal/stream_key_wire.py",
         "prefect/_internal/stream_routed_storage.py",
         "prefect/_internal/stream_execution.py",
@@ -196,12 +197,15 @@ def test_stripped_distribution_has_physical_dtos_and_scoped_http(
     result = json.loads(lines[-1])
     assert result == {
         "verdict": "PASS_STRIPPED_DISTRIBUTION_COMPONENT",
-        "http_requests": 4,
+        "http_requests": 6,
         "offscope_denied_before_transport": True,
         "server_only_imports_blocked": True,
         "business_calls": 0,
         "routed_key_variants_validated": 5,
         "routed_adapter_constructed": True,
+        "dag_lifecycle_dtos_validated": True,
+        "dag_scoped_activation_requests": 2,
+        "worker_generation_vector_validated": True,
         "routed_execution": False,
         "native_acceptance": False,
     }

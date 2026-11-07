@@ -1,0 +1,546 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_public_dag_branch_recovery_postgres[True-incomplete200] _________
+
+execution_api = <tests.test_native_stream_recovery_http.RestartableAPI object at 0x7f35d6bee9c0>
+tmp_path = PosixPath('/tmp/native-ni012-runtime-live/run-async-incomplete200-ce50453a/pytest/test_public_dag_branch_recover0')
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f35d8344290>
+asynchronous = True, mode = 'incomplete200'
+
+    @pytest.mark.parametrize(
+        "asynchronous,mode",
+        [
+            (False, "accepted200"),
+            (False, "incomplete200"),
+            (True, "accepted200"),
+            (True, "incomplete200"),
+        ],
+    )
+    @pytest.mark.timeout(900)
+    async def test_public_dag_branch_recovery_postgres(
+        execution_api: RestartableAPI,
+        tmp_path: Path,
+        db: Any,
+        asynchronous: bool,
+        mode: str,
+    ):
+>       await _run_dag_lifecycle(
+            execution_api,
+            tmp_path,
+            db,
+            asynchronous=asynchronous,
+            mode=mode,
+            count=500,
+            wait_timeout=750,
+            observation_timeout=840,
+        )
+
+tests/test_native_stream_dag_execution_http.py:316: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+execution_api = <tests.test_native_stream_recovery_http.RestartableAPI object at 0x7f35d6bee9c0>
+tmp_path = PosixPath('/tmp/native-ni012-runtime-live/run-async-incomplete200-ce50453a/pytest/test_public_dag_branch_recover0')
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f35d8344290>
+asynchronous = True, mode = 'incomplete200', count = 500, wait_timeout = 750
+observation_timeout = 840
+
+    async def _run_dag_lifecycle(
+        execution_api: RestartableAPI,
+        tmp_path: Path,
+        db: Any,
+        *,
+        asynchronous: bool,
+        mode: str,
+        count: int = 8,
+        wait_timeout: float = 150,
+        observation_timeout: float = 210,
+    ):
+        server = execution_api
+        user_module = tmp_path / "native_dag_example.py"
+        user_module.write_text(_USER_MODULE)
+        definition = load_flow_from_entrypoint(
+            str(user_module) + ":" + ("documents_async" if asynchronous else "documents")
+        )
+        pool = "dag-runtime-" + uuid4().hex
+        names = ["dag-left-" + uuid4().hex, "dag-right-" + uuid4().hex]
+        with temporary_settings(
+            {PREFECT_API_URL: server.url, PREFECT_API_AUTH_STRING: server.auth}
+        ):
+            async with get_client() as client:
+                try:
+                    await client.create_global_concurrency_limit(
+                        GlobalConcurrencyLimitCreate(name="tag:" + _TAG, limit=4)
+                    )
+                except ObjectAlreadyExists:
+                    limit = await client.read_global_concurrency_limit_by_name(
+                        "tag:" + _TAG
+                    )
+                    assert limit.limit == 4 and limit.active_slots == 0
+                template = ProcessWorker.get_default_base_job_template()
+                template["prefect_native_streaming"] = {
+                    "schema_version": 1,
+                    "profile": "bounded-linear-v1",
+                }
+                await client.create_work_pool(
+                    WorkPoolCreate(name=pool, type="process", base_job_template=template)
+                )
+                deployment = RunnerDeployment.from_flow(
+                    definition,
+                    name="dag-lifecycle",
+                    work_pool_name=pool,
+                    concurrency_limit=1,
+                    job_variables={"working_dir": str(Path.cwd()), "stream_output": True},
+                )
+                deployment_id = await deployment.aapply()
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key
+            not in {
+                "PREFECT_SERVER_DATABASE_CONNECTION_URL",
+                "PREFECT_API_DATABASE_CONNECTION_URL",
+                "ARIADNE_NATIVE_STREAM_TEST_DSN",
+            }
+        }
+        environment.update(
+            PREFECT_API_URL=server.url,
+            PREFECT_API_AUTH_STRING=server.auth,
+            PREFECT_LOGGING_LEVEL="INFO",
+            PREFECT_LOGGING_INTERNAL_LEVEL="WARNING",
+            PREFECT_DEBUG_MODE="false",
+            PREFECT_WORKER_QUERY_SECONDS="1",
+            PREFECT_WORKER_HEARTBEAT_SECONDS="1",
+        )
+        workers = []
+        logs = [tmp_path / "worker-left.log", tmp_path / "worker-right.log"]
+        try:
+            for name, log in zip(names, logs):
+                with log.open("wb") as output:
+                    workers.append(
+                        subprocess.Popen(
+                            [
+                                sys.executable,
+                                "-m",
+                                "prefect",
+                                "worker",
+                                "start",
+                                "--pool",
+                                pool,
+                                "--type",
+                                "process",
+                                "--name",
+                                name,
+                                "--limit",
+                                "1",
+                            ],
+                            env=environment,
+                            stdout=output,
+                            stderr=subprocess.STDOUT,
+                        )
+                    )
+            deadline = time.monotonic() + 60
+            registered = []
+            while time.monotonic() < deadline:
+                assert all(worker.poll() is None for worker in workers)
+                with server.client() as client:
+                    registered = [
+                        worker
+                        for worker in client.read_workers_for_work_pool(pool)
+                        if worker.name in names and worker.status.value == "ONLINE"
+                    ]
+                if len(registered) == 2:
+                    async with db.session_context() as session:
+                        capable = (
+                            await session.scalars(
+                                sa.select(db.StreamWorkerCapability.worker_id).where(
+                                    db.StreamWorkerCapability.worker_id.in_(
+                                        [worker.id for worker in registered]
+                                    ),
+                                    db.StreamWorkerCapability.protocol
+                                    == "partitioned-dag-v1",
+                                )
+                            )
+                        ).all()
+                    if len(capable) == 2:
+                        break
+                await asyncio.sleep(0.2)
+            else:
+                raise AssertionError("Two real workers did not advertise the DAG profile")
+            ready_ns = time.monotonic_ns()
+            with server.client() as client:
+                run = client.create_flow_run_from_deployment(
+                    deployment_id,
+                    parameters={
+                        "directory": str(tmp_path),
+                        "count": count,
+                        "mode": mode,
+                        "wait_timeout": wait_timeout,
+                    },
+                )
+            deadline = time.monotonic() + observation_timeout
+            previous_progress = None
+            stable_task_ids = None
+            stable_channel_ids = None
+            while time.monotonic() < deadline:
+                assert all(worker.poll() is None for worker in workers)
+                with server.client() as client:
+                    current = client.read_flow_run(run.id)
+                if count > 8:
+                    progress = await _dag_progress(db, run.id)
+                    if progress is not None:
+                        assert progress["task_run_count"] == 4
+                        assert len(progress["subtasks"]) == 4
+                        assert len(progress["channels"]) == 7
+                        identities = {item["task_run_id"] for item in progress["subtasks"]}
+                        if stable_task_ids is None:
+                            stable_task_ids = identities
+                        assert identities == stable_task_ids
+                        channel_ids = {item["id"] for item in progress["channels"]}
+                        if stable_channel_ids is None:
+                            stable_channel_ids = channel_ids
+                        assert channel_ids == stable_channel_ids
+                        if (
+                            mode in {"accepted200", "incomplete200"}
+                            and (tmp_path / "branch-cut-ready.json").exists()
+                            and not (tmp_path / "branch-cut-observed").exists()
+                        ):
+                            cut_progress = await _dag_progress(db, run.id)
+                            assert cut_progress is not None
+                            await _observe_branch_cut(tmp_path, mode, cut_progress, server)
+                        if (
+                            len(progress["consumers"]) == 3
+                            and all(
+                                item["completed_through"] == count
+                                and item["inflight_sequence"] is None
+                                for item in progress["consumers"]
+                            )
+                            and not (tmp_path / "all-cursors-observed").exists()
+                        ):
+                            # Observe the accepted cursor before normal FINALIZE
+                            # releases retention and deletes consumer rows. The
+                            # user fixture is paused after each final acceptance.
+                            assert all(
+                                item["last_sequence"] == count
+                                for item in progress["channels"]
+                            )
+                            (tmp_path / "accepted-cursors.json").write_text(
+                                json.dumps(progress, sort_keys=True, indent=2)
+                            )
+                            (tmp_path / "all-cursors-observed").touch()
+                        if progress != previous_progress:
+                            with (tmp_path / "progress.jsonl").open("a") as output:
+                                output.write(
+                                    json.dumps(
+                                        {
+                                            "monotonic_ns": time.monotonic_ns(),
+                                            "snapshot": progress,
+                                        },
+                                        sort_keys=True,
+                                    )
+                                    + "\n"
+                                )
+                            previous_progress = progress
+                if current.state is not None and current.state.is_final():
+                    break
+                await asyncio.sleep(1 if count > 8 else 0.2)
+            else:
+                raise AssertionError("DAG Flow did not reach a verified terminal state")
+            final_ns = time.monotonic_ns()
+            expected = (
+                "CANCELLED"
+                if mode == "cancel"
+                else "FAILED"
+                if mode == "failure"
+                else "COMPLETED"
+            )
+            assert current.state.type.value == expected, str(current.state)
+            async with db.session_context() as session:
+                graph = (
+                    await session.scalars(
+                        sa.select(db.StreamGraphRevision).where(
+                            db.StreamGraphRevision.flow_run_id == run.id
+                        )
+                    )
+                ).one()
+                assert graph.profile == "partitioned-dag-v1" and graph.state == "RELEASED"
+                rows = (
+                    await session.execute(
+                        sa.select(
+                            db.StreamOperatorRun.operator_uid,
+                            db.StreamPhysicalSubtask.subtask_index,
+                            db.StreamPhysicalSubtask.assigned_worker_id,
+                            db.StreamPhysicalSubtask.physical_slot_released,
+                            db.TaskRun.id,
+                            db.TaskRun.state_type,
+                        )
+                        .join(
+                            db.StreamPhysicalSubtask,
+                            db.StreamPhysicalSubtask.operator_run_id
+                            == db.StreamOperatorRun.id,
+                        )
+                        .join(
+                            db.TaskRun,
+                            db.TaskRun.id == db.StreamPhysicalSubtask.task_run_id,
+                        )
+                        .where(db.StreamOperatorRun.graph_revision_id == graph.id)
+                    )
+                ).all()
+                assert len(rows) == 4 and len({row.id for row in rows}) == 4
+                assert sorted((row.operator_uid, row.subtask_index) for row in rows) == [
+                    ("A", 0),
+                    ("B", 0),
+                    ("C", 0),
+                    ("C", 1),
+                ]
+                if mode != "preview":
+                    assert all(row.physical_slot_released for row in rows)
+                    assert {row.assigned_worker_id for row in rows} == {
+                        worker.id for worker in registered
+                    }
+                else:
+                    assert all(row.assigned_worker_id is None for row in rows)
+            with server.client() as client:
+                assert (
+                    client.read_global_concurrency_limit_by_name("tag:" + _TAG).active_slots
+                    == 0
+                )
+            if mode in {"normal", "accepted200", "incomplete200"}:
+                markers = [
+                    json.loads(path.read_text()) for path in tmp_path.glob("*.pid.json")
+                ]
+                assert len(markers) == 4 and len({marker["pid"] for marker in markers}) == 4
+                assert {marker["parent"] for marker in markers} == {
+                    worker.pid for worker in workers
+                }
+                for name in ("B-0", "C-0", "C-1"):
+                    documents = list((tmp_path / name).glob("document-*.json"))
+                    assert len(documents) == count
+                    assert {
+                        json.loads(path.read_text())["number"] for path in documents
+                    } == set(range(1, count + 1))
+                assert all(row.state_type.value == "COMPLETED" for row in rows)
+                if count > 8:
+                    progress = await _dag_progress(db, run.id)
+                    assert progress is not None
+                    assert progress["task_run_count"] == 4
+                    assert len(progress["channels"]) == 7
+                    assert progress["consumers"] == []
+                    accepted_progress = json.loads(
+                        (tmp_path / "accepted-cursors.json").read_text()
+                    )
+                    assert len(accepted_progress["consumers"]) == 3
+                    assert all(
+                        item["state"] == "COMPLETED"
+                        and item["last_sequence"] == count
+                        and item["tail_sequence"] == count
+                        for item in progress["channels"]
+                    )
+                    assert all(
+                        item["completed_through"] == count
+                        and item["inflight_sequence"] is None
+                        for item in accepted_progress["consumers"]
+                    )
+                    recovery = mode in {"accepted200", "incomplete200"}
+                    for item in progress["subtasks"]:
+                        expected_attempt = (
+                            2 if recovery and item["operator_uid"] == "B" else 1
+                        )
+                        assert item["physical_epoch"] == expected_attempt
+                        assert item["run_count"] == expected_attempt
+                        assert item["physical_slot_released"]
+                    source = [
+                        json.loads(line)
+                        for line in (tmp_path / "source-accepted.jsonl")
+                        .read_text()
+                        .splitlines()
+                    ]
+                    assert [item["position"] for item in source] == list(
+                        range(1, count + 1)
+                    )
+                    assert len({item["pid"] for item in source}) == 1
+                    for name in ("B-0", "C-0", "C-1"):
+                        calls = [
+                            json.loads(line)
+                            for line in (tmp_path / ("calls-" + name + ".jsonl"))
+                            .read_text()
+                            .splitlines()
+                        ]
+                        expected_calls = list(range(1, count + 1))
+                        if recovery and name == "B-0":
+                            original_pid = json.loads(
+                                (tmp_path / "B-0.pid.json").read_text()
+                            )["pid"]
+                            replacement = json.loads(
+                                (tmp_path / "replacement-started.json").read_text()
+                            )
+                            first = 201 if mode == "accepted200" else 200
+                            assert replacement["sequence"] == first
+                            assert replacement["pid"] != original_pid
+                            assert [
+                                item["sequence"]
+                                for item in calls
+                                if item["pid"] == original_pid
+                            ] == list(range(1, 201))
+                            assert [
+                                item["sequence"]
+                                for item in calls
+                                if item["pid"] == replacement["pid"]
+                            ] == list(range(first, count + 1))
+                            assert len({item["pid"] for item in calls}) == 2
+                            assert len({item["task_run_id"] for item in calls}) == 1
+                            if mode == "incomplete200":
+                                expected_calls.insert(200, 200)
+                        else:
+                            assert len({item["pid"] for item in calls}) == 1
+                        assert [item["sequence"] for item in calls] == expected_calls
+                    processes = [
+                        json.loads(path.read_text())
+                        for path in (tmp_path / "processes").glob("*.pid.json")
+                    ]
+                    assert len(processes) == (5 if recovery else 4)
+                    for item in progress["subtasks"]:
+                        owned = [
+                            marker
+                            for marker in processes
+                            if marker["task_run_id"] == item["task_run_id"]
+                        ]
+                        expected_processes = (
+                            2 if recovery and item["operator_uid"] == "B" else 1
+                        )
+                        assert len(owned) == expected_processes
+                        assert (
+                            len({marker["pid"] for marker in owned}) == expected_processes
+                        )
+                        grants = [
+                            grant
+                            for grant in progress["grants"]
+                            if grant["subtask_id"] == item["subtask_id"]
+                        ]
+                        assert {grant["child_process_id"] for grant in grants} == {
+                            marker["pid"] for marker in owned
+                        }
+                        launches = [
+                            launch
+                            for launch in progress["launches"]
+                            if launch["subtask_id"] == item["subtask_id"]
+                        ]
+>                       assert len(launches) == expected_processes
+E                       AssertionError: assert 2 == 1
+E                        +  where 2 = len([{'id': '01a1ac49-6700-7f6d-a2da-5581fec01557', 'subtask_id': '01a1ac49-5bbc-7078-bacd-21724f953c44', 'child_process_i...', 'subtask_id': '01a1ac49-5bbc-7078-bacd-21724f953c44', 'child_process_id': 283391, 'planned_physical_epoch': 2, ...}])
+
+tests/test_native_stream_dag_execution_http.py:971: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://[redacted-owned-test-dsn]'
+Connecting to postgres at 'postgres://[redacted-owned-test-dsn]'
+Creating test postgres database 'native_ni012_runtime_6d8a88bb_tests_master'
+Using test database connection URL 'postgresql+asyncpg://[redacted-owned-test-dsn]'
+Running hosted API server on port 58991
+---------------------------- Captured stderr setup -----------------------------
+15:17:19.515 | INFO    | uvicorn.error - Started server process [282631]
+15:17:19.519 | INFO    | uvicorn.error - Waiting for application startup.
+15:17:19.877 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+15:17:19.890 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+15:17:19.890 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+15:17:19.890 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+15:17:19.891 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+15:17:19.892 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+15:17:19.892 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+15:17:19.893 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+15:17:19.894 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+15:17:19.894 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+15:17:19.895 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+15:17:19.895 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+15:17:19.895 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+15:17:19.896 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+15:17:19.896 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+15:17:19.896 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+15:17:19.897 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+15:17:19.899 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+15:17:19.901 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+15:17:19.906 | INFO    | uvicorn.error - Application startup complete.
+15:17:19.908 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 58991) (Press CTRL+C to quit)
+15:17:19.933 | INFO    | uvicorn.access - 127.0.0.1:57598 - "GET /api/health HTTP/1.1" 200
+----------------------------- Captured stderr call -----------------------------
+15:17:24.256 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:33939/api/
+15:17:25.039 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - Running call coroutine_wrapper() in thread 'RunSyncEventLoopThread'
+15:17:25.039 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - <WatcherThreadCancelScope, name='coroutine_wrapper' RUNNING, runtime=0.00> entered
+15:17:25.040 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - <WatcherThreadCancelScope, name='coroutine_wrapper' COMPLETED, runtime=0.00> exited
+15:17:25.040 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - Scheduling coroutine for call coroutine_wrapper(<dropped>) in running loop <_UnixSelectorEventLoop running=True closed=False debug=False>
+15:17:25.040 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - <AsyncCancelScope, name='coroutine_wrapper' RUNNING, runtime=0.00> entered
+15:17:25.065 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - <AsyncCancelScope, name='coroutine_wrapper' COMPLETED, runtime=0.02> exited
+15:17:25.065 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - Finished async call coroutine_wrapper(<dropped>)
+15:17:25.072 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:33939/api/
+15:17:25.097 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:33939/api/
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.311 seconds
+15:17:27.049 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.311 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.429 seconds
+15:17:44.418 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.429 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.374 seconds
+15:17:51.614 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.374 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.281 seconds
+15:18:05.113 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.281 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.289 seconds
+15:19:16.442 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.289 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.366 seconds
+15:19:22.197 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.366 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 1.148 seconds
+15:19:26.678 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 1.148 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.323 seconds
+15:19:31.391 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.323 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.428 seconds
+15:19:32.847 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.428 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.284 seconds
+15:19:58.609 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.284 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.316 seconds
+15:20:01.150 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.316 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.287 seconds
+15:20:37.828 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.287 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.324 seconds
+15:20:54.768 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.324 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.460 seconds
+15:20:56.353 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.460 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 1.531 seconds
+15:20:58.948 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 1.531 seconds
+Executing <Task finished name='Task-20' coro=<test_public_dag_branch_recovery_postgres() done, defined at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:299> exception=AssertionError("assert 2 == 1\n +  where 2 = len([{'id': '01a1ac49-6700-7f6d-a2da-5581fec01557', 'subtask_id': '01a1ac49-5bbc-7078-bacd-21724f953c44', 'child_process_i...', 'subtask_id': '01a1ac49-5bbc-7078-bacd-21724f953c44', 'child_process_id': 283391, 'planned_physical_epoch': 2, ...}])") created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.372 seconds
+15:21:37.260 | WARNING | asyncio - Executing <Task finished name='Task-20' coro=<test_public_dag_branch_recovery_postgres() done, defined at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:299> exception=AssertionError("assert 2 == 1\n +  where 2 = len([{'id': '01a1ac49-6700-7f6d-a2da-5581fec01557', 'subtask_id': '01a1ac49-5bbc-7078-bacd-21724f953c44', 'child_process_i...', 'subtask_id': '01a1ac49-5bbc-7078-bacd-21724f953c44', 'child_process_id': 283391, 'planned_physical_epoch': 2, ...}])") created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.372 seconds
+------------------------------ Captured log call -------------------------------
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:33939/api/
+DEBUG    prefect._internal.concurrency:calls.py:322 Running call coroutine_wrapper() in thread 'RunSyncEventLoopThread'
+DEBUG    prefect._internal.concurrency:cancellation.py:152 <WatcherThreadCancelScope, name='coroutine_wrapper' RUNNING, runtime=0.00> entered
+DEBUG    prefect._internal.concurrency:cancellation.py:163 <WatcherThreadCancelScope, name='coroutine_wrapper' COMPLETED, runtime=0.00> exited
+DEBUG    prefect._internal.concurrency:calls.py:336 Scheduling coroutine for call coroutine_wrapper(<dropped>) in running loop <_UnixSelectorEventLoop running=True closed=False debug=False>
+DEBUG    prefect._internal.concurrency:cancellation.py:152 <AsyncCancelScope, name='coroutine_wrapper' RUNNING, runtime=0.00> entered
+DEBUG    prefect._internal.concurrency:cancellation.py:163 <AsyncCancelScope, name='coroutine_wrapper' COMPLETED, runtime=0.02> exited
+DEBUG    prefect._internal.concurrency:calls.py:468 Finished async call coroutine_wrapper(<dropped>)
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:33939/api/
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:33939/api/
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.311 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.429 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.374 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.281 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.289 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.366 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 1.148 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.323 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.428 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.284 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.316 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.287 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.324 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.460 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_branch_recovery_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:316> wait_for=<Future pending cb=[BaseProtocol._on_waiter_completed(), Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 1.531 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task finished name='Task-20' coro=<test_public_dag_branch_recovery_postgres() done, defined at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:299> exception=AssertionError("assert 2 == 1\n +  where 2 = len([{'id': '01a1ac49-6700-7f6d-a2da-5581fec01557', 'subtask_id': '01a1ac49-5bbc-7078-bacd-21724f953c44', 'child_process_i...', 'subtask_id': '01a1ac49-5bbc-7078-bacd-21724f953c44', 'child_process_id': 283391, 'planned_physical_epoch': 2, ...}])") created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.372 seconds
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+15:21:38.321 | INFO    | uvicorn.error - Shutting down
+15:21:38.422 | INFO    | uvicorn.error - Waiting for application shutdown.
+15:21:38.424 | INFO    | uvicorn.error - Application shutdown complete.
+15:21:38.425 | INFO    | uvicorn.error - Finished server process [282631]
+Executing <Task finished name='Task-267' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.264 seconds
+15:21:39.577 | WARNING | asyncio - Executing <Task finished name='Task-267' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.264 seconds
+---------------------------- Captured log teardown -----------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task finished name='Task-267' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.264 seconds
+=========================== short test summary info ============================
+FAILED tests/test_native_stream_dag_execution_http.py::test_public_dag_branch_recovery_postgres[True-incomplete200]
+1 failed in 271.52s (0:04:31)

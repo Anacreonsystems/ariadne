@@ -1,0 +1,529 @@
+{
+  "schema": "native-ni2-012-wire-freeze-candidate-v1",
+  "status": "candidate-awaiting-server-byte-ack-and-architect-freeze",
+  "profile": "partitioned-dag-v1",
+  "authority": {
+    "handoff": "architecture/streaming-etl/evidence/flink-architecture-2026-11-04/ni2-012-implementation-handoff-2026-11-05.json",
+    "handoff_sha256": "b3d42a1119d6e294c3f8e80c9fd484f4558ea249b4b1e40db75da14c406b816b",
+    "implementation": "Blocked until architect wire freeze, NI2-011 accepted, and Root implementation release",
+    "readiness_delta_percent": 0
+  },
+  "native_wire": {
+    "config": "extra=forbid, frozen, hide_input_in_errors",
+    "Digest": "lowercase SHA256 hex64",
+    "Signature": "Ed25519 hex128",
+    "types": "strict integers/booleans, canonical finite JSON, UTF8 bounded text; no coercion",
+    "client_boundary": "Independent client models; no server imports. Standard TaskRun subtree uses existing actual server-dump/client-validate exception, native outer fields exact schema parity."
+  },
+  "public": {
+    "signatures": {
+      "SealedStreamGraph.start": "@sync_compatible async def start(self, *, timeout: float | None = None) -> RunningStreamGraph",
+      "SealedStreamGraph.abort_preview": "@sync_compatible async def abort_preview(self) -> StreamDAGExecution",
+      "RunningStreamGraph.wait": "@sync_compatible async def wait(self, timeout: float | None = None) -> StreamDAGExecution",
+      "RunningStreamGraph.cancel": "@sync_compatible async def cancel(self, *, reason: str = 'Cancellation requested for stream graph') -> NoReturn"
+    },
+    "behavior": "Sync Flow blocks; async Flow awaits the same names. No implicit seal/start/wait. No public activate/fail/admit/collection.",
+    "identity": "Preserve Sealed(graph_revision_id, graph_digest) construction. Trusted Flow registry binds routing_digest, Flow identity/API and frozen operation intents. Running handle contains graph_revision_id/graph_digest/routing_digest only; no live client or credentials.",
+    "start": "Explicitly admits, observes all ready, commits activation, returns Running handle only on ACTIVE. Startup errors use phase-safe fail. START timeout uses the same stable START_TIMEOUT fail and verified cleanup, never releases capacity by deadline.",
+    "wait": "Observation only. Timeout raises without control mutation. Return bounded execution summary only after normal terminal cleanup; failure/cancellation propagate standard FailedRun/cancellation after verified cleanup.",
+    "cancel": "Journal once; after exact cleanup server commits FlowCancelled and caller propagates standard cancellation signal, never returns normally. No fabricated cancellation when normal completion won: typed TERMINAL_CONFLICT.",
+    "abort_preview": "Explicit metadata abandonment only while SEALED/unassigned with no grants/DATA/receipts/slots. Graph terminal FAILED with PREVIEW_ABORT; Flow remains Running.",
+    "normal_flow_exit": "SEALED unused preview auto-aborts before Flow completion. Normally terminal/clean graph deregisters. STOPPING joins and observes its persisted control and propagates that outcome; it never creates conflicting FAIL. STARTING/ACTIVE with no control is abandoned-lifecycle error: stable phase-safe FAIL plus verified cleanup, then Flow fails; no silent auto-wait.",
+    "exceptional_flow_exit": "Cleanup committed phase and re-raise original exception; join existing control if STOPPING. An authoritative CANCEL propagates cancellation rather than rewriting the outcome. Already released graph deregisters; later plain Python failure belongs to ordinary Flow engine.",
+    "flow_retry_guard": {
+      "routes": [
+        "public SEAL",
+        "public START revalidation"
+      ],
+      "predicate": "retries is not None and flow.run_count <= retries",
+      "refusal": "UNSUPPORTED_FLOW_RETRY",
+      "mutation": "zero graph/journal/slot/TaskRun writes",
+      "allowed": "None/0 or exhausted final attempt; no policy rewrite",
+      "reason": "A later Python failure after wait or preview abort must not auto-retry into the released one-lifetime graph. Internal metadata helpers and P2 unchanged."
+    },
+    "finite_tail": "DAG handles/leaf collections remain typed unsupported as ordinary finite Task dependencies. Plain Python may inspect bounded metadata after successful wait."
+  },
+  "parent_routes": [
+    [
+      "POST",
+      "/streams/v2/dags/{graph_id}/start",
+      "StreamDAGStartRequest",
+      "StreamDAGOperationResult",
+      "start_stream_dag"
+    ],
+    [
+      "GET",
+      "/streams/v2/dags/{graph_id}/execution",
+      null,
+      "StreamDAGExecution",
+      "read_stream_dag_execution"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/{graph_id}/abort-preview",
+      "StreamDAGAbortPreviewRequest",
+      "StreamDAGOperationResult",
+      "abort_stream_dag_preview"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/{graph_id}/cancel",
+      "StreamDAGCancelRequest",
+      "StreamDAGOperationResult",
+      "cancel_stream_dag"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/{graph_id}/activate",
+      "StreamDAGActivateRequest",
+      "StreamDAGOperationResult",
+      "activate_stream_dag"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/{graph_id}/fail",
+      "StreamDAGFailRequest",
+      "StreamDAGOperationResult",
+      "fail_stream_dag"
+    ]
+  ],
+  "parent_dto": {
+    "StreamDAGOperationRequest": {
+      "operation_id": "UUID",
+      "graph_digest": "Digest",
+      "routing_digest": "Digest"
+    },
+    "StreamDAGStartRequest": "StreamDAGOperationRequest exactly",
+    "StreamDAGActivateRequest": "StreamDAGOperationRequest exactly; no grant/readiness/target set from client",
+    "StreamDAGAbortPreviewRequest": "StreamDAGOperationRequest exactly",
+    "StreamDAGCancelRequest": "StreamDAGOperationRequest + reason: strict UTF8 <=4096",
+    "StreamDAGFailRequest": "StreamDAGOperationRequest + failure_kind: FLOW_SCOPE_EXCEPTION | START_EXCEPTION | START_TIMEOUT | COORDINATOR_ERROR; no arbitrary error/expected_phase/targets",
+    "StreamDAGOperationResult": {
+      "receipt": "StreamDAGOperationReceipt immutable",
+      "execution": "StreamDAGExecution current"
+    },
+    "StreamDAGOperationReceipt": {
+      "operation_id": "UUID",
+      "graph_revision_id": "UUID",
+      "kind": "START|ACTIVATE|ABORT_PREVIEW|CANCEL|FAIL",
+      "request_digest": "Digest",
+      "outcome_digest": "Digest",
+      "accepted_at": "DateTime",
+      "effective_control_kind": "PREVIEW_ABORT|STARTUP_ABORT|FAIL|CANCEL|null",
+      "control_operation_id": "UUID|null"
+    },
+    "StreamDAGExecution": {
+      "graph_revision_id": "UUID",
+      "flow_run_id": "UUID",
+      "graph_digest": "Digest",
+      "routing_digest": "Digest",
+      "phase": "PREVIEW|STARTING|ACTIVE|STOPPING|TERMINAL",
+      "terminal_state": "COMPLETED|FAILED|CANCELLED|null",
+      "cleanup_complete": "strict bool",
+      "counts": "StreamDAGExecutionCounts",
+      "control": "StreamDAGControlProjection|null",
+      "activation_operation_id": "UUID|null",
+      "readiness_set_digest": "Digest|null",
+      "terminal_operation_id": "UUID|null",
+      "terminal_outcome_digest": "Digest|null"
+    },
+    "StreamDAGExecutionCounts": {
+      "total": "strict int 0..128",
+      "registered": "strict int 0..N",
+      "bootstrap_ready": "strict int 0..N",
+      "terminal_tasks": "strict int 0..N",
+      "stopped": "strict int 0..N",
+      "physical_slots_remaining": "strict int 0..N",
+      "tags_remaining": "strict nonnegative allocation count; may exceed N"
+    },
+    "StreamDAGControlProjection": {
+      "operation_id": "UUID",
+      "kind": "PREVIEW_ABORT|STARTUP_ABORT|FAIL|CANCEL",
+      "state": "REQUESTED|STOPPING|COMPLETED"
+    }
+  },
+  "lifecycle": {
+    "persisted_graph": "Reuse SEALED/ADMITTED/ABORTING/RELEASED; derive phase, no parallel phase column",
+    "transitions": "SEALED->PREVIEW; atomic start admission->STARTING; complete ready-set activation CAS->ACTIVE; persisted control->STOPPING; exact stopped/retired complete attempt sets and resources released->TERMINAL",
+    "activation": "CODE_READY is same-child cap-free code/config preflight only. Then claim/register, private scoped bootstrap, independent retained-Task/bootstrap/PID validation, signed BOOTSTRAP_READY. Server derives all N current ready grants; activation receipt persists readiness_set_digest. Only committed ACTIVE causes private worker GO.",
+    "replacement": "Append launch attempt and new grant. New own BOOTSTRAP_READY before own GO/DATA, without resetting global activation or fencing siblings.",
+    "normal": "Normal verified retirement also requires COMPLETE CLOSED launch-attempt set/digest before physical release. Persist terminal FINALIZE outcome/summary/basis after all terminal/EOF/retirement conditions. Graph completes; Flow stays Running. GET/wait never mutates.",
+    "control_terminal": "Last exact STOP commits FlowCancelled or Failed(retriable=False), CoreFlowPolicy force=False, after all physical proofs. Task retry unchanged.",
+    "convergence": "Same-effective FAIL controls join canonical signed-child FAIL or STARTING worker STARTUP_ABORT; parent action receipt points to existing control, first cause immutable. Opposite CANCEL/FAIL -> CONTROL_CONFLICT.",
+    "terminal_race": "Current auth first. Exact known op returns original receipt plus current terminal execution. New fail/cancel after TERMINAL -> TERMINAL_CONFLICT, no receipt/mutation. Signed terminal Task event still accepted under existing CANCEL without creating FAIL or rewriting accepted EOF.",
+    "terminal_auth": "Narrow same Flow attempt/run_count + graph/current authority TERMINAL|RELEASED access for GET execution and exact known-op replay; new mutations, stale run_count and foreign Flow refuse.",
+    "locks": "Flow/authority/graph then sorted workers then subtask/grant/TaskRun/streams. DATA holds shared prefix through transaction. Signed failed event acquires graph UPDATE before Task/grant locks, never SHARE->UPDATE upgrade after Task lock; does not require output already FAILED."
+  },
+  "operations": {
+    "parent": "uuid5(graph_revision_id, 'prefect-stream-dag-{action}-v1'), action=start/activate/abort-preview/cancel/fail",
+    "startup_abort": "uuid5(graph_revision_id, 'prefect-stream-dag-startup-abort-v1'), server derived",
+    "retry": "Validate/deep-copy finite JSON and freeze canonical UTF8 bytes before first await. Same operation/body/authority on unknown ACK; no new UUID, route recomputation or client phase choice. Cache first parent fail intent for later finalizer replay.",
+    "receipt": "Immutable accepted receipt and request/outcome digests; execution/current attempt/disposition may progress. Auth before lookup; changed material same op conflicts.",
+    "authority": "Public mutations require protected API + current Flow execution authority. Runtime-only activate/fail means no public handle methods, not a new security principal."
+  },
+  "child_routes": [
+    [
+      "GET",
+      "/streams/v2/dags/subtasks/{subtask_id}/bootstrap",
+      null,
+      "StreamDAGSubtaskBootstrap",
+      "read_stream_dag_subtask_bootstrap"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/subtasks/{subtask_id}/bootstrap-ready",
+      "StreamDAGBootstrapReadyRequest",
+      "StreamDAGBootstrapReadyResult",
+      "mark_stream_dag_subtask_bootstrap_ready"
+    ],
+    [
+      "GET",
+      "/streams/v2/dags/subtasks/{subtask_id}/activation",
+      null,
+      "StreamDAGActivationObservation",
+      "read_stream_dag_subtask_activation"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/sources/open",
+      "StreamDAGSourceOpenRequest",
+      "SourceAdmission",
+      "open_stream_dag_source"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/consumers/open",
+      "StreamDAGConsumerOpenRequest",
+      "ConsumerBinding",
+      "open_stream_dag_consumer"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/consumers/read",
+      "StreamDAGConsumerReadRequest",
+      "StreamDelivery|null",
+      "read_stream_dag_consumer"
+    ],
+    [
+      "GET",
+      "/streams/v2/dags/subtasks/{subtask_id}/input/status",
+      null,
+      "StreamInfo",
+      "read_stream_dag_input_status"
+    ],
+    [
+      "GET",
+      "/streams/v2/dags/subtasks/{subtask_id}/output/status",
+      null,
+      "StreamInfo",
+      "read_stream_dag_output_status"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/sources/append",
+      "NI011 StreamDAGSourceAppendRequest unchanged",
+      "NI011 StreamDAGRouteOutcome",
+      "append_stream_dag_source"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/consumers/complete",
+      "NI011 StreamDAGConsumerCompleteRequest unchanged",
+      "NI011 StreamDAGRouteOutcome",
+      "complete_stream_dag_consumer"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/sources/finish",
+      "StreamDAGSourceFinishRequest",
+      "StreamDAGProducerFinishReceipt",
+      "finish_stream_dag_source"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/consumers/finish",
+      "StreamDAGConsumerFinishRequest",
+      "StreamDAGProducerFinishReceipt",
+      "finish_stream_dag_consumer"
+    ]
+  ],
+  "child_dto": {
+    "StreamDAGSubtaskBootstrap": "Own immutable task/config/parameters, NI011 context, own input projection or null, own output projection, current grant/registered identity, bootstrap_digest, standard TaskRun. No sibling parameters/capability/private key.",
+    "input_projection": "subscriber_id,edge_id,edge_partition_id,input_port_uid,input_stream_id,schema_id,schema_digest",
+    "output_projection": "port_uid,stream_id",
+    "bootstrap_digest": "ONE versioned canonical immutable witness: Flow/attempt, graph/routing, assignment/subtask/index/parallelism/operator/ports/subscriber/edge/streams, task identity/manifest/dynamic key/frozen config/own parameters, assigned worker generation, grant/epoch/holder/scope/eventkey, journal-recorded PID/ticks. Exclude mutable TaskRun state/counts/timestamps.",
+    "StreamDAGBootstrapReadyRequest": {
+      "operation_id": "UUID",
+      "bootstrap_digest": "Digest",
+      "signature": "Signature"
+    },
+    "StreamDAGBootstrapReadyResult": "operation_id,graph_revision_id,subtask_id,grant_id,physical_epoch,bootstrap_digest,ready_at,request_digest,outcome_digest",
+    "ready_signature": "Domain prefect-dag-bootstrap-ready-v1; canonical op+graph/assignment/subtask/currentgrant/epoch+holder/scope/eventkey+registered PID/ticks+bootstrap_digest; independently derived server-side",
+    "ready_operation": "uuid5(grant_id,'prefect-stream-dag-bootstrap-ready-v1')",
+    "StreamDAGActivationObservation": "graph_revision_id,subtask_id,grant_id,physical_epoch,phase WAITING|ACTIVE|STOPPING|TERMINAL,activation_operation_id nullable; ACTIVE requires global activation and own ready/no fence, never replaces private GO",
+    "StreamDAGSourceOpenRequest": {
+      "context": "NI011 StreamDAGRouteContext only"
+    },
+    "StreamDAGConsumerOpenRequest": {
+      "context": "NI011 StreamDAGRouteContext only"
+    },
+    "open": "Server derives owner/attempt/TaskRun/streams from current scoped bootstrap; no owner_id in request. Adapter validates supplied engine identities locally.",
+    "StreamDAGConsumerReadRequest": {
+      "context": "NI011 context",
+      "binding": "ConsumerBinding"
+    },
+    "consumer_identity": "Binding.consumer_id is stable EdgePartition.subscriber_id, never TaskRun.id; StreamContext/StreamRunResult use returned ID. Only resolved direct same-graph PAYLOAD business value is returned.",
+    "StreamDAGSourceFinishRequest": "operation_id,context,binding:SourceBinding,expected_position strict>=0",
+    "StreamDAGConsumerFinishRequest": "operation_id,context,binding:ConsumerBinding",
+    "StreamDAGProducerFinishReceipt": "operation_id,graph_revision_id,producer_subtask_id,producer_stream_id,kind SOURCE_EOF|CONSUMER_EOF,tail_sequence>=0,accepted_source_position>=0|null,accepted_input_sequence>=0|null,semantic_digest,outcome_digest; EXACT ONE coordinate selected by kind",
+    "finish": "No error/key/targets. Current auth/binding before replay; source may replay exact accepted EOF Running/Completed; consumer requires no inflight and fully acknowledged COMPLETED input. Semantic identity excludes owner/attempt. uuid5(producer_subtask_id,'prefect-stream-dag-{source|consumer}-finish-v1').",
+    "failure": "Only current signed terminal Task event or exact internal control; no success-finish error strings/legacy failure hooks",
+    "auth": "Own scoped capability + grant header only. Public lifecycle projection PID-free; private own bootstrap needs registered process identity for FD misdelivery guard."
+  },
+  "worker_routes": [
+    [
+      "POST",
+      "/streams/v2/dags/workers/{worker_id}/poll",
+      "StreamDAGWorkerPollRequest",
+      "StreamDAGWorkerAssignment[]",
+      "poll_worker_stream_dag_subtasks"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/workers/{worker_id}/graphs/{graph_id}/startup-abort",
+      "StreamDAGWorkerStartupAbortRequest",
+      "StreamDAGWorkerStartupAbortResult",
+      "abort_worker_stream_dag_startup"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/prepare",
+      "StreamDAGLaunchPrepareRequest",
+      "StreamDAGLaunchOperationResult",
+      "prepare_worker_stream_dag_launch"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/{launch_attempt_id}/record",
+      "StreamDAGLaunchRecordRequest",
+      "StreamDAGLaunchOperationResult",
+      "record_worker_stream_dag_launch"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/{launch_attempt_id}/close",
+      "StreamDAGLaunchCloseRequest",
+      "StreamDAGLaunchCloseReceipt",
+      "close_worker_stream_dag_launch"
+    ],
+    [
+      "POST",
+      "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/stop",
+      "StreamDAGWorkerStopRequest",
+      "StreamDAGStopReceipt",
+      "stop_worker_stream_dag_subtask"
+    ]
+  ],
+  "worker_dto": {
+    "StreamDAGWorkerPollRequest": "protocol literal partitioned-dag-v1,protocol_version strict1,principal:StreamWorkerPrincipal,active_subtask_ids UUID[]<=64,limit strict1..128",
+    "StreamDAGWorkerAssignment": "Own assignment/config/working_directory/current grant; phase STARTING|ACTIVE|STOPPING|TERMINAL; own bootstrap_ready; task/output bounded hints; control{operation_id,kind STARTUP_ABORT|FAIL|CANCEL}|null; COMPLETE own launch_attempts<=64. No Flow capability/sibling config.",
+    "coexistence": "One supervisor/registry supports P2 and DAG with common two-live-child cap and shared occupancy. Unique(worker,protocol,version) capability rows coexist under same exact principal; P2 poll bytes unchanged; TTL is eligibility, never death.",
+    "StreamDAGWorkerStartupAbortRequest": "principal,start_operation_id,graph_digest,routing_digest",
+    "StreamDAGWorkerStartupAbortResult": "control_operation_id,execution",
+    "startup_abort": "Server canonical operation and fixed reason; own persisted assignment/current principal + STARTING only; ACTIVE winner -> ACTIVATION_ALREADY_COMMITTED; parent fail may join same canonical STARTUP_ABORT.",
+    "StreamDAGLaunchPrepareRequest": "principal,operation_id,start_operation_id,replacement_operation_id:UUID|null ONLY",
+    "prepare": "No nominated grant/epoch/index. Server-issued accepted start/replacement authorization derives exact target/grant/epoch/worker generation and next index1..64. One candidate per authorization. PREPARED commits before Popen; replacement appends. Epoch64 forbids new attempt but allows cleanup.",
+    "StreamDAGLaunchRecordRequest": "principal,operation_id,child_process_id strict>0,process_start_ticks strict>0,local_journal_digest:Digest",
+    "record": "Private child gate prevents user import. Record exact PID once before preflight import. Existing PREPARED can record after control won, disposition STOP_REQUIRED; no import. Closed attempt cannot acquire new PID. Worker-local spawn/stop mutex and closed journal prevent late spawn.",
+    "StreamDAGLaunchAttempt": "id,graph_revision_id,subtask_id,start_operation_id,worker_id,worker_generation_digest,attempt_index1..64,expected_grant_id:UUID|null,expected_physical_epoch0..64,replacement_operation_id:UUID|null,state PREPARED|PID_RECORDED|CLOSED,child_process_id:int|null,process_start_ticks:int|null,local_journal_digest:Digest|null,grant_id:UUID|null",
+    "StreamDAGLaunchOperationResult": "receipt:StreamDAGLaunchOperationReceipt,current:StreamDAGLaunchAttempt,disposition SPAWN_ALLOWED|PREFLIGHT_ALLOWED|STOP_REQUIRED; current/disposition volatile, never spawn from old receipt alone",
+    "StreamDAGLaunchOperationReceipt": "operation_id,launch_attempt_id,kind PREPARE|RECORD,request_digest,outcome_digest,accepted_at",
+    "StreamDAGLaunchCloseRequest": "principal,operation_id,proof DEATH{death_witness:NativeStreamProcessDeathWitness}|CLOSED_UNSTARTED{local_journal_digest:Digest,recovery_complete:true,spawn_fence_closed:true}",
+    "close": "PID_RECORDED requires exact JOURNAL-recorded PID/ticks death proof, including pre-grant child. PREPARED/no-PID requires exact current-worker closed-local-journal attestation after recovery. Unknown stays open and holds capacity; one process birth per attempt.",
+    "StreamDAGLaunchCloseReceipt": "operation_id,launch_attempt_id,graph_revision_id,subtask_id,attempt_index,proof_kind DEATH|CLOSED_UNSTARTED,closed_at,request_digest,outcome_digest",
+    "StreamDAGWorkerStopRequest": "principal,operation_id,control_operation_id ONLY",
+    "stop": "Server derives/locks COMPLETE frozen-target attempt set, requires every row CLOSED, persists all_attempts_closed_digest before release. No client subset, unstarted boolean, grant selection or TTL/missing-grant shortcut. Every admitted assignment includes no-grant/epoch0 case; only unassigned SEALED preview releases zero slots synchronously.",
+    "StreamDAGStopReceipt": "operation_id,control_operation_id,graph_revision_id,subtask_id,task_run_id,grant_id:UUID|null,physical_epoch0..64,state STOPPED,task_state COMPLETED|FAILED|CRASHED|CANCELLED,tag_allocation_released:bool,physical_slot_released:true,all_attempts_closed_digest:Digest,outcome_digest",
+    "operations": "prepare uuid5(subtask_id,'prefect-stream-dag-launch-v1/'+startop-or-replacementop); record uuid5(launchid,'prefect-stream-dag-record-v1'); close uuid5(launchid,'prefect-stream-dag-close-v1'); stop uuid5(controlop,'prefect-stream-dag-stop-v1/'+subtaskid)",
+    "physical_compatibility": "Existing assigned-worker claim/register/renew/replacement endpoints dispatch persisted profile to DAG handlers and derive/link matching recorded attempt; no P2 DTO/body changes. DAG normal retirement and control STOP both require complete CLOSED attempt-set proof before physical release. Dedicated active STOP never widens P2 startup-stop/VerifiedRetirement.",
+    "recovery": "Same-principal manager recovery reconstructs server-authoritative complete attempt set. Local journal is aid only. Missing proof, new unsupported worker generation or cross-host loss fails closed with capacity held; no ADR47 expansion."
+  },
+  "storage_matrix": {
+    "dedicated_overrides": [
+      "open_source",
+      "append_source",
+      "close_source",
+      "open_consumer",
+      "read",
+      "complete",
+      "finish_consumer",
+      "status"
+    ],
+    "denied_overrides": [
+      "create_stream",
+      "reserve_output",
+      "register_task_run",
+      "reject_output",
+      "fail_task_output",
+      "finish",
+      "read_prefix"
+    ],
+    "plumbing": "_request/_dispatch restricted to closed DAG methods and exact bootstrap scope; arbitrary names refused. Pure config/_matches reusable. Reflection classifies every base coroutine; a future unclassified method fails.",
+    "server": "Independently deny every legacy DATA/open/read/status/finish/reject/fail/create/reserve/register/prefix/child-lease path, sibling, admin/control. Before own ready and ACTIVE no DATA/body/events; own bootstrap/ready/activation allowed. SOURCE input/status -> SUBTASK_SCOPE_DENIED403.",
+    "task_lifecycle": "Preallocated exact TaskRun, no ordinary registration/reserve or default server result-store calls. Skip legacy DAG child lease renew/release. Signed event authority alone handles failure; worker/graph owns leases and exact death."
+  },
+  "persistence": {
+    "reuse": "Existing StreamPartition, NI011 PAYLOAD/REFERENCE/route receipts, shared occupancy, admission/activation/preactivation-abort, normal retirement primitives. No second store or TaskRun per record.",
+    "additions": [
+      "StreamDAGLifecycleOperation immutable action receipts and terminal FINALIZE basis/summary",
+      "StreamGraphRevision.current_control_operation_id and terminal_operation_id",
+      "Distinct bounded append-only-identity StreamDAGLaunchAttempt with prepare/record/close receipts and grant link",
+      "StreamDAGControlTarget exact start/subtask/TaskRun/worker generation/optional grant + complete closed-attempt-set digest",
+      "Per-grant immutable bootstrap witness and signed ready"
+    ],
+    "checks": "Profile-scoped FK/unique/checks; DAG registered grant links exact recorded launch; fixed P2 new fields null. RELEASED outcome comes from persisted finalization journal, never guessed from mutable counts."
+  },
+  "implementation_paths": {
+    "sdk": {
+      "new_modules": [
+        "src/prefect/client/schemas/stream_dag_executions.py"
+      ],
+      "existing_modules": [
+        "src/prefect/streams.py",
+        "src/prefect/client/orchestration/_streams/client.py",
+        "src/prefect/client/orchestration/routes.py",
+        "src/prefect/client/orchestration/base.py",
+        "src/prefect/client/orchestration/__init__.py",
+        "src/prefect/_internal/stream_execution.py",
+        "src/prefect/_internal/stream_event_auth.py"
+      ],
+      "new_tests": [
+        "tests/client/test_stream_dag_executions.py",
+        "tests/client/test_stream_dag_launches.py",
+        "tests/test_stream_graph_execution_contracts.py",
+        "tests/test_native_dag_execution_client_http.py"
+      ],
+      "existing_tests": [
+        "tests/fixtures/native_physical_client_package_probe.py",
+        "tests/test_native_physical_client_package.py"
+      ]
+    },
+    "server": {
+      "new_modules": [
+        "src/prefect/server/schemas/stream_dag_executions.py",
+        "src/prefect/server/models/stream_dag_executions.py",
+        "src/prefect/server/models/stream_dag_launches.py"
+      ],
+      "existing_modules": [
+        "src/prefect/server/database/orm_models.py",
+        "src/prefect/server/database/interface.py",
+        "src/prefect/server/models/stream_dags.py",
+        "src/prefect/server/models/stream_routes.py",
+        "src/prefect/server/models/stream_subtask_authority.py",
+        "src/prefect/server/models/stream_executions.py",
+        "src/prefect/server/models/stream_subtasks.py",
+        "src/prefect/server/models/streams.py",
+        "src/prefect/server/services/task_run_recorder.py"
+      ],
+      "new_tests": [
+        "tests/server/schemas/test_stream_dag_executions.py",
+        "tests/server/models/test_stream_dag_executions.py",
+        "tests/server/models/test_stream_dag_launches.py",
+        "tests/server/database/test_stream_dag_execution_migrations.py"
+      ],
+      "existing_tests": [
+        "tests/fixtures/database.py"
+      ],
+      "migration_directories": [
+        "src/prefect/server/database/_migrations/versions/postgresql",
+        "src/prefect/server/database/_migrations/versions/sqlite"
+      ],
+      "migration_allocation": "Server allocates unique paired revision IDs and exact basenames before first DDL edit; no guessed IDs in this wire freeze."
+    },
+    "api": {
+      "new_modules": [
+        "src/prefect/server/api/stream_dag_executions.py",
+        "src/prefect/server/api/stream_dag_launches.py"
+      ],
+      "existing_modules": [
+        "src/prefect/server/api/stream_routes.py",
+        "src/prefect/server/api/server.py",
+        "src/prefect/server/api/__init__.py",
+        "src/prefect/server/api/middleware.py",
+        "src/prefect/server/api/_stream_subtask_routes.py",
+        "src/prefect/server/api/stream_subtask_dependencies.py",
+        "src/prefect/server/models/stream_workers.py",
+        "src/prefect/server/api/stream_workers.py"
+      ],
+      "new_tests": [
+        "tests/server/api/test_stream_dag_executions.py",
+        "tests/server/api/test_stream_dag_launches.py"
+      ]
+    },
+    "runtime": {
+      "new_modules": [
+        "src/prefect/_internal/stream_dag_execution.py"
+      ],
+      "existing_modules": [
+        "src/prefect/_internal/stream_dag.py",
+        "src/prefect/_internal/stream_routed_storage.py",
+        "src/prefect/_internal/stream_engine.py",
+        "src/prefect/task_engine.py",
+        "src/prefect/flow_engine.py",
+        "src/prefect/utilities/engine/__init__.py"
+      ],
+      "new_tests": [
+        "tests/test_stream_dag_execution.py",
+        "tests/test_stream_dag_bootstrap.py",
+        "tests/test_native_stream_dag_execution_http.py"
+      ],
+      "existing_tests": [
+        "tests/test_stream_route_terminals.py",
+        "tests/test_stream_dag_dependencies.py"
+      ]
+    },
+    "worker": {
+      "new_modules": [
+        "src/prefect/workers/_stream_dag_subtasks.py",
+        "src/prefect/workers/_stream_dag_launches.py",
+        "src/prefect/_internal/stream_dag_subtask_protocol.py",
+        "src/prefect/_internal/stream_dag_subtask_entrypoint.py"
+      ],
+      "existing_modules": [
+        "src/prefect/workers/_stream_subtasks.py",
+        "src/prefect/workers/process.py"
+      ],
+      "new_tests": [
+        "tests/workers/test_stream_dag_subtasks.py",
+        "tests/workers/test_stream_dag_launches.py",
+        "tests/workers/test_stream_dag_bootstrap.py"
+      ]
+    },
+    "root_ci": {
+      "existing_modules": [
+        ".github/workflows/python-tests.yaml",
+        "pyrightconfig-native-physical.json",
+        "scripts/verify_test_selection.py",
+        "ui-v2/src/api/prefect.ts"
+      ],
+      "rule": "Root owns selection, no-skip gates, exact new module types and hosted evidence. Existing P2/client byte-golden regressions retained."
+    },
+    "ownership_rule": "Each listed file has one owner. Cross-owner changes require explicit handoff; no overlapping edits."
+  },
+  "acceptance_gates": [
+    "Prepare/record/close replay and conflict on actual PostgreSQL.",
+    "Control races pre-Popen, pre-record, pre-import, pre-claim, pre-register and pre-ready.",
+    "Delayed record returns STOP_REQUIRED and cannot import user code.",
+    "Manager restart recovers all known attempts; unknown proof holds capacity.",
+    "One missing CLOSED attempt blocks both STOP and normal retirement release.",
+    "Stale worker, sibling, graph, grant and PID/ticks refuse without mutation.",
+    "Replacement appends and needs new own ready without global reset or sibling replay.",
+    "Both public SEAL and START refuse remaining automatic Flow retry capacity with zero mutation; exhausted final attempt allowed.",
+    "Signed failure/CANCEL races accept events, preserve first control cause/EOF and terminal replay.",
+    "Flow registry unused preview, abandoned lifecycle, STOPPING join and post-wait Python paths.",
+    "Real sync/async two-worker four-child 8/500/5000 routed lifecycle; accepted200->201 and incomplete200->200.",
+    "Fixed P2 wire/lifecycle and NI011 byte goldens unchanged; PG17 executes, unsupported backends fail closed.",
+    "Reflection-complete storage deny matrix, scoped HTTP negatives, strict types, package isolation and one source-bound frozen union."
+  ],
+  "remaining_questions": []
+}

@@ -1,0 +1,44 @@
+"""One benign standard-library profiler scope check; no Prefect, DB or API."""
+import cProfile
+import hashlib
+import json
+from pathlib import Path
+import pstats
+import sys
+import threading
+import time
+
+BASE = Path(__file__).resolve().parent
+
+def intrinsic():
+    monitor = getattr(sys, 'monitoring', None)
+    return {'thread_id': threading.get_ident(), 'thread_cpu_ns': time.thread_time_ns(),
+        'sys_profile_present': sys.getprofile() is not None,
+        'threading_profile_present': threading.getprofile() is not None,
+        'monitoring_profiler_name': monitor.get_tool(monitor.PROFILER_ID) if monitor else None,
+        'monitoring_events': monitor.get_events(monitor.PROFILER_ID) if monitor else None}
+
+samples = {'before': intrinsic()}
+profile = cProfile.Profile(timer=time.thread_time_ns, timeunit=1e-9)
+profile.enable()
+samples['main_enabled'] = intrinsic()
+def foreign_marker():
+    samples['foreign_enabled'] = intrinsic()
+    value = 0
+    for number in range(100_000):
+        value = (value+number) % 65521
+    samples['foreign_after'] = intrinsic()
+child = threading.Thread(target=foreign_marker)
+child.start()
+child.join()
+profile.disable()
+samples['after'] = intrinsic()
+path = BASE/'monitoring-probe.pstats';profile.dump_stats(str(path));stats=pstats.Stats(str(path)).stats
+result={'status':'BENIGN_SCOPE_PROBE_CLOSED','samples':samples,
+    'foreign_marker_in_main_enabled_profile':any(key[2]=='foreign_marker' for key in stats),
+    'negative_self_entries':sum(value[2]<0 for value in stats.values()),
+    'max_self_seconds':max(value[2] for value in stats.values()),
+    'all_owned_threads_joined':not child.is_alive(),'application_imported':any(name=='prefect' or name.startswith('prefect.') for name in sys.modules),
+    'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+    'pstats_sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+output=BASE/'monitoring-probe-result.json';output.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n');print(json.dumps(result,indent=2));print(hashlib.sha256(output.read_bytes()).hexdigest())

@@ -21,9 +21,10 @@ def native_deployment_declaration(flow: Any) -> dict[str, Any] | None:
         raise StreamProtocolError(
             "A native deployment requires an explicit Flow version"
         )
-    if type(flow.retries) is not int or not 1 <= flow.retries <= 63:
+    minimum_retries = 0 if config.profile == "partitioned-dag-v1" else 1
+    if type(flow.retries) is not int or not minimum_retries <= flow.retries <= 63:
         raise StreamProtocolError(
-            "Native deployment recovery requires 1..63 configured Flow retries"
+            f"Native deployment recovery requires {minimum_retries}..63 configured Flow retries"
         )
     identity = native_task_code_identity(flow.fn)
     return {

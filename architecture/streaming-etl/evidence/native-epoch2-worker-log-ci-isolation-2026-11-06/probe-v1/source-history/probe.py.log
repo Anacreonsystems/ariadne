@@ -1,0 +1,325 @@
+"""Prepared bounded logger probe; execution requires the root's runtime GO."""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import hashlib
+import io
+import json
+import logging
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+from contextlib import redirect_stderr, redirect_stdout
+from unittest.mock import MagicMock, patch
+from uuid import UUID
+
+
+EXPECTED_HEAD = "d906ceca414baeac825ce472e0b78cd1dcae3363"
+ASSET_ROOT = Path("/tmp/worker-logging-ci-diagnosis-d906-v1")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--execute-after-root-go", action="store_true")
+    parser.add_argument("--repo", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    args = parser.parse_args()
+    if not args.execute_after_root_go:
+        raise SystemExit("Not executed: runtime STOP and root GO are required.")
+    repo = args.repo.resolve()
+    output = args.out.resolve()
+    if ASSET_ROOT not in output.parents:
+        raise SystemExit("Output must be a new owned directory under the asset root.")
+    head = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if head != EXPECTED_HEAD:
+        raise SystemExit("Source revision differs from the prepared binding.")
+    output.mkdir(parents=True, exist_ok=False)
+    sys.dont_write_bytecode = True
+    workdir = output / "owned-home"
+    workdir.mkdir()
+    os.chdir(output)
+    # Erase inherited settings without reading or exporting their values.
+    os.environ.clear()
+    os.environ.update(
+        {
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "DO_NOT_TRACK": "1",
+            "PREFECT_HOME": str(workdir),
+            "PREFECT_PROFILES_PATH": str(workdir / "profiles.toml"),
+            "PREFECT_API_URL": "http://127.0.0.1:1/api",
+            "PREFECT_SERVER_ALLOW_EPHEMERAL_MODE": "false",
+            "PREFECT_SERVER_DATABASE_CONNECTION_URL": (
+                "sqlite+aiosqlite:///" + str(workdir / "forbidden.db")
+            ),
+            "PREFECT_SERVER_ANALYTICS_ENABLED": "false",
+            "PREFECT_PLUGINS_ENABLED": "false",
+            "PREFECT_TESTING_TEST_MODE": "true",
+            "PREFECT_TESTING_UNIT_TEST_MODE": "true",
+            "PREFECT_LOGGING_LEVEL": "DEBUG",
+            "PREFECT_LOGGING_TO_API_ENABLED": "true",
+            "PREFECT_CLOUD_API_URL": "https://api.prefect.cloud/api",
+        }
+    )
+
+    def deny_external_io(event: str, values: tuple[object, ...]) -> None:
+        if event in {"socket.connect", "socket.getaddrinfo", "sqlite3.connect"}:
+            raise RuntimeError("Unexpected network/database IO in DB-free probe")
+
+    def deadline_expired(signum: int, frame: object) -> None:
+        raise TimeoutError("Bounded logger probe exceeded 30 seconds")
+
+    sys.addaudithook(deny_external_io)
+    signal.signal(signal.SIGALRM, deadline_expired)
+    signal.alarm(30)
+
+    # Intentionally imported only after the explicit execution gate above.
+    import prefect
+    import prefect.logging.configuration as configuration
+    import prefect.logging.handlers as handlers
+    from prefect.client.base import determine_server_type
+    from prefect.logging.loggers import get_worker_logger
+    from prefect.settings import (
+        PREFECT_API_URL,
+        PREFECT_CLOUD_API_URL,
+        PREFECT_LOGGING_TO_API_ENABLED,
+        temporary_settings,
+    )
+
+    if not Path(prefect.__file__).resolve().is_relative_to(repo / "src"):
+        raise RuntimeError("Imported Prefect is not bound to the selected repository")
+    source_paths = [
+        "src/prefect/logging/handlers.py",
+        "src/prefect/logging/loggers.py",
+        "src/prefect/logging/configuration.py",
+        "src/prefect/cli/_app.py",
+        "tests/test_logging.py",
+        "tests/cli/test_config.py",
+    ]
+    result: dict[str, object] = {
+        "head": head,
+        "source_sha256": {
+            name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
+            for name in source_paths
+        },
+        "scope": "controlled mechanism and gates; not historical CI order proof",
+        "cases": [],
+    }
+
+    class WorkerMetadata:
+        type = "cloud_logging_test"
+        name = "test"
+        backend_id: UUID | None = UUID("00000000-0000-0000-0000-000000000001")
+
+    worker = WorkerMetadata()
+    transport = MagicMock(name="shipping_transport")
+    sink = MagicMock(name="controlled_sink")
+    cloud_url = "https://api.prefect.cloud/api/accounts/test/workspaces/test"
+    local_url = "http://127.0.0.1:1/api"
+
+    def snapshot(logger: logging.Logger) -> dict[str, object]:
+        chain = []
+        cursor: logging.Logger | None = logger
+        while cursor is not None:
+            chain.append(
+                {
+                    "name": cursor.name,
+                    "level": cursor.level,
+                    "effective_level": cursor.getEffectiveLevel(),
+                    "disabled": cursor.disabled,
+                    "propagate": cursor.propagate,
+                    "handlers": [
+                        {
+                            "class": type(handler).__name__,
+                            "level": handler.level,
+                            "filters": [type(f).__name__ for f in handler.filters],
+                        }
+                        for handler in cursor.handlers
+                    ],
+                }
+            )
+            cursor = cursor.parent
+        return {
+            "logger_chain": chain,
+            "manager_disable": logger.manager.disable,
+            "debug_enabled": logger.isEnabledFor(logging.DEBUG),
+            "server_type": determine_server_type().name,
+            "api_logging_enabled": PREFECT_LOGGING_TO_API_ENABLED.value(),
+            "sink_configured": handlers._api_log_sink is not None,
+            "worker_id_attached": worker.backend_id is not None,
+        }
+
+    def emit_case(
+        label: str,
+        *,
+        api_url: str = cloud_url,
+        expected_ship: int,
+        expected_console: int,
+        expected_sink: int = 0,
+        enabled: bool = True,
+        send_to_api: bool = True,
+        cloud_base: str = "https://api.prefect.cloud/api",
+    ) -> None:
+        transport.reset_mock()
+        sink.reset_mock()
+        adapter = get_worker_logger(worker)
+        logger = adapter.logger if isinstance(adapter, logging.LoggerAdapter) else adapter
+        console = io.StringIO()
+        capture = logging.StreamHandler(console)
+        capture.setFormatter(logging.Formatter("%(message)s"))
+        namespace = logging.getLogger("prefect.workers")
+        namespace.addHandler(capture)
+        with temporary_settings(
+            {
+                PREFECT_API_URL: api_url,
+                PREFECT_CLOUD_API_URL: cloud_base,
+                PREFECT_LOGGING_TO_API_ENABLED: enabled,
+            }
+        ):
+            before = snapshot(logger)
+            adapter.debug("test-worker-log", extra={"send_to_api": send_to_api})
+        namespace.removeHandler(capture)
+        capture.close()
+        shipped = [
+            payload
+            for call in transport.instance().send.call_args_list
+            for payload in call.args
+            if payload.get("name") == logger.name
+            and payload.get("message") == "test-worker-log"
+        ]
+        sink_count = sum(
+            1
+            for call in sink.call_args_list
+            for payload in call.args
+            if payload.get("name") == logger.name
+            and payload.get("message") == "test-worker-log"
+        )
+        observed = {
+            "ship": len(shipped),
+            "console": console.getvalue().splitlines().count("test-worker-log"),
+            "sink": sink_count,
+        }
+        expected = {
+            "ship": expected_ship,
+            "console": expected_console,
+            "sink": expected_sink,
+        }
+        result["cases"].append(
+            {"case": label, "before": before, "observed": observed, "expected": expected}
+        )
+        if observed != expected:
+            raise AssertionError(f"Controlled case mismatch: {label}")
+
+    def run_exact_cli_predecessor_body() -> None:
+        import pytest
+        from prefect.testing.cli import invoke_and_assert
+        from prefect.utilities.filesystem import tmpchdir
+
+        predecessor_dir = output / "owned-cli-predecessor"
+        predecessor_dir.mkdir()
+        # The original test clears PREFECT_* values. The owned TOML retains safe
+        # storage paths without overriding its test-mode/logging defaults.
+        (predecessor_dir / "prefect.toml").write_text(
+            f"home = {json.dumps(str(workdir))}\n"
+            f"profiles_path = {json.dumps(str(workdir / 'profiles.toml'))}\n"
+            "[plugins]\nenabled = false\n"
+            "[server]\nanalytics_enabled = false\nallow_ephemeral_mode = false\n"
+        )
+        target_name = "test_view_prefers_canonical_dot_env_value_over_alias"
+        source = (repo / "tests/cli/test_config.py").read_text()
+        tree = ast.parse(source)
+        nodes = [
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == target_name
+        ]
+        if len(nodes) != 1 or nodes[0].decorator_list:
+            raise RuntimeError("Exact predecessor source binding is ambiguous")
+        namespace = {
+            "os": os,
+            "prefect": prefect,
+            "pytest": pytest,
+            "Path": Path,
+            "json": json,
+            "tmpchdir": tmpchdir,
+            "invoke_and_assert": invoke_and_assert,
+        }
+        # Compile only the unchanged test function, without collecting the test
+        # module or importing conftest/DB fixtures.
+        code = compile(
+            ast.Module(body=nodes, type_ignores=[]),
+            str(repo / "tests/cli/test_config.py"),
+            "exec",
+        )
+        exec(code, namespace)
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                namespace[target_name](monkeypatch, predecessor_dir)
+        result["predecessor"] = {
+            "node": "tests/cli/test_config.py::" + target_name,
+            "source_body": "unchanged function AST",
+            "fixtures": "direct MonkeyPatch and owned tmp_path, no conftest",
+            "isolation": "owned TOML home/profiles path; no logging/test-mode override",
+        }
+
+    with patch.object(handlers, "APILogWorker", transport):
+        try:
+            configuration.setup_logging(incremental=False)
+            handlers.set_api_log_sink(None)
+            namespace = logging.getLogger("prefect.workers")
+            emit_case("baseline_cloud_id", expected_ship=1, expected_console=1)
+
+            run_exact_cli_predecessor_body()
+            emit_case("after_cli_info_context_exit", expected_ship=0, expected_console=0)
+            logger = get_worker_logger(worker).logger
+            saved_level = logger.level
+            try:
+                logger.setLevel(logging.DEBUG)
+                emit_case("after_cli_with_scoped_debug", expected_ship=1, expected_console=1)
+            finally:
+                logger.setLevel(saved_level)
+            emit_case("after_scoped_debug_restore", expected_ship=0, expected_console=0)
+            configuration.setup_logging()
+            emit_case("after_explicit_restore", expected_ship=1, expected_console=1)
+
+            worker.backend_id = None
+            emit_case("cloud_without_id", expected_ship=0, expected_console=1)
+            emit_case("self_hosted_without_id", api_url=local_url, expected_ship=0, expected_console=1)
+            worker.backend_id = UUID("00000000-0000-0000-0000-000000000001")
+            emit_case("self_hosted_native_id_console_only", api_url=local_url, expected_ship=0, expected_console=1)
+            emit_case("api_logging_disabled", enabled=False, expected_ship=0, expected_console=1)
+            emit_case("record_opted_out", send_to_api=False, expected_ship=0, expected_console=1)
+            emit_case("cloud_base_mismatch", cloud_base="https://cloud.example.invalid/api", expected_ship=0, expected_console=1)
+            emit_case("custom_cloud_base_match", cloud_base="https://cloud.example.invalid/api", api_url="https://cloud.example.invalid/api/accounts/test/workspaces/test", expected_ship=1, expected_console=1)
+
+            handlers.set_api_log_sink(sink)
+            emit_case("active_sink", expected_ship=0, expected_console=1, expected_sink=1)
+            handlers.set_api_log_sink(None)
+
+            logger = get_worker_logger(worker).logger
+            logger.disabled = True
+            emit_case("logger_disabled", expected_ship=0, expected_console=0)
+            logger.disabled = False
+            worker_handlers = list(namespace.handlers)
+            namespace.handlers = []
+            emit_case("worker_handler_removed", expected_ship=0, expected_console=1)
+            namespace.handlers = worker_handlers
+            for handler in namespace.handlers:
+                if isinstance(handler, handlers.WorkerAPILogHandler):
+                    handler.setLevel(logging.INFO)
+            emit_case("worker_handler_info_level", expected_ship=0, expected_console=1)
+        finally:
+            handlers.set_api_log_sink(None)
+            # Keep every stdlib shutdown flush within the mocked transport scope.
+            logging.shutdown()
+            signal.alarm(0)
+            (output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+    print(json.dumps({"result": str(output / "result.json"), "cases": len(result["cases"])}))
+
+
+if __name__ == "__main__":
+    main()

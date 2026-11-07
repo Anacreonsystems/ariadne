@@ -1,0 +1,6 @@
+
+# Closed actual published18124 asynchronous DAG5000 CI failure
+
+The exact [18-safe metadata index](metadata/original-verify-index.json) binds current run42147494934/job127663651017 `[True-5000]` actual1FAIL/0error/0skip, FlowFAILED versus expectedCOMPLETED, testcase4016.121s. Primary coordinator exception/proximate cause was NOT_RETAINED and underlying cause remains UNKNOWN. Sync3960.31Timeout evidence must not be transferred to this async case. A bounded9line terminal-Flow excerpt omits two logger dictionaries; all full logs/privateZIP/raw API snapshots remain outside.
+
+Last outputs2908/2920/2938 differ from callcounts2908/2920/2939 as separate observations; source5000 accepted, four native births/run_count/epoch1, graphRELEASED/FAILED channels do not prove PASS. Dedicated final/health/coordinator reports are missing and not backfilled. Selected aggregates/secondaryfencing/queue.Empty traces are not primarycause/retryexecution/wholehealth counters. Source and rawarchive digests are retained; no new query/download/ZIP scan happened here. Old/currentCI source18124 is distinct from local projection WIP. NI012–014/NI020blocked, earned15/no27/fullmatrixgreen; originals/indices unchanged.

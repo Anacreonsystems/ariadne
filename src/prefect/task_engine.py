@@ -53,6 +53,7 @@ from prefect._internal.stream_engine import (
     reject_stream_execution,
 )
 from prefect._internal.stream_execution import (
+    DAGSubtaskExecutionContext,
     get_stream_execution,
     get_stream_subtask_execution,
 )
@@ -139,8 +140,10 @@ from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.utilities.callables import call_with_parameters, parameters_to_args_kwargs
 from prefect.utilities.collections import visit_collection
 from prefect.utilities.engine import (
+    aemit_dag_task_event,
     build_task_run_state_change_event,
     collect_task_run_inputs_sync,
+    emit_dag_task_event,
     emit_task_run_state_change_event,
     link_state_to_task_run_result,
     refuse_stream_graph_dependencies,
@@ -346,6 +349,8 @@ class BaseTaskRunEngine(Generic[P, R]):
             self.task_run, initial_state, validated_state, self._last_event
         )
         try:
+            if type(get_stream_subtask_execution()) is DAGSubtaskExecutionContext:
+                return emit_dag_task_event(getattr(self, "client"), event)
             return emit_physical_task_event(getattr(self, "client"), event)
         except PhysicalStreamExecutionStopped:
             self._physical_transport_failed = True
@@ -1210,6 +1215,8 @@ class AsyncTaskRunEngine(BaseTaskRunEngine[P, R]):
             self.task_run, initial_state, validated_state, self._last_event
         )
         try:
+            if type(get_stream_subtask_execution()) is DAGSubtaskExecutionContext:
+                return await aemit_dag_task_event(self.client, event)
             return await aemit_physical_task_event(self.client, event)
         except PhysicalStreamExecutionStopped:
             self._physical_transport_failed = True

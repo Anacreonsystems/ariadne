@@ -13,6 +13,8 @@ on:
           - 500-sync
           - 5000-sync
           - 5000-async
+          - dag500-sync
+          - dag500-async
 
 permissions:
   contents: read
@@ -21,7 +23,9 @@ jobs:
   observe:
     name: Native progress - ${{ inputs.case }}
     runs-on: anacreon-runners
-    timeout-minutes: 35
+    # The selected 5000-document functional case has a 3600-second test
+    # watchdog. This observer adds no throughput SLO or product timeout.
+    timeout-minutes: 75
     services:
       postgres:
         image: postgres:17
@@ -42,13 +46,17 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           filter: blob:none
-      - name: Set up uv and Python 3.12
+      - name: Set up uv and managed Python 3.12.14
         uses: astral-sh/setup-uv@v10.0.1
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
         with:
-          python-version: "3.12"
+          python-version: "3.12.14"
           enable-cache: true
       - name: Install packages
-        run: uv sync --locked
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
+        run: uv sync --locked --python 3.12.14
       - name: Configure the isolated database and selected case
         env:
           PROGRESS_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
@@ -65,10 +73,18 @@ jobs:
               "5000-sync": "5000-none-False",
               "5000-async": "5000-none-True",
           }
-          selected = cases[os.environ["PROGRESS_CASE"]]
-          node = "tests/test_native_partitioned_stream_http.py::test_actual_process_worker_runs_four_partition_tasks[" + selected + "]"
+          case = os.environ["PROGRESS_CASE"]
+          if case in {"dag500-sync", "dag500-async"}:
+              selected = "False-500" if case == "dag500-sync" else "True-500"
+              node = "tests/test_native_stream_dag_execution_http.py::test_public_dag_bounded_volume_postgres[" + selected + "]"
+              profile = "partitioned-dag-v1"
+          else:
+              selected = cases[case]
+              node = "tests/test_native_partitioned_stream_http.py::test_actual_process_worker_runs_four_partition_tasks[" + selected + "]"
+              profile = "partitioned-fixed-v1"
           with Path(os.environ["GITHUB_ENV"]).open("a") as output:
               output.write("NATIVE_PROGRESS_NODE=" + node + "\n")
+              output.write("NATIVE_PROGRESS_PROFILE=" + profile + "\n")
           PY
       - name: Run the existing case with read-only progress observation
         env:
@@ -77,19 +93,44 @@ jobs:
         run: |
           mkdir -p "${RUNNER_TEMP}/native-stream-progress"
           uv run python - <<'PY'
+          import hashlib
           import json
           import os
           import platform
+          import subprocess
+          import time
+          import sys
+          import sysconfig
+          from importlib.metadata import version
           from pathlib import Path
 
           limits = {}
-          for name in ("cpu.max", "cpu.stat", "memory.max", "memory.events", "io.stat"):
+          for name in ("cpu.max", "cpu.stat", "memory.max", "memory.current", "memory.peak", "memory.events", "io.stat"):
               path = Path("/sys/fs/cgroup") / name
               if path.is_file():
                   limits[name] = path.read_text()
           result = {
+              "monotonic_ns": time.monotonic_ns(),
+              "runner": {key: os.environ.get(key) for key in ("RUNNER_NAME", "RUNNER_OS", "RUNNER_ARCH")},
+              "node": os.environ["NATIVE_PROGRESS_NODE"],
+              "profile": os.environ["NATIVE_PROGRESS_PROFILE"],
+              "git_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "dirty_paths": subprocess.check_output(["git", "status", "--porcelain"], text=True).splitlines(),
+              "diagnostic_source_sha256": {
+                  name: hashlib.sha256(Path(name).read_bytes()).hexdigest()
+                  for name in (".github/workflows/native-stream-progress.yaml", "scripts/native_progress.py", "tests/test_native_stream_dag_execution_http.py", "pyproject.toml", "uv.lock")
+              },
               "platform": platform.platform(),
               "python": platform.python_version(),
+              "python_executable": sys.executable,
+              "python_build": {
+                  key: sysconfig.get_config_var(key)
+                  for key in ("Py_DEBUG", "CONFIG_ARGS", "CFLAGS", "PY_CFLAGS_NODIST")
+              },
+              "dependency_versions": {
+                  name: version(name)
+                  for name in ("sqlalchemy", "pydantic", "asyncpg", "uvicorn", "fastapi", "httpx")
+              },
               "logical_cpus": os.cpu_count(),
               "cpu_affinity": sorted(os.sched_getaffinity(0)),
               "cgroup": limits,
@@ -99,9 +140,32 @@ jobs:
           PY
           export NATIVE_PROGRESS_SOURCE_ROOT="$PWD"
           export PYTHONPATH="$PWD/src:$PWD:$PWD/scripts"
+          set +e
           uv run --no-sync pytest -p native_progress "$NATIVE_PROGRESS_NODE" \
             -vv -s --basetemp="$NATIVE_PROGRESS_BASETEMP" \
-            --junitxml="${RUNNER_TEMP}/native-stream-progress/result.xml"
+            --junitxml="${RUNNER_TEMP}/native-stream-progress/result.xml" \
+            2>&1 | tee "${RUNNER_TEMP}/native-stream-progress/pytest.log"
+          native_case_exit="${PIPESTATUS[0]}"
+          printf '%s\n' "$native_case_exit" > "${RUNNER_TEMP}/native-stream-progress/pytest-exit"
+          exit "$native_case_exit"
+      - name: Preserve final resource window
+        if: always()
+        run: |
+          uv run python - <<'PYRESOURCE'
+          import json
+          import os
+          import time
+          from pathlib import Path
+
+          names = ("cpu.max", "cpu.stat", "memory.max", "memory.current", "memory.peak", "memory.events", "io.stat")
+          result = {"monotonic_ns": time.monotonic_ns(), "cgroup": {
+              name: (Path("/sys/fs/cgroup") / name).read_text()
+              for name in names if (Path("/sys/fs/cgroup") / name).is_file()
+          }}
+          target = Path(os.environ["RUNNER_TEMP"]) / "native-stream-progress" / "runner-limits-finish.json"
+          target.parent.mkdir(parents=True, exist_ok=True)
+          target.write_text(json.dumps(result, indent=2) + "\n")
+          PYRESOURCE
       - name: Validate observation coverage
         if: always()
         run: |
@@ -113,12 +177,26 @@ jobs:
           folder = Path(os.environ["RUNNER_TEMP"]) / "native-stream-progress" / "progress"
           receipt = json.loads((folder / "session-receipt.json").read_text())
           assert receipt["observer_stopped"], receipt
+          if os.environ["NATIVE_PROGRESS_PROFILE"] == "partitioned-dag-v1":
+              assert receipt["active_observer_connections"] == 0, receipt
+              assert receipt["unconfirmed_observer_closes"] == 0, receipt
+              checkpoints = receipt["teardown_checkpoints"]
+              assert checkpoints and all(point["acknowledged"]
+                  and point["active_observer_connections"] == 0
+                  and point["unconfirmed_observer_closes"] == 0 for point in checkpoints), receipt
           for name in ("imports-start.json", "imports-finish.json"):
               imports = json.loads((folder / name).read_text())
               assert not imports["foreign_prefect_files"], name
           samples = [json.loads(line) for line in (folder / "timeline.jsonl").read_text().splitlines()]
           required = {"flows", "tasks", "consumers", "records", "capacity", "activities", "locks"}
           valid = [sample for sample in samples if required <= sample.keys() and len(sample["tasks"]) == 4]
+          if os.environ["NATIVE_PROGRESS_PROFILE"] == "partitioned-dag-v1":
+              valid = [sample for sample in valid if sample.get("profile") == "partitioned-dag-v1"
+                       and sample.get("owned_flow_id") and sample.get("owned_graph_id")
+                       and sample.get("complete_owned_sample") is True
+                       and len(sample.get("partitions", [])) == 7
+                       and sample.get("observer_connection_closed") is True
+                       and "observer_error" not in sample and "observer_close_error" not in sample]
           assert valid, "No complete PostgreSQL snapshot with four physical tasks was captured"
           print(json.dumps({"samples": len(samples), "complete_samples": len(valid), "latest": valid[-1]["summary"]}))
           PY

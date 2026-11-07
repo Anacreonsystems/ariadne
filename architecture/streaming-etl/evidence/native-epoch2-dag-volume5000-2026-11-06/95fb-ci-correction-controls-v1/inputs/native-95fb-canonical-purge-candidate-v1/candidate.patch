@@ -1,0 +1,309 @@
+diff --git a/tests/fixtures/database.py b/tests/fixtures/database.py
+index 835b149..6e947ee 100644
+--- a/tests/fixtures/database.py
++++ b/tests/fixtures/database.py
+@@ -93,6 +93,65 @@ async def setup_db(database_engine, db):
+         ) from exc
+ 
+ 
++async def _clear_database_tables(session: AsyncSession) -> None:
++    """Purge isolated test rows in restrictive-FK order, in the caller transaction."""
++    await session.execute(orm_models.Agent.__table__.delete())
++    # Physical assignments deliberately retain their Worker FK.
++    # Remove the test graph hierarchy before the special early
++    # pool deletion; submissions also retain the graph FK.
++    # Explicit isolated-test purge keeps restrictive slot and
++    # edge bindings out of the early Worker/partition cleanup.
++    # One deferred receipt->input-reference FK permits this
++    # whole-transaction purge; every payload pin remains strict.
++    await session.execute(
++        orm_models.StreamRecord.__table__.delete().where(
++            orm_models.StreamRecord.record_kind == "REFERENCE"
++        )
++    )
++    await session.execute(
++        orm_models.StreamCompletion.__table__.delete().where(
++            orm_models.StreamCompletion.consumer_kind == "DAG"
++        )
++    )
++    await session.execute(orm_models.StreamRouteReceipt.__table__.delete())
++    await session.execute(
++        orm_models.StreamConsumer.__table__.delete().where(
++            orm_models.StreamConsumer.consumer_kind == "DAG"
++        )
++    )
++    await session.execute(
++        orm_models.StreamRecord.__table__.delete().where(
++            orm_models.StreamRecord.graph_revision_id.is_not(None)
++        )
++    )
++    # Launch identity points to grants (never the reverse), so
++    # isolated-test history is purged before the graph hierarchy.
++    await session.execute(orm_models.StreamDAGControlTarget.__table__.delete())
++    await session.execute(
++        orm_models.StreamGraphRevision.__table__.update().values(
++            current_control_operation_id=None,
++            terminal_operation_id=None,
++        )
++    )
++    await session.execute(orm_models.StreamDAGLaunchAttempt.__table__.delete())
++    await session.execute(orm_models.StreamDAGLifecycleOperation.__table__.delete())
++    await session.execute(orm_models.StreamPhysicalSlotAllocation.__table__.delete())
++    await session.execute(orm_models.StreamGraphEdgePartition.__table__.delete())
++    await session.execute(orm_models.StreamGraphEdge.__table__.delete())
++    await session.execute(orm_models.StreamGraphPort.__table__.delete())
++    await session.execute(orm_models.StreamPhysicalSubtask.__table__.delete())
++    await session.execute(
++        orm_models.StreamSubmission.__table__.delete().where(
++            orm_models.StreamSubmission.graph_revision_id.is_not(None)
++        )
++    )
++    await session.execute(orm_models.StreamGraphRevision.__table__.delete())
++    await session.execute(orm_models.WorkPool.__table__.delete())
++
++    for table in reversed(orm_models.Base.metadata.sorted_tables):
++        await session.execute(table.delete())
++
++
+ @pytest.fixture(autouse=True)
+ async def clear_db(db, request):
+     """
+@@ -107,77 +166,7 @@ async def clear_db(db, request):
+         for attempt in range(max_retries):
+             try:
+                 async with db.session_context(begin_transaction=True) as session:
+-                    await session.execute(orm_models.Agent.__table__.delete())
+-                    # Physical assignments deliberately retain their Worker FK.
+-                    # Remove the test graph hierarchy before the special early
+-                    # pool deletion; submissions also retain the graph FK.
+-                    # Explicit isolated-test purge keeps restrictive slot and
+-                    # edge bindings out of the early Worker/partition cleanup.
+-                    # One deferred receipt->input-reference FK permits this
+-                    # whole-transaction purge; every payload pin remains strict.
+-                    await session.execute(
+-                        orm_models.StreamRecord.__table__.delete().where(
+-                            orm_models.StreamRecord.record_kind == "REFERENCE"
+-                        )
+-                    )
+-                    await session.execute(
+-                        orm_models.StreamCompletion.__table__.delete().where(
+-                            orm_models.StreamCompletion.consumer_kind == "DAG"
+-                        )
+-                    )
+-                    await session.execute(
+-                        orm_models.StreamRouteReceipt.__table__.delete()
+-                    )
+-                    await session.execute(
+-                        orm_models.StreamConsumer.__table__.delete().where(
+-                            orm_models.StreamConsumer.consumer_kind == "DAG"
+-                        )
+-                    )
+-                    await session.execute(
+-                        orm_models.StreamRecord.__table__.delete().where(
+-                            orm_models.StreamRecord.graph_revision_id.is_not(None)
+-                        )
+-                    )
+-                    # Launch identity points to grants (never the reverse), so
+-                    # isolated-test history is purged before the graph hierarchy.
+-                    await session.execute(
+-                        orm_models.StreamDAGControlTarget.__table__.delete()
+-                    )
+-                    await session.execute(
+-                        orm_models.StreamGraphRevision.__table__.update().values(
+-                            current_control_operation_id=None,
+-                            terminal_operation_id=None,
+-                        )
+-                    )
+-                    await session.execute(
+-                        orm_models.StreamDAGLaunchAttempt.__table__.delete()
+-                    )
+-                    await session.execute(
+-                        orm_models.StreamDAGLifecycleOperation.__table__.delete()
+-                    )
+-                    await session.execute(
+-                        orm_models.StreamPhysicalSlotAllocation.__table__.delete()
+-                    )
+-                    await session.execute(
+-                        orm_models.StreamGraphEdgePartition.__table__.delete()
+-                    )
+-                    await session.execute(orm_models.StreamGraphEdge.__table__.delete())
+-                    await session.execute(orm_models.StreamGraphPort.__table__.delete())
+-                    await session.execute(
+-                        orm_models.StreamPhysicalSubtask.__table__.delete()
+-                    )
+-                    await session.execute(
+-                        orm_models.StreamSubmission.__table__.delete().where(
+-                            orm_models.StreamSubmission.graph_revision_id.is_not(None)
+-                        )
+-                    )
+-                    await session.execute(
+-                        orm_models.StreamGraphRevision.__table__.delete()
+-                    )
+-                    await session.execute(orm_models.WorkPool.__table__.delete())
+-
+-                    for table in reversed(orm_models.Base.metadata.sorted_tables):
+-                        await session.execute(table.delete())
++                    await _clear_database_tables(session)
+                     break
+             except (InterfaceError, DBAPIError):
+                 if attempt < max_retries - 1:
+diff --git a/tests/server/database/test_stream_route_migrations.py b/tests/server/database/test_stream_route_migrations.py
+index 8e799f7..96f9960 100644
+--- a/tests/server/database/test_stream_route_migrations.py
++++ b/tests/server/database/test_stream_route_migrations.py
+@@ -14,6 +14,7 @@ import pytest
+ import sqlalchemy as sa
+ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
++from tests.fixtures import database as fixture_database
+ from tests.server.database.test_migrations import _isolated_postgres_schema_changes
+ from tests.server.models.test_stream_dags import dag_request
+ 
+@@ -26,7 +27,7 @@ from prefect._internal.stream_route_plan import (
+ from prefect.server.database import PrefectDBInterface, orm_models
+ from prefect.server.database.alembic_commands import alembic_downgrade, alembic_upgrade
+ from prefect.server.models import flow_runs, stream_dags
+-from prefect.server.schemas import core, states
++from prefect.server.schemas import core, filters, states
+ from prefect.server.schemas import stream_dags as topology
+ from prefect.server.schemas.stream_routes import StreamDAGRouteOutcome
+ from prefect.utilities.asyncutils import run_sync_in_worker_thread
+@@ -1025,3 +1026,72 @@ async def test_downgrade_refuses_routed_and_retained_horizon_history_and_restore
+             await run_sync_in_worker_thread(alembic_upgrade, "head")
+             await database_engine.dispose()
+     assert await data_snapshot(db) == baseline
++
++
++async def test_retained_routed_fixture_can_precede_module_cleanup(
++    db: PrefectDBInterface, flow_run: orm_models.FlowRun
++):
++    """A committed predecessor for ordinary module-scoped cleanup regressions."""
++    await ddl_chain(db, flow_run.id)
++    snapshot = await data_snapshot(db)
++    assert len(snapshot["stream_route_receipt"]) == 4
++    assert (
++        sum(row["record_kind"] == "REFERENCE" for row in snapshot["stream_record"]) == 3
++    )
++    assert len(snapshot["stream_completion"]) == 3
++
++
++@pytest.mark.parametrize("rollback", [False, True])
++async def test_database_fixture_purge_handles_retained_routed_history(
++    db: PrefectDBInterface, flow_run: orm_models.FlowRun, rollback: bool
++):
++    chain = await ddl_chain(db, flow_run.id)
++    baseline = await data_snapshot(db)
++    assert len(baseline["stream_route_receipt"]) == 4
++    assert (
++        sum(row["record_kind"] == "REFERENCE" for row in baseline["stream_record"]) == 3
++    )
++    run_filter = filters.FlowRunFilter(id={"any_": [flow_run.id]})
++    async with db.session_context() as session:
++        assert (
++            await flow_runs.count_flow_runs(session=session, flow_run_filter=run_filter)
++            == 1
++        )
++
++    # This immediate FK must still reject the old unsafe deletion order.
++    with pytest.raises(IntegrityError) as refusal:
++        async with db.session_context(begin_transaction=True) as session:
++            await session.execute(
++                sa.delete(db.StreamRouteReceipt).where(
++                    db.StreamRouteReceipt.id == chain.receipts["A"]
++                )
++            )
++    assert_fk(refusal.value, db, "fk_stream_record__route_receipt_payload")
++    assert await data_snapshot(db) == baseline
++
++    class RollBackCallerTransaction(Exception):
++        pass
++
++    try:
++        async with db.session_context(begin_transaction=True) as session:
++            await fixture_database._clear_database_tables(session)
++            for table in db.Base.metadata.sorted_tables:
++                assert (
++                    await session.scalar(sa.select(sa.func.count()).select_from(table))
++                    == 0
++                )
++            assert (
++                await flow_runs.count_flow_runs(
++                    session=session, flow_run_filter=run_filter
++                )
++                == 0
++            )
++            if rollback:
++                raise RollBackCallerTransaction
++    except RollBackCallerTransaction:
++        assert rollback
++
++    if rollback:
++        assert await data_snapshot(db) == baseline
++    else:
++        assert all(not rows for rows in (await data_snapshot(db)).values())
+diff --git a/tests/server/models/test_filters.py b/tests/server/models/test_filters.py
+index 3de7aec..1db4625 100644
+--- a/tests/server/models/test_filters.py
++++ b/tests/server/models/test_filters.py
+@@ -6,6 +6,8 @@ import pytest
+ from pydantic_core import from_json, to_json
+ from sqlalchemy.exc import InterfaceError
+ 
++from tests.fixtures.database import _clear_database_tables
++
+ import prefect.server
+ from prefect.client.orchestration import get_client
+ from prefect.server import models
+@@ -24,11 +26,7 @@ async def clear_db(db):
+     for attempt in range(max_retries):
+         try:
+             async with db.session_context(begin_transaction=True) as session:
+-                await session.execute(db.Agent.__table__.delete())
+-                await session.execute(db.WorkPool.__table__.delete())
+-
+-                for table in reversed(db.Base.metadata.sorted_tables):
+-                    await session.execute(table.delete())
++                await _clear_database_tables(session)
+                 break
+         except InterfaceError:
+             if attempt < max_retries - 1:
+@@ -321,11 +319,7 @@ async def data(flow_function, db):
+     # ----------------- clear data
+ 
+     async with db.session_context(begin_transaction=True) as session:
+-        # work pool has a circular dependency on pool queue; delete it first
+-        await session.execute(db.WorkPool.__table__.delete())
+-
+-        for table in reversed(db.Base.metadata.sorted_tables):
+-            await session.execute(table.delete())
++        await _clear_database_tables(session)
+ 
+ 
+ class TestCountFlowsModels:
+diff --git a/tests/server/orchestration/api/test_run_history.py b/tests/server/orchestration/api/test_run_history.py
+index ef93c44..70ec400 100644
+--- a/tests/server/orchestration/api/test_run_history.py
++++ b/tests/server/orchestration/api/test_run_history.py
+@@ -8,6 +8,8 @@ from httpx import Response
+ from pydantic import TypeAdapter
+ from whenever import Instant
+ 
++from tests.fixtures.database import _clear_database_tables
++
+ from prefect.server import models
+ from prefect.server.api.run_history import run_history
+ from prefect.server.schemas import actions, core, filters, responses, states
+@@ -94,12 +96,7 @@ async def clear_db(db):
+     """Prevent automatic database-clearing behavior after every test"""
+     yield  # noqa
+     async with db.session_context(begin_transaction=True) as session:
+-        await session.execute(db.Agent.__table__.delete())
+-        # work pool has a circular dependency on pool queue; delete it first
+-        await session.execute(db.WorkPool.__table__.delete())
+-
+-        for table in reversed(db.Base.metadata.sorted_tables):
+-            await session.execute(table.delete())
++        await _clear_database_tables(session)
+ 
+ 
+ @pytest.fixture(autouse=True, scope="module")

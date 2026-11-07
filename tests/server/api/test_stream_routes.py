@@ -565,7 +565,7 @@ async def test_postgres_current_fixed_child_cannot_use_routed_dag_allowlist(
         response = await routed_api.post(
             path, json=request.model_dump(mode="json"), headers=child_headers, auth=None
         )
-        assert response.status_code == 401, response.text
+        assert_error(response, 422, "UNSUPPORTED_PROFILE")
         assert child_headers["Authorization"].split()[1] not in response.text
         assert await route_snapshot(db) == baseline
 

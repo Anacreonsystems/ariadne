@@ -1,0 +1,143 @@
+"""Prepare exact public allowlist for CLOSED async; never inspect active P2."""
+import hashlib
+import json
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+
+BASE = Path('/tmp/native-principal-dag5000-18124-v1')
+ACTOR = BASE / 'sync-v2'
+TRIAL = ACTOR / 'sync5000-00da848f'
+FIXTURE = TRIAL / 'pytest/test_public_dag_bounded_volume0'
+SQLBASE = Path('/tmp/native-principal-dag5000-metadata-observer-18124-v1')
+SQL = SQLBASE / 'sync5000'
+OUT = Path('/tmp/native-principal-sync5000-closed-public-handoff-18124-v1')
+SOURCE = Path('/tmp/ariadne-native-5000-diagnosis-v1')
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load(path):
+    return json.loads(path.read_text())
+
+
+def write(path, value):
+    with path.open('x') as stream:
+        json.dump(value, stream, indent=2, sort_keys=True)
+        stream.write('\n')
+
+
+assert not OUT.exists()
+OUT.mkdir(mode=0o700)
+native = load(TRIAL / 'native5000-receipt-v2.json')
+assert native['runtime_STOPPED'] and native['status'] == 'NATIVE_DAG5000_PASS_DB_RETAINED'
+assert sha(TRIAL / 'native5000-receipt-v2.json') == '1e6eb5ee4057c30bef75c70379459167b2f907402799e0f694036ff8cb327979'
+after = load(TRIAL / 'source-after.json')
+source_names = [
+    'scripts/native_runtime_diagnostics.py', 'src/prefect/server/api/server.py',
+    'src/prefect/server/models/stream_dag_executions.py', 'src/prefect/server/models/stream_dag_launches.py',
+    'src/prefect/server/models/streams.py', 'tests/conftest.py', 'tests/fixtures/database.py',
+    'tests/test_native_partitioned_stream_http.py', 'tests/test_native_stream_dag_execution_http.py',
+    'tests/test_native_stream_http.py', 'tests/test_native_stream_recovery_http.py',
+]
+captures = []
+for name in source_names:
+    source = SOURCE / name
+    assert sha(source) == after[name]['sha256']
+    dest = OUT / 'source-captures' / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with dest.open('xb') as stream:
+        stream.write(source.read_bytes())
+    assert sha(dest) == after[name]['sha256']
+    captures.append({'path':str(dest),'relative_source_path':name,'sha256':sha(dest),'bytes':dest.stat().st_size})
+write(OUT / 'source-captures-index.json', {
+    'source_root':str(SOURCE), 'head':native['head'], 'captures':captures,
+    'qualification':'Captured after syncSTOP while the next distinct P2 trial is active; every source byte first proved equal to the immutable CLOSED async source-after lease. No active P2 artifact is read or copied.'})
+
+top_names = [
+    'native5000-receipt-v2.json','pytest.public.xml','pytest.log','body-wider-health-audit.json',
+    'database-closure.json','process-closure.json','drift.json','source-after.json','source-before.json',
+    'reaping-proof.json','import-audit.json','pytest-exit.json','pytest-exit','provisioning-proof.json',
+    'principal-file-live-observations.jsonl','principal-file-observer-identity.json',
+    'principal-file-observer-STOP.json','principal-extra-actors-reap-proof-v1.json',
+    'collection.json','disk-observations.jsonl','process.json','command.json','database-creation.json',
+    'subreaper-proof.json','original-provisioning-binding.json','disk-before.json',
+    'auxiliary-source-bindings.json','external-assets.json',
+]
+fixture_names = [
+    'observations.json','phases.json','final-progress.json','worker-health.json','coordinator-retirement.json',
+    'all-cursors-observed','accepted-cursors.json','progress.jsonl','native_dag_example.py',
+    'A-0.pid.json','B-0.pid.json','C-0.pid.json','C-1.pid.json',
+]
+actor_names = [
+    'native_5000_runner_v2.py','native_5000_support_v2.py','audit_native_5000_v2.py',
+    'observe_native_5000_v2.py','native_provision_only_v2.py','startup-template.py.txt',
+    'ROOT_AUTHORIZED_PERSONAL_SYNC5000_HOLD.json','PREPARED_SOURCE_HOLD.json',
+]
+root_names = [
+    'observe_principal_sync_artifacts_v1.py','watch_personal_sync_artifacts_v1.py',
+    'sync-artifact-reader-binding-v1.json','principal-sync5000-all-actors-STOP-adapter-v1.json',
+    'audit_closed_personal_sync_v1.py','principal-personal-sync5000-closed-audit-v1.json',
+    'seal_closed_sync_handoff_v1.py',
+]
+sql_names = ['live-observer-STOP-receipt-v1.json','live-observer-reap-proof-v1.json','controller-identity.json','resolved-owned-identity.json']
+sqlbase_names = ['preparation-manifest-v1.json','ROOT_AUTHORIZED_SYNC_LIVE_SCOPE.json',
+                 'ROOT_AUTHORIZED_SYNC_FINAL_SCOPE.json','observer_common.py','controller.py',
+                 'capture_final.py','queries.json','postterminal-consumer-select-v1.sql','scope-plan.md']
+paths = [(TRIAL/name,'native/'+name) for name in top_names]
+paths += [(FIXTURE/name,'fixture/'+name) for name in fixture_names]
+paths += [(ACTOR/name,'actor/'+name) for name in actor_names]
+paths += [(BASE/name,'principal/'+name) for name in root_names]
+paths += [(path,'native/audit/'+path.name) for path in sorted((TRIAL/'audit').glob('*.jsonl'))]
+paths += [(TRIAL/'startup/sitecustomize.py','native/startup/sitecustomize.py')]
+paths += [(SQL/name,'sql/'+name) for name in sql_names]
+paths += [(path,'sql/'+path.name) for path in sorted(SQL.glob('live-sample-*.json'))]
+paths += [(SQL/'final-sample-159107356425897.json','sql/final-sample-159107356425897.json')]
+paths += [(SQLBASE/name,'observer/'+name) for name in sqlbase_names]
+paths += [(OUT/'source-captures-index.json','source-captures-index.json')]
+paths += [(Path(ref['path']),'source-captures/'+ref['relative_source_path']) for ref in captures]
+public = []
+for path, archive_name in paths:
+    assert path.is_file() and not path.is_symlink(), str(path)
+    assert '/native-p2-minimal-bridge-preparation-' not in str(path)
+    assert '.private.' not in path.name and 'selector' not in path.name
+    public.append({'path':str(path),'archive_relative_path':archive_name,'sha256':sha(path),'bytes':path.stat().st_size})
+assert len({x['archive_relative_path'] for x in public}) == len(public)
+for name in ['pytest.log','pytest.public.xml']:
+    text = (TRIAL/name).read_text()
+    matches = re.findall(r'(?i)postgres(?:ql)?(?:\+asyncpg)?://[^\s\x27\"<>]+',text)
+    assert all('redacted' in value.lower() for value in matches), (name,'nonredacted PostgreSQL URL')
+write(OUT/'public-allowlist-v1.json', {'schema':'closed-personal-sync5000-public-allowlist-v1',
+    'head':native['head'], 'actual_closed_trial':str(TRIAL),'regular_files':public,
+    'excluded':['ALL active P2 files and native metadata output','Private selector/config/environment/DSNs',
+                'pytest.private.log and pytest.private.xml','raw API/worker logs','temporary home/sqlite/db files',
+                'pycache/UV lock bytes','business-document payload files and raw business-call/source records'],
+    'existing_public_sanitizer':'native_5000_support_v2.sanitize; pytest.log/XML already sanitized by the actual completed runner; selector/config not read again',
+    'no_archive_copy_or_repo_mutation':True})
+handoff = {'schema':'personal-sync5000-closed-public-handoff-v1',
+    'recorded_at':datetime.now(timezone.utc).isoformat(), 'status':'CLOSED_PERSONAL_SYNC5000_SAFE_ALLOWLIST_READY',
+    'head':native['head'],'personal_actual_SDK_execution':True,'runtime_STOPPED':True,'trial':str(TRIAL),
+    'native_receipt':{'path':str(TRIAL/'native5000-receipt-v2.json'),'sha256':sha(TRIAL/'native5000-receipt-v2.json')},
+    'closed_metadata_audit':{'path':str(BASE/'principal-personal-sync5000-closed-audit-v1.json'),'sha256':sha(BASE/'principal-personal-sync5000-closed-audit-v1.json')},
+    'all_actors_STOP_adapter':{'path':str(BASE/'principal-sync5000-all-actors-STOP-adapter-v1.json'),'sha256':sha(BASE/'principal-sync5000-all-actors-STOP-adapter-v1.json')},
+    'public_allowlist':{'path':str(OUT/'public-allowlist-v1.json'),'sha256':sha(OUT/'public-allowlist-v1.json')},
+    'public_file_count':len(public),'source_captures':11,'pytest_suite':native['body_wider_health']['pytest_suite'],
+    'source_files':1600,'source_drift':[],'actual_import_rows':3884,'import_mismatches':[],
+    'native_PID_start_pairs':11,'all_owned_phase_PID_start_pairs':14,'budgets':native['budgets'],
+    'database':native['database'],'wider_health_all_six_zero':True,'exact_effects':15000,
+    'live_SQL_samples':28,'first_SQL_cursors':[211,215,216],'last_SQL_cursors':[4825,4827,4855],
+    'final_SQL_all15_literal_checks':True,'final_Consumer_rows':0,
+    'qualification':[
+        'Actual personal SDK/TCP/OS/PG17 sync5000 execution; independent29readonly19familySQLcaptures separate from author direct-PG progress.',
+        'First ownSQL snapshot211/215/216 before500; no activation-time or exact500SQL snapshot. Consumer0aftercleanup is not a literal5000Consumerrow proof.',
+        'The old sealed observe_native_5000_v2.py has original author namespace assert and was NOT executed; actual separatef2217one-shot/watch sources and adaptation receipt are included. Six native assets unchanged.',
+        'Public native logs/XML were sanitized by the completed runner; raw/private logs/config/env never read/copied by this handoff. Public schema/file selection explicit, no recursive copy.',
+        'Source captures made later, verified byte-equal to closed async source-after. Active P2 artifacts excluded entirely.',
+        'External KV backend/HTTP retry counter/throughput/CIcause/5000forecast/fullNI014/readiness27 not claimed.',
+    ],'new_DB_tests_project_imports':0,'repository_mutations':0,'collector_executed':False,
+    'archive_publication_requires_Root_routing':True}
+write(OUT/'handoff-v1.json',handoff)
+print(json.dumps({'handoff':str(OUT/'handoff-v1.json'),'sha256':sha(OUT/'handoff-v1.json'),
+                  'allowlist_sha256':sha(OUT/'public-allowlist-v1.json'),'public_files':len(public)}))

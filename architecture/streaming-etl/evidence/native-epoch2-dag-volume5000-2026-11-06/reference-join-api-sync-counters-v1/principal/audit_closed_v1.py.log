@@ -1,0 +1,163 @@
+"""File-only closure audit. No project imports, subprocesses or database access."""
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+BASE = Path('/tmp/native-reference-join-api-sync-counters-18124-v1')
+TRIAL = BASE / 'counters-9954070b'
+OUT = Path(__file__).resolve().parent
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def read(path):
+    return json.loads(path.read_text())
+
+def ref(path):
+    assert path.is_file() and not path.is_symlink(), path
+    return {'path': str(path), 'sha256': digest(path), 'bytes': path.stat().st_size}
+
+def seal(name, value):
+    p = OUT / name
+    assert not p.exists(), p
+    p.write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
+    return ref(p)
+
+manifest = read(BASE / 'preparation-manifest.json')
+assert digest(BASE / 'preparation-manifest.json') == '1ca3c5f1d68acb19848636a70cd4191353fc3eb3fd6f2402095dbea33a731390'
+for name, expected in manifest['artifacts'].items():
+    assert digest(BASE / name) == expected['sha256'], name
+hold = read(BASE / 'ROOT_AUTHORIZED_COUNTERS_HOLD.json')
+receipt = read(TRIAL / 'counters-receipt-v1.json')
+counters = read(TRIAL / 'api-sync-cpu-counters.json')
+completion = read(TRIAL / 'api-measurement-complete.json')
+assert receipt['status'] == 'DIAGNOSTIC_CASE_PASS_DB_RETAINED'
+assert receipt['runtime_STOPPED'] and receipt['pytest_exit'] == 0
+assert receipt['actual_exit_persisted_before_metadata']
+assert not receipt['harness_errors'] and not receipt['harness_signals_sent']
+assert receipt['body_wider_health']['status'] == 'BODY_AND_WIDER_HEALTH_PASS'
+assert all(not lines for lines in receipt['body_wider_health']['wider_health'].values())
+assert receipt['database']['retained'] and receipt['database']['sessions'] == []
+assert receipt['database']['drop_requested'] is False and receipt['database']['force_used'] is False
+assert receipt['provisioning_proof']['hook_invocations'] == 1
+assert receipt['provisioning_proof']['original_provisioning_body_calls'] == 0
+assert receipt['adopted_reaping']['waitpid_echild_success']
+assert receipt['source_files'] == 1601 and receipt['source_drift'] == []
+assert receipt['import_audit'] == {'rows': 3884, 'mismatches': []}
+before, after = read(TRIAL / 'source-before.json'), read(TRIAL / 'source-after.json')
+assert before == after and len(before) == 1601
+assert digest(TRIAL / 'source-before.json') == digest(TRIAL / 'source-after.json') == manifest['source1601_sha256']
+source_root = Path(hold['source_root'])
+for relative, expected in after.items():
+    assert digest(source_root / relative) == expected['sha256'], relative
+assert read(TRIAL / 'publication-before.json') == read(TRIAL / 'publication-after.json')
+assert read(TRIAL / 'external-assets.json') == manifest['assets']
+assert read(TRIAL / 'thirdparty-source-bindings.json') == read(BASE / 'thirdparty-source-bindings.json')
+for source, expected in read(TRIAL / 'thirdparty-source-bindings.json').items():
+    assert digest(Path(source)) == expected, source
+
+root = ET.parse(TRIAL / 'pytest.public.xml').getroot()
+suites = [root] if root.tag == 'testsuite' else list(root.iter('testsuite'))
+assert len(suites) == 1
+suite = suites[0]
+assert [int(suite.get(k, '0')) for k in ('tests', 'failures', 'errors', 'skipped')] == [1, 0, 0, 0]
+assert len(list(suite.iter('testcase'))) == 1
+assert receipt['collection']['count'] == 1
+assert receipt['nodeid'] == 'tests/test_native_stream_dag_execution_http.py::test_public_dag_bounded_volume_postgres[False-500]'
+assert receipt['budgets'] == {'wait': 750, 'observe': 840, 'pytest': 900}
+assert receipt['whole_process_deadline_added'] is False and receipt['retry'] is False
+for branch in ('B-0', 'C-0', 'C-1'):
+    assert receipt['body_wider_health']['business'][branch] == {'calls': 500, 'documents': 500, 'processes': 1, 'task_runs': 1}
+assert counters['status'] == 'COUNTERS_VALID' and not counters['observer_errors'] and counters['active_at_finish'] == 0
+stages = {'alias_constructor', 'select_constructor', 'sql_compiler_constructor', 'dag_validated', 'submission_material', 'pure_reference_validation'}
+assert set(counters['stages']) == stages and len(counters['bindings']) == 7
+for values in counters['stages'].values():
+    assert values['calls'] > 0 and values['inclusive_thread_cpu_ns'] >= 0 and values['inclusive_wall_ns'] >= 0
+    assert values['original_exceptions'] == 0
+assert completion['owner_match'] and completion['measurement']['sha256'] == digest(TRIAL / 'api-sync-cpu-counters.json')
+assert completion['measurement']['bytes'] < 16384
+assert receipt['measurement_audit']['returncode'] == -15
+owner = read(TRIAL / 'api-owner.json')
+assert str(owner['pid']) == str(completion['selection']['pid'])
+assert str(owner['start_ticks']) == str(completion['selection']['start_ticks'])
+assert owner['header'] == completion['selection']['header'] and owner['fd'] == completion['selection']['fd']
+for binding in counters['bindings']:
+    assert digest(Path(binding['source_file'])) == binding['file_sha256']
+identities = dict(receipt['process_closure']['observed_pid_start_pairs'])
+for role in ('runner', 'parent'):
+    identities[str(receipt['subreaper_proof'][role + '_pid'])] = str(receipt['subreaper_proof'][role + '_start_ticks'])
+remaining = []
+for pid, ticks in identities.items():
+    path = Path('/proc') / pid / 'stat'
+    if path.exists():
+        data = path.read_text().rsplit(')', 1)[1].split()
+        if data[19] == str(ticks):
+            remaining.append({'pid': pid, 'start_ticks': ticks, 'state': data[0]})
+assert remaining == []
+
+public_trial_names = [
+    'api-exits.json', 'api-fixture-binding.json', 'api-measurement-complete.json',
+    'api-owner.json', 'api-selected.json', 'api-sync-cpu-counters.json',
+    'auxiliary-source-bindings.json', 'body-wider-health-audit.json', 'collection.json',
+    'command.json', 'counters-receipt-v1.json', 'cpu-sampling-coverage.json',
+    'database-closure.json', 'database-creation.json', 'drift.json', 'external-assets.json',
+    'import-audit.json', 'measurement-audit.json', 'measurement-config.json',
+    'original-provisioning-binding.json', 'process-closure.json', 'process.json',
+    'provisioning-proof.json', 'publication-after.json', 'publication-before.json',
+    'pytest-exit', 'pytest-exit.json', 'pytest.log', 'pytest.public.xml',
+    'reaping-proof.json', 'source-after.json', 'source-before.json', 'subreaper-proof.json',
+    'thirdparty-source-bindings.json',
+]
+public_base_names = list(manifest['artifacts']) + ['preparation-manifest.json', 'ROOT_AUTHORIZED_COUNTERS_HOLD.json']
+public_refs = [ref(BASE / n) for n in public_base_names] + [ref(TRIAL / n) for n in public_trial_names]
+public_refs.append(ref(Path(__file__).resolve()))
+review = {
+    'schema': 'principal-personal-counters-only-closed-review-v1',
+    'recorded_at': datetime.now(timezone.utc).isoformat(),
+    'reviewer': '/root/etl_principal_recovery2',
+    'verdict': 'FUNCTIONAL_CASE_AND_SELECTED_API_COUNTER_CAPTURE_VALID',
+    'personal_execution': True, 'file_only_postrun_audit': True,
+    'additional_runtime_SQL_API_tests_or_project_imports_during_audit': False,
+    'receipt': ref(TRIAL / 'counters-receipt-v1.json'),
+    'counters': ref(TRIAL / 'api-sync-cpu-counters.json'),
+    'API_completion': ref(TRIAL / 'api-measurement-complete.json'),
+    'matching_pre_execution_review': ref(OUT / 'matching-review-v1.json'),
+    'pytest': {'tests': 1, 'passed': 1, 'failed': 0, 'errors': 0, 'skipped': 0, 'JUnit_seconds': float(suite.get('time'))},
+    'actual_tool_exit': 0, 'runtime_STOPPED': True,
+    'source_files': 1601, 'source1601_sha256': digest(TRIAL / 'source-after.json'),
+    'source_drift': [], 'import_rows': 3884, 'import_mismatches': [],
+    'publication_before_after_equal': True,
+    'process_identities_checked': len(identities), 'remaining_same_identity': remaining,
+    'database_scope': 'One newly created owned PG17 DB retained, zero sessions at closed driver check; audit issued no SQL',
+    'fixture_hook_invocations': 1, 'original_provisioning_body_calls': 0,
+    'health': 'Three branches each500 exact calls and effects; all six wider-health categories empty',
+    'API_CPU_seconds': completion['process_rusage_user_seconds'] + completion['process_rusage_system_seconds'],
+    'API_process_wall_seconds': completion['process_elapsed_seconds'],
+    'API_serve_wall_seconds': completion['serve_elapsed_seconds'],
+    'stages': counters['stages'],
+    'scope': 'Only exact selected API PID/start/fd/factory/native identity instrumented; no worker/Flow/Task process counters attributed to these stages',
+    'claim_limits': counters['limits'] + [
+        'Six selected stages only; not a complete CPU profile or complete statement-construction account',
+        'API-wide AliasedClass and Select constructors are not exclusively JOIN calls',
+        'No ASGI/SQL events, request histogram or fingerprints collected in this distinct treatment',
+        'Single diagnostic is not a calibrated before/after comparison, throughput/SLO or 5000 forecast',
+        'Compiler constructor calls do not establish exact engine cache misses or their cause',
+        'No evidence that these constructor stages explain the prior duration difference; generative JOIN/WHERE, cache-key and hydration remain unmeasured',
+        'No formal NI014/ADR43 acceptance or readiness credit; published old-source DAG5000 CI failures remain open',
+    ],
+    'next_runtime_or_product_changes_authorized': False,
+    'audit_preparation_note': 'Initial file-only audit attempt compared source-manifest object to digest string and stopped before sealing. Corrected to expected.sha256; original script preserved. No product drift or runtime/SQL action occurred.',
+    'public_files': public_refs,
+    'excluded': ['pytest.private.log', 'pytest.private.xml', 'private selector/config/env/DSNs', 'pycache', 'UV/runtime lock bytes', 'raw worker/API logs', 'unlisted files'],
+}
+review_ref = seal('principal-counters-closed-review-v1.json', review)
+allowlist_ref = seal('public-allowlist-v1.json', {
+    'schema': 'closed-counters-only-explicit-public-allowlist-v1',
+    'closed': True, 'review': review_ref,
+    'files': public_refs + [review_ref],
+    'no_private_config_or_credentials_or_payload_or_SQL_parameters': True,
+    'old_indices_and_sources_modified': False,
+})
+print(json.dumps({'review': review_ref, 'allowlist': allowlist_ref, 'public_files': len(public_refs) + 1, 'status': review['verdict']}))

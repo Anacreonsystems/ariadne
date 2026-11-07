@@ -1,0 +1,179 @@
+"""API-only observational metrics; no SQL text/parameters or request bodies retained."""
+import contextvars
+import functools
+import hashlib
+import json
+import re
+import threading
+import time
+from pathlib import Path
+
+_CURRENT=contextvars.ContextVar('native_measure500_request',default=None)
+
+
+class Recorder:
+    def __init__(self,trial):
+        self.trial=Path(trial);self.requests=[];self.pending={};self.next_id=0
+        self.errors=[];self.incomplete=False;self.factory_calls=0;self.attached_apps=set()
+        self.outside={'sql':{},'plan_calls':0,'plan_elapsed_ns':0,'plan_thread_cpu_ns':0,'dag_plan_calls':0,'dag_plan_inclusive_wall_ns':0}
+        self.listeners=[];self.restorations=[]
+
+    def error(self,stage,error):
+        self.incomplete=True
+        if len(self.errors)<100:self.errors.append({'stage':stage,'error_type':type(error).__name__})
+
+    def begin(self,scope):
+        self.next_id+=1
+        if len(self.requests)>=50000:
+            self.incomplete=True;return None
+        row={'id':self.next_id,'method':scope.get('method') if scope.get('method') in {'GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS'} else 'OTHER','route':'UNMATCHED','status':None,'started_ns':time.perf_counter_ns(),'closed':False,'sql':{},'plan_calls':0,'plan_elapsed_ns':0,'plan_thread_cpu_ns':0,'dag_plan_calls':0,'dag_plan_inclusive_wall_ns':0,'empty_dag_consumer_read':None,'unhandled_error_type':None}
+        self.requests.append(row);return row
+
+    def bucket(self):
+        row=_CURRENT.get()
+        return row if row is not None and not row['closed'] else self.outside
+
+    def before_cursor(self,conn,cursor,statement,_parameters,context,executemany):
+        try:
+            # Only a one-way statement-shape fingerprint is retained. Never
+            # serialize SQL text or parameters, even when an error occurs.
+            fingerprint=hashlib.sha256(re.sub(r'\s+',' ',statement).strip().encode()).hexdigest()
+            bucket=self.bucket();entries=bucket['sql']
+            if fingerprint not in entries and len(entries)>=4096:
+                self.incomplete=True;return
+            entry=entries.setdefault(fingerprint,{'cursor_execute_before':0,'cursor_execute_after':0,'cursor_execute_error':0,'executemany_dispatches':0,'client_observed_elapsed_ns':0})
+            entry['cursor_execute_before']+=1;entry['executemany_dispatches']+=int(bool(executemany))
+            key=id(context)
+            if key in self.pending:self.incomplete=True
+            self.pending[key]=(entry,time.perf_counter_ns())
+        except Exception as error:self.error('before_cursor_execute',error)
+
+    def after_cursor(self,conn,cursor,statement,_parameters,context,executemany):
+        try:
+            value=self.pending.pop(id(context),None)
+            if value is None:
+                self.incomplete=True;return
+            entry,started=value;entry['cursor_execute_after']+=1
+            entry['client_observed_elapsed_ns']+=time.perf_counter_ns()-started
+        except Exception as error:self.error('after_cursor_execute',error)
+
+    def handle_error(self,exception_context):
+        try:
+            value=self.pending.pop(id(exception_context.execution_context),None)
+            if value is not None:
+                entry,started=value;entry['cursor_execute_error']+=1
+                entry['client_observed_elapsed_ns']+=time.perf_counter_ns()-started
+            # Do not inspect/retain SQL/parameters/exception messages; returning
+            # None leaves SQLAlchemy's original exception behavior unchanged.
+        except Exception as error:self.error('sqlalchemy_handle_error',error)
+
+    def install(self):
+        from sqlalchemy import event
+        from sqlalchemy.engine import Engine
+        from prefect.server.models import stream_routes,stream_dags
+        from prefect.server.api import server as server_module
+        for name,callback in [('before_cursor_execute',self.before_cursor),('after_cursor_execute',self.after_cursor),('handle_error',self.handle_error)]:
+            event.listen(Engine,name,callback);self.listeners.append((Engine,name,callback))
+        original_property=stream_routes.DAGRouteAuthorization.plan
+        original_getter=original_property.fget
+        @functools.wraps(original_getter)
+        def measured_plan(instance):
+            started=time.perf_counter_ns();cpu=time.thread_time_ns()
+            try:return original_getter(instance)
+            finally:
+                ended=time.perf_counter_ns();cpu_ended=time.thread_time_ns()
+                try:
+                    bucket=self.bucket();bucket['plan_calls']+=1;bucket['plan_elapsed_ns']+=ended-started;bucket['plan_thread_cpu_ns']+=cpu_ended-cpu
+                except Exception as error:self.error('sync_plan_property',error)
+        stream_routes.DAGRouteAuthorization.plan=property(measured_plan,original_property.fset,original_property.fdel,original_property.__doc__)
+        self.restorations.append((stream_routes.DAGRouteAuthorization,'plan',original_property))
+        original_dag_plan=stream_dags.dag_plan
+        @functools.wraps(original_dag_plan)
+        async def measured_dag_plan(*args,**kwargs):
+            started=time.perf_counter_ns();bucket=self.bucket()
+            try:return await original_dag_plan(*args,**kwargs)
+            finally:
+                ended=time.perf_counter_ns()
+                try:bucket['dag_plan_calls']+=1;bucket['dag_plan_inclusive_wall_ns']+=ended-started
+                except Exception as error:self.error('dag_plan_inclusive_wall',error)
+        stream_dags.dag_plan=measured_dag_plan
+        self.restorations.append((stream_dags,'dag_plan',original_dag_plan))
+        original_factory=server_module.create_app
+        @functools.wraps(original_factory)
+        def measured_factory(*args,**kwargs):
+            app=original_factory(*args,**kwargs)
+            try:
+                self.factory_calls+=1
+                if id(app) not in self.attached_apps:
+                    app.add_middleware(ObserveASGI,recorder=self)
+                    self.attached_apps.add(id(app))
+            except Exception as error:self.error('factory_attach_asgi',error)
+            return app
+        server_module.create_app=measured_factory
+        self.restorations.append((server_module,'create_app',original_factory))
+
+    def finish(self):
+        from sqlalchemy import event
+        for target,name,callback in reversed(self.listeners):
+            try:event.remove(target,name,callback)
+            except Exception as error:self.error('remove_listener',error)
+        for target,name,original in reversed(self.restorations):
+            try:setattr(target,name,original)
+            except Exception as error:self.error('restore_external_wrapper',error)
+        if self.pending:self.incomplete=True
+        route_summary={}
+        public_rows=[]
+        for row in self.requests:
+            if not row['closed']:self.incomplete=True
+            public={k:v for k,v in row.items() if k not in {'closed','started_ns'}}
+            public_rows.append(public)
+            key=json.dumps([row['method'],row['route'],row['status']],separators=(',',':'))
+            summary=route_summary.setdefault(key,{'requests':0,'empty_dag_consumer_reads':0,'nonempty_dag_consumer_reads':0,'sql_cursor_execute_before':0,'sql_cursor_execute_after':0,'sql_cursor_execute_error':0,'plan_calls':0,'plan_elapsed_ns':0,'plan_thread_cpu_ns':0,'dag_plan_calls':0,'dag_plan_inclusive_wall_ns':0})
+            summary['requests']+=1
+            if row['empty_dag_consumer_read'] is True:summary['empty_dag_consumer_reads']+=1
+            if row['empty_dag_consumer_read'] is False:summary['nonempty_dag_consumer_reads']+=1
+            for metric in ('plan_calls','plan_elapsed_ns','plan_thread_cpu_ns','dag_plan_calls','dag_plan_inclusive_wall_ns'):summary[metric]+=row[metric]
+            for entry in row['sql'].values():
+                for metric in ('before','after','error'):summary['sql_cursor_execute_'+metric]+=entry['cursor_execute_'+metric]
+        output={'schema':'api-only-sync500-cursor-and-plan-metrics-v1','status':'MEASUREMENT_COMPLETE' if not self.incomplete else 'MEASUREMENT_INCONCLUSIVE','factory_calls':self.factory_calls,'request_count':len(public_rows),'route_summary':route_summary,'requests':public_rows,'outside_request':self.outside,'unfinished_sql_dispatches':len(self.pending),'instrumentation_errors':self.errors,'limits':['Cursor events count actual SQLAlchemy DBAPI execution dispatches, not parameter rows or coroutine resumptions','SQL elapsed is client-observed span including driver/network/server/scheduling; not pure DB CPU/lock wait','Only synchronous no-await plan property has thread CPU; dag_plan wall is inclusive across awaits and is not per-request CPU','No SQL text/parameters/request body/header/querystring/payload/DSN/token is retained','Uninstrumented control has no route/cursor/property wrapper; overhead is part of diagnostic treatment','Request context covers ASGI request lifetime; startup/background/late work is separate outside_request','No cross-request topology cache, plan reuse or optimization is installed']}
+        path=self.trial/'api-measurements.json';temporary=self.trial/'api-measurements.pending.json'
+        temporary.write_text(json.dumps(output,indent=2,sort_keys=True)+'\n');temporary.replace(path)
+        return {'status':output['status'],'request_count':output['request_count'],'route_groups':len(route_summary),'unfinished_sql_dispatches':len(self.pending),'errors':len(self.errors),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+
+
+class ObserveASGI:
+    def __init__(self,app,recorder):self.app=app;self.recorder=recorder
+    async def __call__(self,scope,receive,send):
+        if scope.get('type')!='http':return await self.app(scope,receive,send)
+        row=None;token=None;null_matches=True;null_length=0;read_route=False
+        try:
+            row=self.recorder.begin(scope);token=_CURRENT.set(row)
+        except Exception as error:self.recorder.error('asgi_begin',error)
+        async def observed_send(message):
+            nonlocal null_matches,null_length,read_route
+            try:
+                if row is not None:
+                    route=scope.get('route');path=getattr(route,'path_format',None) or getattr(route,'path',None)
+                    if isinstance(path,str):row['route']=path
+                    read_route=row['method']=='POST' and row['route']=='/streams/v2/dags/consumers/read'
+                    if message['type']=='http.response.start':row['status']=int(message['status'])
+                    if message['type']=='http.response.body' and read_route:
+                        body=message.get('body',b'')
+                        # Equality against the fixed JSON null literal only.
+                        # No payload bytes are saved, hashed or serialized.
+                        if null_matches:
+                            if len(body)>4-null_length or body!=b'null'[null_length:null_length+len(body)]:null_matches=False
+                        null_length+=len(body)
+                        if not message.get('more_body',False) and row['status']==200:row['empty_dag_consumer_read']=null_matches and null_length==4
+            except Exception as error:self.recorder.error('asgi_send_observation',error)
+            await send(message)
+        try:
+            return await self.app(scope,receive,observed_send)
+        except BaseException as error:
+            if row is not None:row['unhandled_error_type']=type(error).__name__
+            raise
+        finally:
+            try:
+                if row is not None:row['elapsed_ns']=time.perf_counter_ns()-row['started_ns'];row['closed']=True
+                if token is not None:_CURRENT.reset(token)
+            except Exception as error:self.recorder.error('asgi_end',error)

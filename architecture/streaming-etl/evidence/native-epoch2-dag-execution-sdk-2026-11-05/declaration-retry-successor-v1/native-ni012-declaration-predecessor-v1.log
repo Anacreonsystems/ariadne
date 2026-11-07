@@ -1,0 +1,139 @@
+F....F...................F..FF...............................            [100%]
+=================================== FAILURES ===================================
+______ test_native_deployment_wire_models_match[NativeStreamDeclaration] _______
+
+name = 'NativeStreamDeclaration'
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "NativeStreamDeclaration",
+            "NativeStreamWorkerEnrollRequest",
+            "NativeStreamWorkerEnrollment",
+            "NativeStreamProcessRegistrationRequest",
+            "NativeStreamLaunchProjection",
+            "NativeStreamDeploymentPlan",
+            "NativeStreamTaskProjection",
+            "NativeStreamFiniteProjection",
+            "NativeStreamFlowProjection",
+            "NativeStreamRecoveryCandidate",
+            "NativeStreamLaunchHeartbeatRequest",
+            "NativeStreamLaunchHeartbeat",
+            "NativeStreamReplacementAuthorizeRequest",
+            "NativeStreamReplacementAuthorization",
+            "NativeStreamProcessDeathWitness",
+            "NativeStreamReplacementConfirmRequest",
+            "NativeStreamControlRequest",
+            "NativeStreamControlResult",
+            "NativeStreamUnstartedRetireRequest",
+            "NativeStreamCancelFinalizeRequest",
+            "NativeStreamVerifiedRetireRequest",
+        ],
+    )
+    def test_native_deployment_wire_models_match(name: str):
+>       assert (
+            getattr(client_schemas, name).model_json_schema()
+            == getattr(server_schemas, name).model_json_schema()
+        )
+E       AssertionError: assert {'additionalP...etries'], ...} == {'additionalP...etries'], ...}
+E         
+E         Omitting 5 identical items, use -vv to show
+E         Differing items:
+E         {'properties': {'schema_version': {'const': 1, 'default': 1, 'title': 'Schema Version', 'type': 'integer'}, 'protocol_...'type': 'string'}, 'flow_version': {'maxLength': 255, 'minLength': 1, 'title': 'Flow Version', 'type': 'string'}, ...}} != {'properties': {'schema_version': {'const': 1, 'default': 1, 'title': 'Schema Version', 'type': 'integer'}, 'protocol_...'type': 'string'}, 'flow_version': {'maxLength': 255, 'minLength': 1, 'title': 'Flow Version', 'type': 'string'}, ...}}
+E         Use -v to get more diff
+
+tests/client/test_native_deployment_schemas.py:37: AssertionError
+_____ test_native_deployment_wire_models_match[NativeStreamDeploymentPlan] _____
+
+name = 'NativeStreamDeploymentPlan'
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "NativeStreamDeclaration",
+            "NativeStreamWorkerEnrollRequest",
+            "NativeStreamWorkerEnrollment",
+            "NativeStreamProcessRegistrationRequest",
+            "NativeStreamLaunchProjection",
+            "NativeStreamDeploymentPlan",
+            "NativeStreamTaskProjection",
+            "NativeStreamFiniteProjection",
+            "NativeStreamFlowProjection",
+            "NativeStreamRecoveryCandidate",
+            "NativeStreamLaunchHeartbeatRequest",
+            "NativeStreamLaunchHeartbeat",
+            "NativeStreamReplacementAuthorizeRequest",
+            "NativeStreamReplacementAuthorization",
+            "NativeStreamProcessDeathWitness",
+            "NativeStreamReplacementConfirmRequest",
+            "NativeStreamControlRequest",
+            "NativeStreamControlResult",
+            "NativeStreamUnstartedRetireRequest",
+            "NativeStreamCancelFinalizeRequest",
+            "NativeStreamVerifiedRetireRequest",
+        ],
+    )
+    def test_native_deployment_wire_models_match(name: str):
+>       assert (
+            getattr(client_schemas, name).model_json_schema()
+            == getattr(server_schemas, name).model_json_schema()
+        )
+E       AssertionError: assert {'$defs': {'N...t', ...], ...} == {'$defs': {'N...t', ...], ...}
+E         
+E         Omitting 5 identical items, use -vv to show
+E         Differing items:
+E         {'$defs': {'NativeStreamDeclaration': {'additionalProperties': False, 'description': 'Secret-free native capability pe...d', 'work_pool_id', 'worker_id', 'snapshot_digest', 'generation', ...], 'title': 'NativeStreamLaunchProjection', ...}}} != {'$defs': {'NativeStreamDeclaration': {'additionalProperties': False, 'description': 'Secret-free native capability pe...d', 'work_pool_id', 'worker_id', 'snapshot_digest', 'generation', ...], 'title': 'NativeStreamLaunchProjection', ...}}}
+E         Use -v to get more diff
+
+tests/client/test_native_deployment_schemas.py:37: AssertionError
+______________ test_dag_declaration_accepts_exact_retry_bounds[0] ______________
+
+retries = 0
+
+    @pytest.mark.parametrize("retries", [0, 1, 63])
+    def test_dag_declaration_accepts_exact_retry_bounds(retries: int):
+        wire = _declaration("partitioned-dag-v1", retries)
+        server = server_schemas.NativeStreamDeclaration.model_validate(wire)
+>       client = client_schemas.NativeStreamDeclaration.model_validate_json(server.model_dump_json())
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       pydantic_core._pydantic_core.ValidationError: 1 validation error for NativeStreamDeclaration
+E       flow_retries
+E         Input should be greater than or equal to 1 [type=greater_than_equal, input_value=0, input_type=int]
+E           For further information visit https://errors.pydantic.dev/2.13/v/greater_than_equal
+
+tests/client/test_native_deployment_schemas.py:96: ValidationError
+____ test_legacy_profiles_still_refuse_zero_flow_retries[bounded-linear-v1] ____
+
+profile = 'bounded-linear-v1'
+
+    @pytest.mark.parametrize("profile", ["bounded-linear-v1", "partitioned-fixed-v1"])
+    def test_legacy_profiles_still_refuse_zero_flow_retries(profile: str):
+        for schema in (client_schemas, server_schemas):
+>           with pytest.raises(ValidationError, match="Zero Flow retries"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError: Regex pattern did not match.
+E             Expected regex: 'Zero Flow retries'
+E             Actual message: '1 validation error for NativeStreamDeclaration\nflow_retries\n  Input should be greater than or equal to 1 [type=greater_than_equal, input_value=0, input_type=int]\n    For further information visit https://errors.pydantic.dev/2.13/v/greater_than_equal'
+
+tests/client/test_native_deployment_schemas.py:104: AssertionError
+__ test_legacy_profiles_still_refuse_zero_flow_retries[partitioned-fixed-v1] ___
+
+profile = 'partitioned-fixed-v1'
+
+    @pytest.mark.parametrize("profile", ["bounded-linear-v1", "partitioned-fixed-v1"])
+    def test_legacy_profiles_still_refuse_zero_flow_retries(profile: str):
+        for schema in (client_schemas, server_schemas):
+>           with pytest.raises(ValidationError, match="Zero Flow retries"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError: Regex pattern did not match.
+E             Expected regex: 'Zero Flow retries'
+E             Actual message: '1 validation error for NativeStreamDeclaration\nflow_retries\n  Input should be greater than or equal to 1 [type=greater_than_equal, input_value=0, input_type=int]\n    For further information visit https://errors.pydantic.dev/2.13/v/greater_than_equal'
+
+tests/client/test_native_deployment_schemas.py:104: AssertionError
+=========================== short test summary info ============================
+FAILED tests/client/test_native_deployment_schemas.py::test_native_deployment_wire_models_match[NativeStreamDeclaration]
+FAILED tests/client/test_native_deployment_schemas.py::test_native_deployment_wire_models_match[NativeStreamDeploymentPlan]
+FAILED tests/client/test_native_deployment_schemas.py::test_dag_declaration_accepts_exact_retry_bounds[0]
+FAILED tests/client/test_native_deployment_schemas.py::test_legacy_profiles_still_refuse_zero_flow_retries[bounded-linear-v1]
+FAILED tests/client/test_native_deployment_schemas.py::test_legacy_profiles_still_refuse_zero_flow_retries[partitioned-fixed-v1]
+5 failed, 56 passed in 0.17s

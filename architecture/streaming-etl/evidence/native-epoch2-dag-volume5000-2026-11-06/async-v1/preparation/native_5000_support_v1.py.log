@@ -1,0 +1,23 @@
+"""Unchanged verified Principal source/PG17 helpers; import never connects."""
+from pathlib import Path
+import hashlib,re,subprocess
+import asyncpg
+ROOT=Path("/tmp/ariadne-native-5000-diagnosis-v1")
+
+def source_snapshot():
+    tracked = subprocess.check_output(['git', 'ls-files', 'src/prefect', 'tests', 'pyproject.toml', 'uv.lock', '.github/workflows/python-tests.yaml', 'scripts/native_runtime_diagnostics.py'], cwd=ROOT, text=True).splitlines()
+    paths = sorted({p for p in tracked if p.endswith('.py') or p in {'pyproject.toml','uv.lock','.github/workflows/python-tests.yaml'}} | {str(p.relative_to(ROOT)) for p in (ROOT/'src/prefect').rglob('*.py')} | {'pyrightconfig-native-dag.json','ui-v2/src/api/prefect.ts','architecture/streaming-etl/adr/README.md'})
+    return {name: {'sha256': hashlib.sha256((ROOT/name).read_bytes()).hexdigest(), 'bytes': (ROOT/name).stat().st_size} for name in paths}
+
+def proc_ticks(pid):
+    return Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()[19]
+
+async def create_database(config,name):
+    c=await asyncpg.connect(config['admin_dsn'], timeout=3)
+    try:
+        assert int(await c.fetchval('SHOW server_version_num'))//10000==17
+        assert re.fullmatch('[a-z][a-z0-9_]{1,47}',name)
+        role=config['database_role'].replace('"','""')
+        await c.execute('CREATE DATABASE "'+name+'" OWNER "'+role+'"')
+    finally:
+        await c.close()

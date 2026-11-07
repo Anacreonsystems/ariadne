@@ -1,0 +1,39 @@
+"""Read-only preparation reuse of Principal runner helpers; never executes on import."""
+from pathlib import Path
+import hashlib,json,os,re,subprocess
+import asyncpg
+ROOT=Path("/tmp/ariadne-native-5000-diagnosis-v1")
+
+def source_snapshot():
+    tracked = subprocess.check_output(['git', 'ls-files', 'src/prefect', 'tests', 'pyproject.toml', 'uv.lock', '.github/workflows/python-tests.yaml', 'scripts/native_runtime_diagnostics.py'], cwd=ROOT, text=True).splitlines()
+    paths = sorted({p for p in tracked if p.endswith('.py') or p in {'pyproject.toml','uv.lock','.github/workflows/python-tests.yaml'}} | {str(p.relative_to(ROOT)) for p in (ROOT/'src/prefect').rglob('*.py')} | {'pyrightconfig-native-dag.json','ui-v2/src/api/prefect.ts','architecture/streaming-etl/adr/README.md'})
+    return {name: {'sha256': hashlib.sha256((ROOT/name).read_bytes()).hexdigest(), 'bytes': (ROOT/name).stat().st_size} for name in paths}
+
+def proc_ticks(pid):
+    return Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()[19]
+
+async def create_database(config,name):
+    c=await asyncpg.connect(config['admin_dsn'], timeout=3)
+    try:
+        assert int(await c.fetchval('SHOW server_version_num'))//10000==17
+        assert re.fullmatch('[a-z][a-z0-9_]{1,47}',name)
+        role=config['database_role'].replace('"','""')
+        await c.execute('CREATE DATABASE "'+name+'" OWNER "'+role+'"')
+    finally:
+        await c.close()
+
+async def closure(config,name,drop):
+    c=await asyncpg.connect(config['admin_dsn'], timeout=3)
+    try:
+        names=[name,name+'_tests_master']
+        sessions=[dict(x) for x in await c.fetch('SELECT datname,pid,state FROM pg_stat_activity WHERE datname=ANY($1::text[])',names)]
+        if sessions: raise RuntimeError('Owned component database still has live sessions')
+        dropped=[]
+        if drop:
+            for item in names:
+                assert re.fullmatch('[a-z][a-z0-9_]{1,62}',item)
+                await c.execute('DROP DATABASE IF EXISTS "'+item+'"');dropped.append(item)
+        remaining=[x['datname'] for x in await c.fetch('SELECT datname FROM pg_database WHERE datname=ANY($1::text[])',names)]
+        return {'owned_databases':names,'sessions':sessions,'dropped':dropped,'remaining':remaining,'force_used':False,'old_soak_or_forensic_databases_touched':False,'qualification':'Successful component databases drop only after test teardown; failed execution databases retained for diagnosis. This operational cleanup is not a platform release proof.'}
+    finally:
+        await c.close()

@@ -1,0 +1,215 @@
+"""v4 owned PG17/source/process support; import never connects or launches."""
+
+from __future__ import annotations
+
+import asyncio
+import ast
+import ctypes
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import sys
+import time
+from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
+import xml.etree.ElementTree as ET
+
+import asyncpg
+
+
+ROOT = Path("/workspace/ariadne")
+BASE = Path(__file__).resolve().parent
+SELECTOR = Path("/tmp/native-ni012-runtime-test-env.json")
+EXPECTED_HEAD = "d906ceca414baeac825ce472e0b78cd1dcae3363"
+EXPECTED_TEST_SHA = "b8fb7f17a015147cf4032e74065308027af3a6393cab55cc9653cff1ca02d246"
+EXPECTED_CLI_SHA = "1aca0467539ddeb57dbf7b1fb1dad01ad5400f7e0e8b6ec9a424f049dba5261a"
+PREDECESSOR = "tests/cli/test_config.py::test_view_prefers_canonical_dot_env_value_over_alias"
+WORKER_CLASS = "tests/test_logging.py::TestWorkerLogging"
+TARGET = WORKER_CLASS + "::test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud"
+_active_process = None
+_active_identity = None
+_active_identities: dict[int, str] = {}
+_controller_start_ticks = None
+_timeout_sigint_attempted = False
+
+
+def sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def write(path: Path, value: object) -> None:
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def source_snapshot() -> dict[str, str]:
+    paths = subprocess.check_output(
+        ["git", "ls-files", "src/prefect", "tests", "pyproject.toml", "uv.lock", ".github/workflows", "scripts"],
+        cwd=ROOT,
+        text=True,
+    ).splitlines()
+    paths = set(paths) | {
+        str(path.relative_to(ROOT)) for path in (ROOT / "src/prefect").rglob("*.py")
+    }
+    return {name: sha(ROOT / name) for name in sorted(paths) if (ROOT / name).is_file()}
+
+
+def proc_state(pid: int):
+    try:
+        fields = Path("/proc", str(pid), "stat").read_text().rsplit(")", 1)[1].split()
+    except FileNotFoundError:
+        return None
+    return {"state": fields[0], "parent": int(fields[1]), "pgid": int(fields[2]), "start_ticks": fields[19]}
+
+
+def collect_group(pgid: int, identities: dict[int, str]) -> None:
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit():
+            state = proc_state(int(entry.name))
+            if state is not None and state["pgid"] == pgid:
+                identities[int(entry.name)] = state["start_ticks"]
+
+
+def enable_owned_subreaper() -> dict[str, object]:
+    global _controller_start_ticks
+    libc = ctypes.CDLL(None, use_errno=True)
+    enabled = ctypes.c_int(0)
+    if libc.prctl(36, 1, 0, 0, 0) != 0:
+        raise RuntimeError("Own PR_SET_CHILD_SUBREAPER failed; no DB/Popen allowed")
+    if libc.prctl(37, ctypes.byref(enabled), 0, 0, 0) != 0 or enabled.value != 1:
+        raise RuntimeError("Own PR_GET_CHILD_SUBREAPER verification failed")
+    own = proc_state(os.getpid())
+    parent = proc_state(os.getppid())
+    assert own is not None and parent is not None
+    _controller_start_ticks = own["start_ticks"]
+    return {
+        "runner_pid": os.getpid(), "runner_start_ticks": own["start_ticks"],
+        "parent_pid": os.getppid(), "parent_start_ticks": parent["start_ticks"],
+        "pr_set_child_subreaper": 1, "pr_get_child_subreaper": enabled.value,
+        "scope": "this runner's future descendants only",
+        "pid1_or_prior_orphan_modified": False,
+        "subreaper_support_source_sha256": sha(Path(__file__)),
+    }
+
+
+def owned_group_members(pgid: int, identities: dict[int, str]) -> list[int]:
+    collect_group(pgid, identities)
+    members = []
+    for pid, ticks in identities.items():
+        state = proc_state(pid)
+        if (
+            state is not None and state["start_ticks"] == ticks
+            and state["pgid"] == pgid
+            and int(ticks) >= int(_controller_start_ticks)
+        ):
+            members.append(pid)
+    return members
+
+
+def exact_owned_pytest_python(pgid: int, identities: dict[int, str]):
+    candidates = []
+    for pid in owned_group_members(pgid, identities):
+        try:
+            argv = Path("/proc", str(pid), "cmdline").read_bytes().split(b"\0")
+        except FileNotFoundError:
+            continue
+        # Read only owned child argv in-process. Never print or serialize values.
+        if len(argv) >= 3 and Path(os.fsdecode(argv[0])).name.startswith("python") and argv[1:3] == [b"-m", b"pytest"]:
+            state = proc_state(pid)
+            if state is not None and state["start_ticks"] == identities[pid]:
+                candidates.append({"pid": pid, "start_ticks": identities[pid]})
+    if len(candidates) != 1:
+        return None
+    return candidates[0]
+
+
+def bounded_stop(process, pgid: int, identities: dict[int, str]) -> list[dict[str, object]]:
+    global _timeout_sigint_attempted
+    events = []
+    target = exact_owned_pytest_python(pgid, identities)
+    if target is not None:
+        state = proc_state(target["pid"])
+        if state is not None and state["start_ticks"] == target["start_ticks"]:
+            os.kill(target["pid"], signal.SIGINT)
+            _timeout_sigint_attempted = True
+            events.append({"signal": "SIGINT", "scope": "exact pytest Python identity", **target})
+            deadline = time.monotonic() + 20
+            while process.poll() is None and time.monotonic() < deadline:
+                collect_group(pgid, identities)
+                time.sleep(0.1)
+    else:
+        events.append({"signal": None, "reason": "exact owned pytest Python identity unavailable"})
+    if process.poll() is None and owned_group_members(pgid, identities):
+        os.killpg(pgid, signal.SIGTERM)
+        events.append({"signal": "SIGTERM", "scope": "validated own process group", "pgid": pgid})
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            if owned_group_members(pgid, identities):
+                os.killpg(pgid, signal.SIGKILL)
+                events.append({"signal": "SIGKILL", "scope": "validated own process group", "pgid": pgid})
+    return events
+
+
+def reap_owned_adopted(pgid: int, identities: dict[int, str], timeout: float = 5) -> dict[str, object]:
+    reaped = []
+    deadline = time.monotonic() + timeout
+    echild = False
+    alive_child_polls = 0
+    while True:
+        try:
+            pid, status = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            echild = True
+            break
+        if pid:
+            reaped.append({"pid": pid, "start_ticks": identities.get(pid), "waitpid_options": "WNOHANG", "wait_status": status, "exit_code": os.waitstatus_to_exitcode(status), "ownership": "this verified subreaper had ECHILD before Popen; only its future children can be waited"})
+            continue
+        alive_child_polls += 1
+        collect_group(pgid, identities)
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+    return {"adopted_reaped": reaped, "waitpid_echild_success": echild, "alive_child_polls": alive_child_polls, "proc_children_interface_used": False, "prior_pid1_orphan_touched": False}
+
+
+async def create_owned(config, name: str) -> dict[str, object]:
+    connection = await asyncpg.connect(config["admin_dsn"], timeout=3, command_timeout=5)
+    try:
+        version = int(await connection.fetchval("SHOW server_version_num"))
+        assert version // 10000 == 17
+        assert re.fullmatch("[a-z][a-z0-9_]{1,47}", name)
+        assert await connection.fetchval("SELECT 1 FROM pg_database WHERE datname=$1", name) is None
+        role = config["database_role"].replace('"', '""')
+        await connection.execute('CREATE DATABASE "' + name + '" OWNER "' + role + '"')
+        return {"database": name, "server_major": 17, "created_fresh": True, "existing_database_reused": False}
+    finally:
+        await connection.close()
+
+
+async def owned_sessions(config, name: str) -> dict[str, object]:
+    connection = await asyncpg.connect(config["admin_dsn"], timeout=3, command_timeout=5)
+    try:
+        sessions = [dict(row) for row in await connection.fetch(
+            "SELECT pid,state FROM pg_stat_activity WHERE datname=$1", name
+        )]
+        remaining = bool(await connection.fetchval("SELECT 1 FROM pg_database WHERE datname=$1", name))
+        return {"database": name, "sessions": sessions, "retained": remaining, "drop_requested": False, "force_used": False}
+    finally:
+        await connection.close()
+
+
+def sanitize(value: str, config, sqlalchemy_url: str) -> str:
+    for private in (config["admin_dsn"], sqlalchemy_url):
+        value = value.replace(private, "[redacted-owned-test-dsn]")
+    return re.sub(
+        r"(?i)(postgres(?:ql)?(?:\+asyncpg)?://)[^\s\'\"<>]+",
+        r"\1[redacted-owned-test-dsn]",
+        value,
+    )
+
+

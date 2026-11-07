@@ -8,6 +8,18 @@ Each time a database migration is written, an entry is included here with:
 
 This gives us a history of changes and will create merge conflicts if two migrations are made at once, flagging situations where a branch needs to be updated before merging.
 
+# Add stream route cleanup foreign-key indexes
+SQLite: `4ad43e529eab`
+Postgres: `39c32d418d9a`
+
+Adds leading-column indexes for `StreamRecord.payload_record_id`,
+`StreamRecord.route_receipt_id`, `StreamRouteReceipt.input_reference_record_id`
+and `StreamRouteReceipt.input_payload_record_id`. These indexes support parent
+record cleanup and its foreign-key checks without changing cleanup ordering,
+foreign-key constraints or retained data. Upgrade creates only the four indexes;
+downgrade removes only those indexes. Index creation may hold database locks
+while existing rows are indexed.
+
 # Add fixed-partition physical stream topology
 SQLite: `e59a3f7b8d42`
 Postgres: `b48f2e6a7c31`

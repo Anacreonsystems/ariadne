@@ -27,10 +27,10 @@ from prefect._internal.stream_engine import (
     execute_stream_async,
     execute_stream_sync,
 )
+from prefect._internal.stream_execution import stream_subtask_execution_context
 from prefect._internal.stream_routed_storage import PrefectRoutedStreamStorage
 from prefect.client.orchestration import PrefectClient, SyncPrefectClient
 from prefect.client.orchestration._streams.client import StreamRequestError
-from prefect.client.schemas.objects import TaskRun
 from prefect.client.schemas.stream_routes import StreamDAGRouteContext
 from prefect.client.schemas.streams import (
     ConsumerBinding,
@@ -38,6 +38,8 @@ from prefect.client.schemas.streams import (
     SourceAdmission,
     SourceBinding,
     StreamDelivery,
+    StreamInfo,
+    StreamLimits,
 )
 from prefect.client.stream_storage import PrefectStreamStorage
 from prefect.context import AsyncClientContext, SyncClientContext
@@ -55,6 +57,7 @@ from prefect.streams import (
     StreamSourceConfig,
     StreamTaskConfig,
 )
+from tests.test_stream_dag_bootstrap import owned_storage
 
 
 def route_context(keyed: bool = True) -> StreamDAGRouteContext:
@@ -405,27 +408,55 @@ async def test_unknown_ack_stops_at_the_owned_deadline(monkeypatch: pytest.Monke
 async def test_existing_sync_async_terminal_loops_use_the_injected_dag_adapter(
     asynchronous: bool, source: bool, returns: bool, monkeypatch: pytest.MonkeyPatch
 ):
-    storage, source_binding, consumer, record = bindings()
+    storage, bootstrap, execution, source_binding, consumer = owned_storage(
+        source=source
+    )
+    record = StreamRecord(
+        200,
+        {"input": True},
+        {},
+        DeliveryToken(
+            **consumer.model_dump(),
+            record_id=uuid4(),
+            sequence=200,
+            delivery_id=uuid4(),
+        ),
+    )
     emitted: list[tuple[str, dict[str, Any]]] = []
     reads = 0
 
     async def dispatch(self: Any, method: str, **kwargs: Any) -> Any:
         nonlocal reads
-        if method == "open_stream_source":
+        if method == "open_stream_dag_source":
             return SourceAdmission(
                 binding=source_binding, state="OPEN", accepted_source_position=199
             )
-        if method == "open_stream_consumer":
+        if method == "open_stream_dag_consumer":
             return consumer
-        if method == "read_stream_consumer":
+        if method == "read_stream_dag_consumer":
             reads += 1
             return (
                 StreamDelivery(token=record.token, value=record.value, managed_state={})
                 if reads == 1
                 else None
             )
-        if method == "read_stream":
-            return SimpleNamespace(state="COMPLETED", error=None)
+        if method in {"read_stream_dag_input_status", "read_stream_dag_output_status"}:
+            return StreamInfo(
+                id=consumer.input_stream_id
+                if method == "read_stream_dag_input_status"
+                else source_binding.stream_id,
+                flow_run_id=storage.flow_run_id,
+                protocol_version=1,
+                state="COMPLETED",
+                error=None,
+                last_sequence=200,
+                tail_sequence=200,
+                producer_position=200,
+                record_count=200,
+                byte_count=200,
+                limits=StreamLimits(),
+                released=False,
+            )
         emitted.append((method, copy.deepcopy(kwargs)))
 
     monkeypatch.setattr(PrefectRoutedStreamStorage, "_dispatch", dispatch)
@@ -465,13 +496,7 @@ async def test_existing_sync_async_terminal_loops_use_the_injected_dag_adapter(
     output = Stream(storage, str(source_binding.stream_id))
     run = _StreamRun(
         output,
-        TaskRun(
-            id=source_binding.task_run_id,
-            name="injected",
-            task_key="test",
-            dynamic_key="test",
-            run_count=2,
-        ),
+        bootstrap.task_run,
         source=source,
     )
     parameters: dict[str, Any] = {"ctx": None, "__prefect_stream_run__": run}
@@ -483,15 +508,19 @@ async def test_existing_sync_async_terminal_loops_use_the_injected_dag_adapter(
         task_run=run.task_run,
         is_cancelled=lambda: False,
     )
-    if asynchronous:
-        result = await (
-            execute_source_async(engine) if source else execute_stream_async(engine)
-        )
-    else:
-        result = await asyncio.to_thread(
-            execute_source_sync if source else execute_stream_sync, engine
-        )
+    with stream_subtask_execution_context(execution):
+        if asynchronous:
+            result = await (
+                execute_source_async(engine) if source else execute_stream_async(engine)
+            )
+        else:
+            result = await asyncio.to_thread(
+                execute_source_sync if source else execute_stream_sync, engine
+            )
     assert isinstance(result, SourceRunResult if source else StreamRunResult)
+    if not source:
+        assert result.consumer_id == str(consumer.consumer_id)
+        assert consumer.consumer_id != bootstrap.task_run.id
     method = "append_stream_dag_source" if source else "complete_stream_dag_consumer"
     terminals = [arguments for name, arguments in emitted if name == method]
     assert len(terminals) == 1
@@ -508,10 +537,14 @@ async def test_existing_sync_async_terminal_loops_use_the_injected_dag_adapter(
             assert terminals[0]["value"] is None
 
 
-def test_existing_storage_terminal_methods_are_inherited_only_for_other_operations():
-    assert PrefectRoutedStreamStorage.open_source is PrefectStreamStorage.open_source
-    assert PrefectRoutedStreamStorage.read is PrefectStreamStorage.read
-    assert PrefectRoutedStreamStorage.close_source is PrefectStreamStorage.close_source
+def test_dag_storage_overrides_lifecycle_without_enabling_legacy_stream_start():
+    assert (
+        PrefectRoutedStreamStorage.open_source is not PrefectStreamStorage.open_source
+    )
+    assert PrefectRoutedStreamStorage.read is not PrefectStreamStorage.read
+    assert (
+        PrefectRoutedStreamStorage.close_source is not PrefectStreamStorage.close_source
+    )
     assert not hasattr(Stream, "start")
 
 
@@ -681,3 +714,55 @@ async def test_legacy_sdk_terminal_json_bytes_have_no_new_route_fields(
             body, ensure_ascii=False, separators=(",", ":"), allow_nan=False
         ).encode()
         assert request.content == literal
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("stream_role", ["input", "output"])
+@pytest.mark.parametrize("forged_response", [False, True])
+async def test_own_status_preserves_uuid_through_json_freeze_and_sdk_ack(
+    asynchronous: bool,
+    stream_role: str,
+    forged_response: bool,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    storage, bootstrap, execution, _, consumer = owned_storage()
+    stream_id = (
+        consumer.input_stream_id
+        if stream_role == "input"
+        else consumer.output_stream_id
+    )
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        result = StreamInfo(
+            id=uuid4() if forged_response else stream_id,
+            flow_run_id=bootstrap.flow_run_id,
+            protocol_version=1,
+            state="COMPLETED",
+            error=None,
+            last_sequence=8,
+            tail_sequence=8,
+            producer_position=8,
+            record_count=8,
+            byte_count=128,
+            limits=StreamLimits(),
+            released=False,
+        )
+        return httpx.Response(200, json=result.model_dump(mode="json"))
+
+    with stream_subtask_execution_context(execution):
+        async with wire_client(monkeypatch, handler, asynchronous):
+            if forged_response:
+                with pytest.raises(StreamRequestError) as refused:
+                    await storage.status(str(stream_id))
+                assert refused.value.code == "IDENTITY_CONFLICT"
+            else:
+                result = await storage.status(str(stream_id))
+                assert result.state == "COMPLETED" and result.error is None
+    assert len(requests) == 1
+    assert requests[0].method == "GET"
+    assert (
+        requests[0].url.path
+        == f"/api/streams/v2/dags/subtasks/{execution.subtask_id}/{stream_role}/status"
+    )

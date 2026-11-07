@@ -1,0 +1,132 @@
+"""Read-only recovery of ONE exited v3 attempt; no tests, DDL, signals, or retry."""
+
+import asyncio
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+from urllib.parse import urlsplit, urlunsplit
+import xml.etree.ElementTree as ET
+
+import asyncpg
+
+
+ROOT = Path("/workspace/ariadne")
+BASE = Path(__file__).resolve().parent
+TRIAL = BASE / "trial-9a5b9062"
+
+
+def write(name, value):
+    (TRIAL / name).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def state(pid):
+    try:
+        row = Path("/proc", str(pid), "stat").read_text().rsplit(")", 1)[1].split()
+    except FileNotFoundError:
+        return None
+    return {"state": row[0], "parent": int(row[1]), "start_ticks": row[19]}
+
+
+async def sessions(config, database):
+    parsed = urlsplit(config["admin_dsn"])
+    assert parsed.hostname in {"localhost", "127.0.0.1", "::1"} and parsed.port == 55436
+    connection = await asyncpg.connect(config["admin_dsn"], timeout=3, command_timeout=5)
+    try:
+        assert int(await connection.fetchval("SHOW server_version_num")) // 10000 == 17
+        rows = [dict(row) for row in await connection.fetch("SELECT pid,state FROM pg_stat_activity WHERE datname=$1", database)]
+        retained = bool(await connection.fetchval("SELECT 1 FROM pg_database WHERE datname=$1", database))
+        return {"database": database, "sessions": rows, "retained": retained, "drop_requested": False, "force_used": False}
+    finally:
+        await connection.close()
+
+
+def main():
+    before = json.loads((TRIAL / "source-before.json").read_text())
+    tracked = subprocess.check_output(["git", "ls-files", "src/prefect", "tests", "pyproject.toml", "uv.lock", ".github/workflows", "scripts"], cwd=ROOT, text=True).splitlines()
+    paths = set(tracked) | {str(path.relative_to(ROOT)) for path in (ROOT / "src/prefect").rglob("*.py")}
+    after = {name: sha(ROOT / name) for name in sorted(paths) if (ROOT / name).is_file()}
+    write("source-after-recovery.json", after)
+    drift = sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name))
+    identities = {}
+    mismatch = []
+    audit_rows = 0
+    for path in (TRIAL / "audit").glob("*.jsonl"):
+        for line in path.read_text().splitlines():
+            row = json.loads(line)
+            audit_rows += 1
+            identities[row["pid"]] = str(row["start_ticks"])
+            relative = str(Path(row["path"]).relative_to(ROOT))
+            if before.get(relative) != row["source_sha256"]:
+                mismatch.append(relative)
+    process = json.loads((TRIAL / "process.json").read_text())
+    subreaper = json.loads((TRIAL / "subreaper-proof.json").read_text())
+    identities[process["pytest_pid"]] = process["pytest_start_ticks"]
+    identities[subreaper["runner_pid"]] = subreaper["runner_start_ticks"]
+    identities[subreaper["parent_pid"]] = subreaper["parent_start_ticks"]
+    same_identity_live, same_identity_zombies = [], []
+    for pid, ticks in identities.items():
+        current = state(pid)
+        if current is not None and current["start_ticks"] == ticks:
+            (same_identity_zombies if current["state"] == "Z" else same_identity_live).append({"pid": pid, "start_ticks": ticks, "parent": current["parent"]})
+
+    config = json.loads(Path("/tmp/native-ni012-runtime-test-env.json").read_text())
+    database = json.loads((TRIAL / "command.json").read_text())["database"]
+    creation = json.loads((TRIAL / "database-creation.json").read_text())
+    assert database.startswith(config["database_prefix"] + "_ws_")
+    assert re.fullmatch("[a-z][a-z0-9_]{1,47}", database)
+    assert creation["database"] == database and creation["created_fresh"] is True
+    closure = asyncio.run(sessions(config, database))
+    write("database-closure-recovery.json", closure)
+    parsed = urlsplit(config["admin_dsn"])
+    sqlalchemy_url = urlunsplit((config["sqlalchemy_scheme"], parsed.netloc, "/" + database, parsed.query, ""))
+    for private, public in (("pytest.private.log", "pytest.recovered.log"), ("pytest.private.xml", "pytest.recovered.xml")):
+        text = (TRIAL / private).read_text(errors="replace")
+        for secret in (config["admin_dsn"], sqlalchemy_url):
+            text = text.replace(secret, "[redacted-owned-test-dsn]")
+        text = re.sub(r"(?i)(postgres(?:ql)?(?:\+asyncpg)?://)[^\s\'\"<>]+", r"\1[redacted-owned-test-dsn]", text)
+        (TRIAL / public).write_text(text)
+    tree = ET.parse(TRIAL / "pytest.recovered.xml")
+    cases = list(tree.iter("testcase"))
+    junit = {"tests": len(cases), "failures": sum(case.find("failure") is not None for case in cases), "errors": sum(case.find("error") is not None for case in cases), "skips": sum(case.find("skipped") is not None for case in cases)}
+    proof = json.loads((TRIAL / "provisioning-proof.json").read_text())
+    assets = json.loads((TRIAL / "external-assets.json").read_text())
+    asset_drift = [name for name, digest in assets.items() if sha(BASE / name) != digest]
+    proof_valid = proof["hook_invocations"] == 1 and proof["original_provisioning_body_calls"] == 0 and proof["guard_callback_stable_at_sessionfinish"] is True and proof["override_asset_sha256"] == assets["logging_state_plugin.py"]
+    receipt = {
+        "status": "SEVEN_TEST_BODIES_PASS_WITH_POSTWAIT_HARNESS_FAILURE" if junit == {"tests": 7, "failures": 0, "errors": 0, "skips": 0} else "RECOVERED_OTHER_RESULT",
+        "original_failed_attempt_preserved": True,
+        "launcher_exit": 1,
+        "launcher_failure": "FileNotFoundError for unavailable /proc/runner/task/runner/children after direct Popen.wait",
+        "pytest_exit_code": None,
+        "pytest_exit_qualification": "Popen.wait completed but its return code was not persisted before the reaping metadata exception; do not infer recorded exit0",
+        "junit": junit,
+        "source_files": len(before), "source_drift": drift,
+        "audit_rows": audit_rows, "import_mismatches": mismatch,
+        "external_asset_drift": asset_drift,
+        "observed_pid_start_pairs_including_runner_parent": identities,
+        "remaining_same_identity_live": same_identity_live,
+        "remaining_same_identity_zombies": same_identity_zombies,
+        "new_actor_pid_identities_gone": not same_identity_live and not same_identity_zombies,
+        "subreaper_verified_before_popen": subreaper["pr_get_child_subreaper"] == 1,
+        "actual_adopted_reap_proof": "unavailable: metadata path failed before waitpid loop; no reaping claimed",
+        "provisioning_proof": proof, "provisioning_proof_valid": proof_valid,
+        "database": closure,
+        "retry_or_test_execution_during_recovery": False,
+        "signals_or_pid1_or_prior_orphan_operations_during_recovery": False,
+        "known_prior_orphan_excluded": {"pid": 384983, "start_ticks": "14778279", "status": "unresolved prior operational artifact, not reclassified"},
+        "whole_module151": "previous attempt remains abandoned INCONCLUSIVE",
+        "historical_ci_gw0_order_proven": False,
+        "recovery_script_sha256": sha(Path(__file__)),
+    }
+    write("recovery-receipt.json", receipt)
+    print(json.dumps({"status": receipt["status"], "junit": junit, "pytest_exit_recorded": False, "new_live": same_identity_live, "new_zombies": same_identity_zombies, "owned_db_sessions": len(closure["sessions"]), "fresh_db_retained": closure["retained"], "source_drift": drift, "import_mismatches": mismatch, "provisioning_valid": proof_valid}))
+
+
+if __name__ == "__main__":
+    main()

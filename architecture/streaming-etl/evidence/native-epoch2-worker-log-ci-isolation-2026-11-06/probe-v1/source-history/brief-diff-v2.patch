@@ -1,0 +1,35 @@
+--- probe.py
++++ probe-v2.py
+@@ -44,8 +44,31 @@
+     workdir = output / "owned-home"
+     workdir.mkdir()
+     os.chdir(output)
+-    # Erase inherited settings without reading or exporting their values.
++    # Retain only the managed runtime's proxy/CA configuration. Values stay
++    # local to this child process and are never included in diagnostic output.
++    runtime_environment_keys = (
++        "HTTP_PROXY",
++        "HTTPS_PROXY",
++        "ALL_PROXY",
++        "NO_PROXY",
++        "http_proxy",
++        "https_proxy",
++        "all_proxy",
++        "no_proxy",
++        "SSL_CERT_FILE",
++        "SSL_CERT_DIR",
++        "REQUESTS_CA_BUNDLE",
++        "CURL_CA_BUNDLE",
++    )
++    inherited_runtime_environment = {
++        key: os.environ[key]
++        for key in runtime_environment_keys
++        if key in os.environ
++    }
++    # Erase endpoint/profile/credential settings, then restore the runtime
++    # whitelist before adding explicit owned local Prefect settings.
+     os.environ.clear()
++    os.environ.update(inherited_runtime_environment)
+     os.environ.update(
+         {
+             "PATH": "/usr/local/bin:/usr/bin:/bin",

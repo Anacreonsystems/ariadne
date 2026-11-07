@@ -18,8 +18,7 @@ from prefect.server.models.streams import canonical_stream_payload
 from prefect.server.schemas import stream_subtasks as s
 from prefect.server.schemas.core import TaskRun
 from prefect.server.services.task_run_recorder import (
-    authorized_stream_events,
-    record_bulk_task_run_events_in_session,
+    dispatch_stream_subtask_event,
 )
 from prefect.server.utilities.server import PrefectRouter
 from prefect.types._datetime import DateTime, now
@@ -201,33 +200,8 @@ async def task_event(
     try:
         canonical_stream_payload(event.model_dump(mode="json"), 256 * 1024)
         async with db.session_context(begin_transaction=True) as session:
-            subtask, _ = await require_subtask(
-                session, db, credentials, subtask_id=subtask_id
-            )
-            if (
-                event.resource.prefect_object_id("prefect.task-run")
-                != subtask.task_run_id
-            ):
-                raise NativeStreamError(
-                    "SUBTASK_SCOPE_DENIED", "Event TaskRun is outside the grant"
-                )
-            authorized, native_ids = await authorized_stream_events(
-                session, db, [event.receive()]
-            )
-            if authorized:
-                await record_bulk_task_run_events_in_session(
-                    authorized, db, session, native_ids, commit=False
-                )
-            task = await session.get(
-                db.TaskRun, subtask.task_run_id, populate_existing=True
-            )
-            assert task is not None and task.state_type is not None
-            return s.StreamSubtaskEventResult(
-                event_id=event.id,
-                accepted=bool(authorized),
-                task_run_id=task.id,
-                run_count=task.run_count,
-                state_type=task.state_type,
+            return await dispatch_stream_subtask_event(
+                session, db, subtask_id, event, credentials
             )
     except NativeStreamError as error:
         raise stream_http_error(error) from error

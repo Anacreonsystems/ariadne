@@ -1,9 +1,9 @@
 """Verify that every test file under tests/ is covered by at least one
-test matrix entry in the CI workflow.
+test matrix entry or explicit dedicated pytest invocation in the CI workflow.
 
 This script parses .github/workflows/python-tests.yaml, discovers all
 test files on disk, and checks that the union of the run-tests matrix
-entries covers every file. It exits non-zero if any test file would be
+and dedicated modules covers every file. It exits non-zero if any test file would be
 silently skipped by CI.
 """
 
@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import shlex
 import sys
+from typing import Any
 
 import yaml
 
@@ -115,6 +117,23 @@ def validate_excluded_test_types(
     return errors
 
 
+def dedicated_test_modules(workflow: dict[str, Any]) -> set[str]:
+    """Read exact file declarations; a broad directory is not a coverage waiver."""
+    modules: set[str] = set()
+    for name, job in workflow["jobs"].items():
+        if name == "run-tests":
+            continue
+        for step in job.get("steps", []):
+            command = step.get("run", "").strip()
+            if not command.startswith("uv run pytest "):
+                continue
+            for argument in shlex.split(command):
+                module = argument.split("::", 1)[0]
+                if module.startswith("tests/") and module.endswith(".py"):
+                    modules.add(module)
+    return modules
+
+
 def main() -> None:
     with open(WORKFLOW_PATH) as f:
         workflow = yaml.safe_load(f)
@@ -143,29 +162,35 @@ def main() -> None:
     }
 
     covered: set[str] = set()
+    _, global_ignores, global_ignore_globs = parse_modules(
+        workflow.get("env", {}).get("NATIVE_DAG_TEST_EXCLUSIONS", "")
+    )
     for entry in test_types:
         paths, ignores, ignore_globs = parse_modules(entry["modules"])
         for f in relevant:
-            if file_covered_by(f, paths, ignores, ignore_globs):
+            if file_covered_by(
+                f, paths, ignores + global_ignores, ignore_globs + global_ignore_globs
+            ):
                 covered.add(f)
+    covered.update(relevant & dedicated_test_modules(workflow))
 
     uncovered = sorted(relevant - covered)
     if uncovered:
         print(
             "ERROR: The following test files are not covered by any "
-            "run-tests matrix entry in the CI workflow:"
+            "matrix entry or explicit dedicated pytest invocation in the CI workflow:"
         )
         for f in uncovered:
             print(f"  {f}")
         print(f"\nTotal uncovered: {len(uncovered)}")
         print(
-            "Please update the test-type matrix in "
+            "Please update the test-type matrix or dedicated pytest modules in "
             f"{WORKFLOW_PATH} to include these files."
         )
         sys.exit(1)
     else:
         print(
-            f"OK: All {len(relevant)} test files are covered by the run-tests matrix."
+            f"OK: All {len(relevant)} test files are covered by the matrix or dedicated jobs."
         )
 
 

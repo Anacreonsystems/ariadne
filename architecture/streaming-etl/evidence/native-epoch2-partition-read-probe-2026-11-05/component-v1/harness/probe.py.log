@@ -1,0 +1,238 @@
+"""Bounded retained-volume model probe; no native/business acceptance claim."""
+
+import argparse
+import asyncio
+import dataclasses
+import hashlib
+import json
+import os
+from pathlib import Path
+import secrets
+import sys
+import time
+import types
+from uuid import UUID
+
+import asyncpg
+import sqlalchemy as sa
+
+from prefect.server.database.dependencies import provide_database_interface
+from prefect.server.models import stream_dag_executions as lifecycle
+from prefect.server.models import stream_dag_launches as fixed
+from prefect.server.models import stream_dags, stream_routes
+from prefect.server.models.stream_subtask_authority import capability_digest
+from prefect.server.schemas import stream_dag_executions as wire
+from prefect.server.schemas import stream_routes as routed
+from prefect.server.schemas import stream_subtasks as physical
+from prefect.server.schemas import streams as storage
+
+
+PARSER = argparse.ArgumentParser()
+PARSER.add_argument("--out", type=Path, required=True)
+PARSER.add_argument("--variant", choices=["controls", "baseline", "old-renew", "fixed-renew"], required=True)
+PARSER.add_argument("--seconds", type=float, default=45)
+ARGS = PARSER.parse_args()
+ARGS.out.mkdir(mode=0o700, parents=True, exist_ok=True)
+EVENTS = ARGS.out / "events.jsonl"
+DB = provide_database_interface()
+
+
+def emit(kind, **fields):
+    with EVENTS.open("a") as output:
+        output.write(json.dumps({"kind": kind, "monotonic_ns": time.monotonic_ns(), **fields}, default=str) + "\n")
+
+
+def uid(value):
+    return UUID(str(value))
+
+
+@dataclasses.dataclass
+class Actor:
+    name: str
+    subtask_id: UUID
+    task_run_id: UUID
+    input_stream_id: UUID | None
+    output_stream_id: UUID
+    credentials: physical.StreamSubtaskCredentials = dataclasses.field(repr=False)
+    context: routed.StreamDAGRouteContext
+    worker_id: UUID
+    principal: physical.StreamWorkerPrincipal
+    binding: object
+    position: int
+
+
+async def stats():
+    async with DB.session_context() as session:
+        counts = {}
+        for model in [DB.StreamRecord, DB.StreamRouteReceipt, DB.StreamCompletion, DB.TaskRun]:
+            counts[model.__tablename__] = await session.scalar(sa.select(sa.func.count()).select_from(model))
+        consumers = [dict(row) for row in (await session.execute(sa.select(DB.StreamConsumer.id, DB.StreamConsumer.input_stream_id, DB.StreamConsumer.output_stream_id, DB.StreamConsumer.completed_through, DB.StreamConsumer.inflight_sequence))).mappings()]
+        partitions = [dict(row) for row in (await session.execute(sa.select(DB.StreamPartition.id, DB.StreamPartition.state, DB.StreamPartition.last_sequence, DB.StreamPartition.producer_position))).mappings()]
+        tasks = [dict(row) for row in (await session.execute(sa.select(DB.TaskRun.id, DB.TaskRun.run_count, DB.TaskRun.state_type))).mappings()]
+        return {"counts": counts, "consumers": consumers, "partitions": partitions, "tasks": tasks}
+
+
+async def setup_actors():
+    actors = {}
+    async with DB.session_context(begin_transaction=True) as session:
+        graph = (await session.scalars(sa.select(DB.StreamGraphRevision))).one()
+        flow = await session.get(DB.FlowRun, graph.flow_run_id)
+        authority = (await session.scalars(sa.select(DB.StreamExecutionAuthority).where(DB.StreamExecutionAuthority.flow_run_id == flow.id))).one()
+        assert graph.state == "ADMITTED" and graph.current_control_operation_id is None
+        assert flow.state_type.value == "RUNNING" and authority.state == "ACTIVE" and not authority.cancel_requested
+        plan = await stream_dags.dag_plan(session, DB, graph)
+        for subtask in (await session.scalars(sa.select(DB.StreamPhysicalSubtask))).all():
+            grant = await session.get(DB.StreamSubtaskGrant, subtask.current_grant_id)
+            assert grant.state == "REGISTERED" and not subtask.physical_slot_released
+            token = secrets.token_hex(32)
+            grant.capability_digest = capability_digest(token)
+            context = stream_routes.context_for_subtask(plan, uid(subtask.id))
+            output = await session.get(DB.StreamPartition, subtask.output_stream_id)
+            if subtask.input_stream_id is None:
+                binding = storage.SourceBinding(flow_run_id=uid(flow.id), stream_id=uid(output.id), task_run_id=uid(subtask.task_run_id), owner_id=uid(output.owner_id), attempt=output.attempt, owner_epoch=output.owner_epoch)
+            else:
+                consumer = (await session.scalars(sa.select(DB.StreamConsumer).where(DB.StreamConsumer.subtask_id == subtask.id))).one()
+                binding = storage.ConsumerBinding(flow_run_id=uid(flow.id), consumer_id=uid(consumer.id), input_stream_id=uid(consumer.input_stream_id), output_stream_id=uid(consumer.output_stream_id), owner_id=uid(consumer.owner_id), attempt=consumer.attempt, owner_epoch=consumer.owner_epoch)
+            name = f"{context.operator_uid}-{context.subtask_index}"
+            actors[name] = Actor(name, uid(subtask.id), uid(subtask.task_run_id), uid(subtask.input_stream_id) if subtask.input_stream_id else None, uid(output.id), physical.StreamSubtaskCredentials(grant_id=uid(grant.id), capability=token), context, uid(grant.worker_id), physical.StreamWorkerPrincipal(work_pool_id=uid(grant.work_pool_id), host_id=uid(grant.host_id), boot_id=uid(grant.boot_id), launcher_process_id=grant.launcher_process_id, launcher_start_ticks=grant.launcher_start_ticks), binding, output.producer_position)
+        await session.flush()
+    emit("seed_auth_adaptation", fields=["StreamSubtaskGrant.capability_digest", "StreamSubtaskGrant.updated (ORM onupdate metadata)"], rows=len(actors), qualification="Only this owned clone receives fresh private model-test credentials. Original data/identity/epoch/state/cursors not reset; no physical process is recreated.")
+    return actors
+
+
+async def label(session, actor, operation):
+    name = "readprobe:" + actor.name + ":" + operation
+    await session.execute(sa.text("SELECT set_config('application_name', :name, true)"), {"name": name})
+    pid = await session.scalar(sa.text("SELECT pg_backend_pid()"))
+    emit("actor_backend", actor=actor.name, operation=operation, backend_pid=pid, subtask_id=actor.subtask_id, task_run_id=actor.task_run_id, input_stream_id=actor.input_stream_id, output_stream_id=actor.output_stream_id)
+    return pid
+
+
+async def read(session, actor):
+    return await lifecycle.read_stream_dag_consumer(session, DB, wire.StreamDAGConsumerReadRequest(context=actor.context, binding=actor.binding), actor.credentials)
+
+
+async def append(session, actor):
+    position = actor.position + 1
+    result = await lifecycle.append_stream_dag_source(session, DB, routed.StreamDAGSourceAppendRequest(context=actor.context, binding=actor.binding, position=position, value={"probe": True, "position": position}), actor.credentials)
+    return result, position
+
+
+async def sample(connection):
+    activity = [dict(row) for row in await connection.fetch("SELECT pid,application_name,state,wait_event_type,wait_event,backend_xid::text,pg_blocking_pids(pid) AS blockers,query LIKE 'SELECT stream_partition.%' AS selects_partition,query LIKE 'SELECT flow_run.%' AS selects_flow FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() ORDER BY pid")]
+    locks = [dict(row) for row in await connection.fetch("SELECT pid,locktype,mode,granted,relation::regclass::text AS relation,page,tuple,transactionid::text,virtualxid,virtualtransaction FROM pg_locks WHERE pid IN (SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()) ORDER BY pid,locktype,relation,transactionid,mode")]
+    emit("catalog", activity=activity, locks=locks)
+    return activity
+
+
+async def deterministic_controls(actors, connection):
+    c0, b, source = actors["C-0"], actors["B-0"], actors["A-0"]
+    disjoint = {b.input_stream_id, b.output_stream_id}.isdisjoint({c0.input_stream_id, c0.output_stream_id})
+    assert disjoint
+    async with DB.session_context(begin_transaction=True) as holder:
+        holder_pid = await label(holder, b, "disjoint-append-held")
+        delivery = await read(holder, b)
+        assert delivery is not None
+        await lifecycle.complete_stream_dag_consumer(holder, DB, routed.StreamDAGConsumerCompleteRequest(context=b.context, binding=b.binding, token=delivery.token, kind="YIELD", value={"probe": "B-output"}, managed_state=delivery.managed_state), b.credentials)
+        async with DB.session_context(begin_transaction=True) as reader:
+            reader_pid = await label(reader, c0, "disjoint-read")
+            started = time.monotonic()
+            result = await asyncio.wait_for(read(reader, c0), timeout=5)
+            assert result is not None and holder.in_transaction()
+            emit("control_pass", control="disjoint-branch", holder_pid=holder_pid, reader_pid=reader_pid, elapsed_seconds=time.monotonic()-started, holder_partitions=[b.input_stream_id,b.output_stream_id], reader_partitions=[c0.input_stream_id,c0.output_stream_id])
+    async with DB.session_context(begin_transaction=True) as holder:
+        holder_pid = await label(holder, source, "shared-append-held")
+        outcome, position = await append(holder, source)
+        touched = {source.output_stream_id, *(uid(item.stream_id) for item in outcome.references)}
+        assert c0.input_stream_id in touched
+        entered = asyncio.get_running_loop().create_future()
+        async def reader():
+            async with DB.session_context(begin_transaction=True) as session:
+                pid = await label(session, c0, "shared-read")
+                entered.set_result(pid)
+                return await read(session, c0)
+        task = asyncio.create_task(reader())
+        try:
+            reader_pid = await asyncio.wait_for(asyncio.shield(entered), timeout=5)
+            deadline = time.monotonic()+5
+            witness = None
+            while time.monotonic()<deadline:
+                activity = await sample(connection)
+                witness = next((row for row in activity if row["pid"]==reader_pid and holder_pid in row["blockers"]), None)
+                if witness is not None:
+                    break
+                await asyncio.sleep(0.05)
+            assert witness is not None and witness["selects_partition"] and not task.done()
+            emit("control_block_expected", control="shared-input", holder_pid=holder_pid, reader_pid=reader_pid, touched_partitions=sorted(map(str,touched)), reader_partitions=[c0.input_stream_id,c0.output_stream_id])
+            await holder.commit()
+            source.position=position
+            result=await asyncio.wait_for(task, timeout=5)
+            assert result is not None
+            emit("control_pass", control="shared-input-release", reader_pid=reader_pid, delivered_sequence=result.token.sequence)
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+
+def old_renew_module():
+    path=Path('/tmp/native-ni014-renewal-liveness-v1/red/red-product-source.py.log')
+    raw=path.read_bytes()
+    assert hashlib.sha256(raw).hexdigest()=='736f427986d0cf2f5ad7a9b070423a614662e76b78e497e58f6a6404965f2726'
+    module=types.ModuleType('readprobe_old_stream_dag_launches');sys.modules[module.__name__]=module
+    exec(compile(raw,str(path),'exec'),module.__dict__)
+    emit('old_function_loaded',source_sha256=hashlib.sha256(raw).hexdigest(),qualification='Only old renew implementation/helper is selected; all route models remain current exact recorded source.')
+    return module
+
+
+async def workload(actors, connection):
+    deadline=time.monotonic()+ARGS.seconds
+    source,c0=actors['A-0'],actors['C-0']
+    implementation=old_renew_module() if ARGS.variant=='old-renew' else fixed
+    async def run(actor, operation, function):
+        while time.monotonic()<deadline:
+            started=time.monotonic();phase='begin'
+            try:
+                async with DB.session_context(begin_transaction=True) as session:
+                    pid=await label(session,actor,operation);phase='operation'
+                    result=await function(session)
+                if operation=='append':source.position=result[1]
+                emit('operation',actor=actor.name,operation=operation,elapsed_seconds=time.monotonic()-started,status='success')
+            except Exception as error:
+                emit('operation',actor=actor.name,operation=operation,elapsed_seconds=time.monotonic()-started,status='error',error_class=type(error).__name__,code=getattr(error,'code',None),phase=phase)
+            await asyncio.sleep(0.05 if operation!='renew' else 2)
+    async def monitor():
+        while time.monotonic()<deadline:
+            await sample(connection);await asyncio.sleep(0.25)
+    tasks=[asyncio.create_task(run(source,'append',lambda s:append(s,source))),asyncio.create_task(run(c0,'read',lambda s:read(s,c0))),asyncio.create_task(monitor())]
+    if ARGS.variant!='baseline':
+        # One renew actor targets C0, preserving a sparse paired-route workload.
+        request=physical.StreamWorkerRenewRequest(principal=c0.principal,grant_id=c0.credentials.grant_id)
+        tasks.append(asyncio.create_task(run(c0,'renew',lambda s:implementation.renew_subtask(s,DB,c0.worker_id,c0.subtask_id,request))))
+    try:
+        await asyncio.wait_for(asyncio.gather(*tasks),timeout=min(175,ARGS.seconds+20))
+    finally:
+        for task in tasks:
+            if not task.done():task.cancel()
+        await asyncio.gather(*tasks,return_exceptions=True)
+
+
+async def main():
+    assert 0<ARGS.seconds<=150
+    assert DB.database_config.timeout==10
+    emit('profile',variant=ARGS.variant,platform_timeout_seconds=DB.database_config.timeout,hard_variant_ceiling_seconds=180,qualification='Adapted retained-volume production-model probe, no Python business bodies/physical workers/HTTP acceptance.')
+    before=await stats();(ARGS.out/'before.json').write_text(json.dumps(before,default=str,indent=2)+'\n')
+    actors=await setup_actors()
+    dsn=os.environ['PREFECT_SERVER_DATABASE_CONNECTION_URL'].replace('postgresql+asyncpg://','postgresql://',1)
+    connection=await asyncpg.connect(dsn)
+    try:
+        if ARGS.variant=='controls':await deterministic_controls(actors,connection)
+        else:await workload(actors,connection)
+        after=await stats();(ARGS.out/'after.json').write_text(json.dumps(after,default=str,indent=2)+'\n')
+    finally:
+        await connection.close()
+        engine=await DB.engine();await engine.dispose()
+    emit('complete',variant=ARGS.variant)
+
+
+if __name__=='__main__':asyncio.run(main())

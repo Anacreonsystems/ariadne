@@ -1106,7 +1106,7 @@ class TestWorkerLogging:
 
     @pytest.mark.usefixtures("worker_handler", "logging_to_api_enabled")
     async def test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud(
-        self, mock_log_worker: MagicMock
+        self, mock_log_worker: MagicMock, caplog: pytest.LogCaptureFixture
     ):
         async with self.CloudWorkerTestImpl(
             name="test", work_pool_name="test-work-pool"
@@ -1117,7 +1117,8 @@ class TestWorkerLogging:
                     PREFECT_API_URL: "https://api.prefect.cloud/api/accounts/test/workspaces/test"
                 }
             ):
-                worker._logger.debug("test-worker-log")
+                with caplog.at_level(logging.DEBUG, logger=worker._logger.name):
+                    worker._logger.debug("test-worker-log")
 
         log_statement = [
             log
@@ -1132,27 +1133,44 @@ class TestWorkerLogging:
 
     @pytest.mark.usefixtures("worker_handler", "logging_to_api_enabled")
     async def test_worker_logger_does_not_send_logs_when_not_connected_to_cloud(
-        self, mock_log_worker: MagicMock
+        self, mock_log_worker: MagicMock, caplog: pytest.LogCaptureFixture
     ):
         async with self.ServerWorkerTestImpl(
             name="test", work_pool_name="test-work-pool"
         ) as worker:
             assert isinstance(worker._logger, logging.Logger)
-            worker._logger.debug("test-worker-log")
+            with caplog.at_level(logging.DEBUG, logger=worker._logger.name):
+                worker._logger.debug("test-worker-log")
 
         mock_log_worker.instance().send.assert_not_called()
+        records = [
+            record
+            for record in caplog.records
+            if record.name == worker._logger.name
+            and record.getMessage() == "test-worker-log"
+        ]
+        assert len(records) == 1
 
     @pytest.mark.usefixtures("worker_handler", "logging_to_api_enabled")
     async def test_self_hosted_registered_worker_keeps_console_logs_without_shipping(
-        self, mock_log_worker: MagicMock
+        self, mock_log_worker: MagicMock, caplog: pytest.LogCaptureFixture
     ):
         async with self.ServerWorkerTestImpl(
             name="native", work_pool_name="test-work-pool"
         ) as worker:
             worker._record_worker_id(WORKER_ID)
             assert worker._logger.extra["worker_id"] == str(WORKER_ID)
-            worker._logger.debug("native-worker-console-log")
+            with caplog.at_level(logging.DEBUG, logger=worker._logger.name):
+                worker._logger.debug("native-worker-console-log")
         mock_log_worker.instance().send.assert_not_called()
+        records = [
+            record
+            for record in caplog.records
+            if record.name == worker._logger.name
+            and record.getMessage() == "native-worker-console-log"
+        ]
+        assert len(records) == 1
+        assert records[0].worker_id == str(WORKER_ID)
 
 
 class TestAPILogWorker:

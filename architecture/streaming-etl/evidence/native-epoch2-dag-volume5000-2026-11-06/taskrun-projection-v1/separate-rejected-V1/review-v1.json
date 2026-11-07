@@ -1,0 +1,76 @@
+{
+  "candidate_inputs": {
+    "candidate-static-proof.json": {
+      "bytes": 2620,
+      "path": "/tmp/native-sync500-query-projection-proposal-18124-v1/candidate-static-proof.json",
+      "sha256": "fef8a14a88ae1ba1a9e92698770e23ab0299ef47efaea0935e6c27a77a4666c8"
+    },
+    "projection-only.patch": {
+      "bytes": 958,
+      "path": "/tmp/native-sync500-query-projection-proposal-18124-v1/projection-only.patch",
+      "sha256": "7080c22346bea68b0e35e85a5fda624481eef5720e36d937e13f181e0a2ba444"
+    },
+    "source-bindings.json": {
+      "bytes": 6176,
+      "path": "/tmp/native-sync500-query-projection-proposal-18124-v1/source-bindings.json",
+      "sha256": "8a5654c932e4a33202eb85ae7a5835447aba98a2f159237a4f4ef6bb78ae1721"
+    },
+    "stream_dags.py.candidate": {
+      "bytes": 70593,
+      "path": "/tmp/native-sync500-query-projection-proposal-18124-v1/stream_dags.py.candidate",
+      "sha256": "3a12ee72a0c85bb316825e878cde2cfe2d5fdae826abc48926a635b447ac43d0"
+    }
+  },
+  "current_source_bindings": {
+    "src/prefect/server/database/orm_models.py": {
+      "bytes": 148897,
+      "sha256": "74e9b9252afcd52f323e5d7a429ff06d48739f27f9e92e01528c693a8f164022"
+    },
+    "src/prefect/server/models/stream_dag_executions.py": {
+      "bytes": 126988,
+      "sha256": "806c03f01528f444c85251797e6538ac8354c9186d6758a8f15096b96f740987"
+    },
+    "src/prefect/server/models/stream_dags.py": {
+      "bytes": 70286,
+      "sha256": "0d077f2f82d6a11a11178a96833ba9410c2f8820653a0d361cca864daf93ffb1"
+    },
+    "src/prefect/server/models/stream_routes.py": {
+      "bytes": 62763,
+      "sha256": "a4acc3d4c8a1135aa02b8781d164993bc10eb06cfad995440e369e90b57b8bd9"
+    },
+    "tests/server/models/test_stream_dags.py": {
+      "bytes": 41475,
+      "sha256": "fae1b827dbeac98cc397590de709b5fb84125f055ff876f918d37ad076318d15"
+    }
+  },
+  "execution": "No project imports, application/pytest/test body, DB/SQL/network/hooks or repository edits. Outside receipt only.",
+  "finding": {
+    "activation_callsite_line": 2116,
+    "falsifier": "Seed valid activation prerequisites with a retained cached TaskRun; update state through Core without identity-map sync, then activation/projection must report actual terminal count, with all original fences intact.",
+    "falsifying_interleaving": "Same AsyncSession retains an earlier TaskRun ORM identity. Database state changes without identity-map synchronization before activation. Old dag_plan full ORM populate_existing refreshes that row; new column projection leaves it stale, so later project_execution can reuse stale state_type and change terminal_tasks. This is a source-derived possible behavior difference, not an observed production/CI failure.",
+    "observed_source_fact": "activate_stream_dag invokes dag_plan before project_execution. project_execution TaskRun ORM SELECT lacks populate_existing; terminal_tasks reads each returned TaskRun.state_type.",
+    "projection_callsite_line": 2273,
+    "projection_task_query_line": 393,
+    "required_resolution": "Explicitly retain fresh state at that consumer, or prove a precise supported caller invariant excluding this case. Prefer a narrow explicit fresh-query consumer and meaningful stale-identity-map regression over restoring unused plan ORM hydration. Preserve candidate v1 bytes; successor proposal gets new hashes.",
+    "severity": "blocking before implementation acceptance",
+    "source_path": "src/prefect/server/models/stream_dag_executions.py"
+  },
+  "independent_verified": [
+    "Whole module AST unchanged except dag_plan task_rows assignment.",
+    "Nine selectedcolumns are id plus precisely all eight task_row comparison attributes. Same taskID WHERE/exact-set/cardinality and all explicit comparisons remain.",
+    "SQLAlchemy mapped column types preserve Pydantic policy/task-input result conversion while avoiding ORM TaskRun._state lazyselectin relationship.",
+    "DATA lock_current_task uses UPDATE/populate_existing; admission and abort independently use UPDATE/populate_existing. Full fresh wholegraph proof and all credential/parent/child/resource/owner checks retained."
+  ],
+  "limitations": [
+    "All grill-me/spec-first excluded; conflict scan incomplete.",
+    "Current CI sync5000 actual SDK3960waittimeout remains RED and underlying slowdown UNKNOWN. No acceptance/readiness/NI020 credit."
+  ],
+  "measurement_boundary": "At most one selectin dispatch per dag_plan if relationship actually fires: observed4104calls/~2.26percent of181310dispatches in prior treatment. This is a structural hypothesis, not CPU/latency/CIcause forecast. Same500before/after CONTROL+instrumented followed by requiredfrozen5k/hostedgate verification still required by exactRootGO.",
+  "other_required_falsifier": "Existing corrupted immutable metadata tests remain; additional sameSession cachedTaskRun+CoreUPDATE selectedmetadata(sync_sessionFalse) must still yield typedIDENTITY_CONFLICT from plan, proving fresh SQL projection rather than cached ORM fallback.",
+  "recorded_at": "2026-11-06T06:18:37.271282+00:00",
+  "reviewer": "/root/etl_principal_recovery2",
+  "schema": "principal-taskrun-projection-source-review-v1",
+  "scope_assessment": "Exact nine-column TaskRun proof-metadata projection is within narrow approved implementation scope, with no cache/schema/API/proof omission. Candidate is NOT applied and NOT executed.",
+  "source_only": true,
+  "verdict": "REQUEST_CHANGES_PRE_CODE_ACTIVATION_PROJECTION_FRESHNESS"
+}

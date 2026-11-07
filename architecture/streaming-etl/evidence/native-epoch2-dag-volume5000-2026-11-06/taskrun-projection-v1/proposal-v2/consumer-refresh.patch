@@ -1,0 +1,13 @@
+--- a/src/prefect/server/models/stream_dag_executions.py
++++ b/src/prefect/server/models/stream_dag_executions.py
+@@ -390,7 +390,9 @@
+     tasks = list(
+         (
+             await session.scalars(
+-                sa.select(db.TaskRun).where(db.TaskRun.flow_run_id == scope.flow.id)
++                sa.select(db.TaskRun)
++                .where(db.TaskRun.flow_run_id == scope.flow.id)
++                .execution_options(populate_existing=True)
+             )
+         ).all()
+     )

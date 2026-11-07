@@ -1,0 +1,625 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="8" skipped="0" tests="50" time="136.182" timestamp="2026-11-05T23:17:32.364491+00:00" hostname="f8abb611283c"><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_commits_under_parent_reader_postgres[prepare-initial]" time="8.115" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_commits_under_parent_reader_postgres[prepare-replacement]" time="3.401" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_commits_under_parent_reader_postgres[record-initial]" time="1.988" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_commits_under_parent_reader_postgres[record-replacement]" time="3.563" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_preserves_parent_and_target_fences_postgres[flow-prepare]" time="2.065" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_preserves_parent_and_target_fences_postgres[flow-record]" time="1.899" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_preserves_parent_and_target_fences_postgres[authority-prepare]" time="2.332" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_preserves_parent_and_target_fences_postgres[authority-record]" time="2.079" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_preserves_parent_and_target_fences_postgres[graph-prepare]" time="1.994" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_preserves_parent_and_target_fences_postgres[graph-record]" time="2.227" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_preserves_parent_and_target_fences_postgres[same-subtask-prepare]" time="1.931" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_preserves_parent_and_target_fences_postgres[same-subtask-record]" time="1.922" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_commits_beside_other_target_reader_postgres[prepare]" time="2.301" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_commits_beside_other_target_reader_postgres[record]" time="1.853" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_control_first_keeps_replay_and_delayed_record_postgres[fail]" time="2.170" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_control_first_keeps_replay_and_delayed_record_postgres[cancel]" time="2.431" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_control_first_keeps_replay_and_delayed_record_postgres[startup-abort]" time="2.122" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_concurrent_calls_keep_one_birth_and_receipt_postgres[identical-prepare]" time="1.798" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_concurrent_calls_keep_one_birth_and_receipt_postgres[identical-record]" time="2.138" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_concurrent_calls_keep_one_birth_and_receipt_postgres[changed-prepare]" time="1.821" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_concurrent_calls_keep_one_birth_and_receipt_postgres[changed-record]" time="1.986" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_current_scope_guards_postgres[generation-prepare-replay]" time="2.202"><failure message="AssertionError: {&quot;detail&quot;:{&quot;code&quot;:&quot;SUBTASK_SCOPE_DENIED&quot;,&quot;message&quot;:&quot;Launch attempt is outside its current worker target&quot;,&quot;retryable&quot;:false}}&#10;assert 403 == 409&#10; +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdf40c4da0&gt;
+execution_api = &lt;httpx.AsyncClient object at 0x7fbdf20ce8a0&gt;
+deployment = Deployment(id=a435479d-09f0-4469-b0d1-60e8f460aaef), record = False
+damage = 'generation'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+&gt;           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = &lt;Response [403 Forbidden]&gt;, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -&gt; None:
+&gt;       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Launch attempt is outside its current worker target","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError</failure></testcase><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_current_scope_guards_postgres[generation-record]" time="1.871"><failure message="AssertionError: {&quot;detail&quot;:{&quot;code&quot;:&quot;SUBTASK_SCOPE_DENIED&quot;,&quot;message&quot;:&quot;Launch attempt is outside its current worker target&quot;,&quot;retryable&quot;:false}}&#10;assert 403 == 409&#10; +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdf02f4d10&gt;
+execution_api = &lt;httpx.AsyncClient object at 0x7fbdebfbf740&gt;
+deployment = Deployment(id=3223e3d8-0260-44a6-bad4-e6958fef5a8e), record = True
+damage = 'generation'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+&gt;           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = &lt;Response [403 Forbidden]&gt;, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -&gt; None:
+&gt;       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Launch attempt is outside its current worker target","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError</failure></testcase><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_current_scope_guards_postgres[holder-prepare-replay]" time="1.815"><failure message="AssertionError: {&quot;detail&quot;:{&quot;code&quot;:&quot;SUBTASK_SCOPE_DENIED&quot;,&quot;message&quot;:&quot;Launch attempt is outside its current worker target&quot;,&quot;retryable&quot;:false}}&#10;assert 403 == 409&#10; +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdf04a3b00&gt;
+execution_api = &lt;httpx.AsyncClient object at 0x7fbdf0659b80&gt;
+deployment = Deployment(id=ec9bd48a-3fa3-43d1-9f71-dacef536cb6a), record = False
+damage = 'holder'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+&gt;           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = &lt;Response [403 Forbidden]&gt;, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -&gt; None:
+&gt;       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Launch attempt is outside its current worker target","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError</failure></testcase><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_current_scope_guards_postgres[holder-record]" time="2.094"><failure message="AssertionError: {&quot;detail&quot;:{&quot;code&quot;:&quot;SUBTASK_SCOPE_DENIED&quot;,&quot;message&quot;:&quot;Launch attempt is outside its current worker target&quot;,&quot;retryable&quot;:false}}&#10;assert 403 == 409&#10; +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdf0f6e090&gt;
+execution_api = &lt;httpx.AsyncClient object at 0x7fbdf20aaa50&gt;
+deployment = Deployment(id=48cfccb1-54dc-431c-90b4-9b9ebe22d21f), record = True
+damage = 'holder'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+&gt;           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = &lt;Response [403 Forbidden]&gt;, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -&gt; None:
+&gt;       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Launch attempt is outside its current worker target","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError</failure></testcase><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_current_scope_guards_postgres[run-count-prepare-replay]" time="1.828" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_current_scope_guards_postgres[run-count-record]" time="1.895" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_current_scope_guards_postgres[principal-prepare-replay]" time="2.164"><failure message="AssertionError: {&quot;detail&quot;:{&quot;code&quot;:&quot;SUBTASK_SCOPE_DENIED&quot;,&quot;message&quot;:&quot;Worker does not own the persisted DAG assignment&quot;,&quot;retryable&quot;:false}}&#10;assert 403 == 409&#10; +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdf072cc50&gt;
+execution_api = &lt;httpx.AsyncClient object at 0x7fbdeb3976e0&gt;
+deployment = Deployment(id=f2c30a25-a69e-4d1d-9637-46419c71fdca), record = False
+damage = 'principal'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+&gt;           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = &lt;Response [403 Forbidden]&gt;, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -&gt; None:
+&gt;       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Worker does not own the persisted DAG assignment","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError</failure></testcase><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_current_scope_guards_postgres[principal-record]" time="1.896"><failure message="AssertionError: {&quot;detail&quot;:{&quot;code&quot;:&quot;SUBTASK_SCOPE_DENIED&quot;,&quot;message&quot;:&quot;Worker does not own the persisted DAG assignment&quot;,&quot;retryable&quot;:false}}&#10;assert 403 == 409&#10; +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdeae95670&gt;
+execution_api = &lt;httpx.AsyncClient object at 0x7fbdeb342c00&gt;
+deployment = Deployment(id=a7a3dd63-8e23-40d1-9f5f-4586b6102145), record = True
+damage = 'principal'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+&gt;           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = &lt;Response [403 Forbidden]&gt;, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -&gt; None:
+&gt;       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Worker does not own the persisted DAG assignment","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError</failure></testcase><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_current_scope_guards_postgres[worker-prepare-replay]" time="1.947"><failure message="AssertionError: {&quot;detail&quot;:{&quot;code&quot;:&quot;SUBTASK_SCOPE_DENIED&quot;,&quot;message&quot;:&quot;Worker does not own the persisted DAG assignment&quot;,&quot;retryable&quot;:false}}&#10;assert 403 == 409&#10; +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdeb37d5b0&gt;
+execution_api = &lt;httpx.AsyncClient object at 0x7fbdeaec3ad0&gt;
+deployment = Deployment(id=5648240c-4c4c-44b3-8751-343c55300981), record = False
+damage = 'worker'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+&gt;           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = &lt;Response [403 Forbidden]&gt;, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -&gt; None:
+&gt;       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Worker does not own the persisted DAG assignment","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError</failure></testcase><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_current_scope_guards_postgres[worker-record]" time="2.145"><failure message="AssertionError: {&quot;detail&quot;:{&quot;code&quot;:&quot;SUBTASK_SCOPE_DENIED&quot;,&quot;message&quot;:&quot;Worker does not own the persisted DAG assignment&quot;,&quot;retryable&quot;:false}}&#10;assert 403 == 409&#10; +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fbdf4118740&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fbdf05b5a30&gt;
+execution_api = &lt;httpx.AsyncClient object at 0x7fbdf21d0b60&gt;
+deployment = Deployment(id=ab3f3716-1dc4-4160-8908-4bd03e528fd6), record = True
+damage = 'worker'
+
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare-replay", "record"])
+    @pytest.mark.parametrize(
+        "damage",
+        ["generation", "holder", "run-count", "principal", "worker", "missing-slot"],
+    )
+    async def test_launch_http_current_scope_guards_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        record: bool,
+        damage: str,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(db, session, api, deployment, record=True)
+            if not record:
+                case = replace(case, request=case.prepare, launch_id=None)
+            if damage in {"generation", "holder", "run-count", "missing-slot"}:
+                # Isolated corruption injection verifies fail-closed guards; this
+                # is deliberately not presented as a supported authority takeover.
+                async with db.session_context(begin_transaction=True) as transaction:
+                    scope = await lifecycle.lock_dag_graph(
+                        transaction, db, case.graph_id, None, update=True, worker=True
+                    )
+                    if damage == "generation":
+                        scope.authority.generation += 1
+                    elif damage == "holder":
+                        scope.authority.holder_id = uuid4()
+                    elif damage == "run-count":
+                        scope.authority.flow_run_run_count += 1
+                    else:
+                        await transaction.execute(
+                            sa.delete(db.StreamPhysicalSlotAllocation).where(
+                                db.StreamPhysicalSlotAllocation.subtask_id
+                                == case.subtask_id
+                            )
+                        )
+            elif damage == "principal":
+                principal = case.principal.model_copy(
+                    update={"launcher_start_ticks": case.principal.launcher_start_ticks + 1}
+                )
+                case = replace(
+                    case, request=case.request.model_copy(update={"principal": principal})
+                )
+            else:
+                rows = await _launch_rows(db, case)
+                worker_id = next(
+                    row["id"] for row in rows["worker"] if row["id"] != case.worker_id
+                )
+                case = replace(case, worker_id=worker_id)
+            before = await _launch_rows(db, case)
+            response = await api.post(case.path, json=case.request.model_dump(mode="json"))
+&gt;           assert_error(
+                response,
+                409,
+                "IDENTITY_CONFLICT"
+                if damage in {"run-count", "missing-slot"}
+                else "SUBTASK_SCOPE_DENIED",
+            )
+
+tests/server/models/test_stream_dag_launches.py:887: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+response = &lt;Response [403 Forbidden]&gt;, status = 409
+code = 'SUBTASK_SCOPE_DENIED'
+
+    def assert_error(response: httpx.Response, status: int, code: str) -&gt; None:
+&gt;       assert response.status_code == status, response.text
+E       AssertionError: {"detail":{"code":"SUBTASK_SCOPE_DENIED","message":"Worker does not own the persisted DAG assignment","retryable":false}}
+E       assert 403 == 409
+E        +  where 403 = &lt;Response [403 Forbidden]&gt;.status_code
+
+tests/server/api/test_stream_dags.py:160: AssertionError</failure></testcase><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_current_scope_guards_postgres[missing-slot-prepare-replay]" time="1.901" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_http_current_scope_guards_postgres[missing-slot-record]" time="2.553" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_first_transaction_fences_http_control_until_birth_is_visible_postgres" time="3.542" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_worker_renewal_commits_under_data_reader_prefix_postgres" time="3.009" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_worker_renewal_http_commits_under_reader_prefix_postgres" time="3.588" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_worker_renewal_waits_for_exclusive_parent_fence_postgres[flow]" time="3.650" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_worker_renewal_waits_for_exclusive_parent_fence_postgres[authority]" time="3.446" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_worker_renewal_waits_for_exclusive_parent_fence_postgres[graph]" time="3.094" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_worker_renewal_preserves_current_control_and_identity_fences_postgres[worker]" time="3.457" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_worker_renewal_preserves_current_control_and_identity_fences_postgres[principal]" time="2.862" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_worker_renewal_preserves_current_control_and_identity_fences_postgres[grant]" time="2.981" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_worker_renewal_preserves_current_control_and_identity_fences_postgres[control]" time="3.438" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_terminal_replacement_prepare_and_accepted_replay_postgres[True]" time="5.418" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_terminal_replacement_prepare_and_accepted_replay_postgres[False]" time="6.078" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_startup_abort_worker_prefix_postgres" time="2.549" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_active_graph_refuses_startup_abort_postgres" time="3.231" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_launch_lost_ack_and_delayed_record_after_stop_postgres" time="1.998" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_all_attempts_close_before_last_stop_commits_failed_flow_postgres[False]" time="2.801" /><testcase classname="tests.server.models.test_stream_dag_launches" name="test_all_attempts_close_before_last_stop_commits_failed_flow_postgres[True]" time="3.983" /></testsuite></testsuites>

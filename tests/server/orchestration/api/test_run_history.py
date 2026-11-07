@@ -12,6 +12,7 @@ from prefect.server import models
 from prefect.server.api.run_history import run_history
 from prefect.server.schemas import actions, core, filters, responses, states
 from prefect.server.schemas.states import StateType
+from tests.fixtures.database import _clear_database_tables
 
 pytestmark = pytest.mark.clear_db
 
@@ -94,12 +95,7 @@ async def clear_db(db):
     """Prevent automatic database-clearing behavior after every test"""
     yield  # noqa
     async with db.session_context(begin_transaction=True) as session:
-        await session.execute(db.Agent.__table__.delete())
-        # work pool has a circular dependency on pool queue; delete it first
-        await session.execute(db.WorkPool.__table__.delete())
-
-        for table in reversed(db.Base.metadata.sorted_tables):
-            await session.execute(table.delete())
+        await _clear_database_tables(session)
 
 
 @pytest.fixture(autouse=True, scope="module")

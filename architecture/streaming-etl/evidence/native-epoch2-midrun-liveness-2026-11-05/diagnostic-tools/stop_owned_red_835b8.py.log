@@ -1,0 +1,60 @@
+from pathlib import Path
+import datetime,hashlib,json,os,signal,time
+BASE=Path('/tmp/native-ni012-restored-principal-2026-11-05/source-835b8c21c83e')
+running=json.loads((BASE/'running-receipt-v1.json').read_text());expected={x['pytest_pid']:str(x['pytest_start_ticks']) for x in running['cases']}
+def info(pid):
+ try:
+  raw=Path('/proc',str(pid),'stat').read_text();fields=raw.rsplit(')',1)[1].split()
+  return {'pid':pid,'state':fields[0],'ppid':int(fields[1]),'pgid':int(fields[2]),'sid':int(fields[3]),'start_ticks':fields[19],'cmdline_sha256':hashlib.sha256(Path('/proc',str(pid),'cmdline').read_bytes()).hexdigest()}
+ except FileNotFoundError:return None
+owners={};observers=set();roots=set()
+for t in sorted(BASE.glob('run-*')):
+ root=json.loads((t/'session.json').read_text())['pytest_pid'];roots.add(root);ids={root}
+ observer=json.loads((t/'observer-session.json').read_text())['pid'];observers.add(observer);ids.add(observer)
+ for p in (t/'audit').glob('*.jsonl'):
+  for line in p.read_text().splitlines():ids.add(json.loads(line)['pid'])
+ for p in (t/'pytest').rglob('processes/*.pid.json'):
+  j=json.loads(p.read_text());ids.add(j['pid']);ids.add(j['parent'])
+ for pid in ids:
+  row=info(pid)
+  if row:owners[pid]={**row,'trial':t.name}
+for pid,ticks in expected.items():
+ row=owners.get(pid)
+ if row and row['start_ticks']!=ticks:raise RuntimeError('Root process identity mismatch; no signal sent')
+p=BASE/'owned-processes-before-controlled-stop.json';p.write_text(json.dumps({'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'processes':owners,'root_start_guards':expected,'observer_pids':sorted(observers)},indent=2,sort_keys=True)+'\n');p.chmod(0o600)
+events=[]
+def send(pid,sig,group=False):
+ before=owners[pid];now=info(pid)
+ if now is None or now['state']=='Z':return
+ if now['start_ticks']!=before['start_ticks']:events.append({'pid':pid,'action':'REFUSED_PID_REUSE'});return
+ if group and (now['pgid']!=pid or now['sid']!=pid):group=False
+ try:
+  (os.killpg if group else os.kill)(pid,sig)
+  events.append({'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'pid':pid,'start_ticks':now['start_ticks'],'signal':sig,'group':group,'reason':'Owned known-RED native gate controlled stop; not platform finalization'})
+ except ProcessLookupError:events.append({'pid':pid,'action':'ALREADY_EXITED'})
+for pid in sorted(roots):
+ if pid in owners:send(pid,signal.SIGINT)
+time.sleep(1)
+# Stop only recorded own session leaders or own exact processes. Never signal
+# a foreign/inherited process group; PostgreSQL/old soak PIDs are not selected.
+groups={pid for pid,row in owners.items() if pid not in observers|roots and row['pgid']==pid and row['sid']==pid}
+for pid in sorted(groups):send(pid,signal.SIGTERM,group=True)
+for pid,row in sorted(owners.items()):
+ if pid not in observers|roots|groups:send(pid,signal.SIGTERM)
+end=time.monotonic()+8
+while time.monotonic()<end:
+ live=[pid for pid in owners if pid not in observers and (row:=info(pid)) and row['state']!='Z' and row['start_ticks']==owners[pid]['start_ticks']]
+ if not live:break
+ time.sleep(.2)
+for pid in sorted(owners):
+ if pid not in observers:send(pid,signal.SIGKILL,group=pid in groups)
+# Controllers write exit as pytest stops; observers normally leave themselves.
+end=time.monotonic()+3
+while time.monotonic()<end:
+ live=[pid for pid in observers if (row:=info(pid)) and row['state']!='Z']
+ if not live:break
+ time.sleep(.2)
+for pid in sorted(observers):
+ if pid in owners:send(pid,signal.SIGTERM)
+result={'status':'CONTROLLED_RED_STOP_NOT_PLATFORM_RELEASE','utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'reason':'Unexpected normal-path HTTP5xx/timeouts and async C0 Task.run_count2 violate normal gate; Root explicitly authorized bounded stop before5000','process_snapshot_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'events':events,'remaining_same_identity_live':[pid for pid in owners if (row:=info(pid)) and row['state']!='Z' and row['start_ticks']==owners[pid]['start_ticks']],'remaining_zombies':[pid for pid in owners if (row:=info(pid)) and row['state']=='Z'],'old_soak_or_postgres_signals':False,'product_source_mutations':0}
+p=BASE/'controlled-red-stop-v1.json';p.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n');p.chmod(0o600);print(json.dumps({'receipt':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'signal_events':len(events),'remaining_same_identity_live':result['remaining_same_identity_live'],'remaining_zombies':result['remaining_zombies']}))

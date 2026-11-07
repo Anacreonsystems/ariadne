@@ -1,0 +1,72 @@
+"""One own observer process; no subprocesses, signals or persistent DB session."""
+import asyncio
+import datetime
+import json
+import os
+import time
+from observer_common import BASE, arguments, capture, checked_scope, last_progress, load, output, sha, stop_reason, ticks, write
+
+
+def main():
+    args = arguments()
+    scope, trial, command = checked_scope(args.scope, 'live')
+    out = output(scope); out.mkdir(mode=0o700,exist_ok=False)
+    fixture = trial / 'pytest/test_public_dag_bounded_volume0'
+    identity = {'pid': os.getpid(), 'start_ticks': ticks(os.getpid()),
+                'scope_sha256': sha(args.scope), 'command_sha256': sha(trial / 'command.json'),
+                'pytest_pid': scope['pytest_pid'], 'pytest_start_ticks': scope['pytest_start_ticks'],
+                'sampling_min_seconds': 65, 'uses_subprocesses': False,
+                'persistent_connections': 0, 'proc_task_children_used': False, 'signals_sent': []}
+    write(out / 'controller-identity.json', identity)
+    print(json.dumps({'status': 'LIVE_READONLY_OBSERVER_RUNNING', **identity}), flush=True)
+    reason = 'UNKNOWN'
+    last = None
+    try:
+        while True:
+            reason = stop_reason(scope, trial, fixture)
+            if reason:
+                break
+            try:
+                last_progress(fixture)
+            except FileNotFoundError:
+                time.sleep(2)
+                continue
+            previous = list(out.glob('live-sample-*.json'))
+            latest = max((load(path)['started_monotonic_ns'] for path in previous), default=0)
+            if time.monotonic_ns() - latest >= 65_000_000_000:
+                last = asyncio.run(capture(args.scope, 'live'))
+                print(json.dumps(last), flush=True)
+                if last['status'] != 'ACTUAL_READONLY_MVCC_CAPTURE' or last['connection_closed'] is not True:
+                    reason = 'FAIL_CLOSED_' + last['status']
+                    break
+                if last.get('sql_terminal_window'):
+                    reason=last['sql_terminal_window']
+                    break
+            time.sleep(2)
+    except Exception as error:
+        reason = 'FAIL_CLOSED_' + type(error).__name__
+    finally:
+        samples = []
+        for path in sorted(out.glob('live-sample-*.json')):
+            sample = load(path)
+            samples.append({'path': str(path), 'sha256': sha(path), 'status': sample['status'],
+                            'connection_closed': sample['connection_closed'],
+                            'sql_cursors':sample.get('sql_cursors',[]), 'author_pg_cursors':[row['completed_through'] for row in sample['author_direct_pg_progress_record']['snapshot'].get('consumers',[])]})
+        closed = all(row['connection_closed'] for row in samples)
+        result = {'schema': 'personal-dag5000-live-19family-observer-stop-v1',
+                  'status': 'LIVE_DB_OBSERVER_STOPPED_NO_MORE_CONNECTIONS' if closed else 'OBSERVER_CLOSE_INCONCLUSIVE',
+                  'recorded_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                  'reason': reason, 'identity': identity, 'scope_sha256': sha(args.scope),
+                  'trial': str(trial), 'phase':scope['phase'], 'database': command['database'], 'samples': samples,
+                  'outstanding_connections': 0 if closed else 'UNKNOWN',
+                  'outstanding_capture_process': None, 'last_summary': last,
+                  'auto_final_capture': False, 'limitations': ['First actual cursors/activation timing must be reported honestly',
+                    'Stops before terminal; final SQL requires a separate postterminal Root scope/GO',
+                    'External KV lease backend not inspected']}
+        path = out / 'live-observer-STOP-receipt-v1.json'
+        write(path, result)
+        print(json.dumps({'status': result['status'], 'reason': reason, 'receipt': str(path), 'sha256': sha(path), 'samples': len(samples)}), flush=True)
+
+
+if __name__ == '__main__':
+    main()

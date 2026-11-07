@@ -1,0 +1,93 @@
+"""External normal64 wrapper; unchanged native helper/fixture own lifecycle."""
+
+import json
+import os
+import subprocess
+import time
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from api_selector import api_identity
+from tests.test_native_partitioned_stream_http import execution_api as base_execution_api
+from tests.test_native_stream_dag_execution_http import _run_dag_lifecycle
+from tests.test_native_stream_dag_execution_http import native_backend as native_backend
+from tests.test_native_stream_recovery_http import RestartableAPI
+
+
+def start_ticks(pid: int) -> str:
+    return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+
+
+@pytest.fixture
+def api_popen_observer():
+    """Labelled observer delegates all args/kwargs and never waits for children."""
+    original = subprocess.Popen
+    trial = Path(os.environ["ARIADNE_PROFILE64_DIRECTORY"])
+    owned = []
+
+    def observed(*args: Any, **kwargs: Any) -> Any:
+        process = original(*args, **kwargs)
+        argv = args[0] if args else kwargs.get("args")
+        identity = api_identity(argv) if isinstance(argv, list) else None
+        if identity is not None:
+            try:
+                assert kwargs.get("pass_fds") == (identity["fd"],)
+                manifest = {
+                    **identity, "pid": process.pid,
+                    "start_ticks": start_ticks(process.pid),
+                    "argv": argv, "observed_by": "external Popen observer",
+                    "monotonic_ns": time.monotonic_ns(),
+                }
+                owned.append((process, manifest))
+                temporary = trial / "api-owner.pending.json"
+                temporary.write_text(json.dumps(manifest, indent=2) + "\n")
+                temporary.replace(trial / "api-owner.json")
+            except Exception as error:
+                # Diagnostic failure must not change Popen's result/lifecycle.
+                try:
+                    (trial / "api-observer-error.json").write_text(
+                        json.dumps({"error_type": type(error).__name__}) + "\n"
+                    )
+                except OSError:
+                    pass
+        return process
+
+    subprocess.Popen = observed
+    try:
+        yield
+    finally:
+        subprocess.Popen = original
+        try:
+            # The unchanged fixture has already waited/reaped at this point.
+            # Inspect stored returncode only; do not poll, wait or signal.
+            (trial / "api-exits.json").write_text(json.dumps([
+                {"pid": process.pid, "start_ticks": manifest["start_ticks"],
+                 "returncode": process.returncode}
+                for process, manifest in owned
+            ], indent=2) + "\n")
+        except OSError:
+            pass
+
+
+@pytest.fixture
+def execution_api(native_backend: None, tmp_path: Path, api_popen_observer: None):
+    # Invoke the unchanged original generator, including its exact stop budgets.
+    yield from base_execution_api.__wrapped__(native_backend, tmp_path)
+
+
+@pytest.mark.timeout(300)
+async def test_normal_sync64_api_observation_postgres(
+    execution_api: RestartableAPI, tmp_path: Path, db: Any
+):
+    trial = Path(os.environ["ARIADNE_PROFILE64_DIRECTORY"])
+    manifest = json.loads((trial / "api-owner.json").read_text())
+    assert execution_api.process is not None
+    assert manifest["pid"] == execution_api.process.pid
+    assert manifest["start_ticks"] == start_ticks(execution_api.process.pid)
+    assert manifest["fd"] == execution_api.socket.fileno()
+    await _run_dag_lifecycle(
+        execution_api, tmp_path, db, asynchronous=False, mode="normal", count=64,
+        wait_timeout=150, observation_timeout=210, c_exchange="broadcast",
+    )
