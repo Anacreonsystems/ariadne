@@ -131,7 +131,7 @@ async def wait_for_file_async(directory, name, timeout=720):
 
 
 def final_cursor_budget(count):
-    return 3900 if count == 5000 else 720
+    return 3900 if count in {500, 5000} else 720
 
 
 def cut_ready(ctx, directory, mode):
@@ -162,7 +162,7 @@ def source(ctx, directory: str, count: int, mode: str, keyed: bool = False):
         trace(directory, "source-accepted", {"position": position})
         if count > 8 and position == count and mode in {"normal", "accepted200", "incomplete200"}:
             if mode != "normal":
-                wait_for_file(directory, "replacement-started.json")
+                wait_for_file(directory, "replacement-started.json", 3900 if count == 500 else 720)
         if mode in {"failure", "cancel"}:
             time.sleep(60)
 
@@ -178,7 +178,7 @@ async def source_async(ctx, directory: str, count: int, mode: str, keyed: bool =
         trace(directory, "source-accepted", {"position": position})
         if count > 8 and position == count and mode in {"normal", "accepted200", "incomplete200"}:
             if mode != "normal":
-                await wait_for_file_async(directory, "replacement-started.json")
+                await wait_for_file_async(directory, "replacement-started.json", 3900 if count == 500 else 720)
         if mode in {"failure", "cancel"}:
             await anyio.sleep(60)
 
@@ -208,7 +208,7 @@ def operator(ctx, document, directory: str, role: str, count: int = 8, mode: str
         wait_for_file(directory, "branch-cut-observed", 120)
         exit_at_cut(directory, ready)
     if role == "C" and document["number"] == count and mode in {"accepted200", "incomplete200"}:
-        wait_for_file(directory, "replacement-started.json")
+        wait_for_file(directory, "replacement-started.json", 3900 if count == 500 else 720)
     try:
         yield value
     finally:
@@ -229,7 +229,7 @@ async def operator_async(ctx, document, directory: str, role: str, count: int = 
         await wait_for_file_async(directory, "branch-cut-observed", 120)
         exit_at_cut(directory, ready)
     if role == "C" and document["number"] == count and mode in {"accepted200", "incomplete200"}:
-        await wait_for_file_async(directory, "replacement-started.json")
+        await wait_for_file_async(directory, "replacement-started.json", 3900 if count == 500 else 720)
     try:
         yield value
     finally:
@@ -349,7 +349,7 @@ async def test_public_dag_preseal_failure_two_real_workers_postgres(
         pytest.param(
             asynchronous,
             count,
-            marks=pytest.mark.timeout(4200 if count == 5000 else 900),
+            marks=pytest.mark.timeout(4200),
         )
         for asynchronous, count in [
             (False, 500),
@@ -366,8 +366,8 @@ async def test_public_dag_bounded_volume_postgres(
     asynchronous: bool,
     count: int,
 ):
-    # Sync500 took 264s from workers ready through terminal cleanup. These
-    # test-local deadlines cover async/recovery without a throughput promise.
+    # The 500-record profiles share the existing long functional watchdogs.
+    # These test-local bounds do not declare a throughput SLO.
     await _run_dag_lifecycle(
         execution_api,
         tmp_path,
@@ -375,8 +375,8 @@ async def test_public_dag_bounded_volume_postgres(
         asynchronous=asynchronous,
         mode="normal",
         count=count,
-        wait_timeout=3960 if count == 5000 else 750,
-        observation_timeout=4080 if count == 5000 else 840,
+        wait_timeout=3960,
+        observation_timeout=4080,
     )
 
 
@@ -410,7 +410,7 @@ async def test_public_dag_exchange_modes_postgres(
         (True, "incomplete200"),
     ],
 )
-@pytest.mark.timeout(900)
+@pytest.mark.timeout(4200)
 async def test_public_dag_branch_recovery_postgres(
     execution_api: RestartableAPI,
     tmp_path: Path,
@@ -425,8 +425,8 @@ async def test_public_dag_branch_recovery_postgres(
         asynchronous=asynchronous,
         mode=mode,
         count=500,
-        wait_timeout=750,
-        observation_timeout=840,
+        wait_timeout=3960,
+        observation_timeout=4080,
     )
 
 

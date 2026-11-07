@@ -1741,3 +1741,18 @@ Hosted 303 as-of 18:27:37.615 UTC retains 2 FAIL/1 component CANCELLED/3 native 
 no whole-cause claim. P2 regression and latest-source 5000/hosted19 remain PENDING.
 Prior failures/source qualifications stay; NI014 OPEN/BLOCKED, NI020 blocked,
 15% earned/27% unearned; approved ADR bodies/AC and functional budgets unchanged.
+
+
+## N2.2 Declared 500-record functional profile — 2026-11-07
+
+[Compact component](../evidence/native-epoch2-500-functional-profile-2026-11-07/verification.json):
+only 500-record clocks adopt 3900 final/replacement waits and 3960/4080/4200; data/oracles,
+8/64/5000, global720/120, production and max-parallel3 remain. Personal async
+unfinished200 PASS (216.891s): only200 replays, clean guards/full release.
+Closed ed3 local sync/async5000 PASS (1855.947/1887.091s), strict health 0/OOM 9→9;
+source relevance is explicit. Initial sync 96MiB reserve INVALID/retracted;
+measured live correction and clean fresh async preflight remain recorded.
+Single diagnostic500 PASS (580.713s) has no NI014/SLO credit or causal speedup claim.
+Dated ed3 retains 3 FAIL and four heavy jobs incomplete, none PASS; auto-cancelled or
+superseded is neverPASS. Fresh hosted19/four-heavy required; prior failures stay.
+NI014 OPEN/BLOCKED, NI020 blocked, 15% earned/27% unearned; ADR bodies/AC unchanged.
