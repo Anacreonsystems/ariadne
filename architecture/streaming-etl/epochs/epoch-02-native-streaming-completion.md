@@ -1686,3 +1686,20 @@ OOM-affected FAIL/interruption remain retained. Current 232 snapshot 14:38:51 UT
 three current failures were inspected; no cause is assigned to the other three.
 Full19/four-heavy gates open.
 NI2-012…014 OPEN/BLOCKED, NI2-020 blocked, 15% earned/27% unearned; ADR bodies intact.
+
+
+## N2.2 Heartbeat compatibility and source-bound volume proof — 2026-11-07
+
+[Component](../evidence/native-epoch2-heartbeat-fence-2026-11-07/verification.json)
+binds `363fca7` plus `8d1d9afd`: real heartbeat RED/GREEN and personal PG: 72 PASS
+verify ongoing-child KEY SHARE while identity/offline-admission/default fences
+remain. Frozen keyed64/accepted 201/personal unfinished 200 PASS (JUnit cases 55.907/
+212.887/223.212s), original budgets, replay/health/release/guards/PID/DB closure;
+keyed C counts 30/34 and only unfinished 200 replay remain exact. Three-native
+OOM 9→9 is separate from the active new sync/async5000, whose results are pending.
+Earlier 363 sync/async5000 PASS 2303.295/2294.905s with strict health 0/full release
+and OOM 9→9 do not execute this heartbeat patch. Current 363 hosted 15:45 UTC snapshot
+85 SUCCESS/2 FAIL/4 RUNNING/2 QUEUED/1 SKIP (native12/2/3/2) retains distinct keyed
+heartbeat/continued-progress and accepted200 replacement-Flow-UPDATE traces;
+whole causes/hosted acceptance are not claimed. Prior failures remain;
+NI2-012…014 OPEN/BLOCKED, NI2-020 blocked, 15% earned/27% unearned; ADR criteria intact.

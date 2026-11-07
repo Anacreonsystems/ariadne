@@ -22,11 +22,14 @@ from prefect.server.events.schemas.events import Event
 from prefect.server.models import flow_runs as flow_run_models
 from prefect.server.models import stream_dag_executions as m
 from prefect.server.models import stream_dag_launches as launches
-from prefect.server.models import stream_dags
+from prefect.server.models import stream_dags, workers
 from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.models.stream_executions import (
     apply_flow_lifecycle_result,
     guard_flow_lifecycle,
+)
+from prefect.server.models.stream_worker_capacity import (
+    renew_worker_capability_metadata,
 )
 from prefect.server.models.streams import NativeStreamStore
 from prefect.server.orchestration.core_policy import CoreFlowPolicy
@@ -36,6 +39,7 @@ from prefect.server.schemas import stream_dags as topology
 from prefect.server.schemas import stream_routes as routed
 from prefect.server.schemas import stream_subtasks as physical
 from prefect.server.schemas.native_deployments import NativeStreamProcessDeathWitness
+from prefect.server.schemas.statuses import WorkerStatus
 from prefect.server.schemas.streams import StreamExecutionCredentials
 from prefect.server.services import task_run_recorder as recorder
 from prefect.server.services.task_run_recorder import dispatch_stream_subtask_event
@@ -2044,6 +2048,327 @@ async def test_running_event_overlaps_peer_data_prefix_postgres(
         result = await asyncio.wait_for(start_child(), 5)
         assert result.accepted and result.state_type == states.StateType.RUNNING
         assert result.run_count == 1
+
+
+async def _heartbeat_for_child(
+    db: PrefectDBInterface,
+    child: ReadyChild,
+    started: asyncio.Future[int],
+) -> bool:
+    async with db.session_context(begin_transaction=True) as transaction:
+        worker = await transaction.get(db.Worker, child.worker_id)
+        assert worker is not None
+        pid = await transaction.scalar(sa.text("SELECT pg_backend_pid()"))
+        assert isinstance(pid, int)
+        started.set_result(pid)
+        return await workers.worker_heartbeat(
+            session=transaction,
+            work_pool_id=worker.work_pool_id,
+            worker_name=worker.name,
+            heartbeat_interval_seconds=7,
+        )
+
+
+async def _wait_for_worker_identity_fence(
+    db: PrefectDBInterface,
+    waiter: int,
+    holder: int,
+    statement: str,
+    pending: asyncio.Task,
+) -> None:
+    async with db.session_context() as observer:
+        async with asyncio.timeout(10):
+            while True:
+                await observer.execute(sa.text("SELECT pg_stat_clear_snapshot()"))
+                row = (
+                    await observer.execute(
+                        sa.text(
+                            "SELECT query, wait_event_type, pg_blocking_pids(pid) AS blockers "
+                            "FROM pg_stat_activity WHERE pid=:pid"
+                        ),
+                        {"pid": waiter},
+                    )
+                ).one()
+                if row.wait_event_type == "Lock" and holder in row.blockers:
+                    assert "worker" in row.query and statement in row.query
+                    return
+                if pending.done():
+                    await pending
+                    pytest.fail("Worker operation bypassed the held identity fence")
+                await asyncio.sleep(0.01)
+
+
+@pytest.mark.parametrize("scope", ["data", "running-event"])
+async def test_worker_heartbeat_overlaps_active_dag_child_prefix_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    scope: str,
+):
+    _, _, children = await ready_deployed_region(db, session, execution_api, deployment)
+    child = children[0]
+    if scope == "data":
+        async with db.session_context(begin_transaction=True) as setup:
+            result = await dispatch_stream_subtask_event(
+                setup,
+                db,
+                child.bootstrap.assignment.id,
+                signed_child_event(child, "RUNNING"),
+                child.credentials,
+            )
+            assert result.accepted
+    started = asyncio.get_running_loop().create_future()
+    pending = None
+    try:
+        async with db.session_context(begin_transaction=True) as holder:
+            holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+            if scope == "data":
+                await m.lock_dag_child(
+                    holder, db, child.credentials, ready=True, active=True
+                )
+                await holder.execute(
+                    sa.select(db.TaskRun.id)
+                    .where(db.TaskRun.id == child.bootstrap.task_run.id)
+                    .with_for_update()
+                )
+            else:
+                result = await dispatch_stream_subtask_event(
+                    holder,
+                    db,
+                    child.bootstrap.assignment.id,
+                    signed_child_event(child, "RUNNING"),
+                    child.credentials,
+                )
+                assert result.accepted
+            worker = await holder.get(db.Worker, child.worker_id)
+            assert worker is not None
+            before = worker.id, worker.work_pool_id, worker.name
+            heartbeat_before = worker.last_heartbeat_time
+            pending = asyncio.create_task(_heartbeat_for_child(db, child, started))
+            waiter = await asyncio.wait_for(started, 5)
+            try:
+                assert await asyncio.wait_for(asyncio.shield(pending), 5)
+            except TimeoutError:
+                await _wait_for_worker_identity_fence(
+                    db, waiter, holder_pid, "INSERT INTO worker", pending
+                )
+                pytest.fail("Real worker heartbeat blocked behind the child prefix")
+            await holder.refresh(worker)
+            assert (worker.id, worker.work_pool_id, worker.name) == before
+            assert worker.last_heartbeat_time > heartbeat_before
+            assert worker.heartbeat_interval_seconds == 7
+            assert worker.status == WorkerStatus.ONLINE
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.parametrize("change", ["delete", "pool", "name", "rotation"])
+async def test_active_dag_child_keeps_worker_identity_fence_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    change: str,
+):
+    _, _, children = await ready_deployed_region(db, session, execution_api, deployment)
+    child = children[0]
+    started = asyncio.get_running_loop().create_future()
+
+    async def mutate_worker() -> None:
+        async with db.session_context(begin_transaction=True) as transaction:
+            pid = await transaction.scalar(sa.text("SELECT pg_backend_pid()"))
+            assert isinstance(pid, int)
+            started.set_result(pid)
+            if change == "rotation":
+                await renew_worker_capability_metadata(
+                    transaction,
+                    db,
+                    child.worker_id,
+                    child.principal.model_copy(
+                        update={
+                            "launcher_start_ticks": child.principal.launcher_start_ticks
+                            + 1
+                        }
+                    ),
+                    protocol="partitioned-dag-v1",
+                )
+            elif change == "delete":
+                await transaction.execute(
+                    sa.delete(db.Worker).where(db.Worker.id == child.worker_id)
+                )
+            else:
+                values = (
+                    {"work_pool_id": uuid4()}
+                    if change == "pool"
+                    else {"name": "different-worker-" + uuid4().hex}
+                )
+                await transaction.execute(
+                    sa.update(db.Worker)
+                    .where(db.Worker.id == child.worker_id)
+                    .values(**values)
+                )
+
+    pending = None
+    try:
+        async with db.session_context(begin_transaction=True) as holder:
+            holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+            await m.lock_dag_child(
+                holder, db, child.credentials, ready=True, active=True
+            )
+            worker = await holder.get(db.Worker, child.worker_id)
+            assert worker is not None
+            before = worker.id, worker.work_pool_id, worker.name
+            pending = asyncio.create_task(mutate_worker())
+            statement = (
+                "FOR UPDATE"
+                if change == "rotation"
+                else "DELETE FROM worker"
+                if change == "delete"
+                else "UPDATE worker SET"
+            )
+            await _wait_for_worker_identity_fence(
+                db, await asyncio.wait_for(started, 5), holder_pid, statement, pending
+            )
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            await holder.refresh(worker)
+            assert (worker.id, worker.work_pool_id, worker.name) == before
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.parametrize("graph_update", [False, True])
+async def test_noncontinuation_child_scopes_keep_worker_share_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    graph_update: bool,
+):
+    _, _, children = await ready_deployed_region(db, session, execution_api, deployment)
+    child = children[0]
+    started = asyncio.get_running_loop().create_future()
+    pending = None
+    try:
+        async with db.session_context(begin_transaction=True) as holder:
+            holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+            await m.lock_dag_child(
+                holder,
+                db,
+                child.credentials,
+                graph_update=graph_update,
+                ready=graph_update,
+                active=graph_update,
+            )
+            pending = asyncio.create_task(_heartbeat_for_child(db, child, started))
+            await _wait_for_worker_identity_fence(
+                db,
+                await asyncio.wait_for(started, 5),
+                holder_pid,
+                "INSERT INTO worker",
+                pending,
+            )
+        assert await asyncio.wait_for(pending, 10)
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
+async def test_offline_worker_cannot_admit_new_dag_region_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+):
+    plan, headers = await sealed_execution_graph(db, session, execution_api, deployment)
+    launch = await session.scalar(
+        sa.select(db.NativeStreamLaunchIdentity).where(
+            db.NativeStreamLaunchIdentity.flow_run_id == plan.flow_run_id
+        )
+    )
+    assert launch is not None
+    principal = physical.StreamWorkerPrincipal(
+        work_pool_id=launch.work_pool_id,
+        host_id=launch.launcher_host_id,
+        boot_id=launch.launcher_boot_id,
+        launcher_process_id=launch.launcher_process_id,
+        launcher_start_ticks=launch.launcher_start_ticks,
+    )
+    pool = await session.get(db.WorkPool, launch.work_pool_id)
+    assert pool is not None
+    peer = await execution_api.post(
+        f"/work_pools/{pool.name}/workers/heartbeat",
+        json={"name": "offline-control-peer-" + uuid4().hex, "return_id": True},
+    )
+    assert peer.status_code == 200, peer.text
+    worker_set = [
+        (launch.worker_id, principal),
+        (
+            UUID(peer.text),
+            principal.model_copy(
+                update={"launcher_process_id": 1001, "launcher_start_ticks": 2001}
+            ),
+        ),
+    ]
+    request = s.StreamDAGStartRequest.model_validate(
+        parent_body(plan.id, "start", plan.graph_digest)
+    )
+    await session.commit()
+    async with db.session_context(begin_transaction=True) as setup:
+        for worker_id, identity in worker_set:
+            assert (
+                await launches.poll_worker_stream_dag_subtasks(
+                    setup,
+                    db,
+                    worker_id,
+                    s.StreamDAGWorkerPollRequest(principal=identity),
+                )
+                == []
+            )
+        async with setup.begin_nested() as online_baseline:
+            admitted = await m.start_stream_dag(
+                setup, db, plan.id, request, execution_credentials(headers)
+            )
+            assert admitted.execution.phase == "STARTING"
+            assert admitted.execution.counts.physical_slots_remaining == 4
+            await online_baseline.rollback()
+        assert (
+            await setup.scalar(
+                sa.select(sa.func.count())
+                .select_from(db.StreamPhysicalSlotAllocation)
+                .where(db.StreamPhysicalSlotAllocation.graph_revision_id == plan.id)
+            )
+            == 0
+        )
+        await setup.execute(
+            sa.update(db.Worker)
+            .where(db.Worker.id.in_([worker_id for worker_id, _ in worker_set]))
+            .values(status=WorkerStatus.OFFLINE)
+        )
+    async with db.session_context(begin_transaction=True) as transaction:
+        with pytest.raises(NativeStreamError) as error:
+            await m.start_stream_dag(
+                transaction,
+                db,
+                plan.id,
+                request,
+                execution_credentials(headers),
+            )
+        assert error.value.code == "REGION_CAPACITY"
+        assert (
+            await transaction.scalar(
+                sa.select(sa.func.count())
+                .select_from(db.StreamPhysicalSlotAllocation)
+                .where(db.StreamPhysicalSlotAllocation.graph_revision_id == plan.id)
+            )
+            == 0
+        )
 
 
 async def _dispatch_event_with_pid(

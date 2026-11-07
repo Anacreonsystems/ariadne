@@ -1502,3 +1502,14 @@ Current 14:38:51 UTC hosted snapshot: 83 SUCCESS/6 FAIL/3 RUNNING/1 QUEUED/1 SKI
 (native 9/6/3/1) retains all six failures without assigning uninspected causes.
 Full19/four-heavy gates open; NI2-012…014
 OPEN/BLOCKED, NI2-020 blocked, 15% earned/27% unearned; ADR criteria unchanged.
+
+
+## N2.2 Heartbeat compatibility and source-bound volume proof — 2026-11-07
+
+[Component](evidence/native-epoch2-heartbeat-fence-2026-11-07/verification.json):
+heartbeat RED/GREEN, personal PG: 72 and frozen keyed64/accepted 201/unfinished 200
+PASS retain identity/offline-admission fences, original budgets and full closure.
+Earlier 363 sync/async5000 PASS is source-distinct; new heartbeat 5000 pair is active,
+not accepted. Hosted15:45UTC remains85 SUCCESS/2 FAIL/4 RUNNING/2 QUEUED/1 SKIP
+(native12/2/3/2), with two distinct retained traces and no whole-cause claim.
+NI2-012…014 OPEN/BLOCKED, NI2-020 blocked, 15% earned/27% unearned; prior failures stay.

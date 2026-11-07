@@ -305,7 +305,7 @@ async def _authorized_stream_events(
         for row in physical_graphs.values()
         if row.profile == "partitioned-dag-v1"
     ]
-    # The private RUNNING proof already holds its exact Worker SHARE. Taking
+    # The private RUNNING proof already holds its exact Worker identity lock. Taking
     # another, earlier Worker here would reverse admission's sorted lock order.
     if dag_graph_ids and not shared_running:
         assigned_workers = sa.select(db.StreamPhysicalSubtask.assigned_worker_id).where(

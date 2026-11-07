@@ -1646,10 +1646,13 @@ async def lock_dag_child(
         raise NativeStreamError(
             "SUBTASK_FENCED", "DAG grants require an assigned worker"
         )
+    # Active, ready children fence Worker identity, not heartbeat/status metadata.
+    # KEY SHARE permits non-key heartbeats but still blocks DELETE, pool/name
+    # changes and the exclusive registration/rotation path. Other scopes keep SHARE.
     await session.execute(
         sa.select(db.Worker.id)
         .where(db.Worker.id == locator.worker_id)
-        .with_for_update(read=True)
+        .with_for_update(read=True, key_share=ready and active and not graph_update)
     )
     subtask = await session.scalar(
         sa.select(db.StreamPhysicalSubtask)
