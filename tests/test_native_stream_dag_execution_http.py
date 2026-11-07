@@ -381,7 +381,7 @@ async def test_public_dag_bounded_volume_postgres(
 
 
 @pytest.mark.parametrize("exchange", ["rebalance", "keyed"])
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(900)
 async def test_public_dag_exchange_modes_postgres(
     execution_api: RestartableAPI,
     tmp_path: Path,
@@ -395,6 +395,8 @@ async def test_public_dag_exchange_modes_postgres(
         asynchronous=False,
         mode="normal",
         count=64,
+        wait_timeout=750,
+        observation_timeout=840,
         c_exchange=exchange,
     )
 

@@ -1241,3 +1241,15 @@ owned child startup completed 0.600s after its 20s guard; only native helper boo
 New-helper smoke PENDING; active volume source qualification is explicit.
 The separate DDD rebalance body timeout remains unresolved.
 No acceptance credit; NI014 blocked/NI020 blocked/15% earned/27% unearned.
+
+
+## N2.2 Declared exchange64 functional profile and closed volume pair — 2026-11-07
+
+[Compact component](evidence/native-epoch2-exchange64-functional-profile-2026-11-07/verification.json):
+only exchange64 adopts existing 750/840/900 functional watchdogs; all 64 data/oracles,
+count8/5000 and production stay. Author rebalance 50.900s/personal keyed 51.445s
+and real API restart [complete] 18.445s PASS with clean guards/full closure.
+Production-exact frozen363+8d1 sync/async5000 PASS 2301.694/2204.450s, strict health 0,
+OOM 9→9; setup/helper/module source qualification is explicit. Old 150/210/300
+failures stay FAIL; the 00e 16:34 snapshot is not green. No latency-SLO/whole-cause claim.
+Latest hosted 19/four-heavy/NI014 remain open; NI020 blocked/15% earned/27% unearned.
