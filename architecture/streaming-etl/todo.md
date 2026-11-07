@@ -1566,3 +1566,17 @@ Single diagnostic500 PASS (580.713s) has no NI014/SLO credit or causal speedup c
 Dated ed3 retains 3 FAIL and four heavy jobs incomplete, none PASS; auto-cancelled or
 superseded is neverPASS. Fresh hosted19/four-heavy required; prior failures stay.
 NI014 OPEN/BLOCKED, NI020 blocked, 15% earned/27% unearned; ADR bodies/AC unchanged.
+
+
+## N2.2 Safe local DAG launch diagnostics — 2026-11-07
+
+[Compact component](evidence/native-epoch2-local-launch-diagnostics-2026-11-07/verification.json):
+local failures retain fixed phase/reason/allowed site without exception/wire secrets.
+Warning dedupe granularity is intentionally refined; catch/state/abort/cleanup,
+journal fences and deadlines stay. Author/personal full module: 21 PASS, personal 1.897s,
+source1596/import607 clean, observed PID closure/ECHILD; native pyright29 files0/0.
+Genuine child/pipe REFUSED control proves the production handler and same cleanup,
+not HTTP/PG business acceptance. The old2ee failure before business remains UNKNOWN; later
+FlowRunSHARE errors/timing do not establish its cause. Prior local5000 evidence stays
+source-qualified; no new native/SLO credit. Fresh hosted19/four-heavy required.
+NI014 OPEN/BLOCKED, NI020 blocked, 15% earned/27% unearned; ADR bodies/AC unchanged.

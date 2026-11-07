@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import secrets
 import select
@@ -14,8 +15,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
+from types import SimpleNamespace, TracebackType
+from typing import Any, cast
 from uuid import UUID, uuid5
 
 import httpx
@@ -52,6 +53,92 @@ from prefect.workers._stream_dag_launches import (
     DAGLaunchJournal,
     DAGLaunchJournalError,
 )
+
+_LOCAL_PROTOCOL_REASONS = {
+    "DAG private message was already delivered": ("PRIVATE_WRITE", "ALREADY_DELIVERED"),
+    "DAG private message delivery timed out": ("PRIVATE_WRITE", "DELIVERY_TIMEOUT"),
+    "DAG code preflight is oversized": ("CODE_PREFLIGHT", "OVERSIZED"),
+    "DAG code preflight readiness timed out": ("CODE_PREFLIGHT", "READINESS_TIMEOUT"),
+    "DAG child refused its code preflight": ("CODE_PREFLIGHT", "CHILD_REFUSED"),
+    "DAG PREPARE returned another exact launch": ("PREPARE", "LAUNCH_MISMATCH"),
+    "DAG RECORD returned another exact process": ("RECORD", "PROCESS_MISMATCH"),
+    "DAG bootstrap has another process identity": ("BOOTSTRAP", "PROCESS_MISMATCH"),
+    "DAG private bootstrap is oversized": ("BOOTSTRAP", "OVERSIZED"),
+    "DAG child refused its scoped bootstrap": ("BOOTSTRAP", "CHILD_REFUSED"),
+    "DAG bootstrap acknowledgement remains unknown": ("BOOTSTRAP", "ACK_UNKNOWN"),
+    "DAG startup has no verified private bootstrap": ("GO", "BOOTSTRAP_UNVERIFIED"),
+}
+
+
+def _local_failure_diagnostic(error: Exception) -> str:
+    """Return fixed tokens and one bounded trusted site, never exception text."""
+    phase, reason = "LOCAL_PROTOCOL", "UNCLASSIFIED_LOCAL_PROTOCOL"
+    kind = "StreamProtocolError"
+    if isinstance(error, OSError):
+        kind, phase = "OSError", "LOCAL_OS"
+        number = cast(object, OSError.__dict__["errno"].__get__(error))
+        reason = (
+            errno.errorcode.get(number, "OS_ERROR_UNKNOWN")
+            if type(number) is int and 0 < number < 4096
+            else "OS_ERROR_UNKNOWN"
+        )
+    elif isinstance(error, DAGLaunchJournalError):
+        kind, phase = "DAGLaunchJournalError", "LOCAL_JOURNAL"
+    else:
+        arguments = cast(
+            tuple[object, ...], BaseException.__dict__["args"].__get__(error)
+        )
+        if (
+            len(arguments) == 1
+            and type(arguments[0]) is str
+            and len(arguments[0]) <= 128
+        ):
+            phase, reason = _LOCAL_PROTOCOL_REASONS.get(arguments[0], (phase, reason))
+
+    worker_sites = {
+        "_write",
+        "allow_preflight",
+        "write_bootstrap",
+        "observe_bootstrap_ready",
+        "release",
+        "_check_item",
+        "_check_grant",
+        "_new_run",
+        "_drive",
+        "_advance_launch",
+        "_bootstrap",
+        "_observe_live",
+        "_close_attempt",
+        "_stop",
+    }
+    journal_sites = {
+        "__post_init__",
+        "_uuid",
+        "_positive",
+        "_load",
+        "_persist",
+        "_change",
+        "reconcile",
+        "bind",
+        "read",
+        "reserve_birth",
+        "record_process",
+    }
+    journal_globals = DAGLaunchJournal.__init__.__globals__
+    site = "LOCAL_SITE_UNKNOWN"
+    current = cast(
+        TracebackType | None, BaseException.__dict__["__traceback__"].__get__(error)
+    )
+    for _ in range(16):
+        if current is None:
+            break
+        frame, name = current.tb_frame, current.tb_frame.f_code.co_name
+        if frame.f_globals is globals() and name in worker_sites:
+            site = f"_stream_dag_subtasks.py:{name}:{current.tb_lineno}"
+        elif frame.f_globals is journal_globals and name in journal_sites:
+            site = f"_stream_dag_launches.py:{name}:{current.tb_lineno}"
+        current = current.tb_next
+    return f"{kind} phase={phase} reason={reason} local_site={site}"
 
 
 class DAGSubtaskStartUnknown(StreamProtocolError):
@@ -519,7 +606,7 @@ class NativeDAGSubtaskSupervisor:
                     for child in self._children(run):
                         await run_sync(child.close)
         except (OSError, StreamProtocolError, DAGLaunchJournalError) as error:
-            self._warn(identity, type(error).__name__)
+            self._warn(identity, _local_failure_diagnostic(error))
             run = self.runs.get(identity)
             if run is not None:
                 run.startup_failed = True

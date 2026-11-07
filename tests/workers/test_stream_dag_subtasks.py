@@ -6,6 +6,7 @@ claim about server activation, execution or transactional data correctness.
 
 import asyncio
 import copy
+import errno
 import hashlib
 import logging
 import os
@@ -28,10 +29,12 @@ from prefect.client.schemas import stream_dag_executions as d
 from prefect.client.schemas import stream_subtasks as s
 from prefect.client.schemas.objects import FlowRun
 from prefect.runner._starter_native import linux_process_identity
+from prefect.streams import StreamProtocolError
 from prefect.workers._stream_dag_launches import DAGLaunchJournal
 from prefect.workers._stream_dag_subtasks import (
     DAGSubtaskProcess,
     NativeDAGSubtaskSupervisor,
+    _local_failure_diagnostic,
 )
 from prefect.workers.process import ProcessJobConfiguration
 
@@ -358,6 +361,76 @@ class Wire:
         )
 
 
+class TestDAGLocalFailureDiagnostics(unittest.TestCase):
+    def test_timeout_and_refusal_have_distinct_fixed_codes(self):
+        timeout = _local_failure_diagnostic(
+            StreamProtocolError("DAG code preflight readiness timed out")
+        )
+        refused = _local_failure_diagnostic(
+            StreamProtocolError("DAG child refused its code preflight")
+        )
+        self.assertIn("phase=CODE_PREFLIGHT reason=READINESS_TIMEOUT", timeout)
+        self.assertIn("phase=CODE_PREFLIGHT reason=CHILD_REFUSED", refused)
+        self.assertNotEqual(timeout, refused)
+
+    def test_unknown_args_chain_and_paths_never_reach_diagnostic(self):
+        class UnprintableProtocolError(StreamProtocolError):
+            def __str__(self) -> str:
+                raise AssertionError("Exception text must never be formatted")
+
+        class Message(str):
+            pass
+
+        secret = '{"capability":"secret-sentinel","path":"/private/secret"}'
+        for value in (
+            secret,
+            {"wire": secret},
+            Message("DAG code preflight readiness timed out"),
+        ):
+            with self.subTest(kind=type(value).__name__):
+                try:
+                    try:
+                        raise ValueError(secret)
+                    except ValueError as cause:
+                        raise UnprintableProtocolError(value) from cause
+                except StreamProtocolError as error:
+                    result = _local_failure_diagnostic(error)
+                self.assertEqual(
+                    result,
+                    "StreamProtocolError phase=LOCAL_PROTOCOL "
+                    "reason=UNCLASSIFIED_LOCAL_PROTOCOL local_site=LOCAL_SITE_UNKNOWN",
+                )
+                self.assertNotIn("secret", result)
+
+    def test_os_errors_emit_only_known_errno_token(self):
+        error = OSError(errno.ENOSPC, "secret-sentinel", "/private/secret")
+        self.assertIn("reason=ENOSPC", _local_failure_diagnostic(error))
+        error.errno = "secret-sentinel"
+        result = _local_failure_diagnostic(error)
+        self.assertIn("reason=OS_ERROR_UNKNOWN", result)
+        self.assertNotIn("secret", result)
+
+    def test_same_site_reason_deduplicates_but_distinct_phase_is_retained(self):
+        supervisor = object.__new__(NativeDAGSubtaskSupervisor)
+        logger = logging.getLogger("prefect.tests.dag-safe-diagnostics")
+        supervisor.worker = SimpleNamespace(_logger=logger)
+        supervisor.warnings = set()
+        identity = uuid4()
+        with self.assertLogs(logger.name, level="WARNING") as captured:
+            for message in (
+                "DAG code preflight is oversized",
+                "DAG code preflight is oversized",
+                "DAG private bootstrap is oversized",
+            ):
+                supervisor._warn(
+                    identity, _local_failure_diagnostic(StreamProtocolError(message))
+                )
+        self.assertEqual(len(captured.output), 2)
+        self.assertIn("phase=CODE_PREFLIGHT", captured.output[0])
+        self.assertIn("phase=BOOTSTRAP", captured.output[1])
+        self.assertEqual(len(supervisor.warnings), 2)
+
+
 class TestDAGWorkerTransport(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="dag-worker-transport-")
@@ -404,6 +477,38 @@ class TestDAGWorkerTransport(unittest.IsolatedAsyncioTestCase):
         await self.supervisor.close()
         self.spawn.stop()
         self.temporary.cleanup()
+
+    async def test_real_preflight_refusal_logs_safe_site_and_preserves_cleanup(self):
+        self.stub.write_text(
+            STUB.replace("os.write(ready,b'R')", "os.write(ready,b'X')")
+        )
+        with self.assertLogs(self.worker._logger.name, level="WARNING") as captured:
+            await self.supervisor.poll()
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn("phase=CODE_PREFLIGHT reason=CHILD_REFUSED", captured.output[0])
+        self.assertIn(
+            "local_site=_stream_dag_subtasks.py:allow_preflight:", captured.output[0]
+        )
+        run = next(iter(self.supervisor.runs.values()))
+        assert run.launch is not None and run.launch.child is not None
+        child = run.launch.child
+        local = run.journal.read(run.launch.operation_id)
+        self.assertTrue(run.startup_failed)
+        self.assertTrue(local.birth_reserved)
+        self.assertEqual(local.child_process_id, child.process.pid)
+        self.assertGreater(local.process_start_ticks or 0, 0)
+        self.assertEqual(self.wire.item["phase"], "STOPPING")
+        self.assertIsNone(self.wire.item["current_grant"])
+        self.assertFalse(self.wire.item["assignment"]["physical_slot_released"])
+        self.assertFalse((self.directory / "transport-go").exists())
+        await self.supervisor.poll()
+        self.assertIsNotNone(child.process.returncode)
+        self.assertFalse(child.home.exists())
+        self.assertFalse(Path(f"/proc/{child.process.pid}").exists())
+        self.assertFalse(self.supervisor.runs)
+        self.assertTrue(self.wire.item["assignment"]["physical_slot_released"])
+        self.assertTrue(run.journal.read(run.launch.operation_id).spawn_fence_closed)
+        self.assertEqual(self.wire.item["launch_attempts"][0]["state"], "CLOSED")
 
     async def test_record_ack_precedes_import_and_unknown_reply_never_respawns(self):
         self.wire.unknown.add("record")
