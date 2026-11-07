@@ -1725,3 +1725,19 @@ Production-exact frozen363+8d1 sync/async5000 PASS 2301.694/2204.450s, strict he
 OOM 9→9; setup/helper/module source qualification is explicit. Old 150/210/300
 failures stay FAIL; the 00e 16:34 snapshot is not green. No latency-SLO/whole-cause claim.
 Latest hosted 19/four-heavy/NI014 remain open; NI020 blocked/15% earned/27% unearned.
+
+
+## N2.2 Initial Pending0 and recovery discovery contention — 2026-11-07
+
+[Compact component](../evidence/native-epoch2-initial-pending-discovery-2026-11-07/verification.json)
+binds 303f3a06+a902ab54: genuine signed initial Pending0 shares both graph prefixes
+only after persisted Pending identity/count checks; read-only discovery uses Worker
+SHARE with exclusive mutator default. Task/CAS/control/identity fences remain.
+Author real PG REDs retained; Pending GREEN 19/discovery 11, personal affected PG 98
+and qualified epoch2 Pending0 PASS (synthetic WAITPID, no OS-death claim).
+Native author sync500 (229.253s)/async unfinished200 (218.770s) PASS on exact candidate,
+original 750/840/900, unfinished200 replay only, clean guards/full release/OOM 9→9.
+Hosted 303 as-of 18:27:37.615 UTC retains 2 FAIL/1 component CANCELLED/3 native RUNNING;
+no whole-cause claim. P2 regression and latest-source 5000/hosted19 remain PENDING.
+Prior failures/source qualifications stay; NI014 OPEN/BLOCKED, NI020 blocked,
+15% earned/27% unearned; approved ADR bodies/AC and functional budgets unchanged.

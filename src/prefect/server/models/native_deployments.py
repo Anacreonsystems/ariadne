@@ -742,9 +742,14 @@ async def _worker(
     db: PrefectDBInterface,
     worker_id: UUID,
     work_pool_id: UUID,
+    *,
+    lock_mode: Literal["exclusive", "shared"] = "exclusive",
 ) -> orm_models.Worker:
     worker = await session.scalar(
-        sa.select(db.Worker).where(db.Worker.id == worker_id).with_for_update()
+        sa.select(db.Worker)
+        .where(db.Worker.id == worker_id)
+        .with_for_update(read=lock_mode == "shared")
+        .execution_options(populate_existing=True)
     )
     if (
         worker is None
@@ -771,7 +776,9 @@ async def recovery_candidates(
         raise NativeStreamError(
             "UNSUPPORTED_BACKEND", "Native replacements require PostgreSQL 17"
         )
-    await _worker(session, db, worker_id, work_pool_id)
+    # Discovery only reads bounded launch snapshots; SHARE coexists with DAG
+    # DATA identity locks while fencing worker status, pool changes and deletion.
+    await _worker(session, db, worker_id, work_pool_id, lock_mode="shared")
     stale_before = now("UTC") - LAUNCH_RENEWAL_STALE_AFTER
     rows = (
         await session.execute(

@@ -3,7 +3,15 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncGenerator, NamedTuple, NoReturn, Optional
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncGenerator,
+    Literal,
+    NamedTuple,
+    NoReturn,
+    Optional,
+)
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -35,7 +43,7 @@ from prefect.server.models.stream_subtask_authority import (
     require_subtask,
 )
 from prefect.server.schemas.core import TaskRun, TaskRunPolicy
-from prefect.server.schemas.states import TERMINAL_STATES, State
+from prefect.server.schemas.states import TERMINAL_STATES, State, StateType
 from prefect.server.schemas.stream_subtasks import (
     StreamSubtaskCredentials,
     StreamSubtaskEventResult,
@@ -80,28 +88,52 @@ _NATIVE_RESERVED_TASK_PAYLOAD_KEYS = frozenset(
 _NATIVE_RESERVED_STATE_PAYLOAD_KEYS = frozenset({"id", "timestamp"})
 
 
-def _is_canonical_dag_running_event(event: Event) -> bool:
+def _canonical_dag_start_event_type(
+    event: Event,
+) -> Literal["RUNNING", "PENDING"] | None:
     """Select a lock mode only; the signed event still needs full authorization."""
     state = event.payload.get("validated_state")
     task = event.payload.get("task_run")
     if (
-        event.event != "prefect.task-run.Running"
-        or not isinstance(state, dict)
-        or state.get("type") != "RUNNING"
-        or state.get("name") != "Running"
+        not isinstance(state, dict)
         or not isinstance(task, dict)
         or _NATIVE_RESERVED_STATE_PAYLOAD_KEYS.intersection(state)
         or _NATIVE_RESERVED_TASK_PAYLOAD_KEYS.intersection(task)
         or type(task.get("run_count")) is not int
-        or task["run_count"] < 1
     ):
-        return False
+        return None
+    kind: Literal["RUNNING", "PENDING"]
+    if (
+        event.event == "prefect.task-run.Running"
+        and state.get("type") == "RUNNING"
+        and state.get("name") == "Running"
+        and task["run_count"] >= 1
+    ):
+        kind = "RUNNING"
+    elif (
+        event.event == "prefect.task-run.Pending"
+        and state.get("type") == "PENDING"
+        and state.get("name") == "Pending"
+        and task["run_count"] == 0
+        and "initial_state" in event.payload
+        and event.payload["initial_state"] is None
+        and isinstance(event.payload.get("intended"), dict)
+        and "from" in event.payload["intended"]
+        and event.payload["intended"]["from"] is None
+        and event.payload["intended"].get("to") == "PENDING"
+        and event.follows is None
+    ):
+        # These unsigned fields are a lock hint only. After full authorization,
+        # the own TaskRun UPDATE must prove the exact persisted Pending0 state.
+        kind = "PENDING"
+    else:
+        return None
     try:
         # Reject malformed model payloads before selecting the shared prefix.
         task_run_from_event(event.receive())
     except (KeyError, TypeError, ValueError):
-        return False
-    return True
+        return None
+    return kind
 
 
 async def dispatch_stream_subtask_event(
@@ -111,8 +143,8 @@ async def dispatch_stream_subtask_event(
     event: Event,
     credentials: StreamSubtaskCredentials,
 ) -> StreamSubtaskEventResult:
-    """Share the DAG prefix for one canonical RUNNING event; fence other states."""
-    running_child: dag_lifecycle.DAGChildScope | None = None
+    """Share one canonical RUNNING or initial Pending0 prefix; fence other states."""
+    start_child: dag_lifecycle.DAGChildScope | None = None
     profile = await session.scalar(
         sa.select(db.StreamGraphRevision.profile)
         .join(
@@ -122,13 +154,13 @@ async def dispatch_stream_subtask_event(
         .where(db.StreamPhysicalSubtask.id == subtask_id)
     )
     if profile == "partitioned-dag-v1":
-        running = _is_canonical_dag_running_event(event)
+        start_type = _canonical_dag_start_event_type(event)
         child = await dag_lifecycle.lock_dag_child(
             session,
             db,
             credentials,
             subtask_id=subtask_id,
-            graph_update=not running,
+            graph_update=start_type is None,
             observe=True,
             ready=True,
             active=True,
@@ -138,8 +170,8 @@ async def dispatch_stream_subtask_event(
                 "SUBTASK_FENCED", "A retired DAG child cannot submit events"
             )
         subtask = child.subtask
-        if running:
-            running_child = child
+        if start_type is not None:
+            start_child = child
     else:
         subtask, _ = await require_subtask(
             session, db, credentials, subtask_id=subtask_id
@@ -149,7 +181,7 @@ async def dispatch_stream_subtask_event(
             "SUBTASK_SCOPE_DENIED", "Event TaskRun is outside the grant"
         )
     authorized, native_ids = await _authorized_stream_events(
-        session, db, [event.receive()], dag_running_child=running_child
+        session, db, [event.receive()], dag_start_child=start_child
     )
     if authorized:
         await record_bulk_task_run_events_in_session(
@@ -172,22 +204,26 @@ async def _authorized_stream_events(
     db: PrefectDBInterface,
     events: list[ReceivedEvent],
     *,
-    dag_running_child: dag_lifecycle.DAGChildScope | None = None,
+    dag_start_child: dag_lifecycle.DAGChildScope | None = None,
 ) -> tuple[list[ReceivedEvent], set[UUID]]:
     """Fence enrolled task events under the same locks as their upsert."""
-    shared_running = dag_running_child is not None
-    if dag_running_child is not None:
-        if len(events) != 1 or not _is_canonical_dag_running_event(events[0]):
+    shared_start = dag_start_child is not None
+    start_type = None
+    if dag_start_child is not None:
+        if len(events) != 1:
             return [], set()
-        dag_running_child.graph.validate(session)
+        start_type = _canonical_dag_start_event_type(events[0])
+        if start_type is None:
+            return [], set()
+        dag_start_child.graph.validate(session)
         flow_resource = events[0].resource_in_role.get("flow-run")
         if (
-            dag_running_child.graph.update
+            dag_start_child.graph.update
             or events[0].resource.prefect_object_id("prefect.task-run")
-            != dag_running_child.subtask.task_run_id
+            != dag_start_child.subtask.task_run_id
             or flow_resource is None
             or flow_resource.prefect_object_id("prefect.flow-run")
-            != dag_running_child.graph.flow.id
+            != dag_start_child.graph.flow.id
         ):
             return [], set()
 
@@ -241,7 +277,7 @@ async def _authorized_stream_events(
     )
     if not flow_ids:
         return events, set()
-    if dag_running_child is not None and flow_ids != {dag_running_child.graph.flow.id}:
+    if dag_start_child is not None and flow_ids != {dag_start_child.graph.flow.id}:
         return [], set()
 
     locator_query = (
@@ -253,12 +289,12 @@ async def _authorized_stream_events(
         .where(db.StreamGraphRevision.flow_run_id.in_(flow_ids))
         .order_by(db.StreamGraphRevision.id)
     )
-    if dag_running_child is not None:
+    if dag_start_child is not None:
         locator_query = locator_query.where(
-            db.StreamGraphRevision.id == dag_running_child.graph.graph.id
+            db.StreamGraphRevision.id == dag_start_child.graph.graph.id
         )
     graph_locators = (await session.execute(locator_query)).all()
-    if shared_running and (
+    if shared_start and (
         len(graph_locators) != 1 or graph_locators[0].profile != "partitioned-dag-v1"
     ):
         return [], set()
@@ -271,7 +307,7 @@ async def _authorized_stream_events(
         flow = await session.scalar(
             sa.select(db.FlowRun)
             .where(db.FlowRun.id == flow_id)
-            .with_for_update(read=shared_running or flow_id not in dag_flow_ids)
+            .with_for_update(read=shared_start or flow_id not in dag_flow_ids)
             .execution_options(populate_existing=True)
         )
         if flow is not None:
@@ -280,7 +316,7 @@ async def _authorized_stream_events(
         authority = await session.scalar(
             sa.select(db.StreamExecutionAuthority)
             .where(db.StreamExecutionAuthority.flow_run_id == flow_id)
-            .with_for_update(read=shared_running or flow_id not in dag_flow_ids)
+            .with_for_update(read=shared_start or flow_id not in dag_flow_ids)
             .execution_options(populate_existing=True)
         )
         if authority is not None:
@@ -293,7 +329,7 @@ async def _authorized_stream_events(
             sa.select(db.StreamGraphRevision)
             .where(db.StreamGraphRevision.id == locator.id)
             .with_for_update(
-                read=shared_running or locator.profile != "partitioned-dag-v1"
+                read=shared_start or locator.profile != "partitioned-dag-v1"
             )
             .execution_options(populate_existing=True)
         )
@@ -305,9 +341,9 @@ async def _authorized_stream_events(
         for row in physical_graphs.values()
         if row.profile == "partitioned-dag-v1"
     ]
-    # The private RUNNING proof already holds its exact Worker identity lock. Taking
+    # The private startup proof already holds its exact Worker identity lock. Taking
     # another, earlier Worker here would reverse admission's sorted lock order.
-    if dag_graph_ids and not shared_running:
+    if dag_graph_ids and not shared_start:
         assigned_workers = sa.select(db.StreamPhysicalSubtask.assigned_worker_id).where(
             db.StreamPhysicalSubtask.graph_revision_id.in_(dag_graph_ids),
             db.StreamPhysicalSubtask.assigned_worker_id.is_not(None),
@@ -486,7 +522,7 @@ async def _authorized_stream_events(
                             flow,
                             authority,
                             graph,
-                            not shared_running,
+                            not shared_start,
                         ),
                         physical,
                         grant,
@@ -722,6 +758,19 @@ async def _authorized_stream_events(
                 bytes.fromhex(current_public_key), witness, signature
             ):
                 raise ValueError("invalid execution event signature")
+            if start_type == "PENDING":
+                pending_task = locked_tasks.get(task_id)
+                if (
+                    pending_task is None
+                    or pending_task.run_count != 0
+                    or pending_task.state_type != StateType.PENDING
+                    or pending_task.state_name != "Pending"
+                    or pending_task.state_id != event.id
+                    or pending_task.state_timestamp != event.occurred
+                ):
+                    raise ValueError(
+                        "initial Pending event no longer matches its state"
+                    )
             candidates.setdefault(task_id, []).append((event, run_count, state_type))
         except (KeyError, TypeError, ValueError):
             decisions[id(event)] = False
