@@ -1703,3 +1703,13 @@ and OOM 9→9 do not execute this heartbeat patch. Current 363 hosted 15:45 UTC 
 heartbeat/continued-progress and accepted200 replacement-Flow-UPDATE traces;
 whole causes/hosted acceptance are not claimed. Prior failures remain;
 NI2-012…014 OPEN/BLOCKED, NI2-020 blocked, 15% earned/27% unearned; ADR criteria intact.
+
+
+## Native owned API startup bound — 2026-11-07
+
+[Setup-only component](../evidence/native-owned-api-startup-2026-11-07/verification.json):
+owned child startup completed 0.600s after its 20s guard; only native helper boot
+20→60 changes. Owned-health/death/FD/cleanup and business budgets remain.
+New-helper smoke PENDING; active volume source qualification is explicit.
+The separate DDD rebalance body timeout remains unresolved.
+No acceptance credit; NI014 blocked/NI020 blocked/15% earned/27% unearned.

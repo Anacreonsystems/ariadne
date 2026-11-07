@@ -1513,3 +1513,13 @@ Earlier 363 sync/async5000 PASS is source-distinct; new heartbeat 5000 pair is a
 not accepted. Hosted15:45UTC remains85 SUCCESS/2 FAIL/4 RUNNING/2 QUEUED/1 SKIP
 (native12/2/3/2), with two distinct retained traces and no whole-cause claim.
 NI2-012…014 OPEN/BLOCKED, NI2-020 blocked, 15% earned/27% unearned; prior failures stay.
+
+
+## Native owned API startup bound — 2026-11-07
+
+[Setup-only component](evidence/native-owned-api-startup-2026-11-07/verification.json):
+owned child startup completed 0.600s after its 20s guard; only native helper boot
+20→60 changes. Owned-health/death/FD/cleanup and business budgets remain.
+New-helper smoke PENDING; active volume source qualification is explicit.
+The separate DDD rebalance body timeout remains unresolved.
+No acceptance credit; NI014 blocked/NI020 blocked/15% earned/27% unearned.
