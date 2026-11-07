@@ -1641,3 +1641,25 @@ acceptance. Rawreceipts/ownedheaders/source/config/profiler copies excluded;
 prior history remains exact. NI2-012…014OPEN/BLOCKED/NI2-020blocked/15%earned/
 27unearned; approvedADR42–48 bodies/AC unchanged, conflict scan incomplete and
 grill-me/spec-first variants excluded.
+
+
+## N2.2 Worker renewal contention and bounded infrastructure corrections — 2026-11-07
+
+[Closed component](../evidence/native-epoch2-worker-renewal-2026-11-07/verification.json)
+binds `cd80536` plus patch `94b0408a`. PostgreSQL reproduces Worker SHARE/UPDATE
+contention; same-identity renewal now uses SHARE while registration/rotation retain
+exclusive fencing. Author RED1/GREEN10 and personal PG10 preserve identity,
+occupancy and expiry. Test API startup 60s and named-emitter logging have personal
+29 PASS/3 legitimate skips, with the raw wrapper exit1 scope correction explicit.
+
+Frozen native author async normal500 265.73s, sync accepted200 220.41s/start201 and
+personal async incomplete200 266.42s/start200 PASS. Only unfinished input 200 replays;
+healthy C branches each execute 500 once. Original 750/840/900 budgets, health/
+release, 1599-file guards, imports, PID/ECHILD and retained-DB closure pass. Normal
+intermediate C1 RUNNING is distinct from verified terminal completion; the earlier
+metadata-drift baseline remains diagnostic only.
+
+Old cd80536 CI: 82 SUCCESS/11 FAIL/1 SKIP; native 10 SUCCESS/9 FAIL stays unchanged.
+No hosted/whole-timeout/performance credit; current local 5000/full 19/four-heavy gates
+remain open. NI2-012…014 OPEN/BLOCKED, NI2-020 blocked, 15% earned/27% unearned.
+Approved ADR42–48 bodies/criteria and prior failures remain unchanged.

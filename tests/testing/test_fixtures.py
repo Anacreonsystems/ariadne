@@ -413,7 +413,7 @@ class TestHostedApiReadinessDiagnostic:
                 await gen.__anext__()
             message = str(refused.value)
             details = json.loads("{" + message.partition("{")[2])
-            assert deadlines == [20]
+            assert deadlines == [60]
             assert details["owned_pid"] == 12345 and details["returncode"] is None
             assert details["attempts"] == calls > 0
             assert details["cancel_scope_cancel_called"] is True
@@ -494,8 +494,8 @@ class TestHostedApiReadinessDiagnostic:
                 await gen.__anext__()
             message = str(refused.value)
             details = json.loads("{" + message.partition("{")[2])
-            assert details["elapsed_seconds"] >= 20
-            assert time.monotonic() - started >= 20
+            assert 60 <= details["elapsed_seconds"] < 65
+            assert 60 <= time.monotonic() - started < 70
             assert len(children) == 1 and details["owned_pid"] == children[0].pid
             assert details["returncode"] is None and children[0].returncode is not None
             assert details["last_probe_outcome"] == "RESPONSE"

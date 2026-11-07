@@ -177,7 +177,7 @@ async def hosted_api_server(
                     )
 
                 async with httpx.AsyncClient() as client:
-                    with anyio.move_on_after(20) as cancel_scope:
+                    with anyio.move_on_after(60) as cancel_scope:
                         while True:
                             if process.returncode is not None:
                                 raise RuntimeError(

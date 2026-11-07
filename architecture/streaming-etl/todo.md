@@ -1472,3 +1472,18 @@ withoutreplay/incomplete200replay remain distinct. Eight latch controls and
 directselection9PASS/actionlint0 are qualified, notCIgreen. OldCI250.39Timeout/
 underlyingUNKNOWN retained; [limits](epochs/epoch-02-native-streaming-completion.md#n22-single-leaf-cursor-latch-and-scheduling-cap--2026-11-06).
 No CPU/productcause/full19/fourheavy credit; NI014blocked/15%earned/27unearned.
+
+
+## N2.2 Worker renewal contention and bounded infrastructure corrections — 2026-11-07
+
+[Closed component](evidence/native-epoch2-worker-renewal-2026-11-07/verification.json):
+author RED1/GREEN10 and personal PG10 verify compatible renewal and retained
+identity/occupancy/rotation fences; personal infrastructure 29 PASS/3 legitimate
+skips retains the explicit wrapper scope correction. Frozen native async normal500
+265.73s, sync accepted200 220.41s/start201 and personal async incomplete200 266.42s/
+start200 PASS with original budgets/health/release/source/import/PID/DB closure.
+[Epoch limits](epochs/epoch-02-native-streaming-completion.md#n22-worker-renewal-contention-and-bounded-infrastructure-corrections--2026-11-07)
+preserve normal intermediate C1 RUNNING and the diagnostic metadata-drift baseline.
+Old cd80536 CI: 82 SUCCESS/11 FAIL/1 SKIP; native 10 SUCCESS/9 FAIL remains; current
+local 5000/full 19/four-heavy gates open, NI2-012…014 OPEN/BLOCKED, NI2-020 blocked,
+15% earned/27% unearned. No hosted/whole-timeout/performance or ADR acceptance credit.
