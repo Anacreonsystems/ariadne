@@ -80,6 +80,30 @@ _NATIVE_RESERVED_TASK_PAYLOAD_KEYS = frozenset(
 _NATIVE_RESERVED_STATE_PAYLOAD_KEYS = frozenset({"id", "timestamp"})
 
 
+def _is_canonical_dag_running_event(event: Event) -> bool:
+    """Select a lock mode only; the signed event still needs full authorization."""
+    state = event.payload.get("validated_state")
+    task = event.payload.get("task_run")
+    if (
+        event.event != "prefect.task-run.Running"
+        or not isinstance(state, dict)
+        or state.get("type") != "RUNNING"
+        or state.get("name") != "Running"
+        or not isinstance(task, dict)
+        or _NATIVE_RESERVED_STATE_PAYLOAD_KEYS.intersection(state)
+        or _NATIVE_RESERVED_TASK_PAYLOAD_KEYS.intersection(task)
+        or type(task.get("run_count")) is not int
+        or task["run_count"] < 1
+    ):
+        return False
+    try:
+        # Reject malformed model payloads before selecting the shared prefix.
+        task_run_from_event(event.receive())
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
 async def dispatch_stream_subtask_event(
     session: AsyncSession,
     db: PrefectDBInterface,
@@ -87,7 +111,8 @@ async def dispatch_stream_subtask_event(
     event: Event,
     credentials: StreamSubtaskCredentials,
 ) -> StreamSubtaskEventResult:
-    """Dispatch before locks: DAG takes Graph UPDATE, fixed-P2 keeps its prefix."""
+    """Share the DAG prefix for one canonical RUNNING event; fence other states."""
+    running_child: dag_lifecycle.DAGChildScope | None = None
     profile = await session.scalar(
         sa.select(db.StreamGraphRevision.profile)
         .join(
@@ -97,12 +122,13 @@ async def dispatch_stream_subtask_event(
         .where(db.StreamPhysicalSubtask.id == subtask_id)
     )
     if profile == "partitioned-dag-v1":
+        running = _is_canonical_dag_running_event(event)
         child = await dag_lifecycle.lock_dag_child(
             session,
             db,
             credentials,
             subtask_id=subtask_id,
-            graph_update=True,
+            graph_update=not running,
             observe=True,
             ready=True,
             active=True,
@@ -112,6 +138,8 @@ async def dispatch_stream_subtask_event(
                 "SUBTASK_FENCED", "A retired DAG child cannot submit events"
             )
         subtask = child.subtask
+        if running:
+            running_child = child
     else:
         subtask, _ = await require_subtask(
             session, db, credentials, subtask_id=subtask_id
@@ -121,7 +149,7 @@ async def dispatch_stream_subtask_event(
             "SUBTASK_SCOPE_DENIED", "Event TaskRun is outside the grant"
         )
     authorized, native_ids = await _authorized_stream_events(
-        session, db, [event.receive()]
+        session, db, [event.receive()], dag_running_child=running_child
     )
     if authorized:
         await record_bulk_task_run_events_in_session(
@@ -143,8 +171,25 @@ async def _authorized_stream_events(
     session: AsyncSession,
     db: PrefectDBInterface,
     events: list[ReceivedEvent],
+    *,
+    dag_running_child: dag_lifecycle.DAGChildScope | None = None,
 ) -> tuple[list[ReceivedEvent], set[UUID]]:
     """Fence enrolled task events under the same locks as their upsert."""
+    shared_running = dag_running_child is not None
+    if dag_running_child is not None:
+        if len(events) != 1 or not _is_canonical_dag_running_event(events[0]):
+            return [], set()
+        dag_running_child.graph.validate(session)
+        flow_resource = events[0].resource_in_role.get("flow-run")
+        if (
+            dag_running_child.graph.update
+            or events[0].resource.prefect_object_id("prefect.task-run")
+            != dag_running_child.subtask.task_run_id
+            or flow_resource is None
+            or flow_resource.prefect_object_id("prefect.flow-run")
+            != dag_running_child.graph.flow.id
+        ):
+            return [], set()
 
     event_scope: list[tuple[ReceivedEvent, UUID | None, UUID]] = []
     flow_ids: set[UUID] = set()
@@ -196,18 +241,27 @@ async def _authorized_stream_events(
     )
     if not flow_ids:
         return events, set()
+    if dag_running_child is not None and flow_ids != {dag_running_child.graph.flow.id}:
+        return [], set()
 
-    graph_locators = (
-        await session.execute(
-            sa.select(
-                db.StreamGraphRevision.id,
-                db.StreamGraphRevision.flow_run_id,
-                db.StreamGraphRevision.profile,
-            )
-            .where(db.StreamGraphRevision.flow_run_id.in_(flow_ids))
-            .order_by(db.StreamGraphRevision.id)
+    locator_query = (
+        sa.select(
+            db.StreamGraphRevision.id,
+            db.StreamGraphRevision.flow_run_id,
+            db.StreamGraphRevision.profile,
         )
-    ).all()
+        .where(db.StreamGraphRevision.flow_run_id.in_(flow_ids))
+        .order_by(db.StreamGraphRevision.id)
+    )
+    if dag_running_child is not None:
+        locator_query = locator_query.where(
+            db.StreamGraphRevision.id == dag_running_child.graph.graph.id
+        )
+    graph_locators = (await session.execute(locator_query)).all()
+    if shared_running and (
+        len(graph_locators) != 1 or graph_locators[0].profile != "partitioned-dag-v1"
+    ):
+        return [], set()
     dag_flow_ids = {
         row.flow_run_id for row in graph_locators if row.profile == "partitioned-dag-v1"
     }
@@ -217,7 +271,7 @@ async def _authorized_stream_events(
         flow = await session.scalar(
             sa.select(db.FlowRun)
             .where(db.FlowRun.id == flow_id)
-            .with_for_update(read=flow_id not in dag_flow_ids)
+            .with_for_update(read=shared_running or flow_id not in dag_flow_ids)
             .execution_options(populate_existing=True)
         )
         if flow is not None:
@@ -226,7 +280,7 @@ async def _authorized_stream_events(
         authority = await session.scalar(
             sa.select(db.StreamExecutionAuthority)
             .where(db.StreamExecutionAuthority.flow_run_id == flow_id)
-            .with_for_update(read=flow_id not in dag_flow_ids)
+            .with_for_update(read=shared_running or flow_id not in dag_flow_ids)
             .execution_options(populate_existing=True)
         )
         if authority is not None:
@@ -238,7 +292,9 @@ async def _authorized_stream_events(
         graph = await session.scalar(
             sa.select(db.StreamGraphRevision)
             .where(db.StreamGraphRevision.id == locator.id)
-            .with_for_update(read=locator.profile != "partitioned-dag-v1")
+            .with_for_update(
+                read=shared_running or locator.profile != "partitioned-dag-v1"
+            )
             .execution_options(populate_existing=True)
         )
         if graph is not None:
@@ -249,7 +305,9 @@ async def _authorized_stream_events(
         for row in physical_graphs.values()
         if row.profile == "partitioned-dag-v1"
     ]
-    if dag_graph_ids:
+    # The private RUNNING proof already holds its exact Worker SHARE. Taking
+    # another, earlier Worker here would reverse admission's sorted lock order.
+    if dag_graph_ids and not shared_running:
         assigned_workers = sa.select(db.StreamPhysicalSubtask.assigned_worker_id).where(
             db.StreamPhysicalSubtask.graph_revision_id.in_(dag_graph_ids),
             db.StreamPhysicalSubtask.assigned_worker_id.is_not(None),
@@ -428,7 +486,7 @@ async def _authorized_stream_events(
                             flow,
                             authority,
                             graph,
-                            True,
+                            not shared_running,
                         ),
                         physical,
                         grant,

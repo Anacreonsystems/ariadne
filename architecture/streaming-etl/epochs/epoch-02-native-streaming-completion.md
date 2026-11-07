@@ -1663,3 +1663,26 @@ Old cd80536 CI: 82 SUCCESS/11 FAIL/1 SKIP; native 10 SUCCESS/9 FAIL stays unchan
 No hosted/whole-timeout/performance credit; current local 5000/full 19/four-heavy gates
 remain open. NI2-012…014 OPEN/BLOCKED, NI2-020 blocked, 15% earned/27% unearned.
 Approved ADR42–48 bodies/criteria and prior failures remain unchanged.
+
+
+## N2.2 Signed RUNNING contention and frozen recovery proof — 2026-11-07
+
+[Component proof](../evidence/native-epoch2-running-event-2026-11-07/verification.json)
+binds `232a855` plus `b9d387d3`. The retained hosted C0 event timed out on
+FlowRun UPDATE before body entry; six births closed before epoch 7. Only canonical
+signed singleton RUNNING now shares both global prefixes; TaskRun UPDATE, CAS,
+fences and all terminal/default exclusive paths remain. Author PG RED/GREEN,
+personal existing PG scope: 63 PASS and actual SQLite control: 1 PASS verify this;
+the unfiltered wrong-backend 45 PASS/1 FAIL remains retained.
+
+Frozen native author sync/async normal 500 and personal sync accepted200/async
+incomplete200 PASS: JUnit cases 241.132/254.083/232.784/253.370s. Accepted input resumes 201;
+only unfinished 200 replays; C branches each run 500 once. Original 750/840/900,
+health/release, 1599-file/import guards and PID/ECHILD/retained-DB closure pass.
+Old 232 sync/async 5000 also PASS after correcting the owned PG stand 512MiB→2GiB,
+with zero new OOM kills; those passes do not execute this RUNNING change. Initial
+OOM-affected FAIL/interruption remain retained. Current 232 snapshot 14:38:51 UTC has 83 SUCCESS/6 FAIL/3 RUNNING/1 QUEUED/1 SKIP
+(native 9/6/3/1); all six failures and old cd80536 eleven remain. Only the first
+three current failures were inspected; no cause is assigned to the other three.
+Full19/four-heavy gates open.
+NI2-012…014 OPEN/BLOCKED, NI2-020 blocked, 15% earned/27% unearned; ADR bodies intact.

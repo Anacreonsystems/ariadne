@@ -1205,3 +1205,18 @@ preserve normal intermediate C1 RUNNING and the diagnostic metadata-drift baseli
 Old cd80536 CI: 82 SUCCESS/11 FAIL/1 SKIP; native 10 SUCCESS/9 FAIL remains; current
 local 5000/full 19/four-heavy gates open, NI2-012…014 OPEN/BLOCKED, NI2-020 blocked,
 15% earned/27% unearned. No hosted/whole-timeout/performance or ADR acceptance credit.
+
+
+## N2.2 Signed RUNNING contention and frozen recovery proof — 2026-11-07
+
+[Component proof](evidence/native-epoch2-running-event-2026-11-07/verification.json):
+canonical signed RUNNING uses compatible global locks while TaskRun/CAS/fences
+and terminal/default exclusivity remain. Personal PG: 63 PASS; frozen native author
+sync/async normal 500 and personal accepted 201/incomplete 200 recovery all PASS,
+with original budgets/health/release/source/import/PID/DB closure. Historical 232
+sync/async 5000 PASS after owned PG 2GiB correction are separate from this change;
+OOM-affected attempts, wrong-backend failure and old eleven failures remain.
+Current 14:38:51 UTC hosted snapshot: 83 SUCCESS/6 FAIL/3 RUNNING/1 QUEUED/1 SKIP
+(native 9/6/3/1) retains all six failures without assigning uninspected causes.
+Full19/four-heavy gates open; NI2-012…014
+OPEN/BLOCKED, NI2-020 blocked, 15% earned/27% unearned; ADR criteria unchanged.

@@ -37,6 +37,7 @@ from prefect.server.schemas import stream_routes as routed
 from prefect.server.schemas import stream_subtasks as physical
 from prefect.server.schemas.native_deployments import NativeStreamProcessDeathWitness
 from prefect.server.schemas.streams import StreamExecutionCredentials
+from prefect.server.services import task_run_recorder as recorder
 from prefect.server.services.task_run_recorder import dispatch_stream_subtask_event
 from prefect.types._datetime import now
 from tests.server.api.test_native_deployments import _declaration, _enrollment_body
@@ -2010,3 +2011,337 @@ async def test_lifecycle_sqlite_refuses_before_locator_or_write(
             )
             == before
         )
+
+
+async def test_running_event_overlaps_peer_data_prefix_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+):
+    _, _, children = await ready_deployed_region(db, session, execution_api, deployment)
+    peer, child = children[:2]
+    async with db.session_context(begin_transaction=True) as holder:
+        # Hold the actual DATA authorization prefix and the peer's own TaskRun.
+        # A different child's initial RUNNING event must not wait for this turn.
+        await m.lock_dag_child(holder, db, peer.credentials, ready=True, active=True)
+        await holder.execute(
+            sa.select(db.TaskRun.id)
+            .where(db.TaskRun.id == peer.bootstrap.task_run.id)
+            .with_for_update()
+        )
+
+        async def start_child() -> physical.StreamSubtaskEventResult:
+            async with db.session_context(begin_transaction=True) as transaction:
+                return await dispatch_stream_subtask_event(
+                    transaction,
+                    db,
+                    child.bootstrap.assignment.id,
+                    signed_child_event(child, "RUNNING"),
+                    child.credentials,
+                )
+
+        result = await asyncio.wait_for(start_child(), 5)
+        assert result.accepted and result.state_type == states.StateType.RUNNING
+        assert result.run_count == 1
+
+
+async def _dispatch_event_with_pid(
+    db: PrefectDBInterface,
+    child: ReadyChild,
+    event: Event,
+    started: asyncio.Future[int],
+) -> physical.StreamSubtaskEventResult:
+    async with db.session_context(begin_transaction=True) as transaction:
+        pid = await transaction.scalar(sa.text("SELECT pg_backend_pid()"))
+        assert isinstance(pid, int)
+        started.set_result(pid)
+        return await dispatch_stream_subtask_event(
+            transaction, db, child.bootstrap.assignment.id, event, child.credentials
+        )
+
+
+async def _wait_for_signed_event_lock(
+    db: PrefectDBInterface,
+    waiter: int,
+    holder: int,
+    table: str,
+    pending: asyncio.Task,
+) -> None:
+    async with db.session_context() as observer:
+        async with asyncio.timeout(10):
+            while True:
+                await observer.execute(sa.text("SELECT pg_stat_clear_snapshot()"))
+                row = (
+                    await observer.execute(
+                        sa.text(
+                            "SELECT query, wait_event_type, pg_blocking_pids(pid) AS blockers "
+                            "FROM pg_stat_activity WHERE pid=:pid"
+                        ),
+                        {"pid": waiter},
+                    )
+                ).one()
+                if row.wait_event_type == "Lock" and holder in row.blockers:
+                    assert "FROM " + table in row.query and "FOR UPDATE" in row.query
+                    return
+                if pending.done():
+                    await pending
+                    pytest.fail("Signed event bypassed the required exclusive lock")
+                await asyncio.sleep(0.01)
+
+
+async def test_running_event_keeps_own_taskrun_update_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+):
+    _, _, children = await ready_deployed_region(db, session, execution_api, deployment)
+    child = children[0]
+    started = asyncio.get_running_loop().create_future()
+    pending = None
+    try:
+        async with db.session_context(begin_transaction=True) as holder:
+            holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+            task = await holder.scalar(
+                sa.select(db.TaskRun)
+                .where(db.TaskRun.id == child.bootstrap.task_run.id)
+                .with_for_update()
+            )
+            before = task.state_type, task.run_count, task.state_id
+            pending = asyncio.create_task(
+                _dispatch_event_with_pid(
+                    db, child, signed_child_event(child, "RUNNING"), started
+                )
+            )
+            await _wait_for_signed_event_lock(
+                db, await asyncio.wait_for(started, 5), holder_pid, "task_run", pending
+            )
+            await holder.refresh(task)
+            assert (task.state_type, task.run_count, task.state_id) == before
+        result = await asyncio.wait_for(pending, 10)
+        assert result.accepted and result.state_type == states.StateType.RUNNING
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
+async def test_running_event_does_not_lock_an_earlier_other_worker_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+):
+    _, _, children = await ready_deployed_region(db, session, execution_api, deployment)
+    early, late = sorted({child.worker_id for child in children})
+    child = next(child for child in children if child.worker_id == late)
+    async with db.session_context(begin_transaction=True) as holder:
+        await holder.execute(
+            sa.select(db.Worker.id).where(db.Worker.id == early).with_for_update()
+        )
+        started = asyncio.get_running_loop().create_future()
+        result = await asyncio.wait_for(
+            _dispatch_event_with_pid(
+                db, child, signed_child_event(child, "RUNNING"), started
+            ),
+            5,
+        )
+        assert result.accepted and result.state_type == states.StateType.RUNNING
+
+
+@pytest.mark.parametrize("state", ["PENDING", "COMPLETED", "FAILED"])
+async def test_nonrunning_event_keeps_flow_exclusive_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    state: str,
+):
+    _, _, children = await ready_deployed_region(db, session, execution_api, deployment)
+    peer, child = children[:2]
+    started = asyncio.get_running_loop().create_future()
+    pending = None
+    try:
+        async with db.session_context(begin_transaction=True) as holder:
+            holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+            await m.lock_dag_child(
+                holder, db, peer.credentials, ready=True, active=True
+            )
+            pending = asyncio.create_task(
+                _dispatch_event_with_pid(
+                    db,
+                    child,
+                    signed_child_event(child, state, retriable=False),
+                    started,
+                )
+            )
+            await _wait_for_signed_event_lock(
+                db, await asyncio.wait_for(started, 5), holder_pid, "flow_run", pending
+            )
+        await asyncio.wait_for(pending, 10)
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
+async def test_running_event_default_generic_batch_keeps_flow_exclusive_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+):
+    _, _, children = await ready_deployed_region(db, session, execution_api, deployment)
+    peer, child = children[:2]
+    started = asyncio.get_running_loop().create_future()
+
+    async def authorize_default():
+        async with db.session_context(begin_transaction=True) as transaction:
+            pid = await transaction.scalar(sa.text("SELECT pg_backend_pid()"))
+            assert isinstance(pid, int)
+            started.set_result(pid)
+            return await recorder._authorized_stream_events(
+                transaction, db, [signed_child_event(child, "RUNNING").receive()]
+            )
+
+    pending = None
+    try:
+        async with db.session_context(begin_transaction=True) as holder:
+            holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+            await m.lock_dag_child(
+                holder, db, peer.credentials, ready=True, active=True
+            )
+            pending = asyncio.create_task(authorize_default())
+            await _wait_for_signed_event_lock(
+                db, await asyncio.wait_for(started, 5), holder_pid, "flow_run", pending
+            )
+        authorized, native = await asyncio.wait_for(pending, 10)
+        assert len(authorized) == 1 and native == {child.bootstrap.task_run.id}
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    ["pending", "terminal", "malformed", "mixed", "wrong-name", "reserved-state"],
+)
+async def test_running_event_private_scope_rejects_noncanonical_batches_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    invalid: str,
+):
+    _, _, children = await ready_deployed_region(db, session, execution_api, deployment)
+    child = children[0]
+    event = signed_child_event(child, "RUNNING")
+    events = [event.receive()]
+    if invalid in {"pending", "terminal"}:
+        events = [
+            signed_child_event(
+                child, "PENDING" if invalid == "pending" else "COMPLETED"
+            ).receive()
+        ]
+    elif invalid == "mixed":
+        events.append(signed_child_event(children[1], "COMPLETED").receive())
+    elif invalid == "wrong-name":
+        events = [
+            event.model_copy(update={"event": "prefect.task-run.Completed"}).receive()
+        ]
+    else:
+        payload = {**event.payload}
+        payload["validated_state"] = (
+            []
+            if invalid == "malformed"
+            else {**payload["validated_state"], "id": str(uuid4())}
+        )
+        events = [event.model_copy(update={"payload": payload}).receive()]
+    async with db.session_context(begin_transaction=True) as transaction:
+        child_scope = await m.lock_dag_child(
+            transaction, db, child.credentials, ready=True, active=True
+        )
+        assert not child_scope.graph.update
+        before = await transaction.get(db.TaskRun, child.bootstrap.task_run.id)
+        state_before = before.state_type, before.run_count, before.state_id
+        assert await recorder._authorized_stream_events(
+            transaction, db, events, dag_running_child=child_scope
+        ) == ([], set())
+        await transaction.refresh(before)
+        assert (before.state_type, before.run_count, before.state_id) == state_before
+
+
+@pytest.mark.parametrize("tamper", ["signature", "generation", "payload", "scope"])
+async def test_running_event_shared_scope_keeps_signed_fences_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+    tamper: str,
+):
+    _, _, children = await ready_deployed_region(db, session, execution_api, deployment)
+    child = children[0]
+    event = signed_child_event(child, "RUNNING")
+    resource = dict(event.resource)
+    payload = {**event.payload}
+    if tamper == "signature":
+        resource["prefect.stream-event-signature"] = "invalid-signature"
+    elif tamper == "generation":
+        resource["prefect.stream-physical-epoch"] = "2"
+    elif tamper == "scope":
+        resource["prefect.stream-graph-revision"] = str(uuid4())
+    else:
+        payload["task_run"] = {**payload["task_run"], "run_count": 2}
+    event = event.model_copy(
+        update={"resource": type(event.resource)(resource), "payload": payload}
+    )
+    async with db.session_context(begin_transaction=True) as transaction:
+        task = await transaction.get(db.TaskRun, child.bootstrap.task_run.id)
+        before = task.state_type, task.run_count, task.state_id
+        result = await dispatch_stream_subtask_event(
+            transaction, db, child.bootstrap.assignment.id, event, child.credentials
+        )
+        assert not result.accepted
+        await transaction.refresh(task)
+        assert (task.state_type, task.run_count, task.state_id) == before
+
+
+async def test_running_event_shared_scope_still_refuses_cancelled_graph_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+):
+    plan, credentials, children = await ready_deployed_region(
+        db, session, execution_api, deployment
+    )
+    child = children[0]
+    async with db.session_context(begin_transaction=True) as transaction:
+        await m.cancel_stream_dag(
+            transaction,
+            db,
+            plan.id,
+            s.StreamDAGCancelRequest.model_validate(
+                parent_body(plan.id, "cancel", plan.graph_digest)
+            ),
+            credentials,
+        )
+    async with db.session_context(begin_transaction=True) as transaction:
+        try:
+            result = await dispatch_stream_subtask_event(
+                transaction,
+                db,
+                child.bootstrap.assignment.id,
+                signed_child_event(child, "RUNNING"),
+                child.credentials,
+            )
+        except NativeStreamError as error:
+            assert error.code in {
+                "CANCEL_REQUESTED",
+                "ACTIVATION_NOT_READY",
+                "SUBTASK_FENCED",
+            }
+        else:
+            assert not result.accepted
