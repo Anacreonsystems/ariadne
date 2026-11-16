@@ -1,0 +1,29 @@
+from pathlib import Path
+import collections,datetime,hashlib,json,re,subprocess,time
+BASE=Path('/tmp/native-ni012-restored-principal-2026-11-05/source-835b8c21c83e')
+ansi=re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]');http=re.compile(r'HTTP/\d(?:\.\d)?["\s]+([1-5]\d\d)\b',re.I)
+rows=[]
+for t in sorted(BASE.glob('run-*')):
+ files=[]
+ for p in sorted(t.rglob('*.log')):
+  raw=p.read_bytes();text=ansi.sub('',raw.decode(errors='replace'));normalized=' '.join(text.split())
+  statuses=collections.Counter(http.findall(text));discovery=collections.Counter()
+  for line in text.splitlines():
+   if '/streams/v1/deployments/replacements/candidates' in line:discovery.update(http.findall(line))
+  files.append({'path':str(p.relative_to(t)),'captured_prefix_bytes':len(raw),'captured_prefix_sha256':hashlib.sha256(raw).hexdigest(),'http_statuses':dict(sorted(statuses.items())),'http_5xx_lines':sum(n for code,n in statuses.items() if code.startswith('5')),'recovery_discovery_statuses':dict(sorted(discovery.items())),'recovery_deferred_warning_messages':normalized.count('Native recovery discovery is temporarily unavailable'),'recovery_run_exception_messages':normalized.count('Native recovery could not complete for flow run'),'traceback_headers':text.count('Traceback (most recent call last)'),'exception_group_traceback_headers':text.count('Exception Group Traceback'),'timeout_error_mentions':text.count('TimeoutError'),'deadlock_detected_mentions':text.lower().count('deadlock detected'),'error_level_lines':len(re.findall(r'^.*\bERROR\b.*$',text,re.M))})
+ p=t/'db-observations.jsonl';last=None
+ if p.exists():
+  with p.open('rb') as f:f.seek(max(0,p.stat().st_size-131072));raw=f.read()
+  for line in raw.splitlines()[-4:]:
+   try:last=json.loads(line)
+   except (ValueError,UnicodeDecodeError):pass
+ tasks=[]
+ if last:
+  tasks=[{k:x[k] for k in ['operator_uid','subtask_index','task_run_id','run_count','physical_epoch','state_type']} for x in last['snapshot']['subtasks']]
+ rows.append({'trial':t.name,'files':files,'task_run_counts':tasks,'qualification':'Counts per log prefix are not deduplicated incident counts; raw private contents never printed. Logs may keep growing after this snapshot.'})
+r={'schema':'ariadne-native-log-health-observation-v1','utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'head':subprocess.check_output(['git','rev-parse','HEAD'],cwd='/workspace/ariadne',text=True).strip(),'lease_sha256':hashlib.sha256((BASE/'lease.json').read_bytes()).hexdigest(),'cases':rows,'scope':'Actual own API/worker logs and read-only task metadata; verification observation, not a final gate. No source/product/timeout mutations.'}
+p=BASE/('log-health-'+str(time.monotonic_ns())+'.json');p.write_text(json.dumps(r,indent=2,sort_keys=True)+'\n');p.chmod(0o600)
+summary=[]
+for row in rows:
+ summary.append({'trial':row['trial'],'logs':len(row['files']),'http5xx':sum(x['http_5xx_lines'] for x in row['files']),'worker_deferred_5xx':sum(x['recovery_deferred_warning_messages'] for x in row['files']),'recovery_exception_messages':sum(x['recovery_run_exception_messages'] for x in row['files']),'tracebacks':sum(x['traceback_headers']+x['exception_group_traceback_headers'] for x in row['files']),'timeouts':sum(x['timeout_error_mentions'] for x in row['files']),'deadlocks':sum(x['deadlock_detected_mentions'] for x in row['files']),'error_lines':sum(x['error_level_lines'] for x in row['files']),'task_run_counts':row['task_run_counts']})
+print(json.dumps({'receipt':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'summary':summary},sort_keys=True))

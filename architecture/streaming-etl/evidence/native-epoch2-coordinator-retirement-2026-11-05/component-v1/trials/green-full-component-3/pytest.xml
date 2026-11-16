@@ -1,0 +1,394 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="31" time="182.879" timestamp="2026-11-05T20:21:02.084019+00:00" hostname="f8abb611283c"><testcase classname="tests.server.models.test_stream_dag_executions" name="test_final_parent_release_retires_only_dag_coordinator_postgres[COMPLETED]" time="13.932" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_final_parent_release_retires_only_dag_coordinator_postgres[FAILED]" time="7.019" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_final_parent_release_retires_only_dag_coordinator_postgres[CANCELLED]" time="6.772" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[missing-finalize]" time="6.825" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[terminal-digest]" time="6.632" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[terminal-owner]" time="7.057" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[terminal-material-owner]" time="9.034" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[terminal-material-type]" time="10.286" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[terminal-control-binding]" time="6.680" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[prepared-generation]" time="6.200"><failure message="sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) &lt;class 'asyncpg.exceptions.NotNullViolationError'&gt;: null value in column &quot;prepared_generation&quot; of relation &quot;stream_execution_authority&quot; violates not-null constraint&#10;DETAIL:  Failing row contains (82879874-4cfd-4c3d-9488-43bbff1ff95f, 1, null, ee6293ce-1a24-4153-aad6-f92848fe0ccf, e4067a7f92bc08b8626cdd7f468616a41de96f8152d735004a1f2a6bb6a206e2, 5574a72465178168e0cb9854faf078114600a3844c22190600371aafc06b4d2e, b8ef5bc6ddf1cf472b2bb46ba206e7e1d8c005c93bed0d7c16694db12525b6bf, 80917f79-ce29-4dc5-8c1d-d0bbd2523b9a, 4234d967b9d621d2bc628d6b504577cb5273641f91345a5925c9d412ebb536f7, TERMINAL, 1, ceb245a18256a9b900b0920f35a2647709534e71c7fc75795d44a1bb5dda7cc9, 4, 2026-11-05 20:22:17.937645+00, 3fb7172f-8437-4fcd-827f-42339db2fffa, ceb245a18256a9b900b0920f35a2647709534e71c7fc75795d44a1bb5dda7cc9, 383e39e5-b844-4b5f-a4ca-39e967078853, 2026-11-05 20:22:17.655553+00, 2026-11-05 20:22:22.814895+00, null, null, null, f, f).&#10;[SQL: UPDATE stream_execution_authority SET prepared_generation=$1::BIGINT, updated=now() WHERE stream_execution_authority.id = $2::UUID RETURNING stream_execution_authority.updated]&#10;[parameters: (None, '383e39e5-b844-4b5f-a4ca-39e967078853')]&#10;(Background on this error at: https://sqlalche.me/e/20/gkpj)">self = &lt;sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_cursor object at 0x7fa1b7558f40&gt;
+operation = 'UPDATE stream_execution_authority SET prepared_generation=$1::BIGINT, updated=now() WHERE stream_execution_authority.id = $2::UUID RETURNING stream_execution_authority.updated'
+parameters = (None, '383e39e5-b844-4b5f-a4ca-39e967078853')
+
+    async def _prepare_and_execute(self, operation, parameters):
+        adapt_connection = self._adapt_connection
+    
+        async with adapt_connection._execute_mutex:
+            if not adapt_connection._started:
+                await adapt_connection._start_transaction()
+    
+            if parameters is None:
+                parameters = ()
+    
+            try:
+                prepared_stmt, attributes = await adapt_connection._prepare(
+                    operation, self._invalidate_schema_cache_asof
+                )
+    
+                if attributes:
+                    self.description = [
+                        (
+                            attr.name,
+                            attr.type.oid,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        for attr in attributes
+                    ]
+                else:
+                    self.description = None
+    
+                if self.server_side:
+                    self._cursor = await prepared_stmt.cursor(*parameters)
+                    self.rowcount = -1
+                else:
+&gt;                   self._rows = deque(await prepared_stmt.fetch(*parameters))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:550: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+/workspace/ariadne/.venv/lib/python3.12/site-packages/asyncpg/prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+&gt;   ???
+E   asyncpg.exceptions.NotNullViolationError: null value in column "prepared_generation" of relation "stream_execution_authority" violates not-null constraint
+E   DETAIL:  Failing row contains (82879874-4cfd-4c3d-9488-43bbff1ff95f, 1, null, ee6293ce-1a24-4153-aad6-f92848fe0ccf, e4067a7f92bc08b8626cdd7f468616a41de96f8152d735004a1f2a6bb6a206e2, 5574a72465178168e0cb9854faf078114600a3844c22190600371aafc06b4d2e, b8ef5bc6ddf1cf472b2bb46ba206e7e1d8c005c93bed0d7c16694db12525b6bf, 80917f79-ce29-4dc5-8c1d-d0bbd2523b9a, 4234d967b9d621d2bc628d6b504577cb5273641f91345a5925c9d412ebb536f7, TERMINAL, 1, ceb245a18256a9b900b0920f35a2647709534e71c7fc75795d44a1bb5dda7cc9, 4, 2026-11-05 20:22:17.937645+00, 3fb7172f-8437-4fcd-827f-42339db2fffa, ceb245a18256a9b900b0920f35a2647709534e71c7fc75795d44a1bb5dda7cc9, 383e39e5-b844-4b5f-a4ca-39e967078853, 2026-11-05 20:22:17.655553+00, 2026-11-05 20:22:22.814895+00, null, null, null, f, f).
+
+asyncpg/protocol/protocol.pyx:205: NotNullViolationError
+
+The above exception was the direct cause of the following exception:
+
+self = &lt;sqlalchemy.engine.base.Connection object at 0x7fa1b63f68d0&gt;
+dialect = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x7fa1be265a30&gt;
+context = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x7fa1b729c320&gt;
+statement = &lt;sqlalchemy.dialects.postgresql.asyncpg.PGCompiler_asyncpg object at 0x7fa1bc6c7d10&gt;
+parameters = [(None, '383e39e5-b844-4b5f-a4ca-39e967078853')]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -&gt; CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+&gt;                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1967: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x7fa1bcd2b2f0&gt;&gt;
+error = NotNullViolationError('null value in column "prepared_generation" of relation "stream_execution_authority" violates not-null constraint')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: &lt;class 'asyncpg.exceptions.NotNullViolationError'&gt;: null value in column "prepared_generation" of relation "stream_execution_authority" violates not-null constraint
+E                   DETAIL:  Failing row contains (82879874-4cfd-4c3d-9488-43bbff1ff95f, 1, null, ee6293ce-1a24-4153-aad6-f92848fe0ccf, e4067a7f92bc08b8626cdd7f468616a41de96f8152d735004a1f2a6bb6a206e2, 5574a72465178168e0cb9854faf078114600a3844c22190600371aafc06b4d2e, b8ef5bc6ddf1cf472b2bb46ba206e7e1d8c005c93bed0d7c16694db12525b6bf, 80917f79-ce29-4dc5-8c1d-d0bbd2523b9a, 4234d967b9d621d2bc628d6b504577cb5273641f91345a5925c9d412ebb536f7, TERMINAL, 1, ceb245a18256a9b900b0920f35a2647709534e71c7fc75795d44a1bb5dda7cc9, 4, 2026-11-05 20:22:17.937645+00, 3fb7172f-8437-4fcd-827f-42339db2fffa, ceb245a18256a9b900b0920f35a2647709534e71c7fc75795d44a1bb5dda7cc9, 383e39e5-b844-4b5f-a4ca-39e967078853, 2026-11-05 20:22:17.655553+00, 2026-11-05 20:22:22.814895+00, null, null, null, f, f).
+
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: IntegrityError
+
+The above exception was the direct cause of the following exception:
+
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7fa1be268170&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7fa1b760a7b0&gt;
+execution_api = &lt;httpx.AsyncClient object at 0x7fa1b6abb350&gt;
+deployment = Deployment(id=66d07e63-fb59-4753-a538-f5ccad4a69c6)
+damage = 'prepared-generation'
+
+    @pytest.mark.parametrize(
+        "damage",
+        [
+            "missing-finalize",
+            "terminal-digest",
+            "terminal-owner",
+            "terminal-material-owner",
+            "terminal-material-type",
+            "terminal-control-binding",
+            "prepared-generation",
+            "snapshot-digest",
+            "current-launch",
+            "grant-not-retired",
+            "open-physical-slot",
+            "stale-generation",
+            "wrong-holder",
+            "wrong-capability",
+            "missing-credentials",
+            "verified-without-proof",
+        ],
+    )
+    async def test_dag_coordinator_release_refuses_incomplete_proof_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        damage: str,
+    ):
+        plan, credentials = await completed_dag_region(
+            db, session, execution_api, deployment
+        )
+        headers = coordinator_headers(credentials)
+        response = await execution_api.post(
+            f"/flow_runs/{plan.flow_run_id}/set_state",
+            json={"state": {"type": "COMPLETED", "name": "Completed"}},
+            headers=headers,
+        )
+        assert response.status_code == 201 and response.json()["status"] == "ACCEPT", (
+            response.text
+        )
+&gt;       async with db.session_context(begin_transaction=True) as transaction:
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/server/models/test_stream_dag_executions.py:924: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/contextlib.py:217: in __aexit__
+    await anext(self.gen)
+src/prefect/server/database/interface.py:163: in session_context
+    async with self.database_config.begin_transaction(
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/contextlib.py:217: in __aexit__
+    await anext(self.gen)
+src/prefect/server/database/configurations.py:425: in begin_transaction
+    async with session.begin() as transaction:
+               ^^^^^^^^^^^^^^^
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py:1887: in __aexit__
+    await greenlet_spawn(
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:203: in greenlet_spawn
+    result = context.switch(value)
+             ^^^^^^^^^^^^^^^^^^^^^
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/util.py:147: in __exit__
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py:224: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/util.py:145: in __exit__
+    self.commit()
+&lt;string&gt;:2: in commit
+    ???
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py:137: in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:1311: in commit
+    self._prepare_impl()
+&lt;string&gt;:2: in _prepare_impl
+    ???
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py:137: in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:1286: in _prepare_impl
+    self.session.flush()
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:4331: in flush
+    self._flush(objects)
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:4466: in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py:224: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py:4427: in _flush
+    flush_context.execute()
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py:466: in execute
+    rec.execute(self)
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py:642: in execute
+    util.preloaded.orm_persistence.save_obj(
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py:85: in save_obj
+    _emit_update_statements(
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py:885: in _emit_update_statements
+    c = connection.execute(
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1419: in execute
+    return meth(
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py:527: in _execute_on_connection
+    return connection._execute_clauseelement(
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1641: in _execute_clauseelement
+    ret = self._execute_context(
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1846: in _execute_context
+    return self._exec_single_context(
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1986: in _exec_single_context
+    self._handle_dbapi_exception(
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2363: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;AdaptedConnection &lt;asyncpg.connection.Connection object at 0x7fa1bcd2b2f0&gt;&gt;
+error = NotNullViolationError('null value in column "prepared_generation" of relation "stream_execution_authority" violates not-null constraint')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+&gt;                   raise translated_error from error
+E                   sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) &lt;class 'asyncpg.exceptions.NotNullViolationError'&gt;: null value in column "prepared_generation" of relation "stream_execution_authority" violates not-null constraint
+E                   DETAIL:  Failing row contains (82879874-4cfd-4c3d-9488-43bbff1ff95f, 1, null, ee6293ce-1a24-4153-aad6-f92848fe0ccf, e4067a7f92bc08b8626cdd7f468616a41de96f8152d735004a1f2a6bb6a206e2, 5574a72465178168e0cb9854faf078114600a3844c22190600371aafc06b4d2e, b8ef5bc6ddf1cf472b2bb46ba206e7e1d8c005c93bed0d7c16694db12525b6bf, 80917f79-ce29-4dc5-8c1d-d0bbd2523b9a, 4234d967b9d621d2bc628d6b504577cb5273641f91345a5925c9d412ebb536f7, TERMINAL, 1, ceb245a18256a9b900b0920f35a2647709534e71c7fc75795d44a1bb5dda7cc9, 4, 2026-11-05 20:22:17.937645+00, 3fb7172f-8437-4fcd-827f-42339db2fffa, ceb245a18256a9b900b0920f35a2647709534e71c7fc75795d44a1bb5dda7cc9, 383e39e5-b844-4b5f-a4ca-39e967078853, 2026-11-05 20:22:17.655553+00, 2026-11-05 20:22:22.814895+00, null, null, null, f, f).
+E                   [SQL: UPDATE stream_execution_authority SET prepared_generation=$1::BIGINT, updated=now() WHERE stream_execution_authority.id = $2::UUID RETURNING stream_execution_authority.updated]
+E                   [parameters: (None, '383e39e5-b844-4b5f-a4ca-39e967078853')]
+E                   (Background on this error at: https://sqlalche.me/e/20/gkpj)
+
+/workspace/ariadne/.venv/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: IntegrityError</failure></testcase><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[snapshot-digest]" time="6.565" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[current-launch]" time="6.488" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[grant-not-retired]" time="6.469" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[open-physical-slot]" time="6.683" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[stale-generation]" time="6.667" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[wrong-holder]" time="6.755" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[wrong-capability]" time="6.672" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[missing-credentials]" time="6.422" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_refuses_incomplete_proof_postgres[verified-without-proof]" time="6.727" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_empty_failure_or_preview_postgres[False]" time="1.423" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_empty_failure_or_preview_postgres[True]" time="1.821" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_preserves_other_flow_shared_tag_postgres" time="9.295" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_stopped_dag_coordinator_release_proofs_postgres[cancel-None]" time="3.769" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_stopped_dag_coordinator_release_proofs_postgres[fail-None]" time="3.945" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_stopped_dag_coordinator_release_proofs_postgres[cancel-receipt-owner]" time="3.804" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_stopped_dag_coordinator_release_proofs_postgres[cancel-receipt-flag]" time="4.832" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_stopped_dag_coordinator_release_proofs_postgres[cancel-control-owner]" time="4.051" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_verified_dag_coordinator_release_needs_current_control_postgres[None]" time="1.354" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_verified_dag_coordinator_release_needs_current_control_postgres[stale-generation]" time="1.280" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_verified_dag_coordinator_release_needs_current_control_postgres[corrupt-outcome]" time="1.304" /><testcase classname="tests.server.models.test_stream_dag_executions" name="test_dag_coordinator_release_zero_birth_startup_abort_postgres" time="5.090" /></testsuite></testsuites>

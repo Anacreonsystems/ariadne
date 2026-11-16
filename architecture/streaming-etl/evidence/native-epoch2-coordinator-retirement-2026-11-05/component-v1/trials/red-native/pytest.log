@@ -1,0 +1,352 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_public_dag_lifecycle_two_real_workers_postgres[False-normal] _______
+
+execution_api = <tests.test_native_stream_recovery_http.RestartableAPI object at 0x7f0fb13cfd40>
+tmp_path = PosixPath('/tmp/native-ni014-coordinator-retirement-v1/red-native/pytest/test_public_dag_lifecycle_two_0')
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f0fb2b92030>
+asynchronous = False, mode = 'normal'
+
+    @pytest.mark.parametrize(
+        "asynchronous,mode",
+        [
+            (False, "normal"),
+            (True, "normal"),
+            (False, "preview"),
+            (False, "failure"),
+            (False, "cancel"),
+        ],
+    )
+    @pytest.mark.timeout(300)
+    async def test_public_dag_lifecycle_two_real_workers_postgres(
+        execution_api: RestartableAPI,
+        tmp_path: Path,
+        db: Any,
+        asynchronous: bool,
+        mode: str,
+    ):
+>       await _run_dag_lifecycle(
+            execution_api, tmp_path, db, asynchronous=asynchronous, mode=mode
+        )
+
+tests/test_native_stream_dag_execution_http.py:284: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+execution_api = <tests.test_native_stream_recovery_http.RestartableAPI object at 0x7f0fb13cfd40>
+tmp_path = PosixPath('/tmp/native-ni014-coordinator-retirement-v1/red-native/pytest/test_public_dag_lifecycle_two_0')
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f0fb2b92030>
+asynchronous = False, mode = 'normal', count = 8, wait_timeout = 150
+observation_timeout = 210, c_exchange = 'broadcast'
+
+    async def _run_dag_lifecycle(
+        execution_api: RestartableAPI,
+        tmp_path: Path,
+        db: Any,
+        *,
+        asynchronous: bool,
+        mode: str,
+        count: int = 8,
+        wait_timeout: float = 150,
+        observation_timeout: float = 210,
+        c_exchange: Literal["broadcast", "rebalance", "keyed"] = "broadcast",
+    ):
+        expected_numbers = _expected_branch_numbers(count, c_exchange)
+        server = execution_api
+        user_module = tmp_path / "native_dag_example.py"
+        user_module.write_text(_USER_MODULE)
+        definition = load_flow_from_entrypoint(
+            str(user_module) + ":" + ("documents_async" if asynchronous else "documents")
+        )
+        pool = "dag-runtime-" + uuid4().hex
+        names = ["dag-left-" + uuid4().hex, "dag-right-" + uuid4().hex]
+        with temporary_settings(
+            {PREFECT_API_URL: server.url, PREFECT_API_AUTH_STRING: server.auth}
+        ):
+            async with get_client() as client:
+                try:
+                    await client.create_global_concurrency_limit(
+                        GlobalConcurrencyLimitCreate(name="tag:" + _TAG, limit=4)
+                    )
+                except ObjectAlreadyExists:
+                    limit = await client.read_global_concurrency_limit_by_name(
+                        "tag:" + _TAG
+                    )
+                    assert limit.limit == 4 and limit.active_slots == 0
+                template = ProcessWorker.get_default_base_job_template()
+                template["prefect_native_streaming"] = {
+                    "schema_version": 1,
+                    "profile": "bounded-linear-v1",
+                }
+                await client.create_work_pool(
+                    WorkPoolCreate(name=pool, type="process", base_job_template=template)
+                )
+                deployment = RunnerDeployment.from_flow(
+                    definition,
+                    name="dag-lifecycle",
+                    work_pool_name=pool,
+                    concurrency_limit=1,
+                    job_variables={"working_dir": str(Path.cwd()), "stream_output": True},
+                )
+                deployment_id = await deployment.aapply()
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key
+            not in {
+                "PREFECT_SERVER_DATABASE_CONNECTION_URL",
+                "PREFECT_API_DATABASE_CONNECTION_URL",
+                "ARIADNE_NATIVE_STREAM_TEST_DSN",
+            }
+        }
+        environment.update(
+            PREFECT_API_URL=server.url,
+            PREFECT_API_AUTH_STRING=[redacted-runtime-credential],
+            PREFECT_LOGGING_LEVEL="INFO",
+            PREFECT_LOGGING_INTERNAL_LEVEL="WARNING",
+            PREFECT_DEBUG_MODE="false",
+            PREFECT_WORKER_QUERY_SECONDS="1",
+            PREFECT_WORKER_HEARTBEAT_SECONDS="1",
+        )
+        workers = []
+        logs = [tmp_path / "worker-left.log", tmp_path / "worker-right.log"]
+        try:
+            for name, log in zip(names, logs):
+                with log.open("wb") as output:
+                    workers.append(
+                        subprocess.Popen(
+                            [
+                                sys.executable,
+                                "-m",
+                                "prefect",
+                                "worker",
+                                "start",
+                                "--pool",
+                                pool,
+                                "--type",
+                                "process",
+                                "--name",
+                                name,
+                                "--limit",
+                                "1",
+                            ],
+                            env=environment,
+                            stdout=output,
+                            stderr=subprocess.STDOUT,
+                        )
+                    )
+            deadline = time.monotonic() + 60
+            registered = []
+            while time.monotonic() < deadline:
+                assert all(worker.poll() is None for worker in workers)
+                with server.client() as client:
+                    registered = [
+                        worker
+                        for worker in client.read_workers_for_work_pool(pool)
+                        if worker.name in names and worker.status.value == "ONLINE"
+                    ]
+                if len(registered) == 2:
+                    async with db.session_context() as session:
+                        capable = (
+                            await session.scalars(
+                                sa.select(db.StreamWorkerCapability.worker_id).where(
+                                    db.StreamWorkerCapability.worker_id.in_(
+                                        [worker.id for worker in registered]
+                                    ),
+                                    db.StreamWorkerCapability.protocol
+                                    == "partitioned-dag-v1",
+                                )
+                            )
+                        ).all()
+                    if len(capable) == 2:
+                        break
+                await asyncio.sleep(0.2)
+            else:
+                raise AssertionError("Two real workers did not advertise the DAG profile")
+            ready_ns = time.monotonic_ns()
+            with server.client() as client:
+                run = client.create_flow_run_from_deployment(
+                    deployment_id,
+                    parameters={
+                        "directory": str(tmp_path),
+                        "count": count,
+                        "mode": mode,
+                        "wait_timeout": wait_timeout,
+                        "c_exchange": c_exchange,
+                    },
+                )
+            deadline = time.monotonic() + observation_timeout
+            previous_progress = None
+            stable_task_ids = None
+            stable_channel_ids = None
+            while time.monotonic() < deadline:
+                assert all(worker.poll() is None for worker in workers)
+                with server.client() as client:
+                    current = client.read_flow_run(run.id)
+                if count > 8:
+                    progress = await _dag_progress(db, run.id)
+                    if progress is not None:
+                        assert progress["task_run_count"] == 4
+                        assert len(progress["subtasks"]) == 4
+                        assert len(progress["channels"]) == 7
+                        identities = {item["task_run_id"] for item in progress["subtasks"]}
+                        if stable_task_ids is None:
+                            stable_task_ids = identities
+                        assert identities == stable_task_ids
+                        channel_ids = {item["id"] for item in progress["channels"]}
+                        if stable_channel_ids is None:
+                            stable_channel_ids = channel_ids
+                        assert channel_ids == stable_channel_ids
+                        expected_counts = _expected_channel_counts(
+                            progress, expected_numbers, count
+                        )
+                        if (
+                            mode in {"accepted200", "incomplete200"}
+                            and (tmp_path / "branch-cut-ready.json").exists()
+                            and not (tmp_path / "branch-cut-observed").exists()
+                        ):
+                            cut_progress = await _dag_progress(db, run.id)
+                            assert cut_progress is not None
+                            await _observe_branch_cut(tmp_path, mode, cut_progress, server)
+                        if (
+                            len(progress["consumers"]) == 3
+                            and all(
+                                item["completed_through"]
+                                == expected_counts[item["input_stream_id"]]
+                                and item["inflight_sequence"] is None
+                                for item in progress["consumers"]
+                            )
+                            and not (tmp_path / "all-cursors-observed").exists()
+                        ):
+                            # Observe the accepted cursor before normal FINALIZE
+                            # releases retention and deletes consumer rows. The
+                            # user fixture is paused after each final acceptance.
+                            assert all(
+                                item["last_sequence"] == expected_counts[item["id"]]
+                                for item in progress["channels"]
+                            )
+                            (tmp_path / "accepted-cursors.json").write_text(
+                                json.dumps(progress, sort_keys=True, indent=2)
+                            )
+                            (tmp_path / "all-cursors-observed").touch()
+                        if progress != previous_progress:
+                            with (tmp_path / "progress.jsonl").open("a") as output:
+                                output.write(
+                                    json.dumps(
+                                        {
+                                            "monotonic_ns": time.monotonic_ns(),
+                                            "snapshot": progress,
+                                        },
+                                        sort_keys=True,
+                                    )
+                                    + "\n"
+                                )
+                            previous_progress = progress
+                if current.state is not None and current.state.is_final():
+                    break
+                await asyncio.sleep(1 if count > 8 else 0.2)
+            else:
+                raise AssertionError("DAG Flow did not reach a verified terminal state")
+            final_ns = time.monotonic_ns()
+            expected = (
+                "CANCELLED"
+                if mode == "cancel"
+                else "FAILED"
+                if mode == "failure"
+                else "COMPLETED"
+            )
+            assert current.state.type.value == expected, str(current.state)
+            # Flow finality precedes the starter's observed-terminal release RPC.
+            # Wait for that separate metadata transition, without changing any
+            # platform request timeout or accepting the graph proof as its proxy.
+            retirement_deadline = time.monotonic() + 30
+            while time.monotonic() < retirement_deadline:
+                assert all(worker.poll() is None for worker in workers)
+                coordinator = await _coordinator_progress(db, run.id)
+                if (
+                    coordinator["authority_state"] == "RELEASED"
+                    and coordinator["snapshot_state"] == "RELEASED"
+                    and coordinator["launch_states"]
+                    and set(coordinator["launch_states"]) == {"RELEASED"}
+                ):
+                    break
+                await asyncio.sleep(0.2)
+            else:
+                (tmp_path / "coordinator-retirement.json").write_text(
+                    json.dumps(coordinator, sort_keys=True, indent=2)
+                )
+>               raise AssertionError(f"Final coordinator was not retired: {coordinator}")
+E               AssertionError: Final coordinator was not retired: {'authority_state': 'TERMINAL', 'snapshot_state': 'ACTIVE', 'launch_states': ['PROCESS_REGISTERED']}
+
+tests/test_native_stream_dag_execution_http.py:934: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://[redacted-owned-test-dsn]'
+Connecting to postgres at 'postgres://[redacted-owned-test-dsn]'
+Creating test postgres database 'native_ni012_runtime_coord_893cac8d_tests_master'
+Using test database connection URL 'postgresql+asyncpg://[redacted-owned-test-dsn]'
+Running hosted API server on port 57719
+---------------------------- Captured stderr setup -----------------------------
+20:06:41.507 | INFO    | uvicorn.error - Started server process [341896]
+20:06:41.511 | INFO    | uvicorn.error - Waiting for application startup.
+20:06:41.755 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+20:06:41.760 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+20:06:41.761 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+20:06:41.761 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+20:06:41.761 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+20:06:41.761 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+20:06:41.761 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+20:06:41.761 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+20:06:41.761 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+20:06:41.761 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+20:06:41.762 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+20:06:41.762 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+20:06:41.762 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+20:06:41.762 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+20:06:41.762 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+20:06:41.762 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+20:06:41.763 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+20:06:41.764 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+20:06:41.765 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+20:06:41.766 | INFO    | uvicorn.error - Application startup complete.
+20:06:41.767 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 57719) (Press CTRL+C to quit)
+20:06:41.857 | INFO    | uvicorn.access - 127.0.0.1:48144 - "GET /api/health HTTP/1.1" 200
+----------------------------- Captured stderr call -----------------------------
+20:06:45.557 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:59279/api/
+20:06:46.237 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - Running call coroutine_wrapper() in thread 'RunSyncEventLoopThread'
+20:06:46.237 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - <WatcherThreadCancelScope, name='coroutine_wrapper' RUNNING, runtime=0.00> entered
+20:06:46.238 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - <WatcherThreadCancelScope, name='coroutine_wrapper' COMPLETED, runtime=0.00> exited
+20:06:46.238 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - Scheduling coroutine for call coroutine_wrapper(<dropped>) in running loop <_UnixSelectorEventLoop running=True closed=False debug=False>
+20:06:46.238 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - <AsyncCancelScope, name='coroutine_wrapper' RUNNING, runtime=0.00> entered
+20:06:46.260 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - <AsyncCancelScope, name='coroutine_wrapper' COMPLETED, runtime=0.02> exited
+20:06:46.260 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - Finished async call coroutine_wrapper(<dropped>)
+20:06:46.266 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:59279/api/
+20:06:46.290 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:59279/api/
+Executing <Task pending name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() running at /tmp/ariadne-native-5000-diagnosis-v1/tests/test_native_stream_dag_execution_http.py:284> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.296 seconds
+20:06:48.181 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() running at /tmp/ariadne-native-5000-diagnosis-v1/tests/test_native_stream_dag_execution_http.py:284> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.296 seconds
+Executing <Task pending name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() running at /tmp/ariadne-native-5000-diagnosis-v1/tests/test_native_stream_dag_execution_http.py:284> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.319 seconds
+20:06:52.094 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() running at /tmp/ariadne-native-5000-diagnosis-v1/tests/test_native_stream_dag_execution_http.py:284> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.319 seconds
+Executing <Task finished name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() done, defined at /tmp/ariadne-native-5000-diagnosis-v1/tests/test_native_stream_dag_execution_http.py:266> exception=AssertionError("Final coordinator was not retired: {'authority_state': 'TERMINAL', 'snapshot_state': 'ACTIVE', 'launch_states': ['PROCESS_REGISTERED']}") created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.266 seconds
+20:07:40.553 | WARNING | asyncio - Executing <Task finished name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() done, defined at /tmp/ariadne-native-5000-diagnosis-v1/tests/test_native_stream_dag_execution_http.py:266> exception=AssertionError("Final coordinator was not retired: {'authority_state': 'TERMINAL', 'snapshot_state': 'ACTIVE', 'launch_states': ['PROCESS_REGISTERED']}") created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.266 seconds
+------------------------------ Captured log call -------------------------------
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:59279/api/
+DEBUG    prefect._internal.concurrency:calls.py:322 Running call coroutine_wrapper() in thread 'RunSyncEventLoopThread'
+DEBUG    prefect._internal.concurrency:cancellation.py:152 <WatcherThreadCancelScope, name='coroutine_wrapper' RUNNING, runtime=0.00> entered
+DEBUG    prefect._internal.concurrency:cancellation.py:163 <WatcherThreadCancelScope, name='coroutine_wrapper' COMPLETED, runtime=0.00> exited
+DEBUG    prefect._internal.concurrency:calls.py:336 Scheduling coroutine for call coroutine_wrapper(<dropped>) in running loop <_UnixSelectorEventLoop running=True closed=False debug=False>
+DEBUG    prefect._internal.concurrency:cancellation.py:152 <AsyncCancelScope, name='coroutine_wrapper' RUNNING, runtime=0.00> entered
+DEBUG    prefect._internal.concurrency:cancellation.py:163 <AsyncCancelScope, name='coroutine_wrapper' COMPLETED, runtime=0.02> exited
+DEBUG    prefect._internal.concurrency:calls.py:468 Finished async call coroutine_wrapper(<dropped>)
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:59279/api/
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:59279/api/
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() running at /tmp/ariadne-native-5000-diagnosis-v1/tests/test_native_stream_dag_execution_http.py:284> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.296 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() running at /tmp/ariadne-native-5000-diagnosis-v1/tests/test_native_stream_dag_execution_http.py:284> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.319 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task finished name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() done, defined at /tmp/ariadne-native-5000-diagnosis-v1/tests/test_native_stream_dag_execution_http.py:266> exception=AssertionError("Final coordinator was not retired: {'authority_state': 'TERMINAL', 'snapshot_state': 'ACTIVE', 'launch_states': ['PROCESS_REGISTERED']}") created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.266 seconds
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+20:07:42.308 | INFO    | uvicorn.error - Shutting down
+20:07:42.410 | INFO    | uvicorn.error - Waiting for application shutdown.
+20:07:42.411 | INFO    | uvicorn.error - Application shutdown complete.
+20:07:42.412 | INFO    | uvicorn.error - Finished server process [341896]
+=========================== short test summary info ============================
+FAILED tests/test_native_stream_dag_execution_http.py::test_public_dag_lifecycle_two_real_workers_postgres[False-normal]
+1 failed in 67.13s (0:01:07)

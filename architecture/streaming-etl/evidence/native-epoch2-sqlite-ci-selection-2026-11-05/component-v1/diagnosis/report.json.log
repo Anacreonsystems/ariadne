@@ -1,0 +1,93 @@
+{
+  "schema": "ariadne-native-sqlite-ci-diagnosis-v1",
+  "mode": "read-only-source-investigation",
+  "old_head": "6a3ee28278de22b04ff4895f7abc2551f13b1cda",
+  "current_head": "835b8c21c83e4d0a2d95ddc6abe0b06fb9d75db5",
+  "run_id": 42071413034,
+  "job_id": 127400035459,
+  "source_unchanged": true,
+  "guard_unchanged": true,
+  "sqlite_command_still_declares_pg_only_module": true,
+  "all_module_test_names": [
+    "test_terminal_replacement_prepare_and_accepted_replay_postgres",
+    "test_startup_abort_worker_prefix_postgres",
+    "test_active_graph_refuses_startup_abort_postgres",
+    "test_launch_lost_ack_and_delayed_record_after_stop_postgres",
+    "test_all_attempts_close_before_last_stop_commits_failed_flow_postgres"
+  ],
+  "actual_reports": {
+    "native-dag-contract.xml": {
+      "cases": 459,
+      "classnames": [
+        "tests.client.test_stream_dag_executions",
+        "tests.client.test_stream_dag_launches",
+        "tests.server.schemas.test_stream_dag_executions",
+        "tests.test_stream_dag_bootstrap",
+        "tests.test_stream_dag_execution",
+        "tests.test_stream_graph_execution_contracts",
+        "tests.workers.test_stream_dag_bootstrap.TestDAGPostGOFailure",
+        "tests.workers.test_stream_dag_bootstrap.TestDAGPrivateBootstrap",
+        "tests.workers.test_stream_dag_launches.TestDAGLaunchJournal",
+        "tests.workers.test_stream_dag_subtasks.TestDAGProcessCleanup",
+        "tests.workers.test_stream_dag_subtasks.TestDAGWorkerTransport"
+      ],
+      "nonpassing": 0,
+      "duplicates": 0,
+      "sha256": "b7d3fbe0314e9f4b5022ac4f110cb8800b67272c2af21d4aa8370d2d5835878c"
+    },
+    "native-dag-sqlite.xml": {
+      "cases": 59,
+      "classnames": [
+        "tests.server.api.test_stream_dag_executions",
+        "tests.server.api.test_stream_dag_launches",
+        "tests.server.database.test_stream_dag_execution_migrations",
+        "tests.server.models.test_stream_dag_executions",
+        "tests.test_native_dag_execution_client_http",
+        "tests.test_native_stream_dag_execution_http"
+      ],
+      "nonpassing": 0,
+      "duplicates": 0,
+      "sha256": "46957e5187d96b82cbd5c146fd3940bf543b2591438619493ac890af927af4ce"
+    }
+  },
+  "actual_ci": {
+    "contracts": 459,
+    "contract_subtests": 33,
+    "sqlite": 59,
+    "sqlite_deselected": 52,
+    "failed_step": "Require every declared DAG module to pass without skips"
+  },
+  "root_cause": "SQLite command declares a module whose five test functions all end in _postgres, then -k not postgres deselects every item. The unchanged coverage guard correctly rejects the missing declared module. No executed testcase failed.",
+  "counterfactual": [
+    {
+      "label": "actual-old",
+      "exit": 1,
+      "stdout": "native-dag-contract.xml: 459 cases passed without skips\n",
+      "stderr": "Traceback (most recent call last):\n  File \"<stdin>\", line 34, in <module>\nAssertionError: DAG modules were silently deselected: native-dag-sqlite.xml: {'tests.server.models.test_stream_dag_launches'}\n"
+    },
+    {
+      "label": "counterfactual-one-path-removal",
+      "exit": 0,
+      "stdout": "native-dag-contract.xml: 459 cases passed without skips\nnative-dag-sqlite.xml: 59 cases passed without skips\n",
+      "stderr": ""
+    }
+  ],
+  "proposed_minimal_fix": "Remove only tests/server/models/test_stream_dag_launches.py from the SQLite pytest invocation; retain the PostgreSQL invocation and unchanged completeness/no-skips guard. Confirm actual collection and both report guards after the permitted workflow-only successor.",
+  "limitations": [
+    "Counterfactual reuses actual historical 6a reports and changes only applicability of one declared module. It is not a fresh pytest execution or a green CI claim for835.",
+    "835 adds two component test modules, so its future reports must include those modules; historical reports cannot prove its full CI.",
+    "No source, test, config or documentation file was mutated. Main source hold remains intact."
+  ],
+  "artifact": {
+    "id": 13437988843,
+    "bytes": 9136,
+    "sha256": "49d90af51e6ff63bdcdc90ae805c832fad9bf41fa3b856a6989fdba56ab7ed8b"
+  },
+  "raw_log": {
+    "source_bytes": 86956,
+    "source_sha256": "387dc84c87dc611ef6d14e9e57ab836abdf3faa2f8cc50d8b547a75260525a4b",
+    "public_bytes": 86956,
+    "public_sha256": "387dc84c87dc611ef6d14e9e57ab836abdf3faa2f8cc50d8b547a75260525a4b",
+    "uri_redactions": 0
+  }
+}

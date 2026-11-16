@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="0" skipped="0" tests="1" time="8.661" timestamp="2026-11-05T19:48:06.229162+00:00" hostname="f8abb611283c"><testcase classname="test_temp_placement" name="test_temp_path_artifact" time="8.379"><error message="failed on setup with &quot;RuntimeError: Hosted test Prefect API process exited before readiness with code 1.&quot;">fixturedef = &lt;FixtureDef argname='hosted_api_server' scope='session' baseid=''&gt;
+request = &lt;SubRequest 'hosted_api_server' for &lt;Function test_temp_path_artifact&gt;&gt;
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -&gt; object | None:
+        if (
+            fixturedef.argname == "event_loop_policy"
+            and fixturedef.func.__module__ != __name__
+        ):
+            warnings.warn(
+                PytestDeprecationWarning(_EVENT_LOOP_POLICY_FIXTURE_DEPRECATION_WARNING),
+            )
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+                return (yield)
+        default_loop_scope = request.config.getini("asyncio_default_fixture_loop_scope")
+        loop_scope = (
+            getattr(fixturedef.func, "_loop_scope", None)
+            or default_loop_scope
+            or fixturedef.scope
+        )
+        runner_fixture_id = f"_{loop_scope}_scoped_runner"
+        runner = request.getfixturevalue(runner_fixture_id)
+        # Prevent the runner closing before the fixture's async teardown.
+        runner_fixturedef = request._get_active_fixturedef(runner_fixture_id)
+        runner_fixturedef.addfinalizer(
+            functools.partial(fixturedef.finish, request=request)
+        )
+        synchronizer = _fixture_synchronizer(fixturedef, runner, request)
+        _make_asyncio_fixture_function(synchronizer, loop_scope)
+        with MonkeyPatch.context() as c:
+            c.setattr(fixturedef, "func", synchronizer)
+&gt;           hook_result = yield
+                          ^^^^^
+
+/workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:944: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:407: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+/workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:403: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+unused_tcp_port_factory = &lt;function unused_tcp_port_factory.&lt;locals&gt;.factory at 0x7f345a427ce0&gt;
+test_database_connection_url = 'sqlite+aiosqlite:////tmp/tmp7z73s9fe/prefect_master.db'
+
+    @pytest.fixture(scope="session")
+    async def hosted_api_server(
+        unused_tcp_port_factory: Callable[[], int],
+        test_database_connection_url: Optional[str],
+    ) -&gt; AsyncGenerator[str, None]:
+        """
+        Runs an instance of the Prefect API server in a subprocess instead of the using the
+        ephemeral application.
+    
+        Uses the same database as the rest of the tests.
+    
+        Yields:
+            The API URL
+        """
+        # Ensure the per-worker database URL override is applied before we start the server
+        _ = test_database_connection_url
+    
+        port, reserved_socket = _reserve_hosted_api_socket(unused_tcp_port_factory)
+        server_id = str(uuid4())
+        print(f"Running hosted API server on port {port}")
+    
+        # Will connect to the same database as normal test clients
+        settings = get_current_settings().to_environment_variables(exclude_unset=True)
+    
+        # We must add creationflags to a dict so it is only passed as a function
+        # parameter on Windows, because the presence of creationflags causes
+        # errors on Unix even if set to None
+        kwargs: dict[str, object] = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    
+        if reserved_socket is not None:
+            kwargs["pass_fds"] = (reserved_socket.fileno(),)
+    
+        address_arguments = (
+            ["--fd", str(reserved_socket.fileno())]
+            if reserved_socket is not None
+            else ["--host", "127.0.0.1", "--port", str(port)]
+        )
+    
+        try:
+            async with open_process(
+                command=[
+                    "uvicorn",
+                    "--factory",
+                    "prefect.server.api.server:create_app",
+                    *address_arguments,
+                    "--header",
+                    f"X-Prefect-Test-Server-ID:{server_id}",
+                    "--log-level",
+                    "info",
+                ],
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+                env={
+                    **os.environ,
+                    **settings,
+                },
+                **kwargs,
+            ) as process:
+                if reserved_socket is not None:
+                    reserved_socket.close()
+                    reserved_socket = None
+    
+                api_url = f"http://localhost:{port}/api"
+                try:
+                    # Wait for the server we started to be ready. A successful response
+                    # from another test server on the same port is not sufficient.
+                    response = None
+                    async with httpx.AsyncClient() as client:
+                        with anyio.move_on_after(20):
+                            while True:
+                                if process.returncode is not None:
+&gt;                                   raise RuntimeError(
+                                        "Hosted test Prefect API process exited before "
+                                        f"readiness with code {process.returncode}."
+                                    )
+E                                   RuntimeError: Hosted test Prefect API process exited before readiness with code 1.
+
+/workspace/ariadne/src/prefect/testing/fixtures.py:157: RuntimeError</error></testcase></testsuite></testsuites>

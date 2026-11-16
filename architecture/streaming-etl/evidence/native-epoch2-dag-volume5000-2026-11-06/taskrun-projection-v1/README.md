@@ -1,0 +1,8 @@
+
+# Closed narrow TaskRun projection correction
+
+[Matching V2 review](review/review-v2.json), [Root apply receipt](applied/apply-receipt.json), [normal hooks](applied/hooks-receipt.json) and [posthook review](review/posthook-format-source-review-v1.json) bind two product paths and one new test on1812460+existingP2test4550. Nine selected TaskRun columns retain all ID/cardinality/field/digest checks with mapped types; project_execution explicitly refreshes mutable ORM TaskRun rows through populate_existing. No DTO cache/reuse/newlock/proof/schema/fence shortcut was installed. The14 caller/static witnesses and original predicates remain in exact public source artifacts; this is not a complete conflict scan.
+
+[Rejected V1](separate-rejected-V1/review-v1.json) was unapplied/unexecuted: activation/poll freshness depended on incidental full ORM hydration. Unsafe7080 activationFAIL and old-product4PASS are source-derived unexecuted expectations, not actual failed/passed workloads. V2 resolves freshness explicitly. Proposed testb016 is preserved in original reviewed assets; actual posthook test27c1 is AST-equal formatting only. Exact final3 source captures and before product2 are immutable external captures, not reads of a moving checkout. Runtime1601 includes the new untracked test. Hooks actually exited0/0; they are selected-file checks, not whole CI.
+
+Actual PG23 and post-fix500 diagnostic components are separately indexed siblings. Their scopes do not prove a required5000/hosted gate or old-source CI fix. All prior source/indices/history/approvedADR42–48 bytes remain unchanged; earned15%, NI012–014OPEN/BLOCKED/NI020blocked, no27% credit. No project import/test/DB/network/hook/repo write was performed by archival.

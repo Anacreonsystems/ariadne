@@ -61,6 +61,7 @@ from prefect._internal.control_listener import (
 )
 from prefect._internal.engine import get_hook_name, resolve_custom_flow_run_name
 from prefect._internal.metrics import RunMetrics
+from prefect._internal.stream_dag_execution import async_dag_flow_scope, dag_flow_scope
 from prefect.client.orchestration import PrefectClient, SyncPrefectClient, get_client
 from prefect.client.schemas import FlowRun, TaskRun
 from prefect.client.schemas.filters import FlowRunFilter
@@ -88,6 +89,7 @@ from prefect.events.related import RelatedResource, tags_as_related_resources
 from prefect.events.utilities import emit_event
 from prefect.exceptions import (
     Abort,
+    CancelledRun,
     MissingFlowError,
     Pause,
     PrefectException,
@@ -851,6 +853,35 @@ class FlowRunEngine(BaseFlowRunEngine[P, R]):
 
         return result
 
+    def _adopt_dag_terminal(self, exc: Exception) -> State | None:
+        if (
+            self.flow.streaming is None
+            or self.flow.streaming.profile != "partitioned-dag-v1"
+            or self.flow_run is None
+        ):
+            return None
+        current = self.client.read_flow_run(self.flow_run.id)
+        state = current.state
+        if (
+            current.run_count != self.flow_run.run_count
+            or state is None
+            or not (state.is_failed() or state.is_cancelled())
+        ):
+            return None
+        # The graph journal already committed this state through CoreFlowPolicy
+        # after exact cleanup. Do not propose a competing Failed state.
+        self.flow_run = current
+        self._capture_state_report(state)
+        self._raised = (
+            CancelledRun(state.message or "DAG Flow cancelled")
+            if state.is_cancelled()
+            else exc
+        )
+        self._telemetry.update_state(state)
+        self._telemetry.record_exception(self._raised)
+        self._telemetry.end_span_on_failure(state.message)
+        return state
+
     def handle_exception(
         self,
         exc: Exception,
@@ -858,6 +889,8 @@ class FlowRunEngine(BaseFlowRunEngine[P, R]):
         result_store: Optional[ResultStore] = None,
     ) -> State:
         self._get_flow_run_suspension_request().raise_if_requested()
+        if (adopted := self._adopt_dag_terminal(exc)) is not None:
+            return adopted
         context = FlowRunContext.get()
         terminal_state = cast(
             State,
@@ -891,6 +924,8 @@ class FlowRunEngine(BaseFlowRunEngine[P, R]):
         return state
 
     def handle_timeout(self, exc: TimeoutError) -> None:
+        if self._adopt_dag_terminal(exc) is not None:
+            return
         if isinstance(exc, FlowRunTimeoutError):
             message = (
                 f"Flow run exceeded timeout of {self.flow.timeout_seconds} second(s)"
@@ -1374,7 +1409,10 @@ class FlowRunEngine(BaseFlowRunEngine[P, R]):
                     async_stream_flow_scope,
                 )
 
-                async with async_stream_flow_scope(self.flow_run):
+                async with (
+                    async_stream_flow_scope(self.flow_run),
+                    async_dag_flow_scope(),
+                ):
                     result = await call_with_parameters(self.flow.fn, self.parameters)
                 self.handle_success(result)
 
@@ -1382,7 +1420,7 @@ class FlowRunEngine(BaseFlowRunEngine[P, R]):
         else:
             from prefect._internal.stream_reconstruction import stream_flow_scope
 
-            with stream_flow_scope(self.flow_run):
+            with stream_flow_scope(self.flow_run), dag_flow_scope():
                 result = call_with_parameters(self.flow.fn, self.parameters)
             self.handle_success(result)
 
@@ -1591,6 +1629,33 @@ class AsyncFlowRunEngine(BaseFlowRunEngine[P, R]):
 
         return result
 
+    async def _adopt_dag_terminal(self, exc: Exception) -> State | None:
+        if (
+            self.flow.streaming is None
+            or self.flow.streaming.profile != "partitioned-dag-v1"
+            or self.flow_run is None
+        ):
+            return None
+        current = await self.client.read_flow_run(self.flow_run.id)
+        state = current.state
+        if (
+            current.run_count != self.flow_run.run_count
+            or state is None
+            or not (state.is_failed() or state.is_cancelled())
+        ):
+            return None
+        self.flow_run = current
+        self._capture_state_report(state)
+        self._raised = (
+            CancelledRun(state.message or "DAG Flow cancelled")
+            if state.is_cancelled()
+            else exc
+        )
+        self._telemetry.update_state(state)
+        self._telemetry.record_exception(self._raised)
+        self._telemetry.end_span_on_failure(state.message)
+        return state
+
     async def handle_exception(
         self,
         exc: Exception,
@@ -1598,6 +1663,8 @@ class AsyncFlowRunEngine(BaseFlowRunEngine[P, R]):
         result_store: Optional[ResultStore] = None,
     ) -> State:
         self._get_flow_run_suspension_request().raise_if_requested()
+        if (adopted := await self._adopt_dag_terminal(exc)) is not None:
+            return adopted
         context = FlowRunContext.get()
         terminal_state = cast(
             State,
@@ -1629,6 +1696,8 @@ class AsyncFlowRunEngine(BaseFlowRunEngine[P, R]):
         return state
 
     async def handle_timeout(self, exc: TimeoutError) -> None:
+        if await self._adopt_dag_terminal(exc) is not None:
+            return
         if isinstance(exc, FlowRunTimeoutError):
             message = (
                 f"Flow run exceeded timeout of {self.flow.timeout_seconds} second(s)"
@@ -2134,7 +2203,7 @@ class AsyncFlowRunEngine(BaseFlowRunEngine[P, R]):
 
         from prefect._internal.stream_reconstruction import async_stream_flow_scope
 
-        async with async_stream_flow_scope(self.flow_run):
+        async with async_stream_flow_scope(self.flow_run), async_dag_flow_scope():
             result = await call_with_parameters(self.flow.fn, self.parameters)
         await self.handle_success(result)
         return result

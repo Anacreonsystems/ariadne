@@ -1,0 +1,240 @@
+"""External diagnostics; existing test bodies and runtime fixtures stay real."""
+
+from __future__ import annotations
+
+import ast
+from datetime import datetime, timezone
+import hashlib
+import inspect
+import json
+import logging
+import os
+from pathlib import Path
+import sys
+import time
+from urllib.parse import urlsplit
+
+import pytest
+
+
+ROOT = Path("/workspace/ariadne")
+PREDECESSOR = "tests/cli/test_config.py::test_view_prefers_canonical_dot_env_value_over_alias"
+WORKER_CLASS = "tests/test_logging.py::TestWorkerLogging"
+_provisioning_invocations = 0
+_original_body_calls = 0
+_previous_profile = None
+_fixture_proof: dict[str, object] = {}
+_emit_lines: set[int] = set()
+
+
+def guard_original_provisioning(frame, event, arg):
+    global _original_body_calls
+    if (
+        event == "call"
+        and frame.f_code.co_filename == str(ROOT / "tests/conftest.py")
+        and frame.f_code.co_name == "generate_test_database_connection_url"
+    ):
+        _original_body_calls += 1
+        raise RuntimeError("Original destructive provisioning body is prohibited")
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config: pytest.Config) -> None:
+    global _previous_profile, _emit_lines
+    source = (ROOT / "tests/test_logging.py").read_text()
+    classes = [node for node in ast.parse(source).body if isinstance(node, ast.ClassDef) and node.name == "TestWorkerLogging"]
+    if len(classes) != 1:
+        raise RuntimeError("Worker logging source class binding differs")
+    methods = {
+        "test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud",
+        "test_worker_logger_does_not_send_logs_when_not_connected_to_cloud",
+        "test_self_hosted_registered_worker_keeps_console_logs_without_shipping",
+    }
+    bindings = {}
+    for method in classes[0].body:
+        if isinstance(method, ast.AsyncFunctionDef) and method.name in methods:
+            calls = [
+                node for node in ast.walk(method)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "debug"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value in {"test-worker-log", "native-worker-console-log"}
+            ]
+            if len(calls) != 1:
+                raise RuntimeError("Worker DEBUG emission binding differs")
+            bindings[method.name] = calls[0].lineno
+    if bindings.keys() != methods:
+        raise RuntimeError("Worker DEBUG method binding is incomplete")
+    _emit_lines = set(bindings.values())
+    (Path(os.environ["WORKER_LOGGING_DIAG_TRIAL"]) / "debug-line-bindings.json").write_text(
+        json.dumps({"source_sha256": hashlib.sha256(source.encode()).hexdigest(), "bindings": bindings}, indent=2, sort_keys=True) + "\n"
+    )
+    _previous_profile = sys.getprofile()
+    sys.setprofile(guard_original_provisioning)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    sys.setprofile(_previous_profile)
+    proof = {
+        **_fixture_proof,
+        "hook_invocations": _provisioning_invocations,
+        "original_provisioning_body_calls": _original_body_calls,
+        "original_body_guard_active_during_session": True,
+        "override_asset_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+    }
+    (Path(os.environ["WORKER_LOGGING_DIAG_TRIAL"]) / "provisioning-proof.json").write_text(
+        json.dumps(proof, indent=2, sort_keys=True) + "\n"
+    )
+    if _provisioning_invocations != 1 or _original_body_calls != 0:
+        raise RuntimeError("Provisioning override proof failed")
+
+
+def write_event(row: dict[str, object]) -> None:
+    row.update(utc=datetime.now(timezone.utc).isoformat(), monotonic_ns=time.monotonic_ns())
+    destination = Path(os.environ["WORKER_LOGGING_DIAG_TRIAL"]) / "logger-states.jsonl"
+    with destination.open("a") as stream:
+        stream.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def snapshot(nodeid: str, phase: str, logger_name: str | None = None) -> None:
+    from prefect.client.base import ServerType, determine_server_type
+    from prefect.logging import handlers
+    from prefect.settings import PREFECT_LOGGING_TO_API_ENABLED
+
+    names = ["prefect", "prefect.workers"]
+    if logger_name is not None:
+        names.append(logger_name)
+    loggers = {}
+    for name in names:
+        logger = logging.getLogger(name)
+        loggers[name] = {
+            "level": logger.level,
+            "effective_level": logger.getEffectiveLevel(),
+            "disabled": logger.disabled,
+            "handler_classes": [type(handler).__name__ for handler in logger.handlers],
+        }
+    write_event(
+        {
+            "nodeid": nodeid,
+            "phase": phase,
+            "loggers": loggers,
+            "cloud": determine_server_type() == ServerType.CLOUD,
+            "api_logging_enabled": bool(PREFECT_LOGGING_TO_API_ENABLED.value()),
+            "sink_configured": handlers._api_log_sink is not None,
+        }
+    )
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_fixture_setup(fixturedef: pytest.FixtureDef, request: pytest.FixtureRequest):
+    global _provisioning_invocations, _fixture_proof
+    if fixturedef.argname != "generate_test_database_connection_url":
+        return None
+    # Ownership-only provisioning: the launcher already created this fresh PG17
+    # DB. Bypass the default generator's FORCE/DROP lifecycle so a failure's real
+    # test database is retained. All migrations, sessions, clients, hosted server,
+    # and test bodies use their unchanged repository fixtures.
+    original = inspect.unwrap(fixturedef.func)
+    if (
+        fixturedef.scope != "session"
+        or original.__module__ != "tests.conftest"
+        or Path(inspect.getsourcefile(original)).resolve() != ROOT / "tests/conftest.py"
+        or original.__name__ != "generate_test_database_connection_url"
+    ):
+        raise RuntimeError("Original provisioning fixture identity/scope differs")
+    if request.getfixturevalue("worker_id") != "master":
+        raise RuntimeError("Diagnostic provisioning requires explicit -n0")
+    url = os.environ["PREFECT_SERVER_DATABASE_CONNECTION_URL"]
+    parsed = urlsplit(url)
+    database = os.environ["WORKER_LOGGING_DIAG_DBNAME"]
+    creation = json.loads((Path(os.environ["WORKER_LOGGING_DIAG_TRIAL"]) / "database-creation.json").read_text())
+    if (
+        parsed.scheme != "postgresql+asyncpg"
+        or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
+        or parsed.port != 55436
+        or parsed.path != "/" + database
+        or creation != {"database": database, "server_major": 17, "created_fresh": True, "existing_database_reused": False}
+    ):
+        raise RuntimeError("Provisioning URI is not the precreated fresh PG17 allowlist")
+    _provisioning_invocations += 1
+    if _provisioning_invocations != 1:
+        raise RuntimeError("Provisioning hook called more than once")
+    _fixture_proof = {
+        "argname": fixturedef.argname,
+        "module": original.__module__,
+        "scope": fixturedef.scope,
+        "worker_id": "master",
+        "original_fixture_sha256": hashlib.sha256(inspect.getsource(original).encode()).hexdigest(),
+        "fixture_source_file_sha256": hashlib.sha256((ROOT / "tests/conftest.py").read_bytes()).hexdigest(),
+        "precreated_fresh_pg17_allowlist_validated": True,
+        "cached_result_uses_fixture_cache_key": True,
+    }
+    fixturedef.cached_result = (url, fixturedef.cache_key(request), None)
+    return url
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    expected_workers = {
+        WORKER_CLASS + "::" + name
+        for name in (
+            "test_get_worker_logger_works_with_no_backend_id",
+            "test_get_worker_logger_works_with_backend_id",
+            "test_worker_emits_logs_with_worker_id",
+            "test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud",
+            "test_worker_logger_does_not_send_logs_when_not_connected_to_cloud",
+            "test_self_hosted_registered_worker_keeps_console_logs_without_shipping",
+        )
+    }
+    observed = [item.nodeid for item in items]
+    if (
+        not observed or observed[0] != PREDECESSOR
+        or not all(item.path.resolve() == ROOT / "tests/test_logging.py" for item in items[1:])
+        or not expected_workers.issubset(set(observed))
+        or len(observed) <= 7
+    ):
+        raise RuntimeError("Existing diagnostic test collection/order differs")
+    (Path(os.environ["WORKER_LOGGING_DIAG_TRIAL"]) / "collection.json").write_text(
+        json.dumps({"count": len(observed), "nodeids": observed, "cli_predecessor_first": True, "all_six_worker_cases_present": True}, indent=2) + "\n"
+    )
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_call(item: pytest.Item):
+    if item.nodeid == PREDECESSOR:
+        temporary = Path(item.funcargs["tmp_path"])
+        owned_home = temporary / "owned-default-home"
+        owned_home.mkdir(mode=0o700)
+        (temporary / "prefect.toml").write_text(
+            f"home = {json.dumps(str(owned_home))}\n"
+            f"profiles_path = {json.dumps(str(owned_home / 'profiles.toml'))}\n"
+            "[plugins]\nenabled = false\n"
+            "[server]\nanalytics_enabled = false\nallow_ephemeral_mode = false\n"
+        )
+
+    def trace(frame, event, arg):
+        filename = frame.f_code.co_filename
+        if filename not in {
+            str(ROOT / "tests/test_logging.py"),
+            str(ROOT / "src/prefect/cli/_app.py"),
+        }:
+            return None
+        if event == "line" and filename.endswith("tests/test_logging.py"):
+            line = frame.f_lineno
+            if line in _emit_lines:
+                worker = frame.f_locals.get("worker")
+                if worker is not None:
+                    snapshot(item.nodeid, "at_debug_emission", worker._logger.name)
+        return trace
+
+    snapshot(item.nodeid, "before_call")
+    previous_trace = sys.gettrace()
+    sys.settrace(trace)
+    try:
+        yield
+    finally:
+        sys.settrace(previous_trace)
+        snapshot(item.nodeid, "after_call")

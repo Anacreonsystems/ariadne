@@ -1,0 +1,84 @@
+import asyncio
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
+
+import asyncpg
+
+ROOT=Path('/tmp/ariadne-native-5000-diagnosis-v1')
+BASE=Path('/tmp/native-ni014-renewal-liveness-v1/green')
+CONFIG=Path('/tmp/native-ni012-runtime-test-env.json')
+
+
+def snapshot():
+    paths=sorted((ROOT/'src/prefect').rglob('*.py'))
+    paths += [ROOT/'tests/server/models/test_stream_dag_launches.py',ROOT/'pyproject.toml',ROOT/'uv.lock']
+    return {str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+
+
+async def setup(config, name):
+    c=await asyncpg.connect(config['admin_dsn'])
+    try:
+        assert int(await c.fetchval('SHOW server_version_num'))//10000==17
+        quote=lambda s:'"'+s.replace('"','""')+'"'
+        await c.execute('CREATE DATABASE '+quote(name)+' OWNER '+quote(config['database_role']))
+    finally:
+        await c.close()
+
+
+async def cleanup(config,name):
+    c=await asyncpg.connect(config['admin_dsn'])
+    try:
+        owned=[name,name+'_tests_master']
+        active=[dict(x) for x in await c.fetch('SELECT datname,pid,state FROM pg_stat_activity WHERE datname=ANY($1::text[])',owned)]
+        result={'owned_databases':owned,'sessions_before_drop':active,'dropped':[]}
+        if active:
+            raise RuntimeError('Owned test database has active sessions after fixture shutdown')
+        for db in owned:
+            assert re.fullmatch('[a-z][a-z0-9_]{1,62}',db)
+            await c.execute('DROP DATABASE IF EXISTS "'+db+'"')
+            result['dropped'].append(db)
+        return result
+    finally:
+        await c.close()
+
+
+def main():
+    BASE.mkdir(mode=0o700)
+    config=json.loads(CONFIG.read_text());name=config['database_prefix']+'_renew_'+uuid4().hex[:8]
+    assert re.fullmatch('[a-z][a-z0-9_]{1,47}',name)
+    asyncio.run(setup(config,name))
+    env=os.environ.copy();parsed=urlsplit(config['admin_dsn'])
+    env.pop('PREFECT_API_DATABASE_CONNECTION_URL',None)
+    env['PREFECT_SERVER_DATABASE_CONNECTION_URL']=urlunsplit((config['sqlalchemy_scheme'],parsed.netloc,'/'+name,parsed.query,''))
+    env['UV_NO_SYNC']='1';env['UV_PROJECT_ENVIRONMENT']='/workspace/ariadne/.venv'
+    env['PYTHONPATH']=str(ROOT/'src')+':'+str(ROOT)
+    env['PREFECT_LOGGING_LEVEL']='INFO';env['PREFECT_LOGGING_INTERNAL_LEVEL']='WARNING'
+    scratch=BASE/'temp';scratch.mkdir(mode=0o700);env['TMPDIR']=str(scratch)
+    cmd=['/workspace/ariadne/.venv/bin/python','-m','pytest','tests/server/models/test_stream_dag_launches.py','-q','-o','addopts=','--junitxml='+str(BASE/'pytest.xml'),'--basetemp='+str(BASE/'pytest')]
+    before=snapshot();(BASE/'source-before.json').write_text(json.dumps(before,indent=2,sort_keys=True)+'\n')
+    (BASE/'command.json').write_text(json.dumps({'command':cmd,'cwd':str(ROOT),'head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),'config_selector':str(CONFIG),'database':name,'source_scope':'all src/prefect Python plus selected test and dependency files'},indent=2)+'\n')
+    raw=BASE/'pytest.private.log';fd=os.open(raw,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+    with os.fdopen(fd,'wb') as log:
+        process=subprocess.Popen(cmd,cwd=ROOT,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+        (BASE/'process.json').write_text(json.dumps({'pytest_pid':process.pid,'pgid':os.getpgid(process.pid)},indent=2)+'\n')
+        print(json.dumps({'pytest_pid':process.pid,'trial':str(BASE)}),flush=True)
+        code=process.wait()
+    (BASE/'exit').write_text(str(code)+'\n')
+    after=snapshot();(BASE/'source-after.json').write_text(json.dumps(after,indent=2,sort_keys=True)+'\n')
+    drift=[p for p in before.keys()|after.keys() if before.get(p)!=after.get(p)]
+    (BASE/'drift.json').write_text(json.dumps(drift,indent=2)+'\n')
+    public=re.sub(r'(?i)(postgres(?:ql)?(?:\+asyncpg)?://)[^\s\'"<>]+',r'\1[redacted-owned-test-dsn]',raw.read_text(errors='replace'))
+    (BASE/'pytest.log').write_text(public)
+    (BASE/'private-log-sha256').write_text(hashlib.sha256(raw.read_bytes()).hexdigest()+'\n')
+    (BASE/'cleanup.json').write_text(json.dumps(asyncio.run(cleanup(config,name)),indent=2)+'\n')
+    print(json.dumps({'exit':code,'drift_count':len(drift)}),flush=True)
+    raise SystemExit(code if not drift else 90)
+
+if __name__=='__main__':main()

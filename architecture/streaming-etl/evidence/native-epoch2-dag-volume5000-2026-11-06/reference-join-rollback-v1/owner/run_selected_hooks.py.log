@@ -1,0 +1,24 @@
+import ast,hashlib,json,os,subprocess,time
+from pathlib import Path
+ROOT=Path("/tmp/ariadne-native-5000-diagnosis-v1")
+BASE=Path(__file__).resolve().parent
+FILES=["src/prefect/server/models/stream_routes.py","tests/server/models/test_stream_routes.py"]
+def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def snapshot():return {n:{"sha256":sha(ROOT/n),"AST_sha256":hashlib.sha256(ast.dump(ast.parse((ROOT/n).read_text()),include_attributes=False).encode()).hexdigest()} for n in FILES}
+def write(name,value):(BASE/name).write_text(json.dumps(value,indent=2,sort_keys=True)+"\n")
+env=os.environ.copy();env.update({"PATH":"/workspace/ariadne/.venv/bin"+os.pathsep+env.get("PATH",""),"UV_PROJECT_ENVIRONMENT":"/workspace/ariadne/.venv","UV_NO_SYNC":"1"})
+results=[];initial=snapshot();write("hooks-source-before.json",initial)
+for stage in ("pre-commit","pre-push"):
+ before=snapshot()
+ for n in FILES:(BASE/(stage+"-"+Path(n).name+".before")).write_bytes((ROOT/n).read_bytes())
+ command=["uv","run","--no-sync","--offline","pre-commit","run","--hook-stage",stage,"--files",*FILES]
+ started=time.monotonic()
+ with (BASE/(stage+".log")).open("wb") as output:
+  process=subprocess.Popen(command,cwd=ROOT,env=env,stdout=output,stderr=subprocess.STDOUT)
+  stat=Path(f"/proc/{process.pid}/stat").read_text();ticks=stat[stat.rindex(")")+2:].split()[19]
+  write(stage+"-process.json",{"pid":process.pid,"start_ticks":ticks,"command":command,"cwd":str(ROOT)})
+  code=process.wait()
+ after=snapshot();write(stage+"-source-after.json",after)
+ result={"stage":stage,"command":command,"pid":process.pid,"start_ticks":ticks,"actual_exit":code,"elapsed_seconds":time.monotonic()-started,"log":str(BASE/(stage+".log")),"before":before,"after":after,"mutated":[n for n in FILES if before[n]["sha256"]!=after[n]["sha256"]],"AST_changed":[n for n in FILES if before[n]["AST_sha256"]!=after[n]["AST_sha256"]]}
+ results.append(result);write("hooks-attempts.json",results);print(json.dumps({k:result[k] for k in ("stage","actual_exit","elapsed_seconds","mutated","AST_changed")}),flush=True)
+write("hooks-source-final.json",snapshot())

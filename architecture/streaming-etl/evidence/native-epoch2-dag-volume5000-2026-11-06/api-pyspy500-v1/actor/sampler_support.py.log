@@ -1,0 +1,112 @@
+"""One external nonblocking sampler; native lifecycle and results stay separate."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import time
+
+from api_selector import api_identity
+
+BINARY=Path('/tmp/native-api-statistical-profiler-feasibility-18124-v1/isolated-py-spy/bin/py-spy')
+BINARY_SHA='a41205d4925beafd108e1ace85e66c0a1a7adbfcbebcd4441f07848b608886c0'
+
+
+def state(pid):
+    try:
+        fields=Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()
+        return {'pid':pid,'parent':int(fields[1]),'state':fields[0],'start_ticks':fields[19]}
+    except FileNotFoundError:return None
+
+
+class Sampler:
+    def __init__(self, trial, native_pid):
+        self.trial=Path(trial);self.native_pid=native_pid
+        self.attempted=False;self.process=None;self.before=None;self.target=None
+        self.result=None;self.out=None;self.err=None;self.started=None;self.errors=[]
+
+    def write(self, name, value):
+        (self.trial/name).write_text(json.dumps(value,indent=2,sort_keys=True)+'\n')
+
+    def begin_if_ready(self):
+        if self.attempted:return
+        names=('api-owner.json','api-selected.json','api-fixture-binding.json')
+        if not all((self.trial/name).is_file() for name in names):return
+        try:owner,selected,fixture=[json.loads((self.trial/name).read_text()) for name in names]
+        except (OSError,ValueError):return  # No attachment attempted; fixture may still be writing.
+        self.attempted=True
+        try:
+            for key in ('pid','start_ticks','factory','fd','header'):
+                assert str(owner[key])==str(selected[key])==str(fixture[key])
+            assert owner['argv']==selected['argv']
+            expected=api_identity(owner['argv']);assert expected is not None
+            for key in ('factory','fd','header'):assert expected[key]==owner[key]
+            target=state(owner['pid']);assert target and target['start_ticks']==str(owner['start_ticks']) and target['state']!='Z'
+            commandline=Path('/proc',str(owner['pid']),'cmdline').read_bytes().split(b'\0')
+            commandline=[value.decode() for value in commandline if value]
+            assert len(commandline)==11 and commandline[1:]==owner['argv'][1:]
+            assert api_identity(commandline)==expected
+            uid=[line for line in Path('/proc',str(owner['pid']),'status').read_text().splitlines() if line.startswith('Uid:')]
+            assert len(uid)==1 and int(uid[0].split()[1])==os.getuid()
+            parent=target;ancestry=[]
+            for _ in range(8):
+                ancestry.append(parent['pid'])
+                if parent['pid']==self.native_pid:break
+                parent=state(parent['parent']);assert parent is not None
+            assert self.native_pid in ancestry
+            native_identity=json.loads((self.trial/'process.json').read_text())
+            native_current=state(self.native_pid)
+            assert native_identity['pytest_pid']==self.native_pid and native_current is not None
+            assert native_current['start_ticks']==str(native_identity['pytest_start_ticks'])
+            assert hashlib.sha256(BINARY.resolve().read_bytes()).hexdigest()==BINARY_SHA
+            assert state(owner['pid'])['start_ticks']==target['start_ticks']
+            command=[str(BINARY),'record','--pid',str(target['pid']),'--nonblocking','--duration','120','--rate','49','--format','raw','--output',str(self.trial/'api-profile.raw')]
+            self.target=target;self.started=time.monotonic_ns()
+            self.out=(self.trial/'sampler.stdout').open('xb');self.err=(self.trial/'sampler.stderr').open('xb')
+            self.process=subprocess.Popen(command,cwd=self.trial,stdout=self.out,stderr=self.err)
+            self.before=state(self.process.pid);assert self.before and self.before['parent']==os.getpid()
+            self.write('sampler-start.json',{'command':command,'target':target,'sampler':self.before,'start_monotonic_ns':self.started,'selected_argv':owner['argv'],'factory':expected['factory'],'fd':expected['fd'],'native_header':expected['header'],'owned_native_ancestry':ancestry,'binary_sha256':BINARY_SHA,'harness_signals_sent':[]})
+        except Exception as error:
+            self.errors.append({'stage':'single_attach_guard_or_spawn','error_type':type(error).__name__})
+            self.result={'status':'PROFILE_OBSERVER_INCONCLUSIVE','stage':'single_attach_guard_or_spawn','error_type':type(error).__name__,'retry':False}
+            self.write('sampler-inconclusive.json',self.result)
+
+    def reap(self, block=False):
+        if self.process is None or self.process.returncode is not None:return
+        pid,status,usage=os.wait4(self.process.pid,0 if block else os.WNOHANG)
+        if not pid:return
+        assert pid==self.process.pid
+        self.process.returncode=os.waitstatus_to_exitcode(status)
+        self.out.close();self.err.close()
+        current=state(self.target['pid'])
+        target_same=current is None or current['start_ticks']==self.target['start_ticks']
+        self.result={'sampler_actual_exit':self.process.returncode,'sampler_wait4_completed':True,'sampler_pid_start':self.before,'sampler_after_wait':state(pid),'target_after_sampling':current,'target_same_identity_or_gone':target_same,'sampler_user_cpu_seconds':usage.ru_utime,'sampler_system_cpu_seconds':usage.ru_stime,'sampler_exit_observed_monotonic_ns':time.monotonic_ns(),'sampler_observed_elapsed_seconds':(time.monotonic_ns()-self.started)/1e9,'harness_signals_sent':[]}
+
+    def poll(self):
+        try:
+            self.begin_if_ready()
+            self.reap(False)
+        except Exception as error:
+            self.errors.append({'stage':'sampler_poll','error_type':type(error).__name__})
+
+    def finish(self):
+        # API lifetime is owned by original pytest fixtures, never prolonged.
+        # The finite sampler ends naturally; no API or sampler signals are sent.
+        if self.process is not None:
+            try:self.reap(True)
+            except Exception as error:self.errors.append({'stage':'sampler_wait','error_type':type(error).__name__})
+        if self.result is None:self.result={'status':'PROFILE_OBSERVER_INCONCLUSIVE','stage':'API_identity_never_ready','retry':False}
+        raw=self.trial/'api-profile.raw';samples=0;lines=0
+        if raw.exists():
+            for line in raw.read_text(errors='replace').splitlines():
+                try:_stack,count=line.rsplit(' ',1);count=int(count)
+                except ValueError:continue
+                lines+=1;samples+=count
+        stdout=(self.trial/'sampler.stdout').read_text(errors='replace') if (self.trial/'sampler.stdout').exists() else ''
+        summary=re.search(r'Samples:\s*(\d+)\s+Errors:\s*(\d+)',stdout)
+        captured=bool(not self.errors and self.result.get('sampler_actual_exit')==0 and self.result.get('target_same_identity_or_gone') and self.result.get('sampler_after_wait') is None and samples>0 and summary)
+        self.result.update({'status':'PROFILE_SAMPLES_CAPTURED' if captured else 'PROFILE_OBSERVER_INCONCLUSIVE','requested_seconds':120,'rate_hz':49,'nonblocking':True,'parsed_stack_lines':lines,'summed_raw_stack_weights':samples,'reported_samples':int(summary[1]) if summary else None,'reported_sampling_errors':int(summary[2]) if summary else None,'raw_bytes':raw.stat().st_size if raw.exists() else None,'raw_sha256':hashlib.sha256(raw.read_bytes()).hexdigest() if raw.exists() else None,'attach_attempted_once':self.attempted,'retry':False,'qualification':'Only selected API Python active-thread stacks in fixed120s window; default idle/GIL policy. Nonblocking torn reads/errors reported, nothidden. Stackweights notwholecaseCPU; native-extensionCPU internalframes absent. Inclusive stacks nonadditive. Nativecase outcome independent of observer.'})
+        self.result.update({'observer_errors':self.errors,'raw_and_reported_totals_relation':'equal_observed' if summary and samples==int(summary[1]) else 'different_or_unavailable_population_not_assumed_equal','reported_error_ratio_not_inferred':'CLI Samples denominator may be iterations while raw weights may count thread stacks; preservecounts without probability/coverage or equalityoracle.','coverage_qualification':'Requested120s is not measuredactualcoverage. Start/exit-observation timestamps include toolstartup/poll/waitlag; targetgone canmeanpartialwindow. Defaultactive-thread samples/errorratio are not walltimeorCPUcoverage; Errors0 doesnotmake nonblockingreadsatomic.'})
+        self.write('profile-result.json',self.result)
+        return self.result

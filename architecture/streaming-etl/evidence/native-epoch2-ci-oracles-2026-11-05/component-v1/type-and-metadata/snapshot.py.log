@@ -1,0 +1,22 @@
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.schema import CreateIndex, CreateTable
+from prefect.server.database import orm_models
+
+result = {}
+for label, dialect in [('postgresql', postgresql.dialect()), ('sqlite', sqlite.dialect())]:
+    result[label] = [
+        {
+            'name': table.fullname,
+            'ddl': str(CreateTable(table).compile(dialect=dialect)),
+            'indexes': sorted(str(CreateIndex(index).compile(dialect=dialect)) for index in table.indexes),
+        }
+        for table in sorted(orm_models.Base.metadata.tables.values(), key=lambda value: value.fullname)
+    ]
+encoded = (json.dumps(result, indent=2, sort_keys=True) + '\n').encode()
+Path(sys.argv[1]).write_bytes(encoded)
+print(json.dumps({'tables_per_dialect':len(result['postgresql']), 'sha256': hashlib.sha256(encoded).hexdigest()}))

@@ -1,0 +1,125 @@
+--- provenV3runner
++++ PG23source1601runner
+@@ -1,4 +1,4 @@
+-"""One Root-authorized P2 candidate actor on exact HEAD plus one known test-only patch."""
++"""One Root-authorized real PG23 group on an explicit1601-source/publication lease."""
+ from __future__ import annotations
+ import ast
+ import asyncio
+@@ -16,28 +16,34 @@
+ 
+ from bridge_audit_v1 import inspect
+ import bridge_support_v1 as s
++from observation_support import publication_snapshot
+ 
+ BASE = Path(__file__).resolve().parent
+ ROOT = s.ROOT
+ SELECTION=json.loads((BASE/"selectors-v1.json").read_text())
+ NODES=SELECTION["native_nodes"]
+-ASSETS=("bridge_runner_v1.py","bridge_support_v1.py","bridge_audit_v1.py","bridge_observer_v1.py","bridge_provision_only_v1.py","startup-template.py.txt","selectors-v1.json")
+-
+-
+-DIRTY_TEST_PATH = 'tests/test_native_partitioned_stream_http.py'
+-EXPECTED_PATCH_SHA256 = '4550f35d5db3b4ddc74160f55354d33165551d1cd82d33695ee687402621b0b7'
++ASSETS=("bridge_runner_v1.py","bridge_support_v1.py","bridge_audit_v1.py","bridge_provision_only_v1.py","startup-template.py.txt","selectors-v1.json","observation_support.py")
++
++
++ADDITIONAL_SOURCE = "tests/server/models/test_stream_dag_task_projection.py"
++
++
++def source_snapshot_with_additional():
++    result = s.source_snapshot()
++    assert ADDITIONAL_SOURCE not in result
++    result[ADDITIONAL_SOURCE] = {"sha256": s.sha(ROOT/ADDITIONAL_SOURCE), "bytes": (ROOT/ADDITIONAL_SOURCE).stat().st_size}
++    assert len(result) == 1601
++    return dict(sorted(result.items()))
+ 
+ 
+ def checked_worktree_version(head):
+-    status = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"], cwd=ROOT, text=True)
+-    assert status == " M " + DIRTY_TEST_PATH + "\n"
+-    assert subprocess.check_output(["git", "diff", "--cached", "--name-only"], cwd=ROOT, text=True) == ""
+-    assert subprocess.check_output(["git", "diff", "--name-only"], cwd=ROOT, text=True).splitlines() == [DIRTY_TEST_PATH]
+-    patch = subprocess.check_output(["git", "diff", "--binary", "--", DIRTY_TEST_PATH], cwd=ROOT)
+-    assert hashlib.sha256(patch).hexdigest() == EXPECTED_PATCH_SHA256
+-    return {"head": head, "working_tree_patch_sha256": EXPECTED_PATCH_SHA256,
+-            "allowed_dirty_paths": [DIRTY_TEST_PATH],
+-            "qualification": "Published HEAD plus exactly this explicit uncommitted test-only patch; not a commit-only tested version."}
++    publication = publication_snapshot()
++    assert publication["head"] == head
++    assert subprocess.check_output(["git", "status", "--porcelain"], cwd="/workspace/ariadne", text=True) == ""
++    return {"head": head,
++            "publication_delta_sha256": hashlib.sha256(json.dumps(publication, sort_keys=True).encode()).hexdigest(),
++            "additional_source_bindings": {ADDITIONAL_SOURCE: s.sha(ROOT/ADDITIONAL_SOURCE)},
++            "qualification": "Published HEAD plus exact frozen publication and2reviewedmodelchanges and explicitnewuntrackedtest; not commit-only or blanketclean source."}
+ 
+ 
+ def disk_snapshot():
+@@ -49,12 +55,14 @@
+     assert len(sys.argv) == 2, "usage: bridge_runner_v1.py /ABS/ROOT_AUTHORIZED_P2_BRIDGE_HOLD.json"
+     hold_path = Path(sys.argv[1]); assert hold_path.is_absolute()
+     hold = json.loads(hold_path.read_text())
+-    assert hold["status"] == "ROOT_AUTHORIZED_P2_BRIDGE_V3_SOURCE_HOLD"
++    assert hold["status"] == "ROOT_AUTHORIZED_TASK_PROJECTION_PG23_SOURCE_HOLD"
+     phase=hold["phase"];assert phase in set(NODES)|{"pg_selected"}
+     selectors=hold["authorized_nodes"]
+     if phase=="pg_selected":
++        assert set(selectors)==set(SELECTION["pg_selector_case_counts"])
+         assert selectors and len(selectors)==len(set(selectors)) and set(selectors)<=set(SELECTION["pg_selector_case_counts"])
+         expected_count=sum(SELECTION["pg_selector_case_counts"][x] for x in selectors)
++        assert expected_count==23
+         BUDGETS={"pytest":"unchanged repository defaults and existing per-test markers","whole_process_deadline":None}
+     else:
+         assert selectors==[NODES[phase]]
+@@ -69,7 +77,8 @@
+     assert head == hold["head"] == s.EXPECTED_HEAD
+     tested_version = checked_worktree_version(head)
+     assert hold["tested_version"] == tested_version
+-    before = s.source_snapshot(); assert before == hold["files"]
++    publication_before=publication_snapshot(); assert publication_before==hold["publication_delta"]
++    before = source_snapshot_with_additional(); assert before == hold["files"]
+     assets = {name:s.sha(BASE/name) for name in ASSETS}; assert assets == hold["assets"]
+     auxiliary={name:s.sha(ROOT/name) for name in hold["auxiliary_source_bindings"]};assert auxiliary==hold["auxiliary_source_bindings"]
+     previous_path=Path(hold["previous_phase_stop"]["path"])
+@@ -135,7 +144,7 @@
+             identities[process.pid]=current["start_ticks"]
+             identity={"pytest_pid":process.pid,"pytest_start_ticks":current["start_ticks"],"pgid":pgid,"runner_pid":os.getpid(),"runner_start_ticks":subreaper["runner_start_ticks"],"subreaper_verified_before_popen":True}
+             s.write(trial/"process.json",identity)
+-            print(json.dumps({"status":"ONE_EXACT_P2_BRIDGE_ACTOR_RUNNING","trial":str(trial),**identity}),flush=True)
++            print(json.dumps({"status":"ONE_EXACT_PG23_ACTOR_RUNNING","trial":str(trial),**identity}),flush=True)
+             with (trial/"disk-observations.jsonl").open("w") as disk:
+                 while True:
+                     try:
+@@ -169,12 +178,12 @@
+     s.write(trial/"import-audit.json",imports)
+     if waited:reaping=capture("waitpid_own_adopted",lambda:s.reap_owned_adopted(pgid,identities))
+     s.write(trial/"reaping-proof.json",{"direct_child_wait_first":direct_wait,"adopted":reaping,"harness_signals_sent":[]})
+-    after=capture("source_after",s.source_snapshot)
++    after=capture("source_after",source_snapshot_with_additional)
+     s.write(trial/"source-after.json",after)
+     drift=sorted(k for k in before.keys()|after.keys() if before.get(k)!=after.get(k)) if after is not None else ["SOURCE_AFTER_UNAVAILABLE"]
+     if capture("head_after",lambda:subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip())!=head:drift.append("GIT_HEAD")
+     if capture("assets_after",lambda:{name:s.sha(BASE/name) for name in ASSETS})!=assets:drift.append("EXTERNAL_ASSETS")
+-    if capture("known_patch_after",lambda:checked_worktree_version(head)) != tested_version:drift.append("KNOWN_TEST_ONLY_PATCH")
++    if capture("known_patch_after",lambda:checked_worktree_version(head)) != tested_version:drift.append("EXPLICIT_FROZEN_PUBLICATION_AND_SOURCE_DELTA")
+     if capture("auxiliary_after",lambda:{name:s.sha(ROOT/name) for name in auxiliary})!=auxiliary:drift.append("AUXILIARY_SOURCE_BINDINGS")
+     if capture("startup_after",lambda:(trial/"startup/sitecustomize.py").read_text())!=site:drift.append("GENERATED_STARTUP")
+     s.write(trial/"drift.json",drift)
+@@ -196,14 +205,14 @@
+         capture("sanitize_"+public,lambda private=private,public=public:(trial/public).write_text(s.sanitize((trial/private).read_text(errors="replace"),config,sqlalchemy_url)))
+     runtime_closed=bool(waited and closure and not closure["remaining_same_identity_live"] and not closure["remaining_same_identity_zombies"] and reaping and reaping["waitpid_echild_success"] and database_closure and database_closure["sessions"]==[])
+     passed=bool(pytest_exit==0 and waited and not harness_errors and not drift and not imports["mismatches"] and runtime_closed and proof_valid and collection and collection["requested_selectors"]==selectors and collection["count"]==expected_count and (phase=="pg_selected" or collection["pytest_timeout_marker"]==900) and body["status"]=="BODY_AND_WIDER_HEALTH_PASS" and database_closure["retained"] is True)
+-    receipt={"status":"NATIVE_P2BRIDGE_PASS_DB_RETAINED" if passed else "NATIVE_OR_HEALTH_OR_HARNESS_RED","runtime_STOPPED":runtime_closed,"phase":phase,"nodeid":NODE,"head":head,"tested_version":tested_version,"pytest_exit":pytest_exit,"actual_exit_persisted_before_metadata":waited,"harness_errors":harness_errors,"source_files":len(before),"source_drift":drift,"import_audit":imports,"process_closure":closure,"subreaper_proof":subreaper,"direct_child_wait":direct_wait,"adopted_reaping":reaping,"database":database_closure,"body_wider_health":body,"provisioning_proof":proof,"provisioning_proof_valid":proof_valid,"collection":collection,"budgets":BUDGETS,"assets":assets,"hold_sha256":s.sha(hold_path),"profiling":False,"harness_signals_sent":[],"whole_process_deadline_added":False,"retry":False,"known_prior_orphan":{"pid":384983,"status":"prior dead PPID1 artifact excluded; untouched"},"qualification":"One Root-selected source-bound fixed-P2 native fault500 or PG selector actor. Expected fault worker errors are recorded separately; no zero-all-errors claim. Last-row preservation is not forced by additional fixture overrides. Provisioning-only fixture override preserves its fresh DB on PASS/FAIL for Root postterminal SQL and Principal verdict. Runtime STOP is not next-phase authorization. No auto retry/P2, causal/performance/readiness claim, source correction, drop or terminate."}
+-    s.write(trial/"bridge-receipt-v1.json",receipt)
++    receipt={"status":"TASK_PROJECTION_PG23_PASS_DB_RETAINED" if passed else "NATIVE_OR_HEALTH_OR_HARNESS_RED","runtime_STOPPED":runtime_closed,"phase":phase,"nodeid":NODE,"head":head,"tested_version":tested_version,"pytest_exit":pytest_exit,"actual_exit_persisted_before_metadata":waited,"harness_errors":harness_errors,"source_files":len(before),"source_drift":drift,"import_audit":imports,"process_closure":closure,"subreaper_proof":subreaper,"direct_child_wait":direct_wait,"adopted_reaping":reaping,"database":database_closure,"body_wider_health":body,"provisioning_proof":proof,"provisioning_proof_valid":proof_valid,"collection":collection,"budgets":BUDGETS,"assets":assets,"hold_sha256":s.sha(hold_path),"profiling":False,"harness_signals_sent":[],"whole_process_deadline_added":False,"retry":False,"known_prior_orphan":{"pid":384983,"status":"prior dead PPID1 artifact excluded; untouched"},"qualification":"One Root-selected source-bound realPG23 actor; fournewprojectionfalsifiers plus19unchangedPGcases. No nativeSDK/processworkload/performanceproof inferred fromthisgroup. Expected negativecase logs are not blindly zero-all-errors fenced. Last-row preservation is not forced by additional fixture overrides. Provisioning-only fixture override preserves its fresh DB on PASS/FAIL for Root postterminal SQL and Principal verdict. Runtime STOP is not next-phase authorization. No auto retry/P2, causal/performance/readiness claim, source correction, drop or terminate."}
++    s.write(trial/"pg23-receipt-v1.json",receipt)
+     print(json.dumps({"status":receipt["status"] if runtime_closed else "RUNTIME_CLOSURE_INCOMPLETE","runtime_STOPPED":runtime_closed,"trial":str(trial),"pytest_exit":pytest_exit,"harness_errors":harness_errors,"source_drift":drift,"failed_checks":body["failed_checks"][:12],"remaining_sessions":database_closure["sessions"] if database_closure else None,"fresh_database_retained":database_closure["retained"] if database_closure else None}),flush=True)
+     return 0 if passed else (pytest_exit or 90)
+ 
+ 
+ if __name__=="__main__":
+-    lock=os.open(BASE/"one-native5000-runtime.lock",os.O_WRONLY|os.O_CREAT,0o600)
++    lock=os.open(BASE/"one-pg23-runtime.lock",os.O_WRONLY|os.O_CREAT,0o600)
+     try:
+         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+         code=main()

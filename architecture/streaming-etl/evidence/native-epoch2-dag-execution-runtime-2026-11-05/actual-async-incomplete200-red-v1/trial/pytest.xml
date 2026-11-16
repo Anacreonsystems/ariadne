@@ -1,0 +1,427 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="271.627" timestamp="2026-11-05T15:17:13.002756+00:00" hostname="f8abb611283c"><testcase classname="tests.test_native_stream_dag_execution_http" name="test_public_dag_branch_recovery_postgres[True-incomplete200]" time="271.342"><failure message="AssertionError: assert 2 == 1&#10; +  where 2 = len([{'id': '01a1ac49-6700-7f6d-a2da-5581fec01557', 'subtask_id': '01a1ac49-5bbc-7078-bacd-21724f953c44', 'child_process_i...', 'subtask_id': '01a1ac49-5bbc-7078-bacd-21724f953c44', 'child_process_id': 283391, 'planned_physical_epoch': 2, ...}])">execution_api = &lt;tests.test_native_stream_recovery_http.RestartableAPI object at 0x7f35d6bee9c0&gt;
+tmp_path = PosixPath('/tmp/native-ni012-runtime-live/run-async-incomplete200-ce50453a/pytest/test_public_dag_branch_recover0')
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f35d8344290&gt;
+asynchronous = True, mode = 'incomplete200'
+
+    @pytest.mark.parametrize(
+        "asynchronous,mode",
+        [
+            (False, "accepted200"),
+            (False, "incomplete200"),
+            (True, "accepted200"),
+            (True, "incomplete200"),
+        ],
+    )
+    @pytest.mark.timeout(900)
+    async def test_public_dag_branch_recovery_postgres(
+        execution_api: RestartableAPI,
+        tmp_path: Path,
+        db: Any,
+        asynchronous: bool,
+        mode: str,
+    ):
+&gt;       await _run_dag_lifecycle(
+            execution_api,
+            tmp_path,
+            db,
+            asynchronous=asynchronous,
+            mode=mode,
+            count=500,
+            wait_timeout=750,
+            observation_timeout=840,
+        )
+
+tests/test_native_stream_dag_execution_http.py:316: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+execution_api = &lt;tests.test_native_stream_recovery_http.RestartableAPI object at 0x7f35d6bee9c0&gt;
+tmp_path = PosixPath('/tmp/native-ni012-runtime-live/run-async-incomplete200-ce50453a/pytest/test_public_dag_branch_recover0')
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f35d8344290&gt;
+asynchronous = True, mode = 'incomplete200', count = 500, wait_timeout = 750
+observation_timeout = 840
+
+    async def _run_dag_lifecycle(
+        execution_api: RestartableAPI,
+        tmp_path: Path,
+        db: Any,
+        *,
+        asynchronous: bool,
+        mode: str,
+        count: int = 8,
+        wait_timeout: float = 150,
+        observation_timeout: float = 210,
+    ):
+        server = execution_api
+        user_module = tmp_path / "native_dag_example.py"
+        user_module.write_text(_USER_MODULE)
+        definition = load_flow_from_entrypoint(
+            str(user_module) + ":" + ("documents_async" if asynchronous else "documents")
+        )
+        pool = "dag-runtime-" + uuid4().hex
+        names = ["dag-left-" + uuid4().hex, "dag-right-" + uuid4().hex]
+        with temporary_settings(
+            {PREFECT_API_URL: server.url, PREFECT_API_AUTH_STRING: server.auth}
+        ):
+            async with get_client() as client:
+                try:
+                    await client.create_global_concurrency_limit(
+                        GlobalConcurrencyLimitCreate(name="tag:" + _TAG, limit=4)
+                    )
+                except ObjectAlreadyExists:
+                    limit = await client.read_global_concurrency_limit_by_name(
+                        "tag:" + _TAG
+                    )
+                    assert limit.limit == 4 and limit.active_slots == 0
+                template = ProcessWorker.get_default_base_job_template()
+                template["prefect_native_streaming"] = {
+                    "schema_version": 1,
+                    "profile": "bounded-linear-v1",
+                }
+                await client.create_work_pool(
+                    WorkPoolCreate(name=pool, type="process", base_job_template=template)
+                )
+                deployment = RunnerDeployment.from_flow(
+                    definition,
+                    name="dag-lifecycle",
+                    work_pool_name=pool,
+                    concurrency_limit=1,
+                    job_variables={"working_dir": str(Path.cwd()), "stream_output": True},
+                )
+                deployment_id = await deployment.aapply()
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key
+            not in {
+                "PREFECT_SERVER_DATABASE_CONNECTION_URL",
+                "PREFECT_API_DATABASE_CONNECTION_URL",
+                "ARIADNE_NATIVE_STREAM_TEST_DSN",
+            }
+        }
+        environment.update(
+            PREFECT_API_URL=server.url,
+            PREFECT_API_AUTH_STRING=server.auth,
+            PREFECT_LOGGING_LEVEL="INFO",
+            PREFECT_LOGGING_INTERNAL_LEVEL="WARNING",
+            PREFECT_DEBUG_MODE="false",
+            PREFECT_WORKER_QUERY_SECONDS="1",
+            PREFECT_WORKER_HEARTBEAT_SECONDS="1",
+        )
+        workers = []
+        logs = [tmp_path / "worker-left.log", tmp_path / "worker-right.log"]
+        try:
+            for name, log in zip(names, logs):
+                with log.open("wb") as output:
+                    workers.append(
+                        subprocess.Popen(
+                            [
+                                sys.executable,
+                                "-m",
+                                "prefect",
+                                "worker",
+                                "start",
+                                "--pool",
+                                pool,
+                                "--type",
+                                "process",
+                                "--name",
+                                name,
+                                "--limit",
+                                "1",
+                            ],
+                            env=environment,
+                            stdout=output,
+                            stderr=subprocess.STDOUT,
+                        )
+                    )
+            deadline = time.monotonic() + 60
+            registered = []
+            while time.monotonic() &lt; deadline:
+                assert all(worker.poll() is None for worker in workers)
+                with server.client() as client:
+                    registered = [
+                        worker
+                        for worker in client.read_workers_for_work_pool(pool)
+                        if worker.name in names and worker.status.value == "ONLINE"
+                    ]
+                if len(registered) == 2:
+                    async with db.session_context() as session:
+                        capable = (
+                            await session.scalars(
+                                sa.select(db.StreamWorkerCapability.worker_id).where(
+                                    db.StreamWorkerCapability.worker_id.in_(
+                                        [worker.id for worker in registered]
+                                    ),
+                                    db.StreamWorkerCapability.protocol
+                                    == "partitioned-dag-v1",
+                                )
+                            )
+                        ).all()
+                    if len(capable) == 2:
+                        break
+                await asyncio.sleep(0.2)
+            else:
+                raise AssertionError("Two real workers did not advertise the DAG profile")
+            ready_ns = time.monotonic_ns()
+            with server.client() as client:
+                run = client.create_flow_run_from_deployment(
+                    deployment_id,
+                    parameters={
+                        "directory": str(tmp_path),
+                        "count": count,
+                        "mode": mode,
+                        "wait_timeout": wait_timeout,
+                    },
+                )
+            deadline = time.monotonic() + observation_timeout
+            previous_progress = None
+            stable_task_ids = None
+            stable_channel_ids = None
+            while time.monotonic() &lt; deadline:
+                assert all(worker.poll() is None for worker in workers)
+                with server.client() as client:
+                    current = client.read_flow_run(run.id)
+                if count &gt; 8:
+                    progress = await _dag_progress(db, run.id)
+                    if progress is not None:
+                        assert progress["task_run_count"] == 4
+                        assert len(progress["subtasks"]) == 4
+                        assert len(progress["channels"]) == 7
+                        identities = {item["task_run_id"] for item in progress["subtasks"]}
+                        if stable_task_ids is None:
+                            stable_task_ids = identities
+                        assert identities == stable_task_ids
+                        channel_ids = {item["id"] for item in progress["channels"]}
+                        if stable_channel_ids is None:
+                            stable_channel_ids = channel_ids
+                        assert channel_ids == stable_channel_ids
+                        if (
+                            mode in {"accepted200", "incomplete200"}
+                            and (tmp_path / "branch-cut-ready.json").exists()
+                            and not (tmp_path / "branch-cut-observed").exists()
+                        ):
+                            cut_progress = await _dag_progress(db, run.id)
+                            assert cut_progress is not None
+                            await _observe_branch_cut(tmp_path, mode, cut_progress, server)
+                        if (
+                            len(progress["consumers"]) == 3
+                            and all(
+                                item["completed_through"] == count
+                                and item["inflight_sequence"] is None
+                                for item in progress["consumers"]
+                            )
+                            and not (tmp_path / "all-cursors-observed").exists()
+                        ):
+                            # Observe the accepted cursor before normal FINALIZE
+                            # releases retention and deletes consumer rows. The
+                            # user fixture is paused after each final acceptance.
+                            assert all(
+                                item["last_sequence"] == count
+                                for item in progress["channels"]
+                            )
+                            (tmp_path / "accepted-cursors.json").write_text(
+                                json.dumps(progress, sort_keys=True, indent=2)
+                            )
+                            (tmp_path / "all-cursors-observed").touch()
+                        if progress != previous_progress:
+                            with (tmp_path / "progress.jsonl").open("a") as output:
+                                output.write(
+                                    json.dumps(
+                                        {
+                                            "monotonic_ns": time.monotonic_ns(),
+                                            "snapshot": progress,
+                                        },
+                                        sort_keys=True,
+                                    )
+                                    + "\n"
+                                )
+                            previous_progress = progress
+                if current.state is not None and current.state.is_final():
+                    break
+                await asyncio.sleep(1 if count &gt; 8 else 0.2)
+            else:
+                raise AssertionError("DAG Flow did not reach a verified terminal state")
+            final_ns = time.monotonic_ns()
+            expected = (
+                "CANCELLED"
+                if mode == "cancel"
+                else "FAILED"
+                if mode == "failure"
+                else "COMPLETED"
+            )
+            assert current.state.type.value == expected, str(current.state)
+            async with db.session_context() as session:
+                graph = (
+                    await session.scalars(
+                        sa.select(db.StreamGraphRevision).where(
+                            db.StreamGraphRevision.flow_run_id == run.id
+                        )
+                    )
+                ).one()
+                assert graph.profile == "partitioned-dag-v1" and graph.state == "RELEASED"
+                rows = (
+                    await session.execute(
+                        sa.select(
+                            db.StreamOperatorRun.operator_uid,
+                            db.StreamPhysicalSubtask.subtask_index,
+                            db.StreamPhysicalSubtask.assigned_worker_id,
+                            db.StreamPhysicalSubtask.physical_slot_released,
+                            db.TaskRun.id,
+                            db.TaskRun.state_type,
+                        )
+                        .join(
+                            db.StreamPhysicalSubtask,
+                            db.StreamPhysicalSubtask.operator_run_id
+                            == db.StreamOperatorRun.id,
+                        )
+                        .join(
+                            db.TaskRun,
+                            db.TaskRun.id == db.StreamPhysicalSubtask.task_run_id,
+                        )
+                        .where(db.StreamOperatorRun.graph_revision_id == graph.id)
+                    )
+                ).all()
+                assert len(rows) == 4 and len({row.id for row in rows}) == 4
+                assert sorted((row.operator_uid, row.subtask_index) for row in rows) == [
+                    ("A", 0),
+                    ("B", 0),
+                    ("C", 0),
+                    ("C", 1),
+                ]
+                if mode != "preview":
+                    assert all(row.physical_slot_released for row in rows)
+                    assert {row.assigned_worker_id for row in rows} == {
+                        worker.id for worker in registered
+                    }
+                else:
+                    assert all(row.assigned_worker_id is None for row in rows)
+            with server.client() as client:
+                assert (
+                    client.read_global_concurrency_limit_by_name("tag:" + _TAG).active_slots
+                    == 0
+                )
+            if mode in {"normal", "accepted200", "incomplete200"}:
+                markers = [
+                    json.loads(path.read_text()) for path in tmp_path.glob("*.pid.json")
+                ]
+                assert len(markers) == 4 and len({marker["pid"] for marker in markers}) == 4
+                assert {marker["parent"] for marker in markers} == {
+                    worker.pid for worker in workers
+                }
+                for name in ("B-0", "C-0", "C-1"):
+                    documents = list((tmp_path / name).glob("document-*.json"))
+                    assert len(documents) == count
+                    assert {
+                        json.loads(path.read_text())["number"] for path in documents
+                    } == set(range(1, count + 1))
+                assert all(row.state_type.value == "COMPLETED" for row in rows)
+                if count &gt; 8:
+                    progress = await _dag_progress(db, run.id)
+                    assert progress is not None
+                    assert progress["task_run_count"] == 4
+                    assert len(progress["channels"]) == 7
+                    assert progress["consumers"] == []
+                    accepted_progress = json.loads(
+                        (tmp_path / "accepted-cursors.json").read_text()
+                    )
+                    assert len(accepted_progress["consumers"]) == 3
+                    assert all(
+                        item["state"] == "COMPLETED"
+                        and item["last_sequence"] == count
+                        and item["tail_sequence"] == count
+                        for item in progress["channels"]
+                    )
+                    assert all(
+                        item["completed_through"] == count
+                        and item["inflight_sequence"] is None
+                        for item in accepted_progress["consumers"]
+                    )
+                    recovery = mode in {"accepted200", "incomplete200"}
+                    for item in progress["subtasks"]:
+                        expected_attempt = (
+                            2 if recovery and item["operator_uid"] == "B" else 1
+                        )
+                        assert item["physical_epoch"] == expected_attempt
+                        assert item["run_count"] == expected_attempt
+                        assert item["physical_slot_released"]
+                    source = [
+                        json.loads(line)
+                        for line in (tmp_path / "source-accepted.jsonl")
+                        .read_text()
+                        .splitlines()
+                    ]
+                    assert [item["position"] for item in source] == list(
+                        range(1, count + 1)
+                    )
+                    assert len({item["pid"] for item in source}) == 1
+                    for name in ("B-0", "C-0", "C-1"):
+                        calls = [
+                            json.loads(line)
+                            for line in (tmp_path / ("calls-" + name + ".jsonl"))
+                            .read_text()
+                            .splitlines()
+                        ]
+                        expected_calls = list(range(1, count + 1))
+                        if recovery and name == "B-0":
+                            original_pid = json.loads(
+                                (tmp_path / "B-0.pid.json").read_text()
+                            )["pid"]
+                            replacement = json.loads(
+                                (tmp_path / "replacement-started.json").read_text()
+                            )
+                            first = 201 if mode == "accepted200" else 200
+                            assert replacement["sequence"] == first
+                            assert replacement["pid"] != original_pid
+                            assert [
+                                item["sequence"]
+                                for item in calls
+                                if item["pid"] == original_pid
+                            ] == list(range(1, 201))
+                            assert [
+                                item["sequence"]
+                                for item in calls
+                                if item["pid"] == replacement["pid"]
+                            ] == list(range(first, count + 1))
+                            assert len({item["pid"] for item in calls}) == 2
+                            assert len({item["task_run_id"] for item in calls}) == 1
+                            if mode == "incomplete200":
+                                expected_calls.insert(200, 200)
+                        else:
+                            assert len({item["pid"] for item in calls}) == 1
+                        assert [item["sequence"] for item in calls] == expected_calls
+                    processes = [
+                        json.loads(path.read_text())
+                        for path in (tmp_path / "processes").glob("*.pid.json")
+                    ]
+                    assert len(processes) == (5 if recovery else 4)
+                    for item in progress["subtasks"]:
+                        owned = [
+                            marker
+                            for marker in processes
+                            if marker["task_run_id"] == item["task_run_id"]
+                        ]
+                        expected_processes = (
+                            2 if recovery and item["operator_uid"] == "B" else 1
+                        )
+                        assert len(owned) == expected_processes
+                        assert (
+                            len({marker["pid"] for marker in owned}) == expected_processes
+                        )
+                        grants = [
+                            grant
+                            for grant in progress["grants"]
+                            if grant["subtask_id"] == item["subtask_id"]
+                        ]
+                        assert {grant["child_process_id"] for grant in grants} == {
+                            marker["pid"] for marker in owned
+                        }
+                        launches = [
+                            launch
+                            for launch in progress["launches"]
+                            if launch["subtask_id"] == item["subtask_id"]
+                        ]
+&gt;                       assert len(launches) == expected_processes
+E                       AssertionError: assert 2 == 1
+E                        +  where 2 = len([{'id': '01a1ac49-6700-7f6d-a2da-5581fec01557', 'subtask_id': '01a1ac49-5bbc-7078-bacd-21724f953c44', 'child_process_i...', 'subtask_id': '01a1ac49-5bbc-7078-bacd-21724f953c44', 'child_process_id': 283391, 'planned_physical_epoch': 2, ...}])
+
+tests/test_native_stream_dag_execution_http.py:971: AssertionError</failure></testcase></testsuite></testsuites>

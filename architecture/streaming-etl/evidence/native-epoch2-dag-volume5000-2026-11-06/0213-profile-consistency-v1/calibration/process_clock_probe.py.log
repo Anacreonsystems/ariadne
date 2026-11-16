@@ -1,0 +1,62 @@
+"""Benign shared-clock viability check; no application, network or database."""
+import asyncio
+import cProfile
+import hashlib
+import json
+from pathlib import Path
+import pstats
+import sys
+import threading
+import time
+import greenlet
+
+BASE=Path(__file__).resolve().parent
+
+def burn(count=120_000):
+    value=1
+    for number in range(count):
+        value=(value*33+number)%65521
+    return value
+
+def plain_cpu():
+    burn();burn()
+
+def greenlet_cpu():
+    parent=greenlet.getcurrent()
+    def branch():
+        for _ in range(30):
+            burn(3000);parent.switch()
+    child=greenlet.greenlet(branch)
+    for _ in range(30):
+        burn(3000);child.switch()
+    if not child.dead:child.switch()
+    assert child.dead
+
+def foreign_marker():
+    burn();time.sleep(0.001);burn()
+
+def two_threads():
+    child=threading.Thread(target=foreign_marker)
+    child.start();burn();child.join();assert not child.is_alive()
+
+async def mixed_async():
+    loop=asyncio.get_running_loop()
+    pending=loop.run_in_executor(None,foreign_marker)
+    for _ in range(6):
+        burn(5000);await asyncio.sleep(0)
+    await pending
+
+def mixed():
+    asyncio.run(mixed_async())
+
+results=[]
+for name,work in [('plain',plain_cpu),('greenlet',greenlet_cpu),('thread',two_threads),('async_thread',mixed)]:
+    assert sys.monitoring.get_tool(sys.monitoring.PROFILER_ID) is None
+    profile=cProfile.Profile(timer=time.process_time_ns,timeunit=1e-9)
+    wall,cpu=time.monotonic(),time.process_time()
+    profile.enable();work();profile.disable()
+    observed={'wall_seconds':time.monotonic()-wall,'whole_process_cpu_seconds':time.process_time()-cpu}
+    path=BASE/('process-clock-'+name+'.pstats');profile.dump_stats(str(path));stats=pstats.Stats(str(path)).stats
+    results.append({'case':name,**observed,'sum_self_seconds':sum(v[2] for v in stats.values()),'max_self_seconds':max(v[2] for v in stats.values()),'negative_self_count':sum(v[2]<0 for v in stats.values()),'cumulative_less_than_self_count':sum(v[3]+1e-12<v[2] for v in stats.values()),'foreign_marker_captured':any(k[2]=='foreign_marker' for k in stats),'pstats_sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
+result={'status':'BENIGN_SHARED_PROCESS_CLOCK_PROBE_CLOSED','results':results,'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'application_imported':any(k=='prefect' or k.startswith('prefect.') for k in sys.modules),'owned_threads_remaining':[t.name for t in threading.enumerate() if t is not threading.main_thread()],'limitations':'Tiny synthetic scope sanity only; global stack accounting and concurrent CPU attribution require real capture consistency checks. No native/API/DB/CI acceptance.'}
+p=BASE/'process-clock-result.json';p.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n');print(json.dumps(result,indent=2));print(hashlib.sha256(p.read_bytes()).hexdigest())

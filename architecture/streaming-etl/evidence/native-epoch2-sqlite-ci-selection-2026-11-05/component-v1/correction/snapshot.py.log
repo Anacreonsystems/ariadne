@@ -1,0 +1,13 @@
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+root=Path(sys.argv[1]);target=Path(sys.argv[2])
+paths=subprocess.check_output(['git','ls-files','--','src/prefect','tests/test_native_stream_dag_execution_http.py','tests/test_native_stream_dag_http.py','pyproject.toml','uv.lock','pyrightconfig-native-dag.json','.github/workflows/python-tests.yaml','tests/_internal/test_verify_test_selection.py'],cwd=root,text=True).splitlines()
+files={name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in paths}
+head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
+status=subprocess.check_output(['git','status','--porcelain'],cwd=root,text=True)
+target.write_text(json.dumps({'root':str(root),'head':head,'git_status':status,'files':files},indent=2,sort_keys=True)+'\n')
+print(json.dumps({'root':str(root),'head':head,'git_status':status,'files':len(files)}))

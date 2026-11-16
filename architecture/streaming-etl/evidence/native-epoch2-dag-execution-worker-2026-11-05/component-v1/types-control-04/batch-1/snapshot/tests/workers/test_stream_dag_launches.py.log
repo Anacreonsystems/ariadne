@@ -1,0 +1,345 @@
+"""Actual local launch durability cuts without a database or wire stand-ins."""
+
+import json
+import os
+import stat
+import subprocess
+import sys
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
+from uuid import UUID
+
+from prefect.workers._stream_dag_launches import (
+    DAGLaunchJournal,
+    DAGLaunchJournalError,
+)
+
+
+def process_ticks(pid: int) -> int:
+    value = Path(f"/proc/{pid}/stat").read_text()
+    return int(value[value.rfind(")") + 2 :].split()[19])
+
+
+class TestDAGLaunchJournal(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="dag-launch-journal-test-")
+        self.directory = Path(self.temporary.name) / "journal"
+        self.identities: dict[str, Any] = {
+            "worker_id": UUID(int=1),
+            "worker_generation_digest": "ab" * 32,
+            "graph_revision_id": UUID(int=2),
+            "subtask_id": UUID(int=3),
+        }
+        self.start = UUID(int=4)
+        self.attempt = UUID(int=5)
+        self.children: list[subprocess.Popen[bytes]] = []
+        self.descriptors: list[int] = []
+        self.journal = self.open()
+        self.journal.reconcile({})
+
+    def tearDown(self) -> None:
+        for child in self.children:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
+        for descriptor in self.descriptors:
+            os.close(descriptor)
+        self.temporary.cleanup()
+
+    def open(self, **changes: Any) -> DAGLaunchJournal:
+        return DAGLaunchJournal(self.directory, **{**self.identities, **changes})
+
+    def bound(self) -> UUID:
+        intent = self.journal.intent(self.start)
+        self.journal.bind(intent.operation_id, self.attempt, 1)
+        return intent.operation_id
+
+    def child(self) -> subprocess.Popen[bytes]:
+        read, write = os.pipe()
+        self.descriptors.extend((read, write))
+        child = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import os,sys;os.read(int(sys.argv[1]),1)",
+                str(read),
+            ],
+            pass_fds=(read,),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.children.append(child)
+        return child
+
+    def test_intent_is_private_durable_and_idempotent_before_prepare(self):
+        intent = self.journal.intent(self.start)
+        path = self.directory / f"{intent.operation_id}.json"
+        before = path.read_bytes()
+        self.assertEqual(stat.S_IMODE(self.directory.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        self.assertEqual(self.journal.intent(self.start), intent)
+        self.assertEqual(path.read_bytes(), before)
+        recovered = self.open()
+        with self.assertRaises(DAGLaunchJournalError):
+            recovered.read(intent.operation_id)
+        recovered.reconcile({})
+        self.assertEqual(recovered.read(intent.operation_id), intent)
+        value = json.loads(before)
+        self.assertEqual(value["checksum"], recovered.digest(intent))
+        self.assertNotIn("capability", value)
+        self.assertNotIn("event_private_key", value)
+
+    def test_server_binding_is_exact_and_never_rotates(self):
+        operation = self.bound()
+        original = self.journal.read(operation)
+        self.assertEqual(self.journal.bind(operation, self.attempt, 1), original)
+        for identity, index in (
+            (UUID(int=6), 1),
+            (self.attempt, 2),
+            (self.attempt, True),
+        ):
+            with self.assertRaises(DAGLaunchJournalError):
+                self.journal.bind(operation, identity, index)
+        recovered = self.open()
+        recovered.reconcile({operation: (self.attempt, 1)})
+        self.assertEqual(recovered.read(operation), original)
+
+    def test_closed_unstarted_fence_survives_delayed_prepare_ack(self):
+        operation = self.journal.intent(self.start).operation_id
+        self.journal.close_unstarted(operation)
+        self.journal.bind(operation, self.attempt, 1)
+        recovered = self.open()
+        recovered.reconcile({operation: (self.attempt, 1)})
+        self.assertTrue(recovered.read(operation).spawn_fence_closed)
+        with self.assertRaises(DAGLaunchJournalError):
+            recovered.reserve_birth(operation)
+        self.assertEqual(
+            recovered.close_unstarted(operation), recovered.read(operation)
+        )
+
+    def test_reserved_birth_without_pid_is_unknown_after_manager_recovery(self):
+        operation = self.bound()
+        self.journal.reserve_birth(operation)
+        recovered = self.open()
+        recovered.reconcile({operation: (self.attempt, 1)})
+        self.assertIsNone(recovered.read(operation).child_process_id)
+        with self.assertRaises(DAGLaunchJournalError):
+            recovered.close_unstarted(operation)
+        with self.assertRaises(DAGLaunchJournalError):
+            recovered.reserve_birth(operation)
+
+    def test_actual_recorded_child_reap_closes_only_its_exact_identity(self):
+        operation = self.bound()
+        with self.journal.spawn_stop_mutex():
+            self.journal.reserve_birth(operation)
+            child = self.child()
+            ticks = process_ticks(child.pid)
+            self.journal.record_process(operation, child.pid, ticks)
+        original_digest = self.journal.process_record_digest(operation)
+        with self.assertRaises(DAGLaunchJournalError):
+            self.journal.record_process(operation, child.pid + 1, ticks)
+        with self.assertRaises(DAGLaunchJournalError):
+            self.journal.close_after_verified_death(operation, child.pid, ticks + 1)
+        child.kill()
+        self.assertEqual(child.wait(timeout=5), -9)
+        self.assertFalse(Path(f"/proc/{child.pid}").exists())
+        closed = self.journal.close_after_verified_death(operation, child.pid, ticks)
+        self.assertTrue(closed.spawn_fence_closed)
+        self.assertEqual(self.journal.process_record_digest(operation), original_digest)
+        recovered = self.open()
+        recovered.reconcile({operation: (self.attempt, 1)})
+        self.assertEqual(recovered.read(operation), closed)
+        with self.assertRaises(DAGLaunchJournalError):
+            recovered.reserve_birth(operation)
+
+    def test_concurrent_birth_requests_create_only_one_actual_child(self):
+        operation = self.bound()
+        errors: list[BaseException] = []
+        start = threading.Barrier(12)
+
+        def spawn() -> None:
+            start.wait(timeout=10)
+            try:
+                with self.journal.spawn_stop_mutex():
+                    self.journal.reserve_birth(operation)
+                    child = self.child()
+                    self.journal.record_process(
+                        operation, child.pid, process_ticks(child.pid)
+                    )
+            except DAGLaunchJournalError:
+                return
+            except BaseException as error:
+                errors.append(error)
+
+        threads = [threading.Thread(target=spawn) for _ in range(12)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(len(self.children), 1)
+        self.assertEqual(
+            self.journal.read(operation).child_process_id, self.children[0].pid
+        )
+
+    def test_stop_cannot_attest_unstarted_while_birth_mutex_is_owned(self):
+        operation = self.bound()
+        reserved = threading.Event()
+        allow_birth = threading.Event()
+        stop_entered = threading.Event()
+        stop_finished = threading.Event()
+        refused: list[bool] = []
+
+        def spawn() -> None:
+            with self.journal.spawn_stop_mutex():
+                self.journal.reserve_birth(operation)
+                reserved.set()
+                if not allow_birth.wait(timeout=10):
+                    raise AssertionError("The controlled birth was not released")
+                child = self.child()
+                self.journal.record_process(
+                    operation, child.pid, process_ticks(child.pid)
+                )
+
+        def stop() -> None:
+            stop_entered.set()
+            try:
+                self.journal.close_unstarted(operation)
+            except DAGLaunchJournalError:
+                refused.append(True)
+            finally:
+                stop_finished.set()
+
+        starter = threading.Thread(target=spawn)
+        stopper = threading.Thread(target=stop)
+        starter.start()
+        self.assertTrue(reserved.wait(timeout=10))
+        stopper.start()
+        self.assertTrue(stop_entered.wait(timeout=10))
+        self.assertFalse(stop_finished.is_set())
+        allow_birth.set()
+        starter.join(timeout=15)
+        stopper.join(timeout=15)
+        self.assertFalse(starter.is_alive())
+        self.assertFalse(stopper.is_alive())
+        self.assertEqual(refused, [True])
+        self.assertEqual(len(self.children), 1)
+
+    def test_missing_aliased_and_incomplete_server_views_refuse_recovery(self):
+        operation = self.bound()
+        other = self.journal.intent(self.start, UUID(int=9)).operation_id
+        views: tuple[dict[UUID, tuple[UUID, int]], ...] = (
+            {},
+            {UUID(int=99): (UUID(int=9), 1)},
+            {operation: (UUID(int=9), 1)},
+            {operation: (self.attempt, True)},
+            {operation: (self.attempt, 1), other: (self.attempt, 2)},
+            {operation: (self.attempt, 1), other: (UUID(int=9), 1)},
+        )
+        for expected in views:
+            recovered = self.open()
+            with self.subTest(expected=tuple(expected)):
+                with self.assertRaises(DAGLaunchJournalError):
+                    recovered.reconcile(expected)
+                with self.assertRaises(DAGLaunchJournalError):
+                    recovered.close_unstarted(operation)
+
+    def test_every_local_durability_cut_poison_fences_future_births(self):
+        operation = self.bound()
+        real_fsync = os.fsync
+        real_replace = os.replace
+
+        def file_cut(descriptor: int) -> None:
+            if stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise OSError("Simulated file fsync failure")
+            real_fsync(descriptor)
+
+        def rename_cut(*args: Any, **kwargs: Any) -> None:
+            raise OSError("Simulated rename failure")
+
+        def directory_ack_cut(descriptor: int) -> None:
+            real_fsync(descriptor)
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                raise OSError("Simulated lost directory fsync acknowledgement")
+
+        for name, target, callback in (
+            ("file", "os.fsync", file_cut),
+            ("rename", "os.replace", rename_cut),
+            ("directory-ack", "os.fsync", directory_ack_cut),
+        ):
+            directory = Path(self.temporary.name) / name
+            journal = DAGLaunchJournal(directory, **self.identities)
+            journal.reconcile({})
+            item = journal.intent(self.start)
+            journal.bind(item.operation_id, self.attempt, 1)
+            with self.subTest(cut=name):
+                with patch(
+                    "prefect.workers._stream_dag_launches." + target,
+                    side_effect=callback,
+                ):
+                    with self.assertRaises(DAGLaunchJournalError):
+                        journal.reserve_birth(item.operation_id)
+                with self.assertRaises(DAGLaunchJournalError):
+                    journal.reserve_birth(item.operation_id)
+                with self.assertRaises(DAGLaunchJournalError):
+                    journal.close_unstarted(item.operation_id)
+                if name == "directory-ack":
+                    recovered = DAGLaunchJournal(directory, **self.identities)
+                    recovered.reconcile({item.operation_id: (self.attempt, 1)})
+                    with self.assertRaises(DAGLaunchJournalError):
+                        recovered.close_unstarted(item.operation_id)
+                else:
+                    with self.assertRaises(DAGLaunchJournalError):
+                        DAGLaunchJournal(directory, **self.identities)
+        self.assertIs(os.replace, real_replace)
+        self.assertFalse(self.journal.read(operation).birth_reserved)
+
+    def test_corruption_foreign_generation_and_public_files_hold_capacity(self):
+        item = self.journal.intent(self.start)
+        path = self.directory / f"{item.operation_id}.json"
+        original = path.read_bytes()
+        changed = json.loads(original)
+        changed["record"]["birth_reserved"] = True
+        for raw in (
+            b"{",
+            b"x" * (16 * 1024 + 1),
+            json.dumps(changed).encode(),
+            original + b" ",
+        ):
+            path.write_bytes(raw)
+            with self.assertRaises(DAGLaunchJournalError):
+                self.open()
+        path.write_bytes(original)
+        with self.assertRaises(DAGLaunchJournalError):
+            self.open(worker_generation_digest="cd" * 32)
+        path.chmod(0o644)
+        with self.assertRaises(DAGLaunchJournalError):
+            self.open()
+        path.chmod(0o600)
+        alias = Path(self.temporary.name) / "hard-link"
+        os.link(path, alias)
+        with self.assertRaises(DAGLaunchJournalError):
+            self.open()
+        alias.unlink()
+        path.unlink()
+        path.symlink_to(alias)
+        with self.assertRaises(DAGLaunchJournalError):
+            self.open()
+
+    def test_local_journal_stops_at_the_exact_64_authorization_bound(self):
+        for index in range(64):
+            self.journal.intent(self.start, UUID(int=100 + index))
+        self.assertEqual(len(tuple(self.directory.iterdir())), 64)
+        with self.assertRaises(DAGLaunchJournalError):
+            self.journal.intent(self.start, UUID(int=200))
+        self.assertEqual(len(tuple(self.directory.iterdir())), 64)
+
+
+if __name__ == "__main__":
+    unittest.main()

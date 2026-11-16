@@ -1,0 +1,72 @@
+{
+  "schema": "native-p2-transaction-proof-rejected-v1",
+  "status": "Rejected",
+  "native_credit": 0,
+  "port_performed": false,
+  "optimization_stopped": true,
+  "date": "2026-11-05",
+  "decision_owner": "ETL Architect / HighLoad Principal",
+  "related_adr": "../../adr/ADR-0043-physical-graph-and-partitioned-channels.md",
+  "related_cpu_diagnosis": "../native-p2-progress-observation-2026-11-05/cpu-diagnosis-v1/index.json",
+  "reason": "Corrected transaction-local locked-prefix ledger reduced SQL count but increased observed CPU/wall and added555productionlines; rejected before port.",
+  "source_scope": "Isolated old-P2 checkout only; canonical Root src/tests/config and ADR body/status unchanged by this archive.",
+  "baseline": {
+    "SQL": 72149,
+    "api_CPU_seconds": 72.675689777,
+    "api_wall_seconds": 107.13775343399902,
+    "pytest_seconds_XML": 119.129
+  },
+  "corrected": {
+    "SQL": 46684,
+    "api_CPU_seconds": 97.79848017100001,
+    "api_wall_seconds": 128.12702606400126,
+    "pytest_seconds_XML": 137.2,
+    "physical_model_tests_passed": 55,
+    "physical_model_skipped": 0,
+    "native8_passed": 1,
+    "native500_passed": 1,
+    "scoped_type_errors": 0,
+    "scoped_type_files_analyzed": 2
+  },
+  "observed_reduction_percent": {
+    "sql_total": 35.29501448391523,
+    "api_cpu_seconds": -34.56835493558773,
+    "api_wall_seconds": -19.5909209940009,
+    "pytest_seconds": -15.169270286831907
+  },
+  "predecessor_security_holes": [
+    {
+      "problem": "Raw END/ABORT/keyword-comment COMMIT released actual PostgreSQL locks while SQLAlchemy transaction objects remained active; stale proof accepted.",
+      "predecessor_red_failures": 3,
+      "archive_evidence": "xid-red-01.xml"
+    },
+    {
+      "problem": "Boundary during fresh-prefix SELECT await could clear owner/proof and then predecessor recreated/returned proof without a final fence.",
+      "predecessor_red_failures": 2,
+      "archive_evidence": "generation-red-01.xml"
+    }
+  ],
+  "corrected_fences": "Server transaction identity before canonical locking and in every fresh projection, structural opaque-SQL invalidation, monotonic boundary generation, final no-await identity/credential/reference fence.",
+  "cleanup": {
+    "owned_test_databases_remaining": 0,
+    "owned_DB_sessions_remaining": 0,
+    "gone_exact_API_identities": 5,
+    "absent_Worker_Task_PID_observations": 30,
+    "closed_native_API_ports": 5,
+    "archive_evidence": "successor-v2/cleanup-final.json"
+  },
+  "qualification": "One local baseline and sequential successors under uncontrolled other workloads; observations do not establish a causal SLO,5000completion,CIacceptance or DAG DATA improvement. Earlier unsafe predecessor speedup is not final-source evidence.",
+  "archive": {
+    "path": "evidence.zip",
+    "entries": 126,
+    "published_payloads": 125,
+    "original_index_SHA256": "8d4c85f61364a343cf935e5ffe33b0e23961ac22f25669ce96ee2c607a2c59d8",
+    "ZIP_SHA256": "7e491da2c3e86465b828efc1d4501218a6b43e0f7e6029af9403284a49a2162e",
+    "ZIP_bytes": 1302029,
+    "verified_payloads": 125,
+    "exact_original_payloads": 111,
+    "redacted_payloads": 14,
+    "redaction_mapping": "publication-map.json",
+    "privacy": "redaction-receipt.json"
+  }
+}

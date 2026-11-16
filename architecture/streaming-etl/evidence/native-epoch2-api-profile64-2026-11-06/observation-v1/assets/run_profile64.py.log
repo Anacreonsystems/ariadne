@@ -1,0 +1,264 @@
+"""PREPARED ONLY: a separate Root source hold is mandatory before any DB call."""
+
+import asyncio
+import hashlib
+import importlib.metadata
+import io
+import json
+import os
+import pstats
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
+
+from profile_support import ROOT, closure, create_database, proc_ticks, source_snapshot
+
+ASSETS = Path(__file__).resolve().parent
+CONFIG = Path("/tmp/native-ni012-runtime-test-env.json")
+PLAN = Path("/tmp/native-launch-parent-lock-principal-recovery2-v1/profiling-plan-v1.md")
+PLAN_SHA = "c665f48aaffd07d0605687f62d44063c2ce6179ca3259942e8a07fdf01e105ac"
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def write(path, value):
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def sanitize(value):
+    return re.sub(r"(?i)(postgres(?:ql)?(?:\+asyncpg)?://)[^\s\'\"<>]+", r"\1[redacted-owned-test-dsn]", value)
+
+
+def cpu_sample(owner):
+    pid = owner["pid"]
+    state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    if state[19] != str(owner["start_ticks"]):
+        raise ValueError("PID reused; refuse unrelated process observation")
+    status = {}
+    for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+        key, _, value = line.partition(":")
+        if key in {"VmRSS", "VmHWM", "voluntary_ctxt_switches", "nonvoluntary_ctxt_switches"}:
+            status[key] = value.strip()
+    return {
+        "pid": pid, "start_ticks": state[19], "monotonic_ns": time.monotonic_ns(),
+        "user_ticks": int(state[11]), "system_ticks": int(state[12]),
+        "clock_ticks_per_second": os.sysconf("SC_CLK_TCK"), "status": status,
+    }
+
+
+def normal_health(trial):
+    """Read-only whole-prefix checks; mentions are not deduplicated incidents."""
+    status = re.compile(r"HTTP/\d(?:\.\d)?[\"\s]+(5\d\d)\b",re.I)
+    client_status = re.compile(r"Server error ['\"](5\d\d)\b",re.I)
+    ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+    errors = re.compile(r"(?:^|\|)\s*ERROR(?:\s*\||\s*:)",re.I)
+    reports=[];reasons=[];retry_observations=[]
+    for path in sorted(trial.rglob("*.log")):
+        if path.name not in {"worker-left.log","worker-right.log","pytest.private.log"} and re.fullmatch(r"api-[0-9a-f]{32}\.log",path.name) is None:continue
+        counts={"access_http5xx_mentions":0,"client_http5xx_mentions":0,"timeout_mentions":0,"unhandled_asgi_mentions":0,"error_level_lines":0}
+        for line in path.read_text(errors="replace").splitlines():
+            line=ansi.sub("",line)
+            counts["access_http5xx_mentions"]+=len(status.findall(line))
+            counts["client_http5xx_mentions"]+=len(client_status.findall(line))
+            counts["timeout_mentions"]+=len(re.findall(r"\bTimeoutError\b",line))
+            counts["unhandled_asgi_mentions"]+=int("exception in asgi application" in line.lower() or re.search(r"unhandled.*asgi",line,re.I) is not None)
+            counts["error_level_lines"]+=int(errors.search(line) is not None)
+        reports.append({"path":str(path.relative_to(trial)),"sha256":digest(path),**counts})
+        if any(counts.values()):reasons.append({"reason":"NORMAL_LOG_HEALTH_RED","path":str(path.relative_to(trial)),"counts":counts})
+    for path in sorted(trial.rglob("progress.jsonl")):
+        for number,line in enumerate(path.read_text().splitlines(),1):
+            try:snapshot=json.loads(line)["snapshot"]
+            except (ValueError,KeyError):reasons.append({"reason":"PROGRESS_PARSE_FAILED","path":str(path.relative_to(trial)),"line":number});continue
+            if snapshot.get("task_run_count")!=4:reasons.append({"reason":"TASK_METADATA_CARDINALITY_CHANGED","path":str(path.relative_to(trial)),"line":number})
+            for row in snapshot.get("subtasks",[]):
+                if row.get("run_count",0)>1 or row.get("physical_epoch",0)>1:
+                    item={"path":str(path.relative_to(trial)),"line":number,"task_run_id":row.get("task_run_id"),"run_count":row.get("run_count"),"physical_epoch":row.get("physical_epoch")}
+                    retry_observations.append(item)
+    if retry_observations:reasons.append({"reason":"HEALTHY_NORMAL_TASK_RETRY","observations":retry_observations})
+    health=sorted(trial.rglob("worker-health.json"));coordinator=sorted(trial.rglob("coordinator-retirement.json"));progress=sorted(trial.rglob("final-progress.json"))
+    missing=[name for name,paths in (("worker-health.json",health),("coordinator-retirement.json",coordinator),("final-progress.json",progress)) if not paths]
+    if missing:reasons.append({"reason":"MISSING_EXISTING_HEALTH_OBSERVATIONS","files":missing})
+    for path in health:
+        try:
+            if json.loads(path.read_text()).get("rejected")!=[]:reasons.append({"reason":"EXISTING_WORKER_HEALTH_REJECTED","path":str(path.relative_to(trial))})
+        except ValueError:reasons.append({"reason":"WORKER_HEALTH_PARSE_FAILED"})
+    return {"status":"HEALTH_OBSERVATIONS_CLEAN" if not reasons else "HEALTH_RED_OR_INCOMPLETE","reasons":reasons,"logs":reports,"expected_task_retry_max":1,"qualification":"Read-only complete owned log prefixes and helper progress; typed409 is not5xx. Mention counts do not establish causality or deduplicated incidents; absence of access logs is not a proof of all HTTP statuses."}
+
+
+def startup_source(trial):
+    # Same import-byte observer is installed for control/profile. It never
+    # imports cProfile, creates threads or changes signals in nonmatching PIDs.
+    audit = '''import hashlib,json,marshal,os,sys,time
+_seen=set()
+def _profile_import_audit(event,args):
+ if event!='exec' or not args:return
+ code=args[0];path=getattr(code,'co_filename','')
+ if not isinstance(path,str) or not path.endswith('.py') or path in _seen:return
+ if not (path.startswith(SOURCE_ROOT) or '/src/prefect/' in path or '/site-packages/prefect/' in path):return
+ _seen.add(path)
+ try:
+  pid=os.getpid()
+  with open('/proc/'+str(pid)+'/stat') as state:ticks=state.read().rsplit(')',1)[1].split()[19]
+  with open(path,'rb') as source:source_digest=hashlib.sha256(source.read()).hexdigest()
+  row={'pid':pid,'start_ticks':ticks,'path':path,'source_sha256':source_digest,'code_sha256':hashlib.sha256(marshal.dumps(code)).hexdigest()}
+  fd=os.open(AUDIT_DIRECTORY+'/'+str(pid)+'.jsonl',os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
+  try:os.write(fd,(json.dumps(row,sort_keys=True)+chr(10)).encode())
+  finally:os.close(fd)
+ except OSError:pass
+sys.addaudithook(_profile_import_audit)
+'''
+    audit = audit.replace("SOURCE_ROOT", repr(str(ROOT / "src/prefect") + "/"))
+    audit = audit.replace("AUDIT_DIRECTORY", repr(str(trial / "audit")))
+    return audit + "\n" + (ASSETS / "sitecustomize_profile.py").read_text()
+
+
+def main():
+    os.umask(0o077)
+    if len(sys.argv) not in {3, 4} or sys.argv[2] not in {"control", "profile"}:
+        raise SystemExit("usage: run_profile64.py /ABS/ROOT_PROFILE_HOLD.json control|profile [/ABS/CLOSED_CONTROL/receipt.json]")
+    hold_path = Path(sys.argv[1]); mode = sys.argv[2]
+    assert hold_path.is_absolute()
+    hold = json.loads(hold_path.read_text())
+    assert hold["status"] == "ROOT_AUTHORIZED_PROFILE64_SOURCE_HOLD"
+    assert hold["runtime_authorized_by"] == "/root"
+    assert hold["principal_native_status"] == "STOPPED", "Both native cases must close first"
+    assert mode in hold["authorized_phases"]
+    assert hold["profile_plan_sha256"] == PLAN_SHA == digest(PLAN)
+    assert hold["source_root"] == str(ROOT)
+    assert hold["head"] == subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    assets = {path.name: digest(path) for path in ASSETS.glob("*.py")}
+    assert assets == hold["assets"], "External diagnostic source changed"
+    before = source_snapshot()
+    assert before == hold["files"], "Source lease differs before profiling trial"
+    source_digest = hashlib.sha256(json.dumps(before, sort_keys=True).encode()).hexdigest()
+    control_path = None
+    if mode == "profile":
+        assert len(sys.argv) == 4
+        control_path = Path(sys.argv[3]); control = json.loads(control_path.read_text())
+        assert control_path.is_absolute() and control["status"] == "CONTROL_PASSED"
+        assert control["phase"] == "control" and control["source_digest"] == source_digest
+        assert control["assets"] == assets and control["cleanup_complete"]
+        assert control["workload"] == {"count":64,"asynchronous":False,"mode":"normal","exchange":"broadcast","wait":150,"observe":210,"pytest":300}
+    else:
+        assert len(sys.argv) == 3
+    # No selector contents, environment, credentials or DSNs are archived.
+    trial = ASSETS / (mode + "-" + uuid4().hex[:8]); trial.mkdir(mode=0o700)
+    (trial / "audit").mkdir(); (trial / "startup").mkdir(); (trial / "temp").mkdir()
+    write(trial / "source-before.json", before)
+    write(trial / "profile-config.json", {"mode": mode})
+    site = startup_source(trial)
+    (trial / "startup/sitecustomize.py").write_text(site)
+    write(trial / "external-bindings.json", {"assets":assets,"generated_sitecustomize_sha256":hashlib.sha256(site.encode()).hexdigest()})
+    config = json.loads(CONFIG.read_text())
+    name = config["database_prefix"] + "_pr64_" + uuid4().hex[:8]
+    asyncio.run(create_database(config, name))
+    parsed = urlsplit(config["admin_dsn"]); env = os.environ.copy()
+    env.pop("PREFECT_API_DATABASE_CONNECTION_URL", None)
+    env["PREFECT_SERVER_DATABASE_CONNECTION_URL"] = urlunsplit((config["sqlalchemy_scheme"], parsed.netloc, "/"+name, parsed.query, ""))
+    env["PATH"] = "/workspace/ariadne/.venv/bin" + os.pathsep + env.get("PATH", "")
+    env["UV_NO_SYNC"] = "1"; env["UV_PROJECT_ENVIRONMENT"] = "/workspace/ariadne/.venv"
+    env["PYTHONPATH"] = os.pathsep.join([str(trial/"startup"),str(ASSETS),str(ROOT/"src"),str(ROOT)])
+    env["PYTHONPYCACHEPREFIX"] = str(trial/"pycache")
+    env["TMPDIR"] = str(trial/"temp")
+    env["ARIADNE_PROFILE64_DIRECTORY"] = str(trial)
+    env["PREFECT_LOGGING_LEVEL"] = "INFO"; env["PREFECT_LOGGING_INTERNAL_LEVEL"] = "WARNING"
+    command = ["uv","run","--no-sync","python","-m","pytest",str(ASSETS/"test_native_api_profile64.py"),"-q","-o","addopts=","-c",str(ROOT/"pyproject.toml"),"--confcutdir="+str(ASSETS),"-p","tests.conftest","--junitxml="+str(trial/"pytest.private.xml"),"--basetemp="+str(trial/"pytest")]
+    write(trial / "command.json", {"command":command,"cwd":str(ROOT),"head":hold["head"],"phase":mode,"database":name,"config_selector":str(CONFIG),"hold_sha256":digest(hold_path),"control_receipt_sha256":digest(control_path) if control_path else None})
+    resource_context = {"affinity":sorted(os.sched_getaffinity(0)),"python":sys.version,"executable":sys.executable,"versions":{package:importlib.metadata.version(package) for package in ("uvicorn","asyncpg","pytest","sqlalchemy","httpx")}}
+    resource_context["cgroup"] = {path.name:path.read_text().strip() for path in Path("/sys/fs/cgroup").glob("*") if path.name in {"cpu.max","memory.max","pids.max","cpu.stat","memory.current"} and path.is_file()}
+    write(trial / "runtime-context.json", resource_context)
+    fd = os.open(trial/"pytest.private.log", os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o600)
+    samples = []
+    with os.fdopen(fd, "wb") as log:
+        process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        identity = {"pid":process.pid,"start_ticks":proc_ticks(process.pid),"pgid":os.getpgid(process.pid)}
+        write(trial/"process.json", identity)
+        print(json.dumps({"status":"RUNNING","phase":mode,"trial":str(trial),"pytest_pid":process.pid}),flush=True)
+        while process.poll() is None:
+            try:
+                owner = json.loads((trial/"api-owner.json").read_text())
+                samples.append(cpu_sample(owner))
+            except (OSError, ValueError) as error:
+                samples.append({"monotonic_ns":time.monotonic_ns(),"sample_missing":type(error).__name__})
+            time.sleep(1)
+        code = process.wait()
+    write(trial/"api-process-samples.json", samples)
+    (trial/"exit").write_text(str(code)+"\n")
+    after = source_snapshot(); write(trial/"source-after.json",after)
+    drift = [key for key in before.keys()|after.keys() if before.get(key)!=after.get(key)]
+    if assets != {path.name:digest(path) for path in ASSETS.glob("*.py")}:drift.append("EXTERNAL_ASSETS")
+    if hashlib.sha256((trial/"startup/sitecustomize.py").read_bytes()).hexdigest()!=hashlib.sha256(site.encode()).hexdigest():drift.append("GENERATED_STARTUP_SHIM")
+    if subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip()!=hold["head"]:drift.append("GIT_HEAD")
+    write(trial/"drift.json",drift)
+    for private, public in (("pytest.private.log","pytest.log"),("pytest.private.xml","pytest.xml")):
+        path=trial/private
+        if path.exists():
+            os.chmod(path,0o600); (trial/public).write_text(sanitize(path.read_text(errors="replace")))
+    mismatches=[]; identities={process.pid:identity["start_ticks"]};audit_rows=0
+    for path in (trial/"audit").glob("*.jsonl"):
+        for line in path.read_text().splitlines():
+            row=json.loads(line);audit_rows+=1;identities[row["pid"]]=str(row["start_ticks"])
+            try:relative=str(Path(row["path"]).relative_to(ROOT))
+            except ValueError:mismatches.append({"reason":"foreign Prefect source","path":row["path"]});continue
+            if relative not in before or before[relative]["sha256"]!=row["source_sha256"]:mismatches.append({"reason":"import bytes mismatch","path":relative})
+    if not audit_rows:mismatches.append({"reason":"no import byte observations"})
+    api_match=False
+    try:
+        owner=json.loads((trial/"api-owner.json").read_text());selected=json.loads((trial/"api-selected.json").read_text())
+        keys=("pid","start_ticks","fd","header","factory","argv")
+        api_match=all(owner[key]==selected[key] for key in keys)
+        identities[owner["pid"]]=str(owner["start_ticks"])
+    except (OSError,ValueError,KeyError):pass
+    if not api_match:mismatches.append({"reason":"exact owned API selection was not verified"})
+    try:
+        exits=json.loads((trial/"api-exits.json").read_text())
+        shutdown_ok=api_match and len(exits)==1 and exits[0]["pid"]==owner["pid"] and str(exits[0]["start_ticks"])==str(owner["start_ticks"]) and exits[0]["returncode"] in {0,-15}
+    except (OSError,ValueError,KeyError):shutdown_ok=False
+    if not shutdown_ok:mismatches.append({"reason":"owned API exit unknown/abnormal/forced kill; profile inconclusive"})
+    remaining=[]
+    for pid,ticks in identities.items():
+        try:
+            if proc_ticks(pid)==ticks:remaining.append(pid)
+        except FileNotFoundError:pass
+    write(trial/"process-closure.json",{"identities":identities,"remaining_same_identity":remaining,"import_rows":audit_rows})
+    write(trial/"import-mismatches.json",mismatches)
+    profile_complete = mode=="control"
+    if mode=="profile" and (trial/"profile-complete.json").exists() and not (trial/"profile-inconclusive.json").exists():
+        marker=json.loads((trial/"profile-complete.json").read_text())
+        profile_complete=api_match and marker["pid"]==owner["pid"] and str(marker["start_ticks"])==str(owner["start_ticks"]) and marker["profile_sha256"]==digest(trial/"api.pstats")
+        if profile_complete:
+            for order in ("tottime","cumtime"):
+                stream=io.StringIO();stats=pstats.Stats(str(trial/"api.pstats"),stream=stream).sort_stats(order);stats.print_stats(50);stats.print_callers(30);stats.print_callees(30)
+                (trial/("pstats-"+order+".txt")).write_text(stream.getvalue())
+    collector = subprocess.run(["uv","run","--no-sync","python",str(ROOT/"scripts/native_runtime_diagnostics.py"),"--source",str(trial/"pytest"),"--destination",str(trial/"diagnostics")],cwd=ROOT,env=env,capture_output=True,text=True)
+    write(trial/"collector-command.json",{"exit":collector.returncode,"stdout":sanitize(collector.stdout),"stderr":sanitize(collector.stderr)})
+    health=normal_health(trial);write(trial/"normal-health-audit.json",health)
+    # Unchanged fixture teardown owns all process waits; no signal or timeout
+    # override is installed by this driver. Operational fresh-DB cleanup only.
+    precleanup_valid=code==0 and not drift and not mismatches and not remaining and profile_complete and shutdown_ok and collector.returncode==0 and health["status"]=="HEALTH_OBSERVATIONS_CLEAN"
+    closed=asyncio.run(closure(config,name,precleanup_valid))
+    closed["qualification"]="Only newly owned profile databases; not product terminal/release proof"
+    write(trial/"cleanup.json",closed)
+    valid=precleanup_valid and not closed["sessions"] and not closed["remaining"]
+    status=("CONTROL_PASSED" if mode=="control" else "PROFILE_OBSERVATION_COMPLETE") if valid else "FUNCTIONAL_RED_OR_PROFILE_INCONCLUSIVE"
+    receipt={"status":status,"phase":mode,"pytest_exit":code,"source_digest":source_digest,"assets":assets,"cleanup_complete":not closed["sessions"] and not closed["remaining"] and not remaining,"workload":{"count":64,"asynchronous":False,"mode":"normal","exchange":"broadcast","wait":150,"observe":210,"pytest":300},"profile_complete":profile_complete,"api_shutdown_verified":shutdown_ok,"normal_health_status":health["status"],"qualification":"Bounded functional/API-main-thread observation; no acceptance, throughput, b4 cause or CI-duration causal claim"}
+    write(trial/"receipt.json",receipt)
+    print(json.dumps({"status":status,"trial":str(trial),"pytest_exit":code,"drift_count":len(drift),"profile_complete":profile_complete}),flush=True)
+    raise SystemExit(0 if valid else (code or 90))
+
+
+if __name__ == "__main__":
+    import fcntl
+
+    lock = os.open(ASSETS/"profile-runtime.lock",os.O_WRONLY|os.O_CREAT,0o600)
+    try:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        main()
+    finally:
+        os.close(lock)

@@ -1,5 +1,7 @@
 import asyncio
 import contextlib
+import json
+import math
 import os
 import signal
 import threading
@@ -21,6 +23,7 @@ from typing import (
 from uuid import UUID
 
 import anyio
+import httpx
 from opentelemetry import propagate, trace
 from typing_extensions import TypeIs
 
@@ -28,6 +31,7 @@ import prefect
 import prefect.exceptions
 from prefect._internal.concurrency.cancellation import get_deadline
 from prefect._internal.stream_execution import (
+    DAGSubtaskExecutionContext,
     get_stream_subtask_execution,
     stream_task_event_resource,
 )
@@ -58,6 +62,7 @@ from prefect.results import ResultRecord, should_persist_result
 from prefect.settings import PREFECT_LOGGING_LOG_PRINTS
 from prefect.states import State
 from prefect.streams import (
+    RunningStreamGraph,
     SealedStreamGraph,
     Stream,
     StreamCollection,
@@ -85,6 +90,7 @@ _STREAM_GRAPH_METADATA_TYPES: tuple[type[Any], ...] = (
     StreamOperatorHandle,
     StreamOutput,
     SealedStreamGraph,
+    RunningStreamGraph,
 )
 
 
@@ -1075,6 +1081,111 @@ def emit_task_run_state_change_event(
         related=[dict(resource) for resource in event.related],
         follows=follows,
     )
+
+
+def _dag_event_stopped(message: str) -> NoReturn:
+    # The entrypoint composes TaskEngine; defer its signal import until Task
+    # initialization is complete, retaining the existing signal class identity.
+    from prefect._internal.stream_subtask_entrypoint import (
+        PhysicalStreamExecutionStopped,
+    )
+
+    raise PhysicalStreamExecutionStopped(message)
+
+
+def _freeze_dag_task_event(event: Event) -> bytes:
+    execution = get_stream_subtask_execution()
+    if not isinstance(execution, DAGSubtaskExecutionContext):
+        _dag_event_stopped("DAG TaskRun event requires its own scoped grant")
+    try:
+        frozen = json.dumps(
+            event.model_dump(mode="json"),
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        snapshot = Event.model_validate_json(frozen)
+        if snapshot.resource[
+            "prefect.resource.id"
+        ] != f"prefect.task-run.{execution.task_run_id}" or snapshot.resource[
+            "prefect.run-count"
+        ] != str(snapshot.payload["task_run"]["run_count"]):
+            _dag_event_stopped("DAG event refers to another TaskRun")
+    except Exception:
+        _dag_event_stopped("DAG TaskRun event could not be frozen")
+    return frozen
+
+
+def _validate_dag_task_event_ack(snapshot: Event, result: Any) -> None:
+    execution = get_stream_subtask_execution()
+    if (
+        not isinstance(execution, DAGSubtaskExecutionContext)
+        or not result.accepted
+        or result.event_id != snapshot.id
+        or result.task_run_id != execution.task_run_id
+        or result.run_count != snapshot.payload["task_run"]["run_count"]
+        or result.state_type.value != snapshot.payload["validated_state"]["type"]
+    ):
+        _dag_event_stopped("DAG TaskRun event was fenced or its receipt differs")
+
+
+def emit_dag_task_event(
+    client: "SyncPrefectClient", event: Event, *, timeout: float = 20.0
+) -> Event:
+    """Send the same signed event across ACK loss; never GET a TaskRun.
+
+    Unresolved acknowledgement fences this child. Its worker/server reconciles
+    the durable state after exact exit, without inventing another Failed event.
+    """
+    if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
+        _dag_event_stopped("DAG event timeout must be positive and finite")
+    frozen = _freeze_dag_task_event(event)
+    snapshot = Event.model_validate_json(frozen)
+    deadline = time.monotonic() + timeout
+    while True:
+        execution = get_stream_subtask_execution()
+        if not isinstance(execution, DAGSubtaskExecutionContext):
+            _dag_event_stopped("DAG TaskRun event lost its scoped grant")
+        try:
+            result = client.emit_stream_subtask_event(
+                subtask_id=execution.subtask_id, event=json.loads(frozen)
+            )
+            _validate_dag_task_event_ack(snapshot, result)
+            return snapshot
+        except httpx.TransportError:
+            if time.monotonic() >= deadline:
+                _dag_event_stopped("DAG event acknowledgement remains unknown")
+        except BaseException:
+            _dag_event_stopped("DAG event transport refused its current grant")
+        time.sleep(0.05)
+
+
+async def aemit_dag_task_event(
+    client: "PrefectClient", event: Event, *, timeout: float = 20.0
+) -> Event:
+    """Async counterpart with identical bytes, ownership and failure boundary."""
+    if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
+        _dag_event_stopped("DAG event timeout must be positive and finite")
+    frozen = _freeze_dag_task_event(event)
+    snapshot = Event.model_validate_json(frozen)
+    deadline = time.monotonic() + timeout
+    while True:
+        execution = get_stream_subtask_execution()
+        if not isinstance(execution, DAGSubtaskExecutionContext):
+            _dag_event_stopped("DAG TaskRun event lost its scoped grant")
+        try:
+            result = await client.emit_stream_subtask_event(
+                subtask_id=execution.subtask_id, event=json.loads(frozen)
+            )
+            _validate_dag_task_event_ack(snapshot, result)
+            return snapshot
+        except httpx.TransportError:
+            if time.monotonic() >= deadline:
+                _dag_event_stopped("DAG event acknowledgement remains unknown")
+        except BaseException:
+            _dag_event_stopped("DAG event transport refused its current grant")
+        await anyio.sleep(0.05)
 
 
 def resolve_to_final_result(expr: Any, context: dict[str, Any]) -> Any:

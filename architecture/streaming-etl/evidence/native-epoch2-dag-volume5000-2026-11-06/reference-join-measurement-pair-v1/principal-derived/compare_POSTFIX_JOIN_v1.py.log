@@ -1,0 +1,65 @@
+"""Closed-file comparison only; no application, SQL or profiler imports."""
+import hashlib
+import json
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+
+OUT = Path(__file__).resolve().parent
+TRIALS = {
+    'postfix_control': Path('/tmp/native-sync500-measurement-postfix-18124-v1/control-94db5043'),
+    'postfix_instrumented': Path('/tmp/native-sync500-measurement-postfix-18124-v1/instrumented-b5ee147b'),
+    'JOIN_control': Path('/tmp/native-reference-join-measurement-18124-v1/control-0335d9b4'),
+    'JOIN_instrumented': Path('/tmp/native-reference-join-measurement-18124-v1/instrumented-fc9cd74e'),
+}
+sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+load = lambda p: json.loads(p.read_text())
+ref = lambda p: {'path': str(p), 'sha256': sha(p), 'bytes': p.stat().st_size}
+
+def main():
+    phases = {}
+    for name, trial in TRIALS.items():
+        r, a = load(trial / 'diagnostic-receipt-v1.json'), load(trial / 'api-measurement-complete.json')
+        assert r['status'] == 'DIAGNOSTIC_CASE_PASS_DB_RETAINED' and r['runtime_STOPPED'] and r['pytest_exit'] == 0
+        assert not r['source_drift'] and not r['import_audit']['mismatches'] and not r['harness_errors']
+        phases[name] = {'receipt': ref(trial / 'diagnostic-receipt-v1.json'), 'JUnit_seconds': float(r['body_wider_health']['pytest_suite']['time']), 'API_process_CPU_seconds': a['process_rusage_user_seconds'] + a['process_rusage_system_seconds'], 'API_process_wall_seconds': a['process_elapsed_seconds'], 'API_serve_wall_seconds': a['serve_elapsed_seconds']}
+    before = load(TRIALS['postfix_control'] / 'source-before.json')
+    after = load(TRIALS['JOIN_control'] / 'source-before.json')
+    assert set(before) == set(after) and len(after) == 1601
+    changed = sorted(n for n in before if before[n] != after[n])
+    assert changed == ['src/prefect/server/models/stream_routes.py', 'tests/server/models/test_stream_routes.py']
+    before_assets = load(TRIALS['postfix_control'] / 'external-assets.json')
+    after_assets = load(TRIALS['JOIN_control'] / 'external-assets.json')
+    assert {k: v for k, v in before_assets.items() if k != 'runner.py'} == {k: v for k, v in after_assets.items() if k != 'runner.py'}
+    metrics = {label: load(TRIALS[label] / 'api-measurements.json') for label in ('postfix_instrumented', 'JOIN_instrumented')}
+    groups, totals = {}, {}
+    for label, m in metrics.items():
+        assert m['status'] == 'MEASUREMENT_COMPLETE' and m['unfinished_sql_dispatches'] == 0 and m['instrumentation_errors'] == []
+        buckets = [m['outside_request'], *m['requests']]
+        assert all(e['cursor_execute_before'] == e['cursor_execute_after'] + e['cursor_execute_error'] for b in buckets for e in b['sql'].values())
+        totals[label] = {'requests': m['request_count'], 'cursor_dispatches': sum(e['cursor_execute_before'] for b in buckets for e in b['sql'].values()), 'client_SQL_span_seconds_sum': sum(e['client_observed_elapsed_ns'] for b in buckets for e in b['sql'].values()) / 1e9, 'getter_calls': sum(b['plan_calls'] for b in buckets), 'getter_thread_CPU_seconds': sum(b['plan_thread_cpu_ns'] for b in buckets) / 1e9, 'dag_plan_calls': sum(b['dag_plan_calls'] for b in buckets), 'dag_plan_inclusive_wall_seconds_sum': sum(b['dag_plan_inclusive_wall_ns'] for b in buckets) / 1e9}
+        groups[label] = {}
+        for category, route, empty in (('complete', '/streams/v2/dags/consumers/complete', None), ('nonempty_read', '/streams/v2/dags/consumers/read', False), ('empty_read', '/streams/v2/dags/consumers/read', True), ('source_append', '/streams/v2/dags/sources/append', None)):
+            rows = [r for r in m['requests'] if r['method'] == 'POST' and r['route'] == route and r['status'] == 200 and (empty is None or r['empty_dag_consumer_read'] is empty)]
+            histogram = Counter(sum(e['cursor_execute_before'] for e in r['sql'].values()) for r in rows)
+            assert len(histogram) == 1
+            groups[label][category] = {'requests': len(rows), 'histogram': dict(histogram), 'dispatches': sum(n * count for n, count in histogram.items())}
+    for category in ('complete', 'nonempty_read'):
+        a, b = groups['postfix_instrumented'][category], groups['JOIN_instrumented'][category]
+        assert a['requests'] == b['requests'] == 1500 and next(iter(b['histogram'])) == next(iter(a['histogram'])) - 6
+    assert groups['postfix_instrumented']['source_append']['histogram'] == groups['JOIN_instrumented']['source_append']['histogram'] == {40: 500}
+    assert groups['postfix_instrumented']['empty_read']['histogram'] == {30: 7} and groups['JOIN_instrumented']['empty_read']['histogram'] == {30: 8}
+    descriptive = {}
+    for mode in ('control', 'instrumented'):
+        a, b = phases['postfix_' + mode], phases['JOIN_' + mode]
+        descriptive[mode] = {key: {'before': a[key], 'after': b[key], 'delta': b[key] - a[key], 'delta_percent': 100 * (b[key] - a[key]) / a[key]} for key in ('JUnit_seconds', 'API_process_CPU_seconds', 'API_process_wall_seconds')}
+    result = {'schema': 'principal-POSTFIX-to-JOIN-diagnostic-comparison-v1', 'recorded_at': datetime.now(timezone.utc).isoformat(), 'verdict': 'STRUCTURAL_MINUS6_CONFIRMED_LOCAL_SPEEDUP_NOT_DEMONSTRATED', 'executed_analysis_source': ref(Path(__file__)), 'phases': phases, 'source_delta': {n: {'before': before[n], 'after': after[n]} for n in changed}, 'all8observation_assets_byte_equal': True, 'DATA_groups': groups, 'all_API_totals': totals, 'matched3000resolutions_dispatch_savings': 18000, 'total_dispatch_delta': totals['JOIN_instrumented']['cursor_dispatches'] - totals['postfix_instrumented']['cursor_dispatches'], 'descriptive_single_pair_differences': descriptive, 'limitations': ['Actualsame1500complete+1500nonemptyread eachsave6dispatches. Sourceappend40 andemptyread30 unchanged; emptyreadcount7to8. TotalAPI175522to160132 is15390fewer, notall18000 fixedDATA savings duechangedbackground/poll mix.', 'Both observed JOIN timings/CPU are higher: CONTROL~5.27percent suite/~6.15percent CPU; INSTRUMENTED~28.88percent suite/~32.08percent CPU. One pair establishes no calibrated causalregression, but speedup is not demonstrated.', 'SQLcounts are selectedAPIEngineattempts. SQLclientelapsed anddag_planinclusivewall overlap network/scheduling/concurrentwork and do not establish DB CPU/querylatency/lockwait/criticalpath.', 'No helperCPU, queryconstruction, compiler/cachemiss orORMmaterialization cause is established. Reusable immutableSQLshape is only a source hypothesis, not approvedproductcache ormeasuredsolution.', 'No getter/data/topology/authority cache, timeout/sourcefixture change orsemanticguard skip introduced. Same source1601plusdeclaredmodel/testdelta, freshownedPG17retained, original750/840/900 normal500body passed.', 'Currentlocal4CPU/affinity0..4/16GiB is not hostedCI4CPU/affinity0..3/8GiB parity. BotholdsourceDAG5000CIRED gates remainunclosed; no5000forecast/readiness/NI014/NI020credit.', 'All runtimeactors STOP. Comparison only files/numbers; no new DBquery/test/profile/source/hook/network action. All grill-me/spec-first excluded/conflict scan incomplete.']}
+    p = OUT / 'POSTFIX-JOIN-comparison-v1.json'
+    p.write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
+    supplement = {'schema': 'comparison-public-supplement-v1', 'base93_allowlist': ref(OUT / 'public-allowlist-v1.json'), 'closed_pair_review': ref(OUT / 'principal-pair-closed-review-v1.json'), 'new_files': {'principal-derived/compare_POSTFIX_JOIN_v1.py': ref(Path(__file__)), 'principal-derived/POSTFIX-JOIN-comparison-v1.json': ref(p)}, 'qualification': 'Two immutable new public stdlib/numericfiles only; no private/rawlogs/env/config/DSN/credentials/capabilities/token data. Baseallowlist/native/metrics unchanged.'}
+    q = OUT / 'comparison-public-supplement-v1.json'
+    q.write_text(json.dumps(supplement, indent=2, sort_keys=True) + '\n')
+    print(json.dumps({'comparison': ref(p), 'supplement': ref(q), 'verdict': result['verdict'], 'single_pair_differences': descriptive}))
+
+if __name__ == '__main__':
+    main()

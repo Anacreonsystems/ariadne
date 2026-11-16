@@ -206,3 +206,76 @@ subtask fencing. The standalone materialization probe remains non-native input.
 | A44-07 | Resolve accepted batch after owner replacement and fence stale writes. |
 | A44-08 | Round-trip OUTPUT(null), OUTPUT(value), NO_OUTPUT and old RETURN. |
 | A44-09 | Refuse every partial barrier/snapshot/COMPLETE cut. |
+
+
+## Planning discussion: native state journal handoff — 2026-11-06
+
+The [canonical planning package](../evidence/native-epoch2-state-journal-planning-2026-11-06/v1/index.json)
+retains the original draft, [reviewed v2 implementation proposal](../evidence/native-epoch2-state-journal-planning-2026-11-06/v1/original/implementation-spec-v2.md),
+[Principal read-only review](../evidence/native-epoch2-state-journal-planning-2026-11-06/v1/original/principal-review/state-spec-v2-planning-readonly-review-v1.json)
+and [internal task refinement](../evidence/native-epoch2-state-journal-planning-2026-11-06/v1/original/proposed-task-refinement-v1.json)
+on the exact `d906ceca414baeac825ce472e0b78cd1dcae3363` source basis.
+The review closes preparation only: implementation is not ready or authorized
+by this handoff. The [NI2-014 dependency gate](../todo.md) still requires its
+source-bound runtime/hosted exit before the state implementation handoff.
+Concurrent 5000-record work remains separate and supplies no state acceptance.
+
+As a user, I still want continuation after my last accepted yield. As a
+developer, I still want reconstruction without repeating accepted Python
+business calls. As a system, I still need corrupt or incomplete chains refused
+before business execution, while current-owner write fences remain mandatory.
+The proposed slices map to the existing criteria, without adding a contract:
+
+| Existing criterion | Proposed implementation refinement | Current evidence boundary |
+| --- | --- | --- |
+| A44-01 — Rebuild state200 from snapshot100 plus batches without replay | NI2-020b follows a genuine NI2-024a local COMPLETE cut and folds101–200 before business201. | OPEN: no legal native snapshot100/cut or native oracle has been implemented or executed. |
+| A44-02 — Refuse missing/corrupt/incompatible151 without rewind | NI2-020a develops journal/resolve/genesis reconstruction; NI2-020b supplies the real snapshot-chain refusal oracle. | Planning only; proposed checks are not native results. |
+| A44-07 — Resolve accepted state after replacement and fence stale writes | NI2-020a/b separate accepted logical identity from current physical authorization and restore readiness. | Planning only; no owner-replacement state implementation or independent runtime verification. |
+
+The internal order is NI2-020a journal/resolve/genesis fold, then NI2-024a's
+minimum one-owner ordered DATA/BARRIER cut, then NI2-020b's native snapshot100
+plus batches101–200 oracle, followed by NI2-021 and the general NI2-024
+remainder. This avoids requiring completed NI2-020b before its local-cut
+prerequisite. A cached postimage, fixture seed or journal-only marker cannot
+stand in for a legal COMPLETE cut. The original NI2-020 parent is not done;
+full mailbox, multi-input and graph-wide cut work remain separate.
+
+V2 addresses the review's Pending restore TaskRun-lock and SOURCE identity
+findings. Exact profile/API names, composite FKs, the complete lock/attempt
+trace, encoded/temporary quotas and the local-cut intent/pin protocol still
+need implementation refinement. The [Principal context and clarification](../evidence/native-epoch2-state-journal-planning-2026-11-06/v1/original/principal-handoff/handoff.md)
+and immutable source bindings remain preserved. This dated discussion changes
+no approved body or acceptance criterion, implements no state capability and
+earns no credit. ADR-0044 stays `progress`; epoch-2 earned readiness stays15%.
+
+
+## Concrete state-contract planning agreement — 2026-11-06
+
+The [closed exact-contract package](../evidence/native-epoch2-state-journal-planning-2026-11-06/contract-v1/index.json)
+retains the [revised contract](../evidence/native-epoch2-state-journal-planning-2026-11-06/contract-v1/original/contract-v2.md)
+and [Principal planning agreement](../evidence/native-epoch2-state-journal-planning-2026-11-06/contract-v1/original/principal-review/contract-finalization-principal-planning-closure-v1.json).
+The original REQUEST_CHANGES review and all v1/v2 payloads remain immutable.
+Source bindings cover27/40 immutable d906 paths plus four C26 Git bindings;
+the unrelated current logging-test change is not the source authority.
+
+The agreed planning detail includes the explicit profile-v2/API-v3 five-feature
+negotiation tuple, eight proposed tables with25 foreign-key/four unique
+constraints and the eleven existing profile CHECK inventory. A37-field charged
+packet has a static2156-byte metadata bound below4096, with reservation S+4096.
+These are proposed wire/schema choices and static arithmetic, not implemented
+DDL/DTO behavior or passing runtime tests. The retained falsifiers must exercise
+the actual implementations before any acceptance claim.
+
+The mandatory [C26 planning addendum](../evidence/native-epoch2-state-journal-planning-2026-11-06/contract-v1/original/c26-generic-flow-deletion-addendum-v1.md)
+requires the new-v2 generic deletion path to validate already-retired lifecycle
+state under the ordered Flow/Authority/Graph prefix before any slot/log cleanup
+or deletion. It supplies a future guard/falsifier, not an observed current bug,
+new old-profile policy or permission to repair retirement during deletion.
+
+NI2-014 remains the preimplementation gate. NI2-020a is still genesis-only;
+A44-01 stays OPEN until a genuine aligned024a COMPLETE cut and020b native
+snapshot100 plus101–200 fold oracle exist. These ordinary implementation details
+stay inside the already approved ADR44 scope, with no new user reapproval
+requirement and no implementation GO from this planning record. The entire
+prior ADR body/criteria/history remain unchanged; no state code/runtime or
+acceptance credit is produced. Earned epoch-2 readiness remains15%.

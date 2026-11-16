@@ -1810,6 +1810,37 @@ class NativeStreamStore:
         self, flow_run_id: UUID, *, verified_server: bool = False
     ) -> int:
         async with self._session() as session:
+            profile = await session.scalar(
+                sa.select(self.db.NativeStreamDeploymentSnapshot.profile).where(
+                    self.db.NativeStreamDeploymentSnapshot.flow_run_id == flow_run_id
+                )
+            )
+            graph_profile = await session.scalar(
+                sa.select(self.db.StreamGraphRevision.profile).where(
+                    self.db.StreamGraphRevision.flow_run_id == flow_run_id
+                )
+            )
+            if "partitioned-dag-v1" in (profile, graph_profile):
+                # The lifecycle module uses the shared stream encoding. Defer
+                # this import to break that cycle without opening legacy data
+                # APIs or applying their grant/payload reclamation to a DAG.
+                from prefect.server.models.stream_dag_executions import (
+                    retire_stream_dag_coordinator,
+                )
+
+                if self.execution is not None and not isinstance(
+                    self.execution, StreamExecutionCredentials
+                ):
+                    raise NativeStreamError(
+                        "EXECUTION_BINDING_REQUIRED", "DAG release needs Flow authority"
+                    )
+                return await retire_stream_dag_coordinator(
+                    session,
+                    self.db,
+                    flow_run_id,
+                    self.execution,
+                    verified_server=verified_server,
+                )
             if verified_server:
                 flow = await session.scalar(
                     sa.select(self.db.FlowRun)

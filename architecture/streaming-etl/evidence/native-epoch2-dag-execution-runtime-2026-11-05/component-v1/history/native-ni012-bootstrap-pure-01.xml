@@ -1,0 +1,376 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="5" skipped="0" tests="70" time="1.111" timestamp="2026-11-05T11:22:36.037194+00:00" hostname="f8abb611283c"><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_inheritance_matrix_classifies_every_base_coroutine" time="0.001" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_from_bootstrap_is_detached_metadata_and_requires_exact_current_scope" time="0.004" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[graph_revision_id]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[grant_id]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[holder_id]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[task_run_id]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[subtask_id]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[input_stream_id]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[output_stream_id]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[physical_epoch]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[manifest_digest]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[api_url]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[child_process_id]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_storage_refuses_changed_current_grant_before_transport[process_start_ticks]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[create_stream-args0]" time="0.004" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[reserve_output-args1]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[register_task_run-args2]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[reject_output-args3]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[fail_task_output-args4]" time="0.002" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[finish-args5]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[read_prefix-args6]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[_request-args7]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_every_unowned_legacy_operation_refuses_before_transport[_dispatch-args8]" time="0.003" /><testcase classname="tests.test_stream_dag_bootstrap" name="test_event_unknown_ack_reuses_exact_event_without_task_get[False-False]" time="0.004"><failure message="assert (0 == 2)&#10; +  where 0 = len([])">asynchronous = False, accepted = False
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("accepted", [False, True])
+    async def test_event_unknown_ack_reuses_exact_event_without_task_get(
+        asynchronous: bool, accepted: bool
+    ):
+        _, bootstrap, execution, _, _ = owned_storage()
+        state = Running()
+        state.state_details.task_run_id = bootstrap.task_run.id
+        state.state_details.flow_run_id = bootstrap.flow_run_id
+        event = build_task_run_state_change_event(
+            bootstrap.task_run, bootstrap.task_run.state, state
+        )
+        calls = []
+    
+        def send(**kwargs: Any):
+            calls.append(copy.deepcopy(kwargs))
+            if len(calls) == 1:
+                kwargs["event"]["payload"].clear()
+                raise httpx.ReadTimeout("unknown ACK")
+            return StreamSubtaskEventResult(
+                event_id=event.id,
+                accepted=accepted,
+                task_run_id=bootstrap.task_run.id,
+                run_count=bootstrap.task_run.run_count,
+                state_type=state.type,
+            )
+    
+        class Sync:
+            emit_stream_subtask_event = staticmethod(send)
+    
+        class Async:
+            async def emit_stream_subtask_event(self, **kwargs: Any):
+                return send(**kwargs)
+    
+        with stream_subtask_execution_context(execution):
+            if accepted:
+                result = (
+                    await aemit_dag_task_event(Async(), event)
+                    if asynchronous
+                    else emit_dag_task_event(Sync(), event)
+                )
+                assert result.id == event.id
+            else:
+                with pytest.raises(PhysicalStreamExecutionStopped):
+                    if asynchronous:
+                        await aemit_dag_task_event(Async(), event)
+                    else:
+                        emit_dag_task_event(Sync(), event)
+&gt;       assert len(calls) == 2 and calls[0] == calls[1]
+E       assert (0 == 2)
+E        +  where 0 = len([])
+
+tests/test_stream_dag_bootstrap.py:236: AssertionError</failure></testcase><testcase classname="tests.test_stream_dag_bootstrap" name="test_event_unknown_ack_reuses_exact_event_without_task_get[False-True]" time="0.004"><failure message="assert (0 == 2)&#10; +  where 0 = len([])">asynchronous = True, accepted = False
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("accepted", [False, True])
+    async def test_event_unknown_ack_reuses_exact_event_without_task_get(
+        asynchronous: bool, accepted: bool
+    ):
+        _, bootstrap, execution, _, _ = owned_storage()
+        state = Running()
+        state.state_details.task_run_id = bootstrap.task_run.id
+        state.state_details.flow_run_id = bootstrap.flow_run_id
+        event = build_task_run_state_change_event(
+            bootstrap.task_run, bootstrap.task_run.state, state
+        )
+        calls = []
+    
+        def send(**kwargs: Any):
+            calls.append(copy.deepcopy(kwargs))
+            if len(calls) == 1:
+                kwargs["event"]["payload"].clear()
+                raise httpx.ReadTimeout("unknown ACK")
+            return StreamSubtaskEventResult(
+                event_id=event.id,
+                accepted=accepted,
+                task_run_id=bootstrap.task_run.id,
+                run_count=bootstrap.task_run.run_count,
+                state_type=state.type,
+            )
+    
+        class Sync:
+            emit_stream_subtask_event = staticmethod(send)
+    
+        class Async:
+            async def emit_stream_subtask_event(self, **kwargs: Any):
+                return send(**kwargs)
+    
+        with stream_subtask_execution_context(execution):
+            if accepted:
+                result = (
+                    await aemit_dag_task_event(Async(), event)
+                    if asynchronous
+                    else emit_dag_task_event(Sync(), event)
+                )
+                assert result.id == event.id
+            else:
+                with pytest.raises(PhysicalStreamExecutionStopped):
+                    if asynchronous:
+                        await aemit_dag_task_event(Async(), event)
+                    else:
+                        emit_dag_task_event(Sync(), event)
+&gt;       assert len(calls) == 2 and calls[0] == calls[1]
+E       assert (0 == 2)
+E        +  where 0 = len([])
+
+tests/test_stream_dag_bootstrap.py:236: AssertionError</failure></testcase><testcase classname="tests.test_stream_dag_bootstrap" name="test_event_unknown_ack_reuses_exact_event_without_task_get[True-False]" time="0.003"><failure message="prefect._internal.stream_subtask_entrypoint.PhysicalStreamExecutionStopped: DAG TaskRun event could not be frozen">event = Event(occurred=DateTime(2026, 11, 5, 11, 22, 36, 941187, tzinfo=Timezone('UTC')), event='prefect.task-run.Running', re...t': 2, 'flow_run_run_count': 1, 'total_run_time': 0.0}}, id=UUID('01a1ab72-4c0d-7b36-87ae-265706275775'), follows=None)
+
+    def _freeze_dag_task_event(event: Event) -&gt; bytes:
+        execution = get_stream_subtask_execution()
+        if not isinstance(execution, DAGSubtaskExecutionContext):
+            _dag_event_stopped("DAG TaskRun event requires its own scoped grant")
+        try:
+            frozen = json.dumps(
+                event.model_dump(mode="json"),
+                sort_keys=True,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            snapshot = Event.model_validate_json(frozen)
+            if snapshot.resource[
+                "prefect.resource.id"
+&gt;           ] != f"prefect.task-run.{execution.task_run_id}" or snapshot.payload[
+                "task_run"
+            ]["id"] != str(execution.task_run_id):
+E           KeyError: 'id'
+
+src/prefect/utilities/engine/__init__.py:1110: KeyError
+
+During handling of the above exception, another exception occurred:
+
+asynchronous = False, accepted = True
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("accepted", [False, True])
+    async def test_event_unknown_ack_reuses_exact_event_without_task_get(
+        asynchronous: bool, accepted: bool
+    ):
+        _, bootstrap, execution, _, _ = owned_storage()
+        state = Running()
+        state.state_details.task_run_id = bootstrap.task_run.id
+        state.state_details.flow_run_id = bootstrap.flow_run_id
+        event = build_task_run_state_change_event(
+            bootstrap.task_run, bootstrap.task_run.state, state
+        )
+        calls = []
+    
+        def send(**kwargs: Any):
+            calls.append(copy.deepcopy(kwargs))
+            if len(calls) == 1:
+                kwargs["event"]["payload"].clear()
+                raise httpx.ReadTimeout("unknown ACK")
+            return StreamSubtaskEventResult(
+                event_id=event.id,
+                accepted=accepted,
+                task_run_id=bootstrap.task_run.id,
+                run_count=bootstrap.task_run.run_count,
+                state_type=state.type,
+            )
+    
+        class Sync:
+            emit_stream_subtask_event = staticmethod(send)
+    
+        class Async:
+            async def emit_stream_subtask_event(self, **kwargs: Any):
+                return send(**kwargs)
+    
+        with stream_subtask_execution_context(execution):
+            if accepted:
+                result = (
+                    await aemit_dag_task_event(Async(), event)
+                    if asynchronous
+&gt;                   else emit_dag_task_event(Sync(), event)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                )
+
+tests/test_stream_dag_bootstrap.py:227: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/utilities/engine/__init__.py:1140: in emit_dag_task_event
+    frozen = _freeze_dag_task_event(event)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/utilities/engine/__init__.py:1115: in _freeze_dag_task_event
+    _dag_event_stopped("DAG TaskRun event could not be frozen")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = 'DAG TaskRun event could not be frozen'
+
+    def _dag_event_stopped(message: str) -&gt; NoReturn:
+        # The entrypoint composes TaskEngine; defer its signal import until Task
+        # initialization is complete, retaining the existing signal class identity.
+        from prefect._internal.stream_subtask_entrypoint import (
+            PhysicalStreamExecutionStopped,
+        )
+    
+&gt;       raise PhysicalStreamExecutionStopped(message)
+E       prefect._internal.stream_subtask_entrypoint.PhysicalStreamExecutionStopped: DAG TaskRun event could not be frozen
+
+src/prefect/utilities/engine/__init__.py:1092: PhysicalStreamExecutionStopped</failure></testcase><testcase classname="tests.test_stream_dag_bootstrap" name="test_event_unknown_ack_reuses_exact_event_without_task_get[True-True]" time="0.003"><failure message="prefect._internal.stream_subtask_entrypoint.PhysicalStreamExecutionStopped: DAG TaskRun event could not be frozen">event = Event(occurred=DateTime(2026, 11, 5, 11, 22, 36, 980199, tzinfo=Timezone('UTC')), event='prefect.task-run.Running', re...t': 2, 'flow_run_run_count': 1, 'total_run_time': 0.0}}, id=UUID('01a1ab72-4c34-70ec-8a75-c75cbac08f17'), follows=None)
+
+    def _freeze_dag_task_event(event: Event) -&gt; bytes:
+        execution = get_stream_subtask_execution()
+        if not isinstance(execution, DAGSubtaskExecutionContext):
+            _dag_event_stopped("DAG TaskRun event requires its own scoped grant")
+        try:
+            frozen = json.dumps(
+                event.model_dump(mode="json"),
+                sort_keys=True,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            snapshot = Event.model_validate_json(frozen)
+            if snapshot.resource[
+                "prefect.resource.id"
+&gt;           ] != f"prefect.task-run.{execution.task_run_id}" or snapshot.payload[
+                "task_run"
+            ]["id"] != str(execution.task_run_id):
+E           KeyError: 'id'
+
+src/prefect/utilities/engine/__init__.py:1110: KeyError
+
+During handling of the above exception, another exception occurred:
+
+asynchronous = True, accepted = True
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("accepted", [False, True])
+    async def test_event_unknown_ack_reuses_exact_event_without_task_get(
+        asynchronous: bool, accepted: bool
+    ):
+        _, bootstrap, execution, _, _ = owned_storage()
+        state = Running()
+        state.state_details.task_run_id = bootstrap.task_run.id
+        state.state_details.flow_run_id = bootstrap.flow_run_id
+        event = build_task_run_state_change_event(
+            bootstrap.task_run, bootstrap.task_run.state, state
+        )
+        calls = []
+    
+        def send(**kwargs: Any):
+            calls.append(copy.deepcopy(kwargs))
+            if len(calls) == 1:
+                kwargs["event"]["payload"].clear()
+                raise httpx.ReadTimeout("unknown ACK")
+            return StreamSubtaskEventResult(
+                event_id=event.id,
+                accepted=accepted,
+                task_run_id=bootstrap.task_run.id,
+                run_count=bootstrap.task_run.run_count,
+                state_type=state.type,
+            )
+    
+        class Sync:
+            emit_stream_subtask_event = staticmethod(send)
+    
+        class Async:
+            async def emit_stream_subtask_event(self, **kwargs: Any):
+                return send(**kwargs)
+    
+        with stream_subtask_execution_context(execution):
+            if accepted:
+                result = (
+&gt;                   await aemit_dag_task_event(Async(), event)
+                    if asynchronous
+                    else emit_dag_task_event(Sync(), event)
+                )
+
+tests/test_stream_dag_bootstrap.py:225: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/utilities/engine/__init__.py:1165: in aemit_dag_task_event
+    frozen = _freeze_dag_task_event(event)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/utilities/engine/__init__.py:1115: in _freeze_dag_task_event
+    _dag_event_stopped("DAG TaskRun event could not be frozen")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+message = 'DAG TaskRun event could not be frozen'
+
+    def _dag_event_stopped(message: str) -&gt; NoReturn:
+        # The entrypoint composes TaskEngine; defer its signal import until Task
+        # initialization is complete, retaining the existing signal class identity.
+        from prefect._internal.stream_subtask_entrypoint import (
+            PhysicalStreamExecutionStopped,
+        )
+    
+&gt;       raise PhysicalStreamExecutionStopped(message)
+E       prefect._internal.stream_subtask_entrypoint.PhysicalStreamExecutionStopped: DAG TaskRun event could not be frozen
+
+src/prefect/utilities/engine/__init__.py:1092: PhysicalStreamExecutionStopped</failure></testcase><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_branch_declaration_order_does_not_change_canonical_definition" time="0.004" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_changed_task_is_refused_before_seal" time="0.008" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_compiler_output_satisfies_the_paired_wire_without_rpc" time="0.004" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_complete_fork_freezes_four_physical_tasks_without_execution" time="0.003" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_constructor_add_and_context_exit_are_local_only" time="0.002" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_context_exception_never_seals" time="0.001" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_contextual_tags_are_frozen_per_declaration" time="0.002" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_cross_graph_and_forged_unknown_upstream_are_refused" time="0.002" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_dag_profile_never_enters_legacy_reconstruction_on_scope_exit" time="0.004" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_definition_and_parameter_snapshots_are_defensive" time="0.002" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_differing_parallelism_linear_graph_uses_generic_dag_wire" time="0.005" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_duplicate_source_splits_operator_edges_and_subscribers_are_refused" time="0.008" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_forward_requires_equal_parallelism" time="0.001" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_full_128_subtask_bound_and_operator_bound" time="0.026" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_generic_six_task_graph_is_not_hardcoded_to_four" time="0.002" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_legacy_finite_and_stream_submissions_refuse_before_graph_lookup" time="0.001" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_only_stream_task_contracts_are_accepted" time="0.001" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_parameterless_source_is_valid_only_at_one_partition" time="0.002" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_port_identity_is_qualified_but_input_output_must_differ" time="0.002" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_real_seal_requires_its_flow_authority_before_transport" time="0.002" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_recovered_authoring_and_unknown_ack_use_same_flow_operation" time="0.004"><failure message="prefect.streams.StreamProtocolError: DAG_LIFECYCLE_SCOPE_REQUIRED: DAG lifecycle requires its trusted Flow scope">self = &lt;tests.test_stream_dag_authoring.TestStreamDagAuthoring testMethod=test_recovered_authoring_and_unknown_ack_use_same_flow_operation&gt;
+
+    def test_recovered_authoring_and_unknown_ack_use_same_flow_operation(self):
+        flow_id = uuid4()
+        api_url = "http://127.0.0.1:4200/api"
+        context = SimpleNamespace(
+            flow=SimpleNamespace(
+                version="v1", streaming=SimpleNamespace(profile="partitioned-dag-v1")
+            ),
+            flow_run=SimpleNamespace(
+                id=flow_id,
+                deployment_id=uuid4(),
+                deployment_version="deployed-v1",
+                labels={"prefect.native-streaming": "partitioned-dag-v1"},
+            ),
+        )
+        execution = StreamExecutionContext(
+            flow_run_id=flow_id,
+            generation=1,
+            holder_id=uuid4(),
+            api_url=api_url,
+            capability="a" * 64,
+            event_private_key=b"b" * 32,
+        )
+        calls = []
+    
+        class LostMetadataAck:
+            def __init__(self) -&gt; None:
+                self.api_url = api_url
+    
+            def __enter__(self):
+                return self
+    
+            def __exit__(self, *args: Any):
+                return False
+    
+            def seal_stream_dag(self, **kwargs: Any):
+                calls.append(kwargs)
+                raise httpx.ReadTimeout("Metadata result is unknown")
+    
+        with (
+            patch(
+                "prefect._internal.stream_dag.FlowRunContext.get", return_value=context
+            ),
+            patch(
+                "prefect._internal.stream_dag.get_stream_execution",
+                return_value=execution,
+            ),
+            patch(
+                "prefect._internal.stream_dag.PREFECT_API_URL",
+                SimpleNamespace(value=lambda: api_url),
+            ),
+            patch(
+                "prefect._internal.stream_dag.get_client",
+                return_value=LostMetadataAck(),
+            ),
+        ):
+            original = StreamGraphAuthoring()
+            fork(original)
+            for _ in range(2):
+                with self.assertRaises(httpx.ReadTimeout):
+&gt;                   original.seal()
+
+tests/test_stream_dag_authoring.py:592: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_dag.py:333: in seal
+    self._sealed = self._seal_snapshot(snapshot)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/_internal/stream_dag.py:395: in _seal_snapshot
+    registry = current_dag_registry()
+               ^^^^^^^^^^^^^^^^^^^^^^
+src/prefect/_internal/stream_dag_execution.py:568: in current_dag_registry
+    backend = _backend()
+              ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _backend() -&gt; DAGLifecycleBackend:
+        backend = _CURRENT_DAG.get()
+        if backend is None or TaskRunContext.get() is not None:
+&gt;           raise StreamProtocolError(
+                "DAG_LIFECYCLE_SCOPE_REQUIRED: DAG lifecycle requires its trusted Flow scope"
+            )
+E           prefect.streams.StreamProtocolError: DAG_LIFECYCLE_SCOPE_REQUIRED: DAG lifecycle requires its trusted Flow scope
+
+src/prefect/_internal/stream_dag_execution.py:77: StreamProtocolError</failure></testcase><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_schema_digest_mismatch_is_refused_before_metadata" time="0.001" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_source_only_refuses_but_connected_linear_graph_seals" time="0.002" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_strict_partition_descriptors_and_parallelism_bounds" time="0.001" /><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_uncertain_seal_retries_the_same_intent_and_refuses_new_declarations" time="0.003" /></testsuite></testsuites>

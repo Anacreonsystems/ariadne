@@ -1,0 +1,28 @@
+"""One explicitly declared async1000 native probe; retain the original oracle."""
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from tests.test_native_stream_dag_execution_http import (
+    _run_dag_lifecycle,
+    execution_api as execution_api,
+    native_backend as native_backend,
+)
+from tests.test_native_stream_recovery_http import RestartableAPI
+
+
+@pytest.mark.timeout(900)
+async def test_normal_async1000_post_renewal_postgres(
+    execution_api: RestartableAPI, tmp_path: Path, db: Any
+):
+    await _run_dag_lifecycle(
+        execution_api,
+        tmp_path,
+        db,
+        asynchronous=True,
+        mode="normal",
+        count=1000,
+        wait_timeout=750,
+        observation_timeout=840,
+    )

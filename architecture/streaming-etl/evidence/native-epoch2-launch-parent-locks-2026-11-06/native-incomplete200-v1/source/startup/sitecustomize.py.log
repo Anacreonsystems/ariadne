@@ -1,0 +1,20 @@
+import hashlib,json,marshal,os,sys,time
+_seen=set();_identities={};_root='/tmp/ariadne-native-5000-diagnosis-v1/src/prefect/';_out='/tmp/native-launch-parent-lock-principal-recovery2-v1/incomplete200-06d8631f/audit'
+
+def audit(event,args):
+ if event!='exec' or not args:return
+ code=args[0];path=getattr(code,'co_filename','')
+ if not isinstance(path,str) or not path.endswith('.py') or path in _seen:return
+ if not (path.startswith(_root) or '/src/prefect/' in path or '/site-packages/prefect/' in path):return
+ _seen.add(path)
+ try:
+  pid=os.getpid()
+  if pid not in _identities:
+   with open('/proc/'+str(pid)+'/stat') as state:_identities[pid]=state.read().rsplit(')',1)[1].split()[19]
+  with open(path,'rb') as source:source_digest=hashlib.sha256(source.read()).hexdigest()
+  row={'pid':pid,'start_ticks':_identities[pid],'parent':os.getppid(),'monotonic_ns':time.monotonic_ns(),'path':path,'source_sha256':source_digest,'code_sha256':hashlib.sha256(marshal.dumps(code)).hexdigest()}
+  fd=os.open(_out+'/'+str(os.getpid())+'.jsonl',os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
+  try:os.write(fd,(json.dumps(row,sort_keys=True)+chr(10)).encode())
+  finally:os.close(fd)
+ except OSError:pass
+sys.addaudithook(audit)

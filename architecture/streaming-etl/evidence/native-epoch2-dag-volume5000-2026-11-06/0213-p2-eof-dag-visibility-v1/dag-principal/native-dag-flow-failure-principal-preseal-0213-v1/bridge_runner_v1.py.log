@@ -1,0 +1,224 @@
+"""One Root-authorized P2 candidate actor on exact HEAD plus one known test-only patch."""
+from __future__ import annotations
+import ast
+import asyncio
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
+
+from bridge_audit_v1 import inspect
+import bridge_support_v1 as s
+
+BASE = Path(__file__).resolve().parent
+ROOT = s.ROOT
+SELECTION=json.loads((BASE/"selectors-v1.json").read_text())
+NODES=SELECTION["native_nodes"]
+ASSETS=("bridge_runner_v1.py","bridge_support_v1.py","bridge_audit_v1.py","bridge_observer_v1.py","bridge_provision_only_v1.py","startup-template.py.txt","selectors-v1.json")
+
+
+DIRTY_TEST_PATHS = ['scripts/native_runtime_diagnostics.py','tests/fixtures/native_partitioned_stream_flow.py','tests/test_native_partitioned_stream_http.py','tests/test_native_stream_dag_execution_http.py']
+EXPECTED_PATCH_SHA256 = '76fc13e3924701e3e25512b9c264615cf89a31ed61efe3d5024d7bf7ba84b977'
+
+
+def checked_worktree_version(head):
+    status = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"], cwd=ROOT, text=True).splitlines()
+    assert status == [' M '+name for name in DIRTY_TEST_PATHS]
+    assert subprocess.check_output(["git", "diff", "--cached", "--name-only"], cwd=ROOT, text=True) == ""
+    assert subprocess.check_output(["git", "diff", "--name-only"], cwd=ROOT, text=True).splitlines() == DIRTY_TEST_PATHS
+    patch = subprocess.check_output(["git", "diff", "--binary"], cwd=ROOT)
+    assert hashlib.sha256(patch).hexdigest() == EXPECTED_PATCH_SHA256
+    return {"head": head, "working_tree_patch_sha256": EXPECTED_PATCH_SHA256,
+            "allowed_dirty_paths": DIRTY_TEST_PATHS,
+            "qualification": "Published0213 plus exactly reviewed P2 EOF fix plus two-file failure-visibility diagnostic; not a commit-only tested version."}
+
+
+def disk_snapshot():
+    return {name:dict(zip(("total","used","free"),shutil.disk_usage(name))) for name in ("/tmp","/workspace")}
+
+
+def main():
+    os.umask(0o077)
+    assert len(sys.argv) == 2, "usage: bridge_runner_v1.py /ABS/ROOT_AUTHORIZED_P2_BRIDGE_HOLD.json"
+    hold_path = Path(sys.argv[1]); assert hold_path.is_absolute()
+    hold = json.loads(hold_path.read_text())
+    assert hold["status"] == "ROOT_AUTHORIZED_DAG_FAILURE_VISIBILITY_SOURCE_HOLD"
+    phase=hold["phase"];assert phase in set(NODES)|{"pg_selected"}
+    selectors=hold["authorized_nodes"]
+    # Confirm exact existing source tuples before any trial/DB/Popen.
+    source_tree=ast.parse((ROOT/'tests/test_native_stream_dag_execution_http.py').read_text())
+    control=next(n for n in source_tree.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='test_public_dag_lifecycle_two_real_workers_postgres')
+    parameterization=next(d for d in control.decorator_list if isinstance(d,ast.Call) and isinstance(d.func,ast.Attribute) and d.func.attr=='parametrize')
+    expected_tuple=(False,'failure') if phase=='intentional_failure' else (True,'normal')
+    assert expected_tuple in ast.literal_eval(parameterization.args[1])
+    assert any(isinstance(d,ast.Call) and isinstance(d.func,ast.Attribute) and d.func.attr=='timeout' and ast.literal_eval(d.args[0])==300 for d in control.decorator_list)
+    if phase=="pg_selected":
+        assert selectors and len(selectors)==len(set(selectors)) and set(selectors)<=set(SELECTION["pg_selector_case_counts"])
+        expected_count=sum(SELECTION["pg_selector_case_counts"][x] for x in selectors)
+        BUDGETS={"pytest":"unchanged repository defaults and existing per-test markers","whole_process_deadline":None}
+    else:
+        assert selectors==[NODES[phase]]
+        expected_count=1
+        BUDGETS={"wait":150,"observe":210,"pytest":180}
+    NODE=selectors[0] if expected_count==1 else "PG_SELECTED_SOURCE_BOUND_SELECTORS"
+    assert hold["runtime_authorized_by"] == "/root" and hold["publication_hooks_status"] == "STOPPED_PASS"
+    assert hold["authorized_nodes"] == selectors and hold["budgets"] == BUDGETS
+    assert hold["source_root"] == str(ROOT) and hold["retain_owned_database_on_pass_and_fail"] is True
+    assert hold["separate_root_go"] is True and hold["only_provisioning_fixture_override"] is True
+    head = subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip()
+    assert head == hold["head"] == s.EXPECTED_HEAD
+    tested_version = checked_worktree_version(head)
+    assert hold["tested_version"] == tested_version
+    before = s.source_snapshot(); assert before == hold["files"] and len(before)==1604
+    collection_proof=hold['pre_DB_collection'];assert s.sha(Path(collection_proof['path']))==collection_proof['sha256']
+    collected=json.loads(Path(collection_proof['path']).read_text())
+    assert collected['status']=='ACTUAL_PRE_DB_COLLECTION_PASS' and collected['actual_exit']==0
+    assert selectors[0] in collected['actual_nodes'] and collected['source_test_sha256']==before['tests/test_native_stream_dag_execution_http.py']['sha256']
+    assets = {name:s.sha(BASE/name) for name in ASSETS}; assert assets == hold["assets"]
+    auxiliary={name:s.sha(ROOT/name) for name in hold["auxiliary_source_bindings"]};assert auxiliary==hold["auxiliary_source_bindings"]
+    previous_path=Path(hold["previous_phase_stop"]["path"])
+    assert previous_path.is_absolute() and s.sha(previous_path)==hold["previous_phase_stop"]["sha256"]
+    previous=json.loads(previous_path.read_text())
+    assert previous["runtime_STOPPED"] is True
+    assert hold["runtime_owner"]=="/root/etl_principal_recovery2"
+    conftest=(ROOT/"tests/conftest.py").read_text()
+    nodes=[n for n in ast.parse(conftest).body if isinstance(n,ast.AsyncFunctionDef) and n.name=="generate_test_database_connection_url"]
+    assert len(nodes)==1
+    fixture=nodes[0]
+    assert len(fixture.decorator_list)==1 and ast.unparse(fixture.decorator_list[0])=="pytest.fixture(scope='session', autouse=True)"
+    assert [argument.arg for argument in fixture.args.args]==["worker_id"]
+    original_fixture="".join(conftest.splitlines(keepends=True)[fixture.decorator_list[0].lineno-1:fixture.end_lineno])
+    fixture_sha=hashlib.sha256(original_fixture.encode()).hexdigest()
+    assert fixture_sha==hold["original_provisioning_fixture_sha256"]
+    trial=BASE/(phase+"-"+uuid4().hex[:8]);trial.mkdir(mode=0o700)
+    for name in ("audit","startup","temp"):(trial/name).mkdir(mode=0o700)
+    s.write(trial/"source-before.json",before);s.write(trial/"external-assets.json",assets)
+    s.write(trial/"auxiliary-source-bindings.json",auxiliary)
+    s.write(trial/"disk-before.json",disk_snapshot())
+    s.write(trial/"original-provisioning-binding.json",{"path":"tests/conftest.py","file_sha256":before["tests/conftest.py"]["sha256"],"fixture_source_sha256":fixture_sha,"scope":"session","worker_id_expected":"master","original_body_must_not_execute":True})
+    # All preparatory subprocesses above were waited. This actor can adopt only
+    # its future descendants, never PID1's old orphan or an unrelated process.
+    subreaper=s.enable_owned_subreaper()
+    try:os.waitpid(-1,os.WNOHANG)
+    except ChildProcessError:subreaper["waitpid_preflight_echild"]=True
+    else:raise RuntimeError("ECHILD required before any DB/Popen")
+    s.write(trial/"subreaper-proof.json",subreaper)
+    site=(BASE/"startup-template.py.txt").read_text().replace("SOURCE_ROOT",repr(str(ROOT/"src/prefect")+"/")).replace("TEST_ROOT",repr(str(ROOT/"tests")+"/")).replace("AUDIT_DIRECTORY",repr(str(trial/"audit")))
+    (trial/"startup/sitecustomize.py").write_text(site)
+    config=json.loads(s.SELECTOR.read_text())
+    parsed=urlsplit(config["admin_dsn"])
+    assert parsed.hostname in {"localhost","127.0.0.1","::1"} and parsed.port==55436
+    assert config["sqlalchemy_scheme"]=="postgresql+asyncpg"
+    database=config["database_prefix"]+"_br1_"+uuid4().hex[:8]
+    creation=asyncio.run(s.create_owned(config,database));s.write(trial/"database-creation.json",creation)
+    sqlalchemy_url=urlunsplit((config["sqlalchemy_scheme"],parsed.netloc,"/"+database,parsed.query,""))
+    cache_prefix=Path('/workspace')/('native-dag-failure-'+trial.name+'-pycache')
+    assert not cache_prefix.exists()
+    s.write(trial/'operational-cache-binding.json',{'path':str(cache_prefix),'owner_trial':str(trial),'fresh_path':True,'retained_on_pass_and_fail':True,'reason':'Bounded tmp capacity; preserve normal bytecode behavior outside both checkouts'})
+    environment=os.environ.copy()
+    environment.pop("PREFECT_API_DATABASE_CONNECTION_URL",None)
+    environment.update({"PREFECT_SERVER_DATABASE_CONNECTION_URL":sqlalchemy_url,
+        "PATH":"/workspace/ariadne/.venv/bin"+os.pathsep+environment.get("PATH",""),
+        "UV_NO_SYNC":"1","UV_PROJECT_ENVIRONMENT":"/workspace/ariadne/.venv",
+        "PYTHONPYCACHEPREFIX":str(cache_prefix),
+        "PYTHONPATH":os.pathsep.join((str(trial/"startup"),str(BASE),str(ROOT/"src"),str(ROOT))),
+        "TMPDIR":str(trial/"temp"),"PREFECT_LOGGING_LEVEL":"INFO","PREFECT_LOGGING_INTERNAL_LEVEL":"WARNING",
+        "NATIVE_P2BRIDGE_TRIAL":str(trial),"NATIVE_P2BRIDGE_DBNAME":database,"NATIVE_P2BRIDGE_SELECTORS":json.dumps(selectors),"NATIVE_P2BRIDGE_PHASE":phase})
+    command=["uv","run","--no-sync","--offline","python","-m","pytest",*selectors,"-n0","-q","-o","addopts=","-p","bridge_provision_only_v1","--junitxml="+str(trial/"pytest.private.xml"),"--basetemp="+str(trial/"pytest")]
+    s.write(trial/"command.json",{"command":command,"nodeid":NODE,"cwd":str(ROOT),"phase":phase,"head":head,"tested_version":tested_version,"database":database,"private_selector_path":str(s.SELECTOR),"hold_sha256":s.sha(hold_path),"assets":assets,"generated_startup_sha256":hashlib.sha256(site.encode()).hexdigest(),"budgets":BUDGETS,"whole_process_deadline_added":False,"count":8 if phase!="pg_selected" else None,"mode":phase,"asynchronous":phase=="async_preseal_failure","profiling":False,"only_provisioning_fixture_override":True,"derived_tests_master_database_created":False,"database_retained_always":True,"drop_or_terminate_backend_allowed":False})
+    process=None;identities={};pytest_exit=None;waited=False;direct_wait=None;reaping=None;harness_errors=[];pgid=None
+    def capture(stage,callback,default=None):
+        try:return callback()
+        except BaseException as exc:
+            harness_errors.append({"stage":stage,"exception_type":type(exc).__name__})
+            return default
+    try:
+        with (trial/"pytest.private.log").open("xb") as output:
+            process=subprocess.Popen(command,cwd=ROOT,env=environment,stdout=output,stderr=subprocess.STDOUT,start_new_session=True)
+            pgid=process.pid
+            current=s.proc_state(process.pid)
+            if current is None:raise RuntimeError("Direct child identity unavailable")
+            identities[process.pid]=current["start_ticks"]
+            identity={"pytest_pid":process.pid,"pytest_start_ticks":current["start_ticks"],"pgid":pgid,"runner_pid":os.getpid(),"runner_start_ticks":subreaper["runner_start_ticks"],"subreaper_verified_before_popen":True}
+            s.write(trial/"process.json",identity)
+            print(json.dumps({"status":"ONE_EXACT_DAG_FAILURE_VISIBILITY_CONTROL_RUNNING","trial":str(trial),**identity}),flush=True)
+            with (trial/"disk-observations.jsonl").open("w") as disk:
+                while True:
+                    try:
+                        value=process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        s.collect_group(pgid,identities)
+                        disk.write(json.dumps({"monotonic_ns":time.monotonic_ns(),"disks":disk_snapshot()})+"\n");disk.flush()
+                        continue
+                    # The FIRST operation after direct Popen.wait is durable exit
+                    # capture. Later audit/reaping failures cannot erase it.
+                    (trial/"pytest-exit").write_text(str(value)+"\n")
+                    pytest_exit=value;waited=True
+                    s.write(trial/"pytest-exit.json",{"actual_popen_wait_returncode":value,"persisted_before_metadata_or_reaping":True})
+                    direct_wait={"pid":process.pid,"start_ticks":identities[process.pid],"popen_wait_completed":True,"returncode":value}
+                    break
+    except BaseException as exc:
+        harness_errors.append({"stage":"pytest_or_process_metadata","exception_type":type(exc).__name__})
+    # No harness signal/deadline overrides. If an unexpected harness error leaves
+    # a live owner, retain the DB and explicitly report incomplete closure.
+    def imports_audit():
+        rows=0;mismatches=[]
+        for path in (trial/"audit").glob("*.jsonl"):
+            for line in path.read_text().splitlines():
+                row=json.loads(line);rows+=1;identities[row["pid"]]=str(row["start_ticks"])
+                try:relative=str(Path(row["path"]).relative_to(ROOT))
+                except ValueError:mismatches.append({"reason":"foreign Prefect/test import","path":row["path"]});continue
+                if relative not in before or before[relative]["sha256"]!=row["source_sha256"]:mismatches.append({"reason":"import bytes differ","path":relative})
+        if not rows:mismatches.append({"reason":"no source byte observations"})
+        return {"rows":rows,"mismatches":mismatches}
+    imports=capture("import_audit",imports_audit,{"rows":0,"mismatches":["capture failed"]})
+    s.write(trial/"import-audit.json",imports)
+    if waited:reaping=capture("waitpid_own_adopted",lambda:s.reap_owned_adopted(pgid,identities))
+    s.write(trial/"reaping-proof.json",{"direct_child_wait_first":direct_wait,"adopted":reaping,"harness_signals_sent":[]})
+    after=capture("source_after",s.source_snapshot)
+    s.write(trial/"source-after.json",after)
+    drift=sorted(k for k in before.keys()|after.keys() if before.get(k)!=after.get(k)) if after is not None else ["SOURCE_AFTER_UNAVAILABLE"]
+    if capture("head_after",lambda:subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip())!=head:drift.append("GIT_HEAD")
+    if capture("assets_after",lambda:{name:s.sha(BASE/name) for name in ASSETS})!=assets:drift.append("EXTERNAL_ASSETS")
+    if capture("known_patch_after",lambda:checked_worktree_version(head)) != tested_version:drift.append("KNOWN_TEST_ONLY_PATCH")
+    if capture("auxiliary_after",lambda:{name:s.sha(ROOT/name) for name in auxiliary})!=auxiliary:drift.append("AUXILIARY_SOURCE_BINDINGS")
+    if capture("startup_after",lambda:(trial/"startup/sitecustomize.py").read_text())!=site:drift.append("GENERATED_STARTUP")
+    s.write(trial/"drift.json",drift)
+    def pid_closure():
+        live=[];zombies=[]
+        for pid,ticks in identities.items():
+            current=s.proc_state(pid)
+            if current is not None and current["start_ticks"]==str(ticks):(zombies if current["state"]=="Z" else live).append(pid)
+        return {"observed_pid_start_pairs":identities,"remaining_same_identity_live":live,"remaining_same_identity_zombies":zombies}
+    closure=capture("known_pid_closure",pid_closure);s.write(trial/"process-closure.json",closure)
+    database_closure=capture("owned_database_sessions",lambda:asyncio.run(s.owned_sessions(config,database)))
+    s.write(trial/"database-closure.json",database_closure)
+    body=capture("body_wider_health",lambda:inspect(trial,phase,expected_count),{"status":"HARNESS_CAPTURE_RED","failed_checks":["audit capture failed"]})
+    s.write(trial/"body-wider-health-audit.json",body)
+    proof=capture("provisioning_proof",lambda:json.loads((trial/"provisioning-proof.json").read_text()))
+    proof_valid=capture("validate_provisioning_proof",lambda:bool(proof and proof["hook_invocations"]==1 and proof["original_provisioning_body_calls"]==0 and proof["guard_callback_stable_at_sessionfinish"] is True and proof["original_fixture_sha256"]==fixture_sha and proof["fixture_source_file_sha256"]==before["tests/conftest.py"]["sha256"] and proof["override_asset_sha256"]==assets["bridge_provision_only_v1.py"] and proof["worker_id"]=="master" and proof["scope"]=="session" and proof["module"]=="tests.conftest" and proof["cached_result_uses_fixture_cache_key"] is True),False)
+    collection=capture("collection",lambda:json.loads((trial/"collection.json").read_text()))
+    for private,public in (("pytest.private.log","pytest.log"),("pytest.private.xml","pytest.public.xml")):
+        capture("sanitize_"+public,lambda private=private,public=public:(trial/public).write_text(s.sanitize((trial/private).read_text(errors="replace"),config,sqlalchemy_url)))
+    runtime_closed=bool(waited and closure and not closure["remaining_same_identity_live"] and not closure["remaining_same_identity_zombies"] and reaping and reaping["waitpid_echild_success"] and database_closure and database_closure["sessions"]==[])
+    passed=bool(pytest_exit==0 and waited and not harness_errors and not drift and not imports["mismatches"] and runtime_closed and proof_valid and collection and collection["requested_selectors"]==selectors and collection["count"]==expected_count and (phase=="pg_selected" or collection["pytest_timeout_marker"]==180) and body["status"]=="BODY_AND_WIDER_HEALTH_PASS" and database_closure["retained"] is True)
+    receipt={"status":"DAG_FAILURE_VISIBILITY_CONTROL_PASS_DB_RETAINED" if passed else "NATIVE_OR_HEALTH_OR_HARNESS_RED","runtime_STOPPED":runtime_closed,"phase":phase,"nodeid":NODE,"head":head,"tested_version":tested_version,"pytest_exit":pytest_exit,"actual_exit_persisted_before_metadata":waited,"harness_errors":harness_errors,"source_files":len(before),"source_drift":drift,"import_audit":imports,"process_closure":closure,"subreaper_proof":subreaper,"direct_child_wait":direct_wait,"adopted_reaping":reaping,"database":database_closure,"body_wider_health":body,"provisioning_proof":proof,"provisioning_proof_valid":proof_valid,"collection":collection,"budgets":BUDGETS,"assets":assets,"hold_sha256":s.sha(hold_path),"profiling":False,"harness_signals_sent":[],"whole_process_deadline_added":False,"retry":False,"known_prior_orphan":{"pid":384983,"status":"prior dead PPID1 artifact excluded; untouched"},"qualification":"One existing source-bound8doc DAG failure-visibility control. Expected fault worker errors are recorded separately; no zero-all-errors claim. Last-row preservation is not forced by additional fixture overrides. Provisioning-only fixture override preserves its fresh DB on PASS/FAIL for Root postterminal SQL and Principal verdict. Runtime STOP is not next-phase authorization. No auto retry/P2, causal/performance/readiness claim, source correction, drop or terminate."}
+    s.write(trial/"bridge-receipt-v1.json",receipt)
+    print(json.dumps({"status":receipt["status"] if runtime_closed else "RUNTIME_CLOSURE_INCOMPLETE","runtime_STOPPED":runtime_closed,"trial":str(trial),"pytest_exit":pytest_exit,"harness_errors":harness_errors,"source_drift":drift,"failed_checks":body["failed_checks"][:12],"remaining_sessions":database_closure["sessions"] if database_closure else None,"fresh_database_retained":database_closure["retained"] if database_closure else None}),flush=True)
+    return 0 if passed else (pytest_exit or 90)
+
+
+if __name__=="__main__":
+    lock=os.open(BASE/"one-native5000-runtime.lock",os.O_WRONLY|os.O_CREAT,0o600)
+    try:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        code=main()
+    finally:os.close(lock)
+    raise SystemExit(code)

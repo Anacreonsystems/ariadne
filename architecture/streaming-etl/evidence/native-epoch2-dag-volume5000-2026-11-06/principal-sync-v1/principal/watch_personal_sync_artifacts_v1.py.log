@@ -1,0 +1,35 @@
+"""Bounded file-only observer; no DB/import project/control of runtime actors."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import time
+
+BASE=Path('/tmp/native-principal-dag5000-18124-v1')
+TRIAL=BASE/'sync-v2/sync5000-00da848f'
+SOURCE=BASE/'observe_principal_sync_artifacts_v1.py'
+PID=404347
+TICKS='15699861'
+def start(pid):
+    try:return Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()[19]
+    except FileNotFoundError:return None
+identity={'pid':os.getpid(),'start_ticks':start(os.getpid()),'observed_pytest_pid':PID,
+          'observed_pytest_start_ticks':TICKS,'period_seconds':60,'DB_connections':0,
+          'signals_sent':[],'proc_task_children_used':False,
+          'one_shot_source_sha256':hashlib.sha256(SOURCE.read_bytes()).hexdigest()}
+(TRIAL/'principal-file-observer-identity.json').write_text(json.dumps(identity,indent=2,sort_keys=True)+'\n')
+print(json.dumps({'status':'FILE_ONLY_READER_RUNNING',**identity}),flush=True)
+code=compile(SOURCE.read_text(),str(SOURCE),'exec')
+sys.argv=[str(SOURCE),str(TRIAL)]
+count=0
+while True:
+    alive=start(PID)==TICKS
+    exec(code,{'__name__':'__main__'})
+    count+=1
+    if not alive:break
+    time.sleep(60)
+stop={'status':'FILE_ONLY_READER_STOPPED','identity':identity,'samples':count,
+      'reason':'OWNED_PYTEST_PID_START_GONE','DB_connections':0,'signals_sent':[]}
+(TRIAL/'principal-file-observer-STOP.json').write_text(json.dumps(stop,indent=2,sort_keys=True)+'\n')
+print(json.dumps(stop),flush=True)

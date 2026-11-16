@@ -1,0 +1,101 @@
+"""Read only one closed unchanged native DAG5000 test and its existing artifacts."""
+
+import json
+import re
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+
+def inspect(trial: Path, phase: str) -> dict:
+    failures = []
+
+    def check(value, message):
+        if not value:
+            failures.append(message)
+
+    def load(path):
+        try:
+            return json.loads(path.read_text())
+        except (OSError, ValueError):
+            failures.append(str(path.relative_to(trial)) + ":missing_or_invalid")
+            return {}
+
+    def rows(path):
+        try:
+            return [json.loads(line) for line in path.read_text().splitlines()]
+        except (OSError, ValueError):
+            failures.append(str(path.relative_to(trial)) + ":missing_or_invalid")
+            return []
+
+    suites = []
+    try:
+        suites = ET.parse(trial / "pytest.private.xml").findall(".//testsuite")
+    except (OSError, ET.ParseError):
+        failures.append("pytest XML missing/invalid")
+    check(len(suites) == 1, "exactly one pytest suite")
+    suite = suites[0].attrib if suites else {}
+    check(suite.get("tests") == "1" and all(suite.get(k) == "0" for k in ("failures", "errors", "skipped")), "one exact existing native5000 test PASS without skip")
+    health = {key: [] for key in ("api_access_5xx", "http_client_5xx", "TimeoutError", "api_asgi_unhandled", "worker_error", "healthy_retry")}
+    ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+    access = re.compile(r"\bHTTP/\d(?:\.\d)?[\"\']?\s+5\d{2}\b", re.I)
+    client = re.compile(r"Server error ['\"]5\d{2}\b", re.I)
+    for path in sorted((trial / "pytest").rglob("*.log")):
+        if not (path.name.startswith("api-") or path.name in {"worker-left.log", "worker-right.log"}):
+            continue
+        for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+            line = ansi.sub("", line)
+            record = {"file": str(path.relative_to(trial)), "line": number}
+            if path.name.startswith("api-") and access.search(line): health["api_access_5xx"].append(record)
+            if client.search(line): health["http_client_5xx"].append(record)
+            if re.search(r"\bTimeoutError\b", line): health["TimeoutError"].append(record)
+            if path.name.startswith("api-") and "exception in asgi application" in line.lower(): health["api_asgi_unhandled"].append(record)
+            if path.name.startswith("worker-") and re.search(r"(?:^|\|)\s*ERROR(?:\s*\||\s*:)", line): health["worker_error"].append(record)
+    for path in (trial / "pytest").rglob("progress.jsonl"):
+        for row in rows(path):
+            snapshot = row.get("snapshot", row.get("progress", row))
+            for target in snapshot.get("subtasks", []):
+                if target.get("run_count", 0) > 1 or target.get("physical_epoch", 0) > 1:
+                    health["healthy_retry"].append({"monotonic_ns": row.get("monotonic_ns"), "subtask": target})
+    directories = [p for p in (trial / "pytest").glob("*") if p.is_dir() and not p.is_symlink() and (p / "observations.json").exists()]
+    check(len(directories) == 1, "one complete native fixture observation")
+    business = {}; coordinator = {}; worker_health = {}; timing = {}
+    if directories:
+        directory = directories[0]
+        observation = load(directory / "observations.json")
+        final = load(directory / "final-progress.json")
+        cursors = load(directory / "accepted-cursors.json")
+        coordinator = load(directory / "coordinator-retirement.json")
+        worker_health = load(directory / "worker-health.json")
+        timing = load(directory / "phases.json")
+        check(observation.get("asynchronous") is (phase == "async5000") and observation.get("count") == 5000 and observation.get("mode") == "normal" and observation.get("c_exchange") == "broadcast" and observation.get("flow_state") == "COMPLETED" and observation.get("task_runs") == 4, "declared normal DAG5000 workload and final Flow")
+        check(coordinator.get("authority_state") == coordinator.get("snapshot_state") == "RELEASED" and coordinator.get("launch_states") and set(coordinator["launch_states"]) == {"RELEASED"}, "coordinator authority/snapshot/launch RELEASED")
+        check(worker_health.get("rejected") == [], "unchanged fixture strict normal worker health")
+        check(final.get("graph_state") == "RELEASED" and final.get("task_run_count") == 4 and len(final.get("channels", [])) == 7 and final.get("consumers") == [], "normal graph metadata and retention closure")
+        check(len(final.get("subtasks", [])) == 4, "four physical subtasks")
+        for target in final.get("subtasks", []):
+            check(target["physical_epoch"] == target["run_count"] == 1 and target["physical_slot_released"], "normal subtask attempt1 and released slot")
+        for channel in final.get("channels", []):
+            check(channel["state"] == "COMPLETED" and channel["last_sequence"] == channel["tail_sequence"] == 5000, "channel complete tail5000")
+        check(len(cursors.get("consumers", [])) == 3, "three accepted cursors")
+        for cursor in cursors.get("consumers", []):
+            check(cursor["completed_through"] == 5000 and cursor["inflight_sequence"] is None, "accepted cursor5000 without in-flight")
+        expected = list(range(1, 5001))
+        source = rows(directory / "source-accepted.jsonl")
+        check([row["position"] for row in source] == expected and len({row["pid"] for row in source}) == 1, "source5000 exact once in one process")
+        for branch in ("B-0", "C-0", "C-1"):
+            calls = rows(directory / ("calls-" + branch + ".jsonl"))
+            check([row["sequence"] for row in calls] == expected and [row["number"] for row in calls] == expected, branch + " exact5000 body calls")
+            check(len({row["task_run_id"] for row in calls}) == len({row["pid"] for row in calls}) == 1, branch + " one stable TaskRun/process")
+            documents = list((directory / branch).glob("document-*.json"))
+            check(len(documents) == 5000, branch + "5000 unique effects")
+            invalid = []
+            for number in expected:
+                try: value = json.loads((directory / branch / f"document-{number}.json").read_text())
+                except (OSError, ValueError): value = None
+                if value != {"document_id": f"document-{number}", "number": number}: invalid.append(number)
+            check(not invalid, branch + " exact effect bodies; first invalid=" + str(invalid[:10]))
+            business[branch] = {"calls": len(calls), "documents": len(documents), "processes": len({row["pid"] for row in calls}), "task_runs": len({row["task_run_id"] for row in calls})}
+        markers = list((directory / "processes").glob("*.pid.json"))
+        check(len(markers) == 4 and len(final.get("launches", [])) == len(final.get("grants", [])) == 4 and all(row["state"] == "CLOSED" for row in final.get("launches", [])), "four exact physical births/grants and closed attempts")
+    check(not any(health.values()), "wider normal health:5xx/timeout/ASGI/error/retry")
+    return {"status": "BODY_AND_WIDER_HEALTH_PASS" if not failures else "NATIVE_BODY_OR_HEALTH_RED", "pytest_suite": suite, "failed_checks": failures, "wider_health": health, "business": business, "coordinator": coordinator, "fixture_worker_health": worker_health, "phases": timing, "qualification": "Read-only post-run reconciliation of the unchanged existing native test. Typed409 is not5xx; logs are observations, not a complete HTTP trace or causal/performance evidence."}

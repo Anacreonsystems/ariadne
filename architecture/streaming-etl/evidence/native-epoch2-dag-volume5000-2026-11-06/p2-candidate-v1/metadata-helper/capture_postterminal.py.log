@@ -1,0 +1,239 @@
+"""One separately Root-authorized, current-owned P2 fault500 postterminal SELECT."""
+import argparse
+import asyncio
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+from urllib.parse import urlsplit, urlunsplit
+from uuid import UUID
+
+BASE=Path(__file__).resolve().parent
+OWNER=Path('/tmp/native-p2-minimal-bridge-preparation-18124-v3-final-v1')
+SOURCE=Path('/tmp/ariadne-native-5000-diagnosis-v1')
+SELECTOR=Path('/tmp/native-ni012-runtime-test-env.json')
+HEAD='18124603882fe9196a6eec6063a4619e7087f48f'
+NODES={'sync_incomplete200':'tests/test_native_partitioned_stream_http.py::test_actual_process_worker_runs_four_partition_tasks[500-operator-before-yield-200-False]','async_accepted200':'tests/test_native_partitioned_stream_http.py::test_actual_process_worker_runs_four_partition_tasks[500-operator-loss-200-True]'}
+DISCOVER="SELECT id AS graph_id,flow_run_id,profile FROM stream_graph_revision WHERE flow_run_id=$1 AND profile='partitioned-fixed-v1' ORDER BY id LIMIT 2"
+CONTEXT="SELECT current_database() AS database,current_setting('server_version_num') AS server_version,current_setting('transaction_read_only') AS read_only,pg_backend_pid() AS backend_pid,clock_timestamp() AS observed_utc,txid_current_snapshot()::text AS mvcc_snapshot"
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load(path):
+    return json.loads(path.read_text())
+
+
+def write(path,value):
+    with path.open('x') as handle:
+        json.dump(value,handle,indent=2,sort_keys=True,default=str)
+        handle.write('\n')
+    path.chmod(0o600)
+
+
+def rows(path):
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def identity_alive(pid,ticks):
+    try:current=Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()[19]
+    except FileNotFoundError:return False
+    return current==str(ticks)
+
+
+def checked_tested_version(expected):
+    assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=SOURCE,text=True).strip()==expected['head']==HEAD
+    dirty='tests/test_native_partitioned_stream_http.py'
+    assert expected['allowed_dirty_paths']==[dirty]
+    assert subprocess.check_output(['git','status','--porcelain','--untracked-files=all'],cwd=SOURCE,text=True)==' M '+dirty+'\n'
+    assert subprocess.check_output(['git','diff','--cached','--name-only'],cwd=SOURCE,text=True)==''
+    assert subprocess.check_output(['git','diff','--name-only'],cwd=SOURCE,text=True).splitlines()==[dirty]
+    patch=subprocess.check_output(['git','diff','--binary','--',dirty],cwd=SOURCE)
+    assert hashlib.sha256(patch).hexdigest()==expected['working_tree_patch_sha256']
+    return expected
+
+
+def validate(scope_path):
+    assert scope_path.is_absolute() and scope_path.parent.resolve()==BASE
+    scope=load(scope_path)
+    assert scope['status']=='ROOT_AUTHORIZED_P2_FAULT500_POSTTERMINAL_READONLY'
+    assert scope['authorized_by']=='/root' and scope['separate_postterminal_root_go'] is True
+    assert scope['head']==HEAD and scope['phase'] in NODES
+    manifest_path=BASE/'preparation-manifest-v2.json'
+    assert scope['preparation_sha256']==sha(manifest_path)
+    manifest=load(manifest_path)
+    assert scope['tested_version']==checked_tested_version(manifest['tested_version'])
+    for ref in manifest['artifacts']:
+        assert sha(BASE/ref['path'])==ref['sha256'] and (BASE/ref['path']).stat().st_size==ref['bytes']
+    for ref in manifest['source_bindings']:
+        assert sha(SOURCE/ref['path'])==ref['sha256']
+    for name,digest in manifest['native_assets'].items():assert sha(OWNER/name)==digest
+    trial=Path(scope['trial']);phase=scope['phase']
+    assert trial.is_absolute() and trial.parent.resolve()==OWNER
+    assert re.fullmatch(phase+r'-[0-9a-f]{8}',trial.name)
+    assert sha(trial/'command.json')==scope['command_sha256']
+    command=load(trial/'command.json')
+    assert command['tested_version']==scope['tested_version']
+    assert command['nodeid']==NODES[phase] and command['phase']==command['mode']==phase and command['head']==HEAD
+    assert command['cwd']==str(SOURCE) and command['count']==500 and command['profiling'] is False
+    assert command['asynchronous'] is (phase=='async_accepted200') and command['budgets']=={'observe':840,'pytest':900}
+    assert command['database']==scope['database'] and re.fullmatch(r'native_ni012_runtime_br1_[0-9a-f]{8}',command['database'])
+    assert command['assets']==manifest['native_assets']==load(trial/'external-assets.json')
+    assert command['private_selector_path']==str(SELECTOR)
+    assert command['only_provisioning_fixture_override'] is True and command['derived_tests_master_database_created'] is False
+    assert command['database_retained_always'] is True and command['drop_or_terminate_backend_allowed'] is False
+    hold_ref=scope['native_hold'];hold_path=Path(hold_ref['path'])
+    assert hold_path.is_absolute() and hold_path.parent.resolve()==OWNER
+    assert sha(hold_path)==hold_ref['sha256']==command['hold_sha256']
+    hold=load(hold_path)
+    assert hold['tested_version']==scope['tested_version']
+    assert hold['status']=='ROOT_AUTHORIZED_P2_BRIDGE_V3_SOURCE_HOLD' and hold['runtime_authorized_by']=='/root'
+    assert hold['head']==HEAD and hold['phase']==phase and hold['authorized_nodes']==[NODES[phase]]
+    assert hold['assets']==manifest['native_assets'] and hold['budgets']==command['budgets']
+    assert sha(trial/'source-before.json')==scope['source_before_sha256']
+    assert load(trial/'source-before.json')==hold['files']
+    for ref in manifest['source_bindings']:assert hold['files'][ref['path']]['sha256']==ref['sha256']
+    assert load(trial/'database-creation.json')=={'database':command['database'],'server_major':17,'created_fresh':True,'existing_database_reused':False}
+    stop_ref=scope['native_stop_receipt'];stop_path=Path(stop_ref['path'])
+    assert stop_path.parent.resolve()==trial and sha(stop_path)==stop_ref['sha256']
+    stop=load(stop_path)
+    assert stop['tested_version']==scope['tested_version']
+    assert stop['head']==HEAD and stop['phase']==phase and stop['nodeid']==NODES[phase] and stop['runtime_STOPPED'] is True
+    assert stop['assets']==manifest['native_assets'] and stop['source_drift']==[] and stop['import_audit']['mismatches']==[]
+    assert stop['database']['database']==command['database'] and stop['database']['retained'] is True and stop['database']['sessions']==[]
+    assert stop['process_closure']['remaining_same_identity_live']==stop['process_closure']['remaining_same_identity_zombies']==[]
+    assert stop['actual_exit_persisted_before_metadata'] is True and (trial/'pytest-exit').exists()
+    for pid,ticks in stop['process_closure']['observed_pid_start_pairs'].items():assert not identity_alive(pid,ticks)
+    identity=load(trial/'process.json')
+    for prefix in ('pytest','runner'):
+        assert str(identity[prefix+'_pid'])==str(scope[prefix+'_pid']) and str(identity[prefix+'_start_ticks'])==str(scope[prefix+'_start_ticks'])
+        assert not identity_alive(identity[prefix+'_pid'],identity[prefix+'_start_ticks'])
+    candidates=[p for p in (trial/'pytest').glob('*') if p.is_dir() and not p.is_symlink() and (p/'case-observation.json').is_file()]
+    assert len(candidates)==1
+    fixture=candidates[0]
+    assert sha(fixture/'case-observation.json')==scope['case_observation_sha256']
+    observation=load(fixture/'case-observation.json')
+    assert observation['count']==500 and observation['fault']==('operator-before-yield-200' if phase=='sync_incomplete200' else 'operator-loss-200')
+    assert observation['asynchronous'] is (phase=='async_accepted200') and observation['flow_run_id']==scope['flow_id']
+    UUID(scope['flow_id']);UUID(scope['b0_task_run_id'])
+    call_bindings=scope['closed_call_trace_sha256']
+    assert set(call_bindings)=={'calls-0-1.jsonl','calls-0-2.jsonl','calls-1-1.jsonl'}
+    for name,digest in call_bindings.items():assert sha(fixture/name)==digest
+    first=rows(fixture/'calls-0-1.jsonl');second=rows(fixture/'calls-0-2.jsonl');healthy=rows(fixture/'calls-1-1.jsonl')
+    assert first and second and healthy
+    assert {r['task_run_id'] for r in first}=={r['task_run_id'] for r in second}=={scope['b0_task_run_id']}
+    assert {r['task_run_id'] for r in healthy}!= {scope['b0_task_run_id']} and len({r['task_run_id'] for r in healthy})==1
+    assert all(r['assignment_epoch']==1 for r in first+second+healthy)
+    birth_names={'source-0-1.pid','source-1-1.pid','operator-0-1.pid','operator-0-2.pid','operator-1-1.pid'}
+    assert {p.name for p in fixture.glob('*.pid')}==birth_names
+    birth_pids={name:int((fixture/name).read_text()) for name in birth_names}
+    assert len(set(birth_pids.values()))==5
+    assert {r['pid'] for r in first}=={birth_pids['operator-0-1.pid']} and {r['pid'] for r in second}=={birth_pids['operator-0-2.pid']}
+    assert {r['pid'] for r in healthy}=={birth_pids['operator-1-1.pid']}
+    return scope,trial,command,observation,birth_pids
+
+
+def literal_checks(metadata,b0_id,observation,birth_pids):
+    m=metadata
+    required={'scope','tasks','operators','subtasks','grants','partitions','tag_allocations','limits','flow_lease','authority','coordinator_launches'}
+    if not required<=set(m):return {'required_literal_rows_present':False}
+    tasks={str(row['id']):row for row in m['tasks']}
+    subtasks={str(row['id']):row for row in m['subtasks']}
+    b0=[row for row in m['subtasks'] if str(row['task_run_id'])==b0_id]
+    operators={str(row['id']):row for row in m['operators']}
+    grants=m['grants']
+    b0_ok=len(b0)==1
+    b0_subtask=str(b0[0]['id']) if b0_ok else None
+    b0_grants=[row for row in grants if str(row['subtask_id'])==b0_subtask]
+    other_grants=[row for row in grants if str(row['subtask_id'])!=b0_subtask]
+    worker_ids={row['worker_id'] for row in observation['workers']}
+    def grant_birth_matches(grant):
+        subtask=subtasks.get(str(grant['subtask_id']))
+        if subtask is None:return False
+        uid=operators.get(str(subtask['operator_run_id']),{}).get('operator_uid')
+        if uid not in {'source.documents','operator.sign'}:return False
+        role='source' if uid=='source.documents' else 'operator'
+        marker=f"{role}-{subtask['subtask_index']}-{grant['physical_epoch']}.pid"
+        return birth_pids.get(marker)==grant['child_process_id']
+    return {
+        'scope_fixedP2_released_Flowcompleted_count1':len(m['scope'])==1 and m['scope'][0]['profile']=='partitioned-fixed-v1' and m['scope'][0]['state']=='RELEASED' and m['scope'][0]['flow_state']=='COMPLETED' and m['scope'][0]['flow_run_count']==1 and m['scope'][0]['assignment_epoch']==1,
+        'four_tasks_B0count2_other3count1_completed':len(tasks)==4 and b0_id in tasks and all(row['state_type']=='COMPLETED' and row['run_count']==(2 if task_id==b0_id else 1) for task_id,row in tasks.items()),
+        'four_subtasks_graphassignment1_B0physical2_other3physical1':len(subtasks)==4 and b0_ok and {str(row['task_run_id']) for row in subtasks.values()}==set(tasks) and all(row['assignment_epoch']==1 and row['physical_epoch']==(2 if str(row['task_run_id'])==b0_id else 1) for row in subtasks.values()),
+        'B0_exact_operator_sign_partition0':b0_ok and b0[0]['subtask_index']==0 and operators.get(str(b0[0]['operator_run_id']),{}).get('operator_uid')=='operator.sign',
+        'four_subtask_physical_slots_released_two_exact_workers':len(subtasks)==4 and all(row['physical_slot_released'] for row in subtasks.values()) and {str(row['assigned_worker_id']) for row in subtasks.values()}==worker_ids and len(worker_ids)==2,
+        'five_grants_four_initial_one_B0physical2_terminal':len(grants)==5 and len(b0_grants)==2 and sorted(row['physical_epoch'] for row in b0_grants)==[1,2] and len(other_grants)==3 and all(row['physical_epoch']==1 for row in other_grants) and all(row['state'] in {'RETIRED','RELEASED'} for row in grants),
+        'five_grants_match_five_actual_birth_PIDs':len(grants)==5 and {row['child_process_id'] for row in grants}==set(birth_pids.values()) and all(row['process_start_ticks'] is not None and grant_birth_matches(row) for row in grants),
+        'current_grants_match_current_subtask_epochs':len(subtasks)==4 and all(any(str(grant['id'])==str(row['current_grant_id']) and str(grant['subtask_id'])==str(row['id']) and grant['physical_epoch']==row['physical_epoch'] for grant in grants) for row in subtasks.values()),
+        'four_partitions_completed_released250':len(m['partitions'])==4 and all(row['state']=='COMPLETED' and row['released'] and row['last_sequence']==row['tail_sequence']==row['producer_position']==250 for row in m['partitions']),
+        'four_tag_allocations_literal_released':len(m['tag_allocations'])==4 and {str(row['subtask_id']) for row in m['tag_allocations']}==set(subtasks) and all(row['released'] for row in m['tag_allocations']),
+        'tag_and_deployment_active_slots0':len(m['limits'])==2 and all(row['active_slots']==0 for row in m['limits']) and len(m['flow_lease'])==1 and m['flow_lease'][0]['deployment_active_slots']==0,
+        'authority_and_coordinator_literal_released':len(m['authority'])==1 and len(m['coordinator_launches'])==1 and all(row['state']=='RELEASED' for row in m['authority']+m['coordinator_launches'])}
+
+
+async def run(scope_path):
+    scope,trial,command,observation,birth_pids=validate(scope_path)
+    output=BASE/scope['phase'];output.mkdir(mode=0o700,exist_ok=False)
+    write(output/'capture-attempted.json',{'scope_sha256':sha(scope_path),'trial':str(trial),'command_sha256':scope['command_sha256'],'native_stop_receipt':scope['native_stop_receipt'],'one_attempt_per_phase':True})
+    sql=load(BASE/'queries.json');assert len(sql)==19
+    for query in [DISCOVER,CONTEXT,*sql.values()]:
+        assert query.startswith('SELECT ') and not re.search(r'\b(FOR\s+UPDATE|FOR\s+SHARE|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|LOCK|TRUNCATE|CALL|pg_terminate_backend|pg_cancel_backend)\b',query,re.I)
+    # Private selector is consumed only after every Root/nativeSTOP/file binding.
+    config=load(SELECTOR);parsed=urlsplit(config['admin_dsn'])
+    assert parsed.hostname in {'localhost','127.0.0.1','::1'} and parsed.port==55436 and config['sqlalchemy_scheme']=='postgresql+asyncpg'
+    assert command['database'].startswith(config['database_prefix']+'_br1_')
+    dsn=urlunsplit((parsed.scheme,parsed.netloc,'/'+command['database'],parsed.query,''))
+    import asyncpg
+    connection=None
+    result={'schema':'fixedP2-fault500-postterminal-literal-PG-proof-v2-known-test-patch','status':'CAPTURE_STARTED','head':HEAD,'tested_version':scope['tested_version'],'phase':scope['phase'],'trial':str(trial),'database':command['database'],'flow_id':scope['flow_id'],'b0_task_run_id':scope['b0_task_run_id'],'scope_sha256':sha(scope_path),'command_sha256':scope['command_sha256'],'native_stop_receipt':scope['native_stop_receipt'],'case_observation_sha256':scope['case_observation_sha256'],'closed_call_trace_sha256':scope['closed_call_trace_sha256'],'sql_sha256':sha(BASE/'queries.json'),'readonly':True,'explicit_row_locks':False,'automatic_retry':False,'limitations':['One postterminal repeatable-read snapshot, not live/activation history','P2 assignment_epoch1 is distinct from B0 physical_epoch2; calltrace has no physical_epoch column','Normal unchanged fixtures may erase rows: literal absence is retained and cannot prove physical2','P2Consumer is joined by TaskRun id/input/output, not DAG graph relation; retained row absence cannot prove literal terminal cursors','DAG physical-slot/birth tables may be empty for fixed-P2; release proof comes from literal physical_subtask/tag/counter rows, not invented DAG rows','Persisted Flow lease/authority facts only; external KV lease backend not inspected','No config/env/DSN/payload/capability/raw delivery token selected or serialized']}
+    async def transaction():
+        nonlocal connection
+        connection=await asyncpg.connect(dsn,timeout=3,command_timeout=2,server_settings={'default_transaction_read_only':'on','application_name':'principal_p2_fault500_postterminal','statement_timeout':'2000','lock_timeout':'100','idle_in_transaction_session_timeout':'3000'})
+        async with connection.transaction(isolation='repeatable_read',readonly=True):
+            context=dict(await connection.fetchrow(CONTEXT))
+            assert context['database']==command['database'] and int(context['server_version'])//10000==17 and context['read_only']=='on'
+            result['database_context']=context
+            flow=UUID(scope['flow_id']);graphs=[dict(row) for row in await connection.fetch(DISCOVER,flow)]
+            result['bounded_owned_graph_discovery']=graphs
+            if len(graphs)!=1:
+                direct={'flow_lease':(flow,),'lease_history':(flow,),'authority':(flow,),'coordinator_launches':(flow,),'tasks':(flow,),'partitions':(flow,)}
+                data={name:[dict(row) for row in await connection.fetch(sql[name],*params)] for name,params in direct.items()}
+                result.update(status='OWNED_GRAPH_ROWS_ABSENT_OR_AMBIGUOUS_NO_PHYSICAL_PROOF',metadata=data,counts={k:len(v) for k,v in data.items()},graph_dependent_families_not_queried=sorted(set(sql)-set(data)),literal_checks={'unique_owned_graph_present':False})
+                return
+            graph=graphs[0]['graph_id'];result['graph_id']=str(graph)
+            assert graphs[0]['flow_run_id']==flow and graphs[0]['profile']=='partitioned-fixed-v1'
+            params={'scope':(graph,flow),'flow_lease':(flow,),'lease_history':(flow,),'operators':(graph,),'ports':(graph,),'edges':(graph,),'edge_partitions':(graph,flow),'launches':(graph,),'authority':(flow,),'coordinator_launches':(flow,),'tasks':(flow,),'partitions':(flow,)}
+            data={name:[dict(row) for row in await connection.fetch(query,*params.get(name,(flow,graph)))] for name,query in sql.items()}
+            result.update(status='ACTUAL_POSTTERMINAL_READONLY_CAPTURE',metadata=data,counts={key:len(values) for key,values in data.items()})
+    try:
+        await asyncio.wait_for(transaction(),timeout=6)
+    except Exception as error:result.update(status='READONLY_CAPTURE_FAILED_OR_INCONCLUSIVE',error_type=type(error).__name__)
+    finally:
+        if connection is not None:
+            try:await connection.close(timeout=3)
+            except Exception as error:result.update(status='CONNECTION_CLOSE_INCONCLUSIVE',close_error_type=type(error).__name__)
+        result['connection_closed']=connection is None or connection.is_closed()
+    if result['status']=='ACTUAL_POSTTERMINAL_READONLY_CAPTURE':
+        try:
+            checks=literal_checks(result['metadata'],scope['b0_task_run_id'],observation,birth_pids)
+            result['literal_checks']=checks
+            result['status']='LITERAL_P2_REPLACEMENT_AND_RELEASE_FACTS_OBSERVED' if all(checks.values()) else 'LITERAL_P2_FACTS_NOT_FULLY_PROVEN'
+        except Exception as error:result.update(status='LITERAL_CHECKS_INCONCLUSIVE',literal_check_error_type=type(error).__name__)
+    path=output/'postterminal-capture.json';write(path,result)
+    summary={'status':result['status'],'path':str(path),'sha256':sha(path),'connection_closed':result['connection_closed'],'counts':result.get('counts'),'literal_checks':result.get('literal_checks')}
+    print(json.dumps(summary),flush=True)
+    return 0 if result['status']=='LITERAL_P2_REPLACEMENT_AND_RELEASE_FACTS_OBSERVED' and result['connection_closed'] else 1
+
+
+if __name__=='__main__':
+    os.umask(0o077)
+    parser=argparse.ArgumentParser();parser.add_argument('--scope',type=Path,required=True);parser.add_argument('--execute-root-go',action='store_true',required=True)
+    args=parser.parse_args()
+    try:code=asyncio.run(run(args.scope))
+    except Exception as error:
+        print(json.dumps({'status':'PRECONNECTION_BINDING_OR_HARNESS_INCONCLUSIVE','error_type':type(error).__name__}),flush=True);code=1
+    raise SystemExit(code)

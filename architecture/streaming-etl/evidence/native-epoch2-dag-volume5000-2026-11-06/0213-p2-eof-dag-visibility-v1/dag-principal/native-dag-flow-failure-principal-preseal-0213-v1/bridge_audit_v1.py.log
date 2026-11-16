@@ -1,0 +1,69 @@
+"""Closed-file oracle for one existing async preseal failure; no DB or API."""
+import json
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+
+def inspect(trial: Path, phase: str, expected_count: int) -> dict:
+    failures = []
+    def check(value, name):
+        if not value:
+            failures.append(name)
+    def load(path):
+        try:
+            return json.loads(path.read_text())
+        except (OSError, ValueError):
+            failures.append(str(path.relative_to(trial)) + ':missing_or_invalid')
+            return {}
+    check(phase == 'async_preseal_failure' and expected_count == 1, 'one exact existing independent selector')
+    try:
+        suites = ET.parse(trial / 'pytest.private.xml').findall('.//testsuite')
+    except (OSError, ET.ParseError):
+        suites = []
+    check(len(suites) == 1, 'one actual pytest suite')
+    suite = suites[0].attrib if suites else {}
+    check(suite.get('tests') == '1' and all(suite.get(k) == '0' for k in ('failures', 'errors', 'skipped')),
+          'one real native test PASS without skip')
+    directories = [p for p in (trial / 'pytest').glob('*') if p.is_dir()
+                   and not p.is_symlink() and (p / 'observations.json').is_file()]
+    check(len(directories) == 1, 'one original fixture observation')
+    observation = {}; diagnostic = {}; coordinator = {}; worker_health = {}
+    if len(directories) == 1:
+        directory = directories[0]
+        observation = load(directory / 'observations.json')
+        check(observation.get('count') == 8 and observation.get('mode') == 'preseal-failure'
+              and observation.get('asynchronous') is True and observation.get('flow_state') == 'FAILED',
+              'existing async preseal mode reached its original expected failed state')
+        counts = observation.get('zero_execution_counts', {})
+        check(observation.get('graph_revision_id') is None and observation.get('task_runs') == 0
+              and bool(counts) and set(counts.values()) == {0}, 'nonvacuous zero execution before seal')
+        check(bool(observation.get('flow_run_id')) and len(observation.get('workers', [])) == 2,
+              'one owned Flow and two real workers')
+        check(not list(directory.glob('*.pid.json')), 'no physical child births')
+        all_captures = list((trial / 'pytest').rglob('dag-flow-failure.json'))
+        target = directory / 'dag-flow-failure.json'
+        check(all_captures == [target], 'exactly one capture in owned case directory')
+        diagnostic = load(target)
+        check(set(diagnostic) == {'schema_version', 'exception_type', 'sdk_wait_timeout', 'graph_revision_id',
+              'monotonic_ns', 'frames', 'frames_truncated'}, 'only bounded allowlisted fields')
+        check(diagnostic.get('exception_type') == 'builtins.ValueError'
+              and diagnostic.get('graph_revision_id') is None and diagnostic.get('sdk_wait_timeout') is False,
+              'async original ValueError captured before a graph exists')
+        frames = diagnostic.get('frames', [])
+        check(0 < len(frames) <= 16 and any(r.get('function') == 'documents_async' for r in frames),
+              'actual async Flow-body frame retained')
+        check(all(set(row) == {'file', 'function', 'line'} and isinstance(row['line'], int)
+                  and '/' not in row['file'] and len(row['file']) <= 120 and len(row['function']) <= 120
+                  for row in frames), 'bounded basename/function/line-only frames')
+        check(isinstance(diagnostic.get('monotonic_ns'), int) and diagnostic['monotonic_ns'] > 0,
+              'actual monotonic observation')
+        coordinator = load(directory / 'coordinator-retirement.json')
+        check(coordinator.get('authority_state') == 'RELEASED' and coordinator.get('snapshot_state') == 'RELEASED'
+              and bool(coordinator.get('launch_states')) and set(coordinator['launch_states']) == {'RELEASED'},
+              'automatic coordinator release remains observed by original test')
+        worker_health = load(directory / 'worker-health.json')
+        check(worker_health.get('rejected') == [], 'original worker-health predicate rejects no rows')
+    return {'status': 'BODY_AND_WIDER_HEALTH_PASS' if not failures else 'NATIVE_BODY_OR_CAPTURE_RED',
+            'pytest_suite': suite, 'failed_checks': failures, 'case_observation': observation,
+            'failure_diagnostic': diagnostic, 'coordinator': coordinator, 'worker_health': worker_health,
+            'qualification': 'Original existing async preseal failure, its original180s marker and all unchanged domain/terminal/worker assertions. This closed-file audit adds exact failure-file/ValueError/null-graph/async-frame checks. Null graph is scoped by the unique fresh case directory and original Flow observation, not an invented graph-to-Flow match. No injected SDK timeout, new matrix case, profile, postterminal DB query or readiness credit.'}

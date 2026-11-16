@@ -1,0 +1,97 @@
+import ast
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import xml.etree.ElementTree as ET
+
+ROOT=Path('/tmp/native-ni2-012-worker-v1')
+SOURCE=Path('/workspace/ariadne')
+OUT=ROOT/'first-cut-evidence'
+OUT.mkdir()
+ALIASES={}
+
+def write(path,value):
+    path.write_text(json.dumps(value,indent=2,default=str)+'\n')
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def copy_tree(source,prefix):
+    for path in source.rglob('*'):
+        if not path.is_file() or '__pycache__' in path.parts:
+            continue
+        relative=Path(prefix)/path.relative_to(source)
+        original=relative.as_posix()
+        if path.suffix=='.py':
+            relative=Path(original+'.log')
+            ALIASES[original]=relative.as_posix()
+        target=OUT/relative
+        target.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(path,target)
+
+owned=json.loads((ROOT/'final-control-01/source-after.json').read_text())
+assert owned==json.loads((ROOT/'final-control-01/source-before.json').read_text())
+assert owned==json.loads((ROOT/'types-control-04/source-before.json').read_text())
+assert all(digest(SOURCE/p)==sha for p,sha in owned.items())
+batches=json.loads((ROOT/'types-control-04/batches.json').read_text())
+assert sorted(p for batch in batches for p in batch)==sorted(owned)
+type_results=[]
+for index,paths in enumerate(batches,1):
+    folder=ROOT/'types-control-04'/f'batch-{index}'
+    data=json.loads((folder/'pyright.stdout.json').read_text())
+    execution=json.loads((folder/'pyright.command-result.json').read_text())
+    assert data['summary']['filesAnalyzed']==len(paths)==3
+    assert data['summary']['errorCount']==data['summary']['warningCount']==execution['returncode']==0
+    assert execution['guard_stop'] is None
+    type_results.append({'paths':paths,'summary':data['summary'],'execution':execution})
+for folder in ('journal-control-01','journal-control-02','transport-control-01','transport-control-02',
+               'transport-control-03','types-control-01','types-control-02','types-control-03',
+               'types-control-04','final-control-01','ci-priority-hold'):
+    copy_tree(ROOT/folder,folder)
+for path in ROOT.glob('*.log'):
+    shutil.copyfile(path,OUT/path.name)
+for path in ROOT.glob('*.py'):
+    shutil.copyfile(path,OUT/(path.name+'.log'))
+for name,sha in owned.items():
+    target=OUT/'current-source'/(name+'.log')
+    target.parent.mkdir(parents=True,exist_ok=True)
+    shutil.copyfile(SOURCE/name,target)
+    assert digest(target)==sha
+patch=subprocess.check_output(['git','diff','--','src/prefect/workers/_stream_subtasks.py','src/prefect/workers/process.py'],cwd=SOURCE)
+(OUT/'existing-worker-source.patch').write_bytes(patch)
+
+old=subprocess.check_output(['git','show','HEAD:src/prefect/workers/_stream_subtasks.py'],cwd=SOURCE,text=True)
+new=(SOURCE/'src/prefect/workers/_stream_subtasks.py').read_text()
+def fallback(text):
+    tree=ast.parse(text)
+    return [ast.get_source_segment(text,node) for node in ast.walk(tree) if isinstance(node,ast.If)
+            and 'exc.status_code == 404' in (ast.get_source_segment(text,node.test) or '')]
+assert fallback(old)==fallback(new) and len(fallback(old))==1
+old_p2_paths=['src/prefect/_internal/stream_subtask_entrypoint.py','src/prefect/_internal/stream_subtask_protocol.py','tests/workers/test_stream_subtasks.py']
+p2_unchanged={p:hashlib.sha256(subprocess.check_output(['git','show','HEAD:'+p],cwd=SOURCE)).hexdigest()==digest(SOURCE/p) for p in old_p2_paths}
+assert all(p2_unchanged.values())
+suite=ET.parse(ROOT/'final-control-01/result.xml').getroot().find('testsuite')
+assert suite is not None and suite.attrib['failures']==suite.attrib['errors']==suite.attrib['skipped']=='0'
+receipt={
+    'status':'IMPLEMENTER_COMPONENT_FIRST_CUT_FROZEN_AWAITING_INDEPENDENT_REVIEW',
+    'source_head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=SOURCE,text=True).strip(),
+    'owned_paths_sha256':owned,
+    'tests':{'xml':suite.attrib,'console':'32 passed, 31 subtests passed in 3.22s','no_root_conftest':True,'forbidden_server_imports':[]},
+    'types':{'analyzed_path_union':sorted(p for batch in batches for p in batch),'exact_union_matches_owned_paths':True,'batches':type_results},
+    'ruff':{'version':(ROOT/'ruff-final-version.log').read_text().strip(),'check':(ROOT/'ruff-final-check.log').read_text().strip(),'format':(ROOT/'ruff-final-format.log').read_text().strip()},
+    'p2':{'existing_fallback_source_byte_identical':True,'old_entrypoint_protocol_test_byte_identical':p2_unchanged,
+          'additive_existing_worker_edits':'Optional DAG companion in the single P2 owner polling loop/shared child count; enable from ProcessWorker. Read-only command-provenance property preserves private assignment and serialized configuration.'},
+    'limits':['No DB or HTTP execution acceptance','Typed in-memory wire fixture covers local transport cuts only','No actual application Task GO/DATA in these controls','No full fixed-P2 regression or hosted CI acceptance claim','Runtime factory/dependency source snapshots are reference evidence; Root owns final unified gate'],
+    'preserved_failures':['Journal initial type gate: 2 errors/17 warnings, subsequently fixed','First nine-file type process stopped at 512MiB; no type result','First split batch2 9 errors/4 warnings and batch3 3 errors/2 warnings, subsequently fixed','Second split batch3 resource-stopped at 512MiB; no type result','Initial control02 setup command failed before execution because cwd did not exist; retried sequentially','One diagnostic-print command SyntaxError before reading JSON; no product/test effect'],
+}
+write(OUT/'receipt.json',receipt)
+write(OUT/'layout-aliases.json',ALIASES)
+items=[]
+for path in OUT.rglob('*'):
+    if path.is_file() and path.name!='index.json':
+        items.append({'path':path.relative_to(OUT).as_posix(),'bytes':path.stat().st_size,'sha256':digest(path)})
+items.sort(key=lambda item:item['path'])
+write(OUT/'index.json',{'status':receipt['status'],'receipt':'receipt.json','payload_count':len(items),'total_bytes':sum(item['bytes'] for item in items),'payloads':items})
+print(json.dumps({'receipt_sha256':digest(OUT/'receipt.json'),'index_sha256':digest(OUT/'index.json'),'payload_count':len(items),'total_bytes':sum(item['bytes'] for item in items)},indent=2))

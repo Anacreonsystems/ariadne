@@ -1,0 +1,326 @@
+--- unformattedV1-test_stream_routes.py
++++ formattedV2-test_stream_routes.py
+@@ -1230,24 +1230,30 @@
+         )
+     ).one()
+     assert tuple(output) == (0, 0, 0, 0)
+-    assert set(
+-        (
+-            await session.scalars(
+-                sa.select(db.StreamRecord.id).where(
+-                    db.StreamRecord.graph_revision_id == region.plan.id
+-                )
+-            )
+-        ).all()
+-    ) == record_ids
+-    assert set(
+-        (
+-            await session.scalars(
+-                sa.select(db.StreamRouteReceipt.id).where(
+-                    db.StreamRouteReceipt.graph_revision_id == region.plan.id
+-                )
+-            )
+-        ).all()
+-    ) == receipt_ids
++    assert (
++        set(
++            (
++                await session.scalars(
++                    sa.select(db.StreamRecord.id).where(
++                        db.StreamRecord.graph_revision_id == region.plan.id
++                    )
++                )
++            ).all()
++        )
++        == record_ids
++    )
++    assert (
++        set(
++            (
++                await session.scalars(
++                    sa.select(db.StreamRouteReceipt.id).where(
++                        db.StreamRouteReceipt.graph_revision_id == region.plan.id
++                    )
++                )
++            ).all()
++        )
++        == receipt_ids
++    )
+ 
+ 
+ @pytest.mark.parametrize("poison", ["reference", "receipt", "payload"])
+@@ -1256,40 +1262,96 @@
+ ):
+     region = await routing_region(db, flow_run)
+     source = await claim_source(db, region)
+-    outcome = await append(db, region, source_request(region, source, 1, {"kept": True}))
++    outcome = await append(
++        db, region, source_request(region, source, 1, {"kept": True})
++    )
+     reference = outcome.references[0]
+-    target = next(row for row in region.plan.subtasks if row.input_stream_id == reference.stream_id)
++    target = next(
++        row
++        for row in region.plan.subtasks
++        if row.input_stream_id == reference.stream_id
++    )
+     binding = await open_input(db, region, target.operator_uid, target.subtask_index)
+     before = await contents(db, region)
+-    async with route_store(db, region, target.operator_uid, target.subtask_index) as (session, store, _):
++    async with route_store(db, region, target.operator_uid, target.subtask_index) as (
++        session,
++        store,
++        _,
++    ):
+         cached_reference = await session.get(db.StreamRecord, reference.record_id)
+         cached_payload = await session.get(db.StreamRecord, outcome.payload_record_id)
+         cached_receipt = await session.get(db.StreamRouteReceipt, outcome.receipt_id)
+-        assert cached_reference is not None and cached_payload is not None and cached_receipt is not None
+-        assert (await store.resolve_reference(reference.stream_id, reference.sequence)).value == {"kept": True}
++        assert (
++            cached_reference is not None
++            and cached_payload is not None
++            and cached_receipt is not None
++        )
++        assert (
++            await store.resolve_reference(reference.stream_id, reference.sequence)
++        ).value == {"kept": True}
+         async with session.begin_nested() as savepoint:
+             if poison == "reference":
+                 original = cached_reference.value
+                 corrupted = {**original, "graph_revision_id": str(uuid4())}
+                 _, encoded, digest = stream_routes.canonical_stream_payload(corrupted)
+-                update = sa.update(db.StreamRecord).where(db.StreamRecord.id == cached_reference.id).values(value=corrupted, value_digest=digest, size_bytes=len(encoded))
++                update = (
++                    sa.update(db.StreamRecord)
++                    .where(db.StreamRecord.id == cached_reference.id)
++                    .values(
++                        value=corrupted, value_digest=digest, size_bytes=len(encoded)
++                    )
++                )
+             elif poison == "receipt":
+                 original = cached_receipt.outcome
+-                corrupted = {**original, "references": [dict(item) for item in original["references"]]}
++                corrupted = {
++                    **original,
++                    "references": [dict(item) for item in original["references"]],
++                }
+                 corrupted["references"][0]["edge_id"] = str(uuid4())
+-                corrupted["references"].sort(key=lambda item: (UUID(item["edge_id"]).bytes, UUID(item["edge_partition_id"]).bytes, UUID(item["record_id"]).bytes))
++                corrupted["references"].sort(
++                    key=lambda item: (
++                        UUID(item["edge_id"]).bytes,
++                        UUID(item["edge_partition_id"]).bytes,
++                        UUID(item["record_id"]).bytes,
++                    )
++                )
+                 corrupted["outcome_digest"] = route_outcome_digest(corrupted)
+                 wire.StreamDAGRouteOutcome.model_validate(corrupted)
+-                update = sa.update(db.StreamRouteReceipt).where(db.StreamRouteReceipt.id == cached_receipt.id).values(outcome=corrupted, outcome_digest=corrupted["outcome_digest"], outcome_size=len(canonical_route_json(corrupted)))
++                update = (
++                    sa.update(db.StreamRouteReceipt)
++                    .where(db.StreamRouteReceipt.id == cached_receipt.id)
++                    .values(
++                        outcome=corrupted,
++                        outcome_digest=corrupted["outcome_digest"],
++                        outcome_size=len(canonical_route_json(corrupted)),
++                    )
++                )
+             else:
+                 original = cached_payload.value
+-                update = sa.update(db.StreamRecord).where(db.StreamRecord.id == cached_payload.id).values(value={"changed_without_digest": True})
++                update = (
++                    sa.update(db.StreamRecord)
++                    .where(db.StreamRecord.id == cached_payload.id)
++                    .values(value={"changed_without_digest": True})
++                )
+             await session.execute(update.execution_options(synchronize_session=False))
+-            assert (cached_reference.value if poison == "reference" else cached_receipt.outcome if poison == "receipt" else cached_payload.value) == original
++            assert (
++                cached_reference.value
++                if poison == "reference"
++                else cached_receipt.outcome
++                if poison == "receipt"
++                else cached_payload.value
++            ) == original
+             with pytest.raises(NativeStreamError) as refused:
+                 await store.read_consumer(binding)
+             assert refused.value.code == "REFERENCE_IDENTITY_CONFLICT"
+-            await _assert_reference_refusal_left_data_unchanged(session, db, region, binding, {row.id for row in before["records"]}, set(before["receipts"]))
++            await _assert_reference_refusal_left_data_unchanged(
++                session,
++                db,
++                region,
++                binding,
++                {row.id for row in before["records"]},
++                set(before["receipts"]),
++            )
+             await savepoint.rollback()
+     assert await contents(db, region) == before
+ 
+@@ -1299,22 +1361,51 @@
+ ):
+     region = await routing_region(db, flow_run)
+     source = await claim_source(db, region)
+-    outcome = await append(db, region, source_request(region, source, 1, {"kept": True}))
++    outcome = await append(
++        db, region, source_request(region, source, 1, {"kept": True})
++    )
+     reference = outcome.references[0]
+-    target = next(row for row in region.plan.subtasks if row.input_stream_id == reference.stream_id)
++    target = next(
++        row
++        for row in region.plan.subtasks
++        if row.input_stream_id == reference.stream_id
++    )
+     binding = await open_input(db, region, target.operator_uid, target.subtask_index)
+     before = await contents(db, region)
+-    async with route_store(db, region, target.operator_uid, target.subtask_index) as (session, store, _):
++    async with route_store(db, region, target.operator_uid, target.subtask_index) as (
++        session,
++        store,
++        _,
++    ):
+         with pytest.raises(NativeStreamError) as missing:
+             await store.resolve_reference(reference.stream_id, reference.sequence + 1)
+         assert missing.value.code == "ROUTE_HORIZON_EXPIRED"
+         async with session.begin_nested() as savepoint:
+-            await session.execute(sa.update(db.StreamRecord).where(db.StreamRecord.id == reference.record_id).values(value={"malformed": True}).execution_options(synchronize_session=False))
+-            await session.execute(sa.update(db.StreamRouteReceipt).where(db.StreamRouteReceipt.id == outcome.receipt_id).values(outcome={"also_malformed": True}).execution_options(synchronize_session=False))
+-            with pytest.raises(NativeStreamError, match="Reference envelope is invalid") as refused:
++            await session.execute(
++                sa.update(db.StreamRecord)
++                .where(db.StreamRecord.id == reference.record_id)
++                .values(value={"malformed": True})
++                .execution_options(synchronize_session=False)
++            )
++            await session.execute(
++                sa.update(db.StreamRouteReceipt)
++                .where(db.StreamRouteReceipt.id == outcome.receipt_id)
++                .values(outcome={"also_malformed": True})
++                .execution_options(synchronize_session=False)
++            )
++            with pytest.raises(
++                NativeStreamError, match="Reference envelope is invalid"
++            ) as refused:
+                 await store.read_consumer(binding)
+             assert refused.value.code == "REFERENCE_IDENTITY_CONFLICT"
+-            await _assert_reference_refusal_left_data_unchanged(session, db, region, binding, {row.id for row in before["records"]}, set(before["receipts"]))
++            await _assert_reference_refusal_left_data_unchanged(
++                session,
++                db,
++                region,
++                binding,
++                {row.id for row in before["records"]},
++                set(before["receipts"]),
++            )
+             await savepoint.rollback()
+     assert await contents(db, region) == before
+ 
+@@ -1324,25 +1415,57 @@
+ ):
+     region = await routing_region(db, flow_run)
+     source = await claim_source(db, region)
+-    outcome = await append(db, region, source_request(region, source, 1, {"kept": True}))
++    outcome = await append(
++        db, region, source_request(region, source, 1, {"kept": True})
++    )
+     reference = outcome.references[0]
+-    target = next(row for row in region.plan.subtasks if row.input_stream_id == reference.stream_id)
++    target = next(
++        row
++        for row in region.plan.subtasks
++        if row.input_stream_id == reference.stream_id
++    )
+     binding = await open_input(db, region, target.operator_uid, target.subtask_index)
+     before = await contents(db, region)
+-    async with route_store(db, region, target.operator_uid, target.subtask_index) as (session, store, _):
++    async with route_store(db, region, target.operator_uid, target.subtask_index) as (
++        session,
++        store,
++        _,
++    ):
+         cached_edge = await session.get(db.StreamGraphEdge, reference.edge_id)
+         assert cached_edge is not None
+         original_port = cached_edge.producer_port_id
+-        alternate_port = next(row.output_port.id for row in region.plan.operators if row.operator_uid == target.operator_uid)
+-        assert alternate_port != original_port and alternate_port != cached_edge.consumer_port_id
++        alternate_port = next(
++            row.output_port.id
++            for row in region.plan.operators
++            if row.operator_uid == target.operator_uid
++        )
++        assert (
++            alternate_port != original_port
++            and alternate_port != cached_edge.consumer_port_id
++        )
+         async with session.begin_nested() as savepoint:
+-            await session.execute(sa.update(db.StreamGraphEdge).where(db.StreamGraphEdge.id == cached_edge.id).values(producer_port_id=alternate_port).execution_options(synchronize_session=False))
++            await session.execute(
++                sa.update(db.StreamGraphEdge)
++                .where(db.StreamGraphEdge.id == cached_edge.id)
++                .values(producer_port_id=alternate_port)
++                .execution_options(synchronize_session=False)
++            )
+             assert cached_edge.producer_port_id == original_port
+-            with pytest.raises(NativeStreamError, match="Original payload identity, content or producer differs") as refused:
++            with pytest.raises(
++                NativeStreamError,
++                match="Original payload identity, content or producer differs",
++            ) as refused:
+                 await store.read_consumer(binding)
+             assert refused.value.code == "REFERENCE_IDENTITY_CONFLICT"
+             assert cached_edge.producer_port_id == original_port
+-            await _assert_reference_refusal_left_data_unchanged(session, db, region, binding, {row.id for row in before["records"]}, set(before["receipts"]))
++            await _assert_reference_refusal_left_data_unchanged(
++                session,
++                db,
++                region,
++                binding,
++                {row.id for row in before["records"]},
++                set(before["receipts"]),
++            )
+             await savepoint.rollback()
+     assert await contents(db, region) == before
+ 
+@@ -1352,12 +1475,22 @@
+ ):
+     region = await routing_region(db, flow_run)
+     source = await claim_source(db, region)
+-    outcome = await append(db, region, source_request(region, source, 1, {"kept": True}))
++    outcome = await append(
++        db, region, source_request(region, source, 1, {"kept": True})
++    )
+     reference = outcome.references[0]
+-    target = next(row for row in region.plan.subtasks if row.input_stream_id == reference.stream_id)
++    target = next(
++        row
++        for row in region.plan.subtasks
++        if row.input_stream_id == reference.stream_id
++    )
+     binding = await open_input(db, region, target.operator_uid, target.subtask_index)
+     before = await contents(db, region)
+-    async with route_store(db, region, target.operator_uid, target.subtask_index) as (session, store, _):
++    async with route_store(db, region, target.operator_uid, target.subtask_index) as (
++        session,
++        store,
++        _,
++    ):
+         cached_payload = await session.get(db.StreamRecord, outcome.payload_record_id)
+         assert cached_payload is not None
+         async with session.begin_nested() as savepoint:
+@@ -1366,6 +1499,13 @@
+             with pytest.raises(NativeStreamError) as refused:
+                 await store.resolve_reference(reference.stream_id, reference.sequence)
+             assert refused.value.code == "REFERENCE_IDENTITY_CONFLICT"
+-            await _assert_reference_refusal_left_data_unchanged(session, db, region, binding, {row.id for row in before["records"]}, set(before["receipts"]))
++            await _assert_reference_refusal_left_data_unchanged(
++                session,
++                db,
++                region,
++                binding,
++                {row.id for row in before["records"]},
++                set(before["receipts"]),
++            )
+             await savepoint.rollback()
+     assert await contents(db, region) == before

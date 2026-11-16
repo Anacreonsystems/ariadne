@@ -1,7 +1,10 @@
 """DAG topology metadata tests; native execution remains explicitly fenced."""
 
+import asyncio
 from collections import Counter
 from collections.abc import AsyncGenerator
+from datetime import timedelta
+from typing import Literal
 from uuid import UUID, uuid4
 
 import pytest
@@ -35,6 +38,7 @@ from prefect.server.schemas import stream_dags as s
 from prefect.server.schemas import stream_subtasks as physical
 from prefect.server.schemas.core import TaskRunPolicy
 from prefect.settings import PREFECT_SERVER_API_AUTH_STRING, temporary_settings
+from prefect.types import DateTime
 from prefect.types._datetime import now
 from tests.server.models.test_stream_executions import (
     _claim,
@@ -1071,3 +1075,270 @@ async def test_postseal_extra_partition_refuses_abort_without_mutating_any_strea
             )
             == 0
         )
+
+
+async def _renewal_worker(
+    db: PrefectDBInterface,
+    protocols: tuple[Literal["partitioned-fixed-v1", "partitioned-dag-v1"], ...],
+) -> tuple[UUID, physical.StreamWorkerPrincipal]:
+    async with db.session_context(begin_transaction=True) as session:
+        pool = await workers.create_work_pool(
+            session=session,
+            work_pool=actions.WorkPoolCreate(
+                name="renewal-" + uuid4().hex, type="process"
+            ),
+        )
+        await workers.worker_heartbeat(
+            session=session, work_pool_id=pool.id, worker_name="renewal-worker"
+        )
+        worker = await session.scalar(
+            sa.select(db.Worker).where(db.Worker.work_pool_id == pool.id)
+        )
+        assert worker is not None
+        principal = physical.StreamWorkerPrincipal(
+            work_pool_id=pool.id,
+            host_id=uuid4(),
+            boot_id=uuid4(),
+            launcher_process_id=1000,
+            launcher_start_ticks=2000,
+        )
+        for protocol in protocols:
+            await renew_worker_capability_metadata(
+                session, db, worker.id, principal, protocol=protocol
+            )
+        return worker.id, principal
+
+
+async def _renew_worker_for_test(
+    db: PrefectDBInterface,
+    worker_id: UUID,
+    principal: physical.StreamWorkerPrincipal,
+    protocol: Literal["partitioned-fixed-v1", "partitioned-dag-v1"],
+    backend_pid: asyncio.Future[int] | None = None,
+) -> None:
+    async with db.session_context(begin_transaction=True) as session:
+        if backend_pid is not None:
+            pid = await session.scalar(sa.text("SELECT pg_backend_pid()"))
+            assert isinstance(pid, int)
+            backend_pid.set_result(pid)
+        await renew_worker_capability_metadata(
+            session, db, worker_id, principal, protocol=protocol
+        )
+
+
+async def _renewal_capabilities(
+    session: AsyncSession, db: PrefectDBInterface, worker_id: UUID
+) -> dict[str, tuple[UUID, UUID, int, int, DateTime]]:
+    rows = (
+        await session.scalars(
+            sa.select(db.StreamWorkerCapability)
+            .where(db.StreamWorkerCapability.worker_id == worker_id)
+            .order_by(db.StreamWorkerCapability.protocol)
+            .execution_options(populate_existing=True)
+        )
+    ).all()
+    return {
+        row.protocol: (
+            row.id,
+            row.host_id,
+            row.launcher_process_id,
+            row.launcher_start_ticks,
+            row.last_renewed_at,
+        )
+        for row in rows
+    }
+
+
+async def _wait_for_worker_renewal_lock(
+    db: PrefectDBInterface,
+    backend_pid: int,
+    holder_pid: int,
+    clause: str,
+    pending: asyncio.Task[None],
+) -> None:
+    async with db.session_context() as observer:
+        async with asyncio.timeout(10):
+            while True:
+                await observer.execute(sa.text("SELECT pg_stat_clear_snapshot()"))
+                row = (
+                    await observer.execute(
+                        sa.text(
+                            "SELECT query, wait_event_type, pg_blocking_pids(pid) AS blockers "
+                            "FROM pg_stat_activity WHERE pid=:pid"
+                        ),
+                        {"pid": backend_pid},
+                    )
+                ).one()
+                if row.wait_event_type == "Lock" and holder_pid in row.blockers:
+                    assert "FROM worker" in row.query and clause in row.query
+                    return
+                if pending.done():
+                    await pending
+                    pytest.fail("Renewal completed before the required Worker lock")
+                await asyncio.sleep(0.01)
+
+
+@pytest.mark.parametrize("protocol", ["partitioned-fixed-v1", "partitioned-dag-v1"])
+async def test_postgres_same_identity_renewal_completes_while_data_holds_worker_share(
+    db: PrefectDBInterface,
+    protocol: Literal["partitioned-fixed-v1", "partitioned-dag-v1"],
+):
+    worker_id, principal = await _renewal_worker(
+        db, ("partitioned-fixed-v1", "partitioned-dag-v1")
+    )
+    async with db.session_context(begin_transaction=True) as setup:
+        await setup.execute(
+            sa.update(db.StreamWorkerCapability)
+            .where(db.StreamWorkerCapability.worker_id == worker_id)
+            .values(last_renewed_at=now("UTC") - timedelta(seconds=5))
+        )
+    async with db.session_context(begin_transaction=True) as holder:
+        # This is the Worker row-lock clause held through a native DAG DATA turn.
+        await holder.execute(
+            sa.select(db.Worker.id)
+            .where(db.Worker.id == worker_id)
+            .with_for_update(read=True)
+        )
+        before = await _renewal_capabilities(holder, db, worker_id)
+        await asyncio.wait_for(
+            _renew_worker_for_test(db, worker_id, principal, protocol), 5
+        )
+        after = await _renewal_capabilities(holder, db, worker_id)
+        assert before.keys() == after.keys()
+        for advertised in before:
+            assert after[advertised][:-1] == before[advertised][:-1]
+            if advertised == protocol:
+                assert after[advertised][-1] > before[advertised][-1]
+            else:
+                assert after[advertised] == before[advertised]
+
+
+async def test_postgres_exclusive_admission_worker_lock_still_blocks_same_identity_renewal(
+    db: PrefectDBInterface,
+):
+    worker_id, principal = await _renewal_worker(db, ("partitioned-fixed-v1",))
+    pid = asyncio.get_running_loop().create_future()
+    pending = None
+    try:
+        async with db.session_context(begin_transaction=True) as holder:
+            holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+            await holder.execute(
+                sa.select(db.Worker.id)
+                .where(db.Worker.id == worker_id)
+                .with_for_update()
+            )
+            before = await _renewal_capabilities(holder, db, worker_id)
+            pending = asyncio.create_task(
+                _renew_worker_for_test(
+                    db, worker_id, principal, "partitioned-fixed-v1", pid
+                )
+            )
+            await _wait_for_worker_renewal_lock(
+                db, await pid, holder_pid, "FOR SHARE", pending
+            )
+            assert await _renewal_capabilities(holder, db, worker_id) == before
+        await asyncio.wait_for(pending, 10)
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "change", ["missing-protocol", "identity-rotation", "other-protocol-identity"]
+)
+async def test_postgres_registration_and_rotation_keep_exclusive_worker_fence(
+    db: PrefectDBInterface, change: str
+):
+    protocols = (
+        ("partitioned-dag-v1",)
+        if change == "missing-protocol"
+        else ("partitioned-dag-v1", "partitioned-fixed-v1")
+    )
+    worker_id, principal = await _renewal_worker(db, protocols)
+    requested = "partitioned-fixed-v1"
+    if change == "other-protocol-identity":
+        async with db.session_context(begin_transaction=True) as setup:
+            await setup.execute(
+                sa.update(db.StreamWorkerCapability)
+                .where(
+                    db.StreamWorkerCapability.worker_id == worker_id,
+                    db.StreamWorkerCapability.protocol == "partitioned-dag-v1",
+                )
+                .values(launcher_start_ticks=principal.launcher_start_ticks + 1)
+            )
+    if change == "identity-rotation":
+        principal = principal.model_copy(
+            update={"launcher_start_ticks": principal.launcher_start_ticks + 1}
+        )
+    pid = asyncio.get_running_loop().create_future()
+    pending = None
+    try:
+        async with db.session_context(begin_transaction=True) as holder:
+            holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+            await holder.execute(
+                sa.select(db.Worker.id)
+                .where(db.Worker.id == worker_id)
+                .with_for_update(read=True)
+            )
+            before = await _renewal_capabilities(holder, db, worker_id)
+            pending = asyncio.create_task(
+                _renew_worker_for_test(db, worker_id, principal, requested, pid)
+            )
+            await _wait_for_worker_renewal_lock(
+                db, await pid, holder_pid, "FOR UPDATE", pending
+            )
+            assert await _renewal_capabilities(holder, db, worker_id) == before
+        await asyncio.wait_for(pending, 10)
+        async with db.session_context() as observed:
+            after = await _renewal_capabilities(observed, db, worker_id)
+        assert set(after) == {"partitioned-fixed-v1", "partitioned-dag-v1"}
+        assert all(row[3] == principal.launcher_start_ticks for row in after.values())
+        if change != "missing-protocol":
+            assert (
+                after[requested][-1] - after["partitioned-dag-v1"][-1]
+            ).total_seconds() >= 120
+        else:
+            assert after["partitioned-dag-v1"] == before["partitioned-dag-v1"]
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.parametrize("existing", [(), ("partitioned-dag-v1",)])
+async def test_postgres_concurrent_first_or_missing_protocol_registration_is_serialized(
+    db: PrefectDBInterface,
+    existing: tuple[Literal["partitioned-fixed-v1", "partitioned-dag-v1"], ...],
+):
+    worker_id, principal = await _renewal_worker(db, existing)
+    pending = []
+    try:
+        async with db.session_context(begin_transaction=True) as holder:
+            holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+            await holder.execute(
+                sa.select(db.Worker.id)
+                .where(db.Worker.id == worker_id)
+                .with_for_update()
+            )
+            for _ in range(2):
+                pid = asyncio.get_running_loop().create_future()
+                task = asyncio.create_task(
+                    _renew_worker_for_test(
+                        db, worker_id, principal, "partitioned-fixed-v1", pid
+                    )
+                )
+                pending.append(task)
+                await _wait_for_worker_renewal_lock(
+                    db, await pid, holder_pid, "FOR SHARE", task
+                )
+        await asyncio.wait_for(asyncio.gather(*pending), 10)
+        async with db.session_context() as observed:
+            after = await _renewal_capabilities(observed, db, worker_id)
+        assert set(after) == set(existing) | {"partitioned-fixed-v1"}
+        assert all(row[3] == principal.launcher_start_ticks for row in after.values())
+    finally:
+        for task in pending:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)

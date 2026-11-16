@@ -1,0 +1,45 @@
+{
+  "baseline_test_sha256": "38a574eb2c66d0f90504bf6a4011adce4c4c10aeadf020dfc97eb3265cdd5328",
+  "candidate_test_sha256": "cc89b27b1dd5b9592d99a9abee5f078b59533cc3b60a9556406207c473e265be",
+  "checks_passed_source_only": [
+    "Actual candidate diff matches supplied patch",
+    "Whole module AST equals baseline after removing exact asyncio import, new helper and guarded polling addition",
+    "Original deadlines840/3540 and pytest900/3600 unchanged; final poll reuses existing deadline",
+    "All old assertions, cuts, business effects, state checks and worker cleanup retained",
+    "Nonvacuous exactly1graph/authority/snapshot/launch,4subtasks/partitions/tagallocations and expected4or5grants; consumers0/counters0",
+    "Only SELECTs in fresh session; no explicit row locks, manual release API or repair DML",
+    "Normal terminal profiles selected; Failed/import-exit/predeclaration excluded from new successful-flow shape",
+    "terminal-exit-stall pre-stop physical-held oracle runs before final release wait",
+    "passed=True follows successful release gate"
+  ],
+  "decision": "RequestChanges",
+  "findings": [
+    {
+      "evidence": "_terminal_resources selects model.id/subtask_id/task_run_id, returns dict(row) without normalization. ORM Base.id is Mapped[uuid.UUID]. terminal-resources writer locally passes default=str, but that does not mutate resources. lifecycle_checks keeps original dict; final writer uses json.dumps(observation,indent=2).",
+      "file": "tests/test_native_partitioned_stream_http.py",
+      "governing_contract": "Tests must be deterministic and preserve truthful evidence (tests/AGENTS.md); this patch exists to prove actual automatic release without breaking existing output/old oracles.",
+      "line": 773,
+      "minimal_correction": "Convert only the newly added resources structure into JSON-compatible primitives before returning or storing it. Preserve the existing observation writer and baseline behavior. Preserve this v1 attempt and provide a new bound candidate version for review.",
+      "problem": "Raw UUID-bearing SQL row dictionaries are saved into lifecycle_checks, then the unchanged final case-observation writer calls json.dumps without an encoder. A successful cleanup reaches TypeError rather than a successful test result.",
+      "related_lines": [
+        139,
+        150,
+        232,
+        770,
+        804,
+        820
+      ],
+      "severity": "blocking"
+    }
+  ],
+  "head": "18124603882fe9196a6eec6063a4619e7087f48f",
+  "patch_sha256": "b0bdd89868cfb2f9921e915dad02fa245274de53862ffcc808f41ce1305797ed",
+  "reviewed_at": "2026-11-06T04:42:19.668761+00:00",
+  "scope": "Read-only review of concrete test-only patch; not a new architecture decision or runtime verification",
+  "scope_limits": [
+    "No project imports/pytest/DB/network/runtime or source edits",
+    "Actual payload row counts are not newly selected; this change observes automatic release transaction and counters, while existing accepted storage tests cover delete semantics",
+    "New full-cleanup wait is not claimed for failed/import-exit/predeclaration profiles; their original assertions remain unchanged",
+    "This source review is not a runtime PASS or permission to execute"
+  ]
+}

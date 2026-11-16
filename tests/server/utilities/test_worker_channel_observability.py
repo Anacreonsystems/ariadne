@@ -9,6 +9,7 @@ import pytest
 
 from prefect.client.schemas.worker_channel import CANCELLING_TIMEOUT_TEARDOWN
 from prefect.server.utilities import worker_channel as worker_channel_module
+from prefect.server.worker_communication import cleanup_queue as cleanup_queue_module
 from prefect.server.worker_communication.cleanup_queue import (
     CLEANUP_QUEUE_OPERATIONS,
     record_cleanup_queue_operation,
@@ -31,7 +32,7 @@ class TestCleanupQueueOperationMetrics:
     ) -> None:
         work_pool_id = uuid4()
         message_id = uuid4()
-        with caplog.at_level(logging.DEBUG):
+        with caplog.at_level(logging.DEBUG, logger=cleanup_queue_module.logger.name):
             await queue.enqueue(
                 message_id=message_id,
                 idempotency_key="test-key",
@@ -58,7 +59,7 @@ class TestCleanupQueueOperationMetrics:
             target={"flow_run_id": str(uuid4())},
         )
 
-        with caplog.at_level(logging.DEBUG):
+        with caplog.at_level(logging.DEBUG, logger=cleanup_queue_module.logger.name):
             await queue.enqueue(
                 message_id=message_id,
                 idempotency_key="test-key",
@@ -84,7 +85,7 @@ class TestCleanupQueueOperationMetrics:
             target={"flow_run_id": str(uuid4())},
         )
 
-        with caplog.at_level(logging.DEBUG):
+        with caplog.at_level(logging.DEBUG, logger=cleanup_queue_module.logger.name):
             reservation = await queue.reserve(
                 work_pool_id=work_pool_id,
                 cleanup_kinds=[CANCELLING_TIMEOUT_TEARDOWN],
@@ -113,7 +114,7 @@ class TestCleanupQueueOperationMetrics:
         )
         assert reservation is not None
 
-        with caplog.at_level(logging.DEBUG):
+        with caplog.at_level(logging.DEBUG, logger=cleanup_queue_module.logger.name):
             result = await queue.ack(
                 work_pool_id=work_pool_id,
                 message_id=reservation.message_id,
@@ -126,8 +127,12 @@ class TestCleanupQueueOperationMetrics:
             for r in caplog.records
         )
 
+    @pytest.mark.parametrize("server_log_level", [logging.DEBUG, logging.INFO])
     async def test_release_records_accepted(
-        self, queue: WorkerCleanupQueue, caplog: pytest.LogCaptureFixture
+        self,
+        queue: WorkerCleanupQueue,
+        caplog: pytest.LogCaptureFixture,
+        server_log_level: int,
     ) -> None:
         work_pool_id = uuid4()
         await queue.enqueue(
@@ -143,7 +148,10 @@ class TestCleanupQueueOperationMetrics:
         )
         assert reservation is not None
 
-        with caplog.at_level(logging.DEBUG):
+        with (
+            caplog.at_level(server_log_level, logger="prefect.server"),
+            caplog.at_level(logging.DEBUG, logger=cleanup_queue_module.logger.name),
+        ):
             result = await queue.release(
                 work_pool_id=work_pool_id,
                 message_id=reservation.message_id,
@@ -174,7 +182,7 @@ class TestCleanupQueueOperationMetrics:
         )
         assert reservation is not None
 
-        with caplog.at_level(logging.DEBUG):
+        with caplog.at_level(logging.DEBUG, logger=cleanup_queue_module.logger.name):
             result = await queue.renew(
                 work_pool_id=work_pool_id,
                 message_id=reservation.message_id,
@@ -223,7 +231,7 @@ class TestWorkerChannelConfigDiagnostics:
     def test_log_worker_channel_config(self, caplog: pytest.LogCaptureFixture) -> None:
         from prefect.server.api.server import _log_worker_channel_config
 
-        with caplog.at_level(logging.DEBUG):
+        with caplog.at_level(logging.DEBUG, logger="prefect.server"):
             _log_worker_channel_config()
 
         assert any(

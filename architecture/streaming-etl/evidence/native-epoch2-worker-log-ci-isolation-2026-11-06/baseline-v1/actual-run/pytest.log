@@ -1,0 +1,43 @@
+....F..                                                                  [100%]
+=================================== FAILURES ===================================
+_ TestWorkerLogging.test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud _
+
+self = <tests.test_logging.TestWorkerLogging object at 0x7fc5fd323b30>
+mock_log_worker = <MagicMock id='140488641095744'>
+
+    @pytest.mark.usefixtures("worker_handler", "logging_to_api_enabled")
+    async def test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud(
+        self, mock_log_worker: MagicMock
+    ):
+        async with self.CloudWorkerTestImpl(
+            name="test", work_pool_name="test-work-pool"
+        ) as worker:
+            await worker.sync_with_backend()
+            with temporary_settings(
+                {
+                    PREFECT_API_URL: "https://api.prefect.cloud/api/accounts/test/workspaces/test"
+                }
+            ):
+                worker._logger.debug("test-worker-log")
+    
+        log_statement = [
+            log
+            for call in mock_log_worker.instance().send.call_args_list
+            for log in call.args
+            if log["name"] == worker._logger.name
+            and log["message"] == "test-worker-log"
+        ]
+    
+>       assert len(log_statement) == 1
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/test_logging.py:1130: AssertionError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='Task-50' coro=<TestWorkerLogging.test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud() running at /workspace/ariadne/tests/test_logging.py:1111> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 2.910 seconds
+01:01:45.624 | WARNING | asyncio - Executing <Task pending name='Task-50' coro=<TestWorkerLogging.test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud() running at /workspace/ariadne/tests/test_logging.py:1111> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 2.910 seconds
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-50' coro=<TestWorkerLogging.test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud() running at /workspace/ariadne/tests/test_logging.py:1111> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 2.910 seconds
+=========================== short test summary info ============================
+FAILED tests/test_logging.py::TestWorkerLogging::test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud
+1 failed, 6 passed in 94.20s (0:01:34)

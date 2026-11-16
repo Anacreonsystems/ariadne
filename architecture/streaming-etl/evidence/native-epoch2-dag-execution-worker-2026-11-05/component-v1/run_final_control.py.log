@@ -1,0 +1,59 @@
+import hashlib
+import importlib.abc
+import json
+from pathlib import Path
+import sys
+
+ROOT = Path('/tmp/native-ni2-012-worker-v1/final-control-01')
+ROOT.mkdir()
+SOURCE = Path('/workspace/ariadne')
+OWNED = list(json.loads(Path('/tmp/native-ni2-012-worker-v1/types-control-04/source-before.json').read_text()))
+DEPENDENCIES = [
+    'src/prefect/_internal/stream_execution.py',
+    'src/prefect/_internal/stream_event_auth.py',
+    'src/prefect/_internal/stream_engine.py',
+    'src/prefect/_internal/stream_routed_storage.py',
+    'src/prefect/client/schemas/stream_dag_executions.py',
+    'src/prefect/runner/_native_process.py',
+    'src/prefect/runner/_starter_native.py',
+    'src/prefect/_internal/stream_subtask_entrypoint.py',
+    'src/prefect/_internal/stream_subtask_protocol.py',
+]
+
+def hashes(paths):
+    return {p: hashlib.sha256((SOURCE/p).read_bytes()).hexdigest() for p in paths}
+
+before = hashes(OWNED)
+dependencies = hashes(DEPENDENCIES)
+(ROOT/'source-before.json').write_text(json.dumps(before,indent=2)+'\n')
+(ROOT/'dependencies-before.json').write_text(json.dumps(dependencies,indent=2)+'\n')
+
+class Guard(importlib.abc.MetaPathFinder):
+    def find_spec(self,fullname,path=None,target=None):
+        if fullname=='prefect.server' or fullname.startswith('prefect.server.'):
+            raise AssertionError('No server imports in the worker component gate')
+        return None
+
+sys.meta_path.insert(0,Guard())
+import pytest
+
+arguments = [
+    '-c','/dev/null','--noconftest','-p','no:cacheprovider','-q',
+    'tests/workers/test_stream_dag_launches.py',
+    'tests/workers/test_stream_dag_subtasks.py',
+    'tests/workers/test_stream_dag_bootstrap.py',
+    '--junitxml='+str(ROOT/'result.xml'),
+]
+(ROOT/'command.json').write_text(json.dumps({'argv':['uv','run','--no-sync','python','/tmp/native-ni2-012-worker-v1/run_final_control.py'],'pytest_arguments':arguments,'cwd':str(SOURCE)},indent=2)+'\n')
+code = pytest.main(arguments)
+after = hashes(OWNED)
+dependencies_after = hashes(DEPENDENCIES)
+(ROOT/'source-after.json').write_text(json.dumps(after,indent=2)+'\n')
+(ROOT/'dependencies-after.json').write_text(json.dumps(dependencies_after,indent=2)+'\n')
+(ROOT/'receipt.json').write_text(json.dumps({
+    'exit_code':code,'owned_source_unchanged':before==after,
+    'dependency_source_unchanged':dependencies==dependencies_after,
+    'forbidden_imports':[m for m in sys.modules if m=='prefect.server' or m.startswith('prefect.server.')],
+    'scope':'Local durability, real child/pipe transport and typed in-memory wire controls only; no server activation/DATA execution/acceptance claim',
+},indent=2)+'\n')
+sys.exit(code)

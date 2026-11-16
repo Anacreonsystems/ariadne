@@ -1,0 +1,18 @@
+--- a/src/prefect/server/models/stream_dag_launches.py
++++ b/src/prefect/server/models/stream_dag_launches.py
+@@ -81,6 +81,7 @@
+     new_launch: bool = False,
+     all_workers: bool = False,
+ ) -> DAGWorkerScope:
++    await require_physical_backend(session, db)
+     graph_id = await session.scalar(
+         sa.select(db.StreamPhysicalSubtask.graph_revision_id).where(
+             db.StreamPhysicalSubtask.id == subtask_id
+@@ -510,6 +511,7 @@
+     graph_id: UUID,
+     request: s.StreamDAGWorkerStartupAbortRequest,
+ ) -> s.StreamDAGWorkerStartupAbortResult:
++    await require_physical_backend(session, db)
+     subtask_id = await session.scalar(
+         sa.select(db.StreamPhysicalSubtask.id)
+         .where(

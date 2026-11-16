@@ -1,0 +1,61 @@
+--- provenPG23-bridge_runner_v1.py
++++ PG68-bridge_runner_v1.py
+@@ -1,4 +1,4 @@
+-"""One Root-authorized real PG23 group on an explicit1601-source/publication lease."""
++"""One Root-authorized real PG68 group on an explicit1601-source/publication lease."""
+ from __future__ import annotations
+ import ast
+ import asyncio
+@@ -43,7 +43,7 @@
+     return {"head": head,
+             "publication_delta_sha256": hashlib.sha256(json.dumps(publication, sort_keys=True).encode()).hexdigest(),
+             "additional_source_bindings": {ADDITIONAL_SOURCE: s.sha(ROOT/ADDITIONAL_SOURCE)},
+-            "qualification": "Published HEAD plus exact frozen publication and2reviewedmodelchanges and explicitnewuntrackedtest; not commit-only or blanketclean source."}
++            "qualification": "Published HEAD plus exact frozen publication and reviewed model/test deltas and explicit untracked test; not commit-only or blanketclean source."}
+ 
+ 
+ def disk_snapshot():
+@@ -55,14 +55,14 @@
+     assert len(sys.argv) == 2, "usage: bridge_runner_v1.py /ABS/ROOT_AUTHORIZED_P2_BRIDGE_HOLD.json"
+     hold_path = Path(sys.argv[1]); assert hold_path.is_absolute()
+     hold = json.loads(hold_path.read_text())
+-    assert hold["status"] == "ROOT_AUTHORIZED_TASK_PROJECTION_PG23_SOURCE_HOLD"
++    assert hold["status"] == "ROOT_AUTHORIZED_REFERENCE_JOIN_PG68_SOURCE_HOLD"
+     phase=hold["phase"];assert phase in set(NODES)|{"pg_selected"}
+     selectors=hold["authorized_nodes"]
+     if phase=="pg_selected":
+         assert set(selectors)==set(SELECTION["pg_selector_case_counts"])
+         assert selectors and len(selectors)==len(set(selectors)) and set(selectors)<=set(SELECTION["pg_selector_case_counts"])
+         expected_count=sum(SELECTION["pg_selector_case_counts"][x] for x in selectors)
+-        assert expected_count==23
++        assert expected_count==68
+         BUDGETS={"pytest":"unchanged repository defaults and existing per-test markers","whole_process_deadline":None}
+     else:
+         assert selectors==[NODES[phase]]
+@@ -144,7 +144,7 @@
+             identities[process.pid]=current["start_ticks"]
+             identity={"pytest_pid":process.pid,"pytest_start_ticks":current["start_ticks"],"pgid":pgid,"runner_pid":os.getpid(),"runner_start_ticks":subreaper["runner_start_ticks"],"subreaper_verified_before_popen":True}
+             s.write(trial/"process.json",identity)
+-            print(json.dumps({"status":"ONE_EXACT_PG23_ACTOR_RUNNING","trial":str(trial),**identity}),flush=True)
++            print(json.dumps({"status":"ONE_EXACT_PG68_ACTOR_RUNNING","trial":str(trial),**identity}),flush=True)
+             with (trial/"disk-observations.jsonl").open("w") as disk:
+                 while True:
+                     try:
+@@ -205,14 +205,14 @@
+         capture("sanitize_"+public,lambda private=private,public=public:(trial/public).write_text(s.sanitize((trial/private).read_text(errors="replace"),config,sqlalchemy_url)))
+     runtime_closed=bool(waited and closure and not closure["remaining_same_identity_live"] and not closure["remaining_same_identity_zombies"] and reaping and reaping["waitpid_echild_success"] and database_closure and database_closure["sessions"]==[])
+     passed=bool(pytest_exit==0 and waited and not harness_errors and not drift and not imports["mismatches"] and runtime_closed and proof_valid and collection and collection["requested_selectors"]==selectors and collection["count"]==expected_count and (phase=="pg_selected" or collection["pytest_timeout_marker"]==900) and body["status"]=="BODY_AND_WIDER_HEALTH_PASS" and database_closure["retained"] is True)
+-    receipt={"status":"TASK_PROJECTION_PG23_PASS_DB_RETAINED" if passed else "NATIVE_OR_HEALTH_OR_HARNESS_RED","runtime_STOPPED":runtime_closed,"phase":phase,"nodeid":NODE,"head":head,"tested_version":tested_version,"pytest_exit":pytest_exit,"actual_exit_persisted_before_metadata":waited,"harness_errors":harness_errors,"source_files":len(before),"source_drift":drift,"import_audit":imports,"process_closure":closure,"subreaper_proof":subreaper,"direct_child_wait":direct_wait,"adopted_reaping":reaping,"database":database_closure,"body_wider_health":body,"provisioning_proof":proof,"provisioning_proof_valid":proof_valid,"collection":collection,"budgets":BUDGETS,"assets":assets,"hold_sha256":s.sha(hold_path),"profiling":False,"harness_signals_sent":[],"whole_process_deadline_added":False,"retry":False,"known_prior_orphan":{"pid":384983,"status":"prior dead PPID1 artifact excluded; untouched"},"qualification":"One Root-selected source-bound realPG23 actor; fournewprojectionfalsifiers plus19unchangedPGcases. No nativeSDK/processworkload/performanceproof inferred fromthisgroup. Expected negativecase logs are not blindly zero-all-errors fenced. Last-row preservation is not forced by additional fixture overrides. Provisioning-only fixture override preserves its fresh DB on PASS/FAIL for Root postterminal SQL and Principal verdict. Runtime STOP is not next-phase authorization. No auto retry/P2, causal/performance/readiness claim, source correction, drop or terminate."}
+-    s.write(trial/"pg23-receipt-v1.json",receipt)
++    receipt={"status":"REFERENCE_JOIN_PG68_PASS_DB_RETAINED" if passed else "NATIVE_OR_HEALTH_OR_HARNESS_RED","runtime_STOPPED":runtime_closed,"phase":phase,"nodeid":NODE,"head":head,"tested_version":tested_version,"pytest_exit":pytest_exit,"actual_exit_persisted_before_metadata":waited,"harness_errors":harness_errors,"source_files":len(before),"source_drift":drift,"import_audit":imports,"process_closure":closure,"subreaper_proof":subreaper,"direct_child_wait":direct_wait,"adopted_reaping":reaping,"database":database_closure,"body_wider_health":body,"provisioning_proof":proof,"provisioning_proof_valid":proof_valid,"collection":collection,"budgets":BUDGETS,"assets":assets,"hold_sha256":s.sha(hold_path),"profiling":False,"harness_signals_sent":[],"whole_process_deadline_added":False,"retry":False,"known_prior_orphan":{"pid":384983,"status":"prior dead PPID1 artifact excluded; untouched"},"qualification":"One Root-selected source-bound realPG68 actor; fullroutefile45cases anddisjointPG23. Exactly67PASS andoneexplicitSQLite-only backendSKIP onPG17 required. No nativeSDK/processworkload/performanceproof inferred fromthisgroup. Expected negativecase logs are not blindly zero-all-errors fenced. Last-row preservation is not forced by additional fixture overrides. Provisioning-only fixture override preserves its fresh DB on PASS/FAIL for Root postterminal SQL and Principal verdict. Runtime STOP is not next-phase authorization. No auto retry/P2, causal/performance/readiness claim, source correction, drop or terminate."}
++    s.write(trial/"pg68-receipt-v1.json",receipt)
+     print(json.dumps({"status":receipt["status"] if runtime_closed else "RUNTIME_CLOSURE_INCOMPLETE","runtime_STOPPED":runtime_closed,"trial":str(trial),"pytest_exit":pytest_exit,"harness_errors":harness_errors,"source_drift":drift,"failed_checks":body["failed_checks"][:12],"remaining_sessions":database_closure["sessions"] if database_closure else None,"fresh_database_retained":database_closure["retained"] if database_closure else None}),flush=True)
+     return 0 if passed else (pytest_exit or 90)
+ 
+ 
+ if __name__=="__main__":
+-    lock=os.open(BASE/"one-pg23-runtime.lock",os.O_WRONLY|os.O_CREAT,0o600)
++    lock=os.open(BASE/"one-pg68-runtime.lock",os.O_WRONLY|os.O_CREAT,0o600)
+     try:
+         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+         code=main()

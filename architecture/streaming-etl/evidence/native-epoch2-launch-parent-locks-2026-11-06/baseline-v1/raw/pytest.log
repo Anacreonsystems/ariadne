@@ -1,0 +1,649 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+____ test_launch_http_commits_under_parent_reader_postgres[prepare-initial] ____
+
+fut = <Future cancelled created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448>
+timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout <= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout <= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+>           return await fut
+                   ^^^^^^^^^
+E           asyncio.exceptions.CancelledError
+
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/tasks.py:520: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f9caf5dde80>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7f9cad8b9d30>
+execution_api = <httpx.AsyncClient object at 0x7f9cad8e9e80>
+deployment = Deployment(id=3b6a5dbf-71b1-4916-a5da-5a64fac7b8ff)
+tmp_path = PosixPath('/tmp/native-launch-parent-lock-recovery2-runs-v1/baseline-red-v1/pytest/test_launch_http_commits_under0')
+record = False, replacement = False
+
+    @pytest.mark.parametrize("replacement", [False, True], ids=["initial", "replacement"])
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare", "record"])
+    async def test_launch_http_commits_under_parent_reader_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        tmp_path: Path,
+        record: bool,
+        replacement: bool,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(
+                db, session, api, deployment, record=record, replacement=replacement
+            )
+            before = await _launch_rows(db, case)
+            task: asyncio.Task[httpx.Response] | None = None
+            evidence: dict[str, Any] = {"deadline_seconds": 5, "holder_released": False}
+            try:
+                async with _launch_sql_capture(db) as statements:
+                    async with db.session_context(begin_transaction=True) as holder:
+                        holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+                        assert isinstance(holder_pid, int)
+                        await _hold_data_reader_prefix(
+                            holder, db, case.flow_id, case.graph_id
+                        )
+                        statements.clear()
+                        task = asyncio.create_task(
+                            api.post(case.path, json=case.request.model_dump(mode="json"))
+                        )
+                        try:
+>                           response = await asyncio.wait_for(
+                                asyncio.shield(task), timeout=5
+                            )
+
+tests/server/models/test_stream_dag_launches.py:490: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x7f9cac63e240>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+>               raise TimeoutError from exc_val
+E               TimeoutError
+
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://[redacted-owned-test-dsn]'
+Connecting to postgres at 'postgres://[redacted-owned-test-dsn]'
+Creating test postgres database 'native_ni012_runtime_launch_bda291f4_tests_master'
+Using test database connection URL 'postgresql+asyncpg://[redacted-owned-test-dsn]'
+Running hosted API server on port 45623
+---------------------------- Captured stderr setup -----------------------------
+23:13:03.799 | INFO    | uvicorn.error - Started server process [363948]
+23:13:03.803 | INFO    | uvicorn.error - Waiting for application startup.
+23:13:04.061 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+23:13:04.066 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+23:13:04.066 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+23:13:04.066 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+23:13:04.067 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+23:13:04.067 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+23:13:04.067 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+23:13:04.067 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+23:13:04.067 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+23:13:04.067 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+23:13:04.067 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+23:13:04.067 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+23:13:04.068 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+23:13:04.068 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+23:13:04.068 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+23:13:04.069 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+23:13:04.069 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+23:13:04.070 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+23:13:04.071 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+23:13:04.074 | INFO    | uvicorn.error - Application startup complete.
+23:13:04.075 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 45623) (Press CTRL+C to quit)
+23:13:04.121 | INFO    | uvicorn.access - 127.0.0.1:43380 - "GET /api/health HTTP/1.1" 200
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.629 seconds
+23:13:05.406 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.629 seconds
+23:13:05.417 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-ddc74297eb6e4a4dacd6619cc916cc0a because it does not have a base job template
+23:13:05.432 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1adfc-c197-7e75-b509-bfd8d9e76a3c for resource: prefect.work-pool.81e601a9-d0b4-462e-847a-11e243f93164
+23:13:05.472 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1adfc-c1b9-7e94-bf65-780fd30f4f9d for resource: prefect.work-pool.81e601a9-d0b4-462e-847a-11e243f93164
+23:13:05.521 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-ddc74297eb6e4a4dacd6619cc916cc0a because it does not have a base job template
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.629 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-ddc74297eb6e4a4dacd6619cc916cc0a because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1adfc-c197-7e75-b509-bfd8d9e76a3c for resource: prefect.work-pool.81e601a9-d0b4-462e-847a-11e243f93164
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1adfc-c1b9-7e94-bf65-780fd30f4f9d for resource: prefect.work-pool.81e601a9-d0b4-462e-847a-11e243f93164
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-ddc74297eb6e4a4dacd6619cc916cc0a because it does not have a base job template
+__ test_launch_http_commits_under_parent_reader_postgres[prepare-replacement] __
+
+fut = <Future cancelled created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448>
+timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout <= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout <= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+>           return await fut
+                   ^^^^^^^^^
+E           asyncio.exceptions.CancelledError
+
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/tasks.py:520: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f9caf5dde80>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7f9cac3d3c20>
+execution_api = <httpx.AsyncClient object at 0x7f9cac1a2660>
+deployment = Deployment(id=3069a3d6-97d0-47a9-8bb5-438a91a99d4b)
+tmp_path = PosixPath('/tmp/native-launch-parent-lock-recovery2-runs-v1/baseline-red-v1/pytest/test_launch_http_commits_under1')
+record = False, replacement = True
+
+    @pytest.mark.parametrize("replacement", [False, True], ids=["initial", "replacement"])
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare", "record"])
+    async def test_launch_http_commits_under_parent_reader_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        tmp_path: Path,
+        record: bool,
+        replacement: bool,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(
+                db, session, api, deployment, record=record, replacement=replacement
+            )
+            before = await _launch_rows(db, case)
+            task: asyncio.Task[httpx.Response] | None = None
+            evidence: dict[str, Any] = {"deadline_seconds": 5, "holder_released": False}
+            try:
+                async with _launch_sql_capture(db) as statements:
+                    async with db.session_context(begin_transaction=True) as holder:
+                        holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+                        assert isinstance(holder_pid, int)
+                        await _hold_data_reader_prefix(
+                            holder, db, case.flow_id, case.graph_id
+                        )
+                        statements.clear()
+                        task = asyncio.create_task(
+                            api.post(case.path, json=case.request.model_dump(mode="json"))
+                        )
+                        try:
+>                           response = await asyncio.wait_for(
+                                asyncio.shield(task), timeout=5
+                            )
+
+tests/server/models/test_stream_dag_launches.py:490: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x7f9cad104800>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+>               raise TimeoutError from exc_val
+E               TimeoutError
+
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.449 seconds
+23:13:13.080 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.449 seconds
+23:13:13.091 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-f6df314fe7ac456dbb965685f10c4f42 because it does not have a base job template
+23:13:13.117 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1adfc-df9b-7260-a0d5-e77504edb500 for resource: prefect.work-pool.d118e04c-8f58-4432-984f-5e3864802301
+23:13:13.173 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1adfc-dfd0-7c29-aeb0-a277b67a9a7d for resource: prefect.work-pool.d118e04c-8f58-4432-984f-5e3864802301
+23:13:13.246 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-f6df314fe7ac456dbb965685f10c4f42 because it does not have a base job template
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.354 seconds
+23:13:13.698 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.354 seconds
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.449 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-f6df314fe7ac456dbb965685f10c4f42 because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1adfc-df9b-7260-a0d5-e77504edb500 for resource: prefect.work-pool.d118e04c-8f58-4432-984f-5e3864802301
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1adfc-dfd0-7c29-aeb0-a277b67a9a7d for resource: prefect.work-pool.d118e04c-8f58-4432-984f-5e3864802301
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-f6df314fe7ac456dbb965685f10c4f42 because it does not have a base job template
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.354 seconds
+____ test_launch_http_commits_under_parent_reader_postgres[record-initial] _____
+
+fut = <Future cancelled created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448>
+timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout <= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout <= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+>           return await fut
+                   ^^^^^^^^^
+E           asyncio.exceptions.CancelledError
+
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/tasks.py:520: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f9caf5dde80>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7f9cc35b0bc0>
+execution_api = <httpx.AsyncClient object at 0x7f9cac4ee9f0>
+deployment = Deployment(id=f0ef9384-369e-433b-bdec-676fdc22328a)
+tmp_path = PosixPath('/tmp/native-launch-parent-lock-recovery2-runs-v1/baseline-red-v1/pytest/test_launch_http_commits_under2')
+record = True, replacement = False
+
+    @pytest.mark.parametrize("replacement", [False, True], ids=["initial", "replacement"])
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare", "record"])
+    async def test_launch_http_commits_under_parent_reader_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        tmp_path: Path,
+        record: bool,
+        replacement: bool,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(
+                db, session, api, deployment, record=record, replacement=replacement
+            )
+            before = await _launch_rows(db, case)
+            task: asyncio.Task[httpx.Response] | None = None
+            evidence: dict[str, Any] = {"deadline_seconds": 5, "holder_released": False}
+            try:
+                async with _launch_sql_capture(db) as statements:
+                    async with db.session_context(begin_transaction=True) as holder:
+                        holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+                        assert isinstance(holder_pid, int)
+                        await _hold_data_reader_prefix(
+                            holder, db, case.flow_id, case.graph_id
+                        )
+                        statements.clear()
+                        task = asyncio.create_task(
+                            api.post(case.path, json=case.request.model_dump(mode="json"))
+                        )
+                        try:
+>                           response = await asyncio.wait_for(
+                                asyncio.shield(task), timeout=5
+                            )
+
+tests/server/models/test_stream_dag_launches.py:490: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x7f9ca7aed700>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+>               raise TimeoutError from exc_val
+E               TimeoutError
+
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.413 seconds
+23:13:21.961 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.413 seconds
+23:13:21.973 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-550190f52e89415a88e93d0733e2e938 because it does not have a base job template
+23:13:21.988 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1adfd-0243-7bac-8ae2-4396d0e56cea for resource: prefect.work-pool.66ae977b-319c-43e7-9d9d-318b1ccab6aa
+23:13:22.020 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1adfd-0260-79ee-a209-ebeda30a93bd for resource: prefect.work-pool.66ae977b-319c-43e7-9d9d-318b1ccab6aa
+23:13:22.062 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-550190f52e89415a88e93d0733e2e938 because it does not have a base job template
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.413 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-550190f52e89415a88e93d0733e2e938 because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1adfd-0243-7bac-8ae2-4396d0e56cea for resource: prefect.work-pool.66ae977b-319c-43e7-9d9d-318b1ccab6aa
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1adfd-0260-79ee-a209-ebeda30a93bd for resource: prefect.work-pool.66ae977b-319c-43e7-9d9d-318b1ccab6aa
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-550190f52e89415a88e93d0733e2e938 because it does not have a base job template
+__ test_launch_http_commits_under_parent_reader_postgres[record-replacement] ___
+
+fut = <Future cancelled created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448>
+timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout <= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout <= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+>           return await fut
+                   ^^^^^^^^^
+E           asyncio.exceptions.CancelledError
+
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/tasks.py:520: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f9caf5dde80>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7f9cadf97440>
+execution_api = <httpx.AsyncClient object at 0x7f9cad0e2e40>
+deployment = Deployment(id=014a1860-a6bb-413f-a843-3c3351489a47)
+tmp_path = PosixPath('/tmp/native-launch-parent-lock-recovery2-runs-v1/baseline-red-v1/pytest/test_launch_http_commits_under3')
+record = True, replacement = True
+
+    @pytest.mark.parametrize("replacement", [False, True], ids=["initial", "replacement"])
+    @pytest.mark.parametrize("record", [False, True], ids=["prepare", "record"])
+    async def test_launch_http_commits_under_parent_reader_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        tmp_path: Path,
+        record: bool,
+        replacement: bool,
+    ):
+        async with _launch_http_client(execution_api) as api:
+            case = await _launch_http_case(
+                db, session, api, deployment, record=record, replacement=replacement
+            )
+            before = await _launch_rows(db, case)
+            task: asyncio.Task[httpx.Response] | None = None
+            evidence: dict[str, Any] = {"deadline_seconds": 5, "holder_released": False}
+            try:
+                async with _launch_sql_capture(db) as statements:
+                    async with db.session_context(begin_transaction=True) as holder:
+                        holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+                        assert isinstance(holder_pid, int)
+                        await _hold_data_reader_prefix(
+                            holder, db, case.flow_id, case.graph_id
+                        )
+                        statements.clear()
+                        task = asyncio.create_task(
+                            api.post(case.path, json=case.request.model_dump(mode="json"))
+                        )
+                        try:
+>                           response = await asyncio.wait_for(
+                                asyncio.shield(task), timeout=5
+                            )
+
+tests/server/models/test_stream_dag_launches.py:490: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x7f9cad107f40>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+>               raise TimeoutError from exc_val
+E               TimeoutError
+
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.416 seconds
+23:13:29.057 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.416 seconds
+23:13:29.071 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-866ac37e9aba442abbc4de9963e81c96 because it does not have a base job template
+23:13:29.085 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1adfd-1dfd-7bd5-8370-9dd126fa8626 for resource: prefect.work-pool.dde639c0-487d-4d4a-93d2-2928e8787e32
+23:13:29.116 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1adfd-1e17-7156-a59e-e7ace7416f57 for resource: prefect.work-pool.dde639c0-487d-4d4a-93d2-2928e8787e32
+23:13:29.161 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-866ac37e9aba442abbc4de9963e81c96 because it does not have a base job template
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.416 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-866ac37e9aba442abbc4de9963e81c96 because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1adfd-1dfd-7bd5-8370-9dd126fa8626 for resource: prefect.work-pool.dde639c0-487d-4d4a-93d2-2928e8787e32
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1adfd-1e17-7156-a59e-e7ace7416f57 for resource: prefect.work-pool.dde639c0-487d-4d4a-93d2-2928e8787e32
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-866ac37e9aba442abbc4de9963e81c96 because it does not have a base job template
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+23:13:37.016 | INFO    | uvicorn.error - Shutting down
+23:13:37.118 | INFO    | uvicorn.error - Waiting for application shutdown.
+23:13:37.121 | INFO    | uvicorn.error - Application shutdown complete.
+23:13:37.122 | INFO    | uvicorn.error - Finished server process [363948]
+Executing <Task finished name='Task-448' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.289 seconds
+23:13:38.283 | WARNING | asyncio - Executing <Task finished name='Task-448' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.289 seconds
+---------------------------- Captured log teardown -----------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task finished name='Task-448' coro=<_wrap_asyncgen_fixture.<locals>._asyncgen_fixture_wrapper.<locals>.finalizer.<locals>.async_finalizer() done, defined at /workspace/ariadne/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:414> result=None created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.289 seconds
+=========================== short test summary info ============================
+FAILED tests/server/models/test_stream_dag_launches.py::test_launch_http_commits_under_parent_reader_postgres[prepare-initial]
+FAILED tests/server/models/test_stream_dag_launches.py::test_launch_http_commits_under_parent_reader_postgres[prepare-replacement]
+FAILED tests/server/models/test_stream_dag_launches.py::test_launch_http_commits_under_parent_reader_postgres[record-initial]
+FAILED tests/server/models/test_stream_dag_launches.py::test_launch_http_commits_under_parent_reader_postgres[record-replacement]
+4 failed in 40.31s

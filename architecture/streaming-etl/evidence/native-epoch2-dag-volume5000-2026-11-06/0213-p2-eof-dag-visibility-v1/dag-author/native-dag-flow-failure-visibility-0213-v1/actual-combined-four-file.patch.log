@@ -1,0 +1,209 @@
+diff --git a/scripts/native_runtime_diagnostics.py b/scripts/native_runtime_diagnostics.py
+index f74dfcd..aec98bf 100644
+--- a/scripts/native_runtime_diagnostics.py
++++ b/scripts/native_runtime_diagnostics.py
+@@ -18,6 +18,7 @@ JSON_NAMES = {
+     "case-observation.json",
+     "coordinator-retirement.json",
+     "worker-health.json",
++    "dag-flow-failure.json",
+     "branch-cut-ready.json",
+     "branch-cut-observation.json",
+     "branch-loss.json",
+diff --git a/tests/fixtures/native_partitioned_stream_flow.py b/tests/fixtures/native_partitioned_stream_flow.py
+index e583cb7..3d5b2cb 100644
+--- a/tests/fixtures/native_partitioned_stream_flow.py
++++ b/tests/fixtures/native_partitioned_stream_flow.py
+@@ -3,6 +3,7 @@
+ import asyncio
+ import atexit
+ import json
++import math
+ import os
+ import sys
+ import time
+@@ -79,6 +80,19 @@ if (
+         raise SystemExit(73)
+ 
+ 
++def _wait_for_replacement(target: Path) -> None:
++    # This fixture and its parent test share one host's monotonic clock.
++    deadline = float((target / "replacement-observation-deadline").read_text())
++    if not math.isfinite(deadline) or deadline <= 0:
++        raise ValueError("Invalid replacement observation deadline")
++    while not (target / "replacement-started").exists():
++        if time.monotonic() >= deadline:
++            raise TimeoutError(
++                "Replacement did not start before the case observation deadline"
++            )
++        time.sleep(0.02)
++
++
+ @task(
+     version="native-partitioned-v1",
+     retries=2,
+@@ -102,13 +116,7 @@ def partitioned_source(
+                 str(time.monotonic_ns())
+             )
+     if fault in {"operator-loss-200", "operator-before-yield-200"}:
+-        deadline = time.monotonic() + 90
+-        while not (target / "replacement-started").exists():
+-            if time.monotonic() > deadline:
+-                raise TimeoutError(
+-                    "Replacement did not start while healthy sources waited"
+-                )
+-            time.sleep(0.02)
++        _wait_for_replacement(target)
+ 
+ 
+ @task(
+diff --git a/tests/test_native_partitioned_stream_http.py b/tests/test_native_partitioned_stream_http.py
+index 3b3c1ab..8be03d4 100644
+--- a/tests/test_native_partitioned_stream_http.py
++++ b/tests/test_native_partitioned_stream_http.py
+@@ -399,12 +399,20 @@ async def test_actual_process_worker_runs_four_partition_tasks(
+                     break
+             assert time.monotonic() < deadline, diagnostics()
+             time.sleep(0.1)
++        # Publish before the Flow can launch; use this same finite deadline
++        # for both the healthy-source rendezvous and parent observation.
++        deadline = time.monotonic() + (3540 if count == 5000 else 840)
++        if fault in {"operator-loss-200", "operator-before-yield-200"}:
++            staged_deadline = tmp_path / "replacement-observation-deadline.tmp"
++            with staged_deadline.open("x") as output:
++                output.write(repr(deadline))
++            staged_deadline.replace(tmp_path / "replacement-observation-deadline")
++            lifecycle_checks["replacement_observation_deadline"] = deadline
+         with server.client() as client:
+             run = client.create_flow_run_from_deployment(
+                 deployment_id,
+                 parameters={"directory": str(tmp_path), "count": count, "fault": fault},
+             )
+-        deadline = time.monotonic() + (3540 if count == 5000 else 840)
+         observed = False
+         while True:
+             assert all(worker.poll() is None for worker in workers), diagnostics()
+diff --git a/tests/test_native_stream_dag_execution_http.py b/tests/test_native_stream_dag_execution_http.py
+index a9ace67..4ac591d 100644
+--- a/tests/test_native_stream_dag_execution_http.py
++++ b/tests/test_native_stream_dag_execution_http.py
+@@ -51,6 +51,7 @@ _USER_MODULE = """import json
+ import os
+ import time
+ from pathlib import Path
++from uuid import UUID
+ import anyio
+ from prefect import flow, task
+ from prefect.streams import (NativeStreamFlowConfig, SourceRecord, StreamGraph,
+@@ -58,6 +59,35 @@ from prefect.streams import (NativeStreamFlowConfig, SourceRecord, StreamGraph,
+     StreamPartitionCall, KeyedStreamOutput)
+ 
+ 
++def _record_flow_failure(directory, graph_revision_id, error):
++    try:
++        target = Path(directory) / "dag-flow-failure.json"
++        if target.exists():
++            return
++        frames = []
++        current = error.__traceback__
++        while current is not None and len(frames) < 16:
++            frames.append({"file": Path(current.tb_frame.f_code.co_filename).name[:120],
++                "function": current.tb_frame.f_code.co_name[:120], "line": current.tb_lineno})
++            current = current.tb_next
++        kind = type(error)
++        known_wait_timeout = (kind is TimeoutError and len(error.args) == 1
++            and type(error.args[0]) is str
++            and error.args[0] == "DAG wait timed out; observation did not mutate the graph")
++        record = {"schema_version": 1, "exception_type": (kind.__module__ + "." + kind.__qualname__)[:240],
++            "sdk_wait_timeout": known_wait_timeout,
++            "graph_revision_id": str(UUID(str(graph_revision_id))) if graph_revision_id is not None else None,
++            "monotonic_ns": time.monotonic_ns(), "frames": frames,
++            "frames_truncated": current is not None}
++        temporary = target.with_suffix(".tmp")
++        with temporary.open("x") as output:
++            json.dump(record, output)
++        temporary.replace(target)
++    except BaseException:
++        # Diagnostic failures never replace the original Flow-body exception.
++        pass
++
++
+ def mark(directory, role, ctx):
+     for name in ("PREFECT_API_AUTH_STRING", "PREFECT_SERVER_API_AUTH_STRING",
+                  "PREFECT_API_KEY", "ARIADNE_NATIVE_STREAM_TEST_DSN"):
+@@ -233,37 +263,49 @@ def author(directory, count, mode, asynchronous, c_exchange="broadcast"):
+ @flow(version="dag-lifecycle-v1", retries=0, persist_result=False,
+       streaming=NativeStreamFlowConfig(profile="partitioned-dag-v1", partition_count=None))
+ def documents(directory: str, count: int = 8, mode: str = "normal", wait_timeout: float = 150, c_exchange: str = "broadcast"):
+-    if mode == "preseal-failure":
+-        raise ValueError("Application failure before DAG authoring")
+-    sealed = author(directory, count, mode, False, c_exchange)
+-    if mode == "preview":
+-        return {"preview": True}
+-    running = sealed.start(timeout=90)
+-    if mode == "failure":
+-        raise ValueError("Application failure after durable activation")
+-    if mode == "cancel":
+-        running.cancel(reason="Explicit application cancellation")
+-        raise AssertionError("Cancellation returned normally")
+-    running.wait(timeout=wait_timeout)
+-    return {"documents": count}
++    graph_revision_id = None
++    try:
++        if mode == "preseal-failure":
++            raise ValueError("Application failure before DAG authoring")
++        sealed = author(directory, count, mode, False, c_exchange)
++        graph_revision_id = sealed.graph_revision_id
++        if mode == "preview":
++            return {"preview": True}
++        running = sealed.start(timeout=90)
++        if mode == "failure":
++            raise ValueError("Application failure after durable activation")
++        if mode == "cancel":
++            running.cancel(reason="Explicit application cancellation")
++            raise AssertionError("Cancellation returned normally")
++        running.wait(timeout=wait_timeout)
++        return {"documents": count}
++    except BaseException as error:
++        _record_flow_failure(directory, graph_revision_id, error)
++        raise
+ 
+ 
+ @flow(version="dag-lifecycle-v1", retries=0, persist_result=False,
+       streaming=NativeStreamFlowConfig(profile="partitioned-dag-v1", partition_count=None))
+ async def documents_async(directory: str, count: int = 8, mode: str = "normal", wait_timeout: float = 150, c_exchange: str = "broadcast"):
+-    if mode == "preseal-failure":
+-        raise ValueError("Application failure before DAG authoring")
+-    sealed = author(directory, count, mode, True, c_exchange)
+-    if mode == "preview":
+-        return {"preview": True}
+-    running = await sealed.start(timeout=90)
+-    if mode == "failure":
+-        raise ValueError("Application failure after durable activation")
+-    if mode == "cancel":
+-        await running.cancel(reason="Explicit application cancellation")
+-        raise AssertionError("Cancellation returned normally")
+-    await running.wait(timeout=wait_timeout)
+-    return {"documents": count}
++    graph_revision_id = None
++    try:
++        if mode == "preseal-failure":
++            raise ValueError("Application failure before DAG authoring")
++        sealed = author(directory, count, mode, True, c_exchange)
++        graph_revision_id = sealed.graph_revision_id
++        if mode == "preview":
++            return {"preview": True}
++        running = await sealed.start(timeout=90)
++        if mode == "failure":
++            raise ValueError("Application failure after durable activation")
++        if mode == "cancel":
++            await running.cancel(reason="Explicit application cancellation")
++            raise AssertionError("Cancellation returned normally")
++        await running.wait(timeout=wait_timeout)
++        return {"documents": count}
++    except BaseException as error:
++        _record_flow_failure(directory, graph_revision_id, error)
++        raise
+ """
+ 
+ 

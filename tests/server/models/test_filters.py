@@ -11,6 +11,7 @@ from prefect.client.orchestration import get_client
 from prefect.server import models
 from prefect.server.schemas import actions, core, filters, schedules, states
 from prefect.types._datetime import now
+from tests.fixtures.database import _clear_database_tables
 
 pytestmark = pytest.mark.clear_db
 
@@ -24,11 +25,7 @@ async def clear_db(db):
     for attempt in range(max_retries):
         try:
             async with db.session_context(begin_transaction=True) as session:
-                await session.execute(db.Agent.__table__.delete())
-                await session.execute(db.WorkPool.__table__.delete())
-
-                for table in reversed(db.Base.metadata.sorted_tables):
-                    await session.execute(table.delete())
+                await _clear_database_tables(session)
                 break
         except InterfaceError:
             if attempt < max_retries - 1:
@@ -321,11 +318,7 @@ async def data(flow_function, db):
     # ----------------- clear data
 
     async with db.session_context(begin_transaction=True) as session:
-        # work pool has a circular dependency on pool queue; delete it first
-        await session.execute(db.WorkPool.__table__.delete())
-
-        for table in reversed(db.Base.metadata.sorted_tables):
-            await session.execute(table.delete())
+        await _clear_database_tables(session)
 
 
 class TestCountFlowsModels:

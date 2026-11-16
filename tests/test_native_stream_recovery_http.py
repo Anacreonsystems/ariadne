@@ -69,7 +69,7 @@ class RestartableAPI:
                 stderr=subprocess.STDOUT,
             )
         self.pids.append(self.process.pid)
-        deadline = time.monotonic() + 20
+        deadline = time.monotonic() + 60
         with httpx.Client(timeout=0.5, auth=tuple(self.auth.split(":"))) as client:
             while True:
                 assert self.process.poll() is None, "Owned API exited during startup"

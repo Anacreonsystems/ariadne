@@ -1,0 +1,122 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_______ test_unused_preview_finalizer_aborts_without_start_or_execution ________
+
+    async def test_unused_preview_finalizer_aborts_without_start_or_execution():
+        registry = RecordingRegistry()
+        registry.losses = {"abort_stream_dag_preview"}
+>       await registry.finalize(None)
+
+tests/test_stream_dag_execution.py:236: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_dag_execution.py:610: in finalize
+    await self._finalize_registered(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.test_stream_dag_execution.RecordingRegistry object at 0x7ff43929bc80>
+error = None
+
+    async def _finalize_registered(self, error: BaseException | None) -> None:
+        first: BaseException | None = None
+        # A seal's ACK may be missing while its graph rows already exist. Recover
+        # the same frozen seal before deciding which lifecycle cleanup applies.
+        for _, recover in list(self._pending.values()):
+            try:
+                await run_sync(recover)
+            except BaseException as pending_error:
+                first = first or pending_error
+        for entry in list(self._graphs.values()):
+            try:
+                current = await self._cleanup_entry(
+                    entry,
+                    failure_kind="FLOW_SCOPE_EXCEPTION"
+                    if error is not None
+                    else "COORDINATOR_ERROR",
+                )
+                if (
+                    error is None
+                    and current is not None
+                    and current.terminal_state == "FAILED"
+                ):
+                    first = first or StreamProtocolError(
+                        "DAG was abandoned or failed before Flow completion"
+                    )
+            except CancelledRun:
+                raise
+            except BaseException as cleanup_error:
+                first = first or cleanup_error
+        if first is not None:
+            if error is not None:
+                raise first from error
+>           raise first
+E           prefect.streams.StreamProtocolError: DAG was abandoned or failed before Flow completion
+
+src/prefect/_internal/stream_dag_execution.py:647: StreamProtocolError
+______ test_unknown_ack_commit_after_phase_read_reconciles_before_cleanup ______
+
+    async def test_unknown_ack_commit_after_phase_read_reconciles_before_cleanup():
+        from prefect.client.orchestration._streams.client import StreamRequestError
+    
+        class LateCommitRegistry(RecordingRegistry):
+            first_read = True
+    
+            async def _dispatch(self, method: str, **body: Any):
+                if method == "read_stream_dag_execution" and self.first_read:
+                    self.first_read = False
+                    result = await super()._dispatch(method, **body)
+                    # The cancelled/unknown-ACK START commits after the observer
+                    # read but before abort-preview acquires the server graph lock.
+                    self.phase = "STARTING"
+                    return result
+                if method == "abort_stream_dag_preview" and self.phase == "STARTING":
+                    self.calls.append((method, copy.deepcopy(body)))
+                    raise StreamRequestError(
+                        "CONTROL_CONFLICT", "START won the graph lock", retryable=False
+                    )
+                return await super()._dispatch(method, **body)
+    
+        registry = LateCommitRegistry()
+        with pytest.raises(StreamProtocolError, match="abandoned"):
+>           await registry.finalize(None)
+
+tests/test_stream_dag_execution.py:664: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/_internal/stream_dag_execution.py:610: in finalize
+    await self._finalize_registered(error)
+src/prefect/_internal/stream_dag_execution.py:647: in _finalize_registered
+    raise first
+src/prefect/_internal/stream_dag_execution.py:626: in _finalize_registered
+    current = await self._cleanup_entry(
+src/prefect/_internal/stream_dag_execution.py:572: in _cleanup_entry
+    current = await self._operate(
+src/prefect/_internal/stream_dag_execution.py:403: in _operate
+    raw = await self._call(
+src/prefect/_internal/stream_dag_execution.py:333: in _call
+    result = await self._dispatch(method, **body)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.test_stream_dag_execution.test_unknown_ack_commit_after_phase_read_reconciles_before_cleanup.<locals>.LateCommitRegistry object at 0x7ff4392a2ff0>
+method = 'abort_stream_dag_preview'
+body = {'graph_revision_id': UUID('9df40f9d-e277-44ff-b850-258b263b3233'), 'graph_digest': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...2c-aa81-5381-b6dc-5c4cc8ce772e'), 'routing_digest': 'c9b7681237be17e5d90ec06bdfb3a45f3d76a6983eec58ec30a0d3e68c68f7b0'}
+
+    async def _dispatch(self, method: str, **body: Any):
+        if method == "read_stream_dag_execution" and self.first_read:
+            self.first_read = False
+            result = await super()._dispatch(method, **body)
+            # The cancelled/unknown-ACK START commits after the observer
+            # read but before abort-preview acquires the server graph lock.
+            self.phase = "STARTING"
+            return result
+        if method == "abort_stream_dag_preview" and self.phase == "STARTING":
+            self.calls.append((method, copy.deepcopy(body)))
+>           raise StreamRequestError(
+                "CONTROL_CONFLICT", "START won the graph lock", retryable=False
+            )
+E           prefect.client.orchestration._streams.client.StreamRequestError: START won the graph lock
+
+tests/test_stream_dag_execution.py:657: StreamRequestError
+=========================== short test summary info ============================
+FAILED tests/test_stream_dag_execution.py::test_unused_preview_finalizer_aborts_without_start_or_execution
+FAILED tests/test_stream_dag_execution.py::test_unknown_ack_commit_after_phase_read_reconciles_before_cleanup
+2 failed, 46 deselected in 0.21s

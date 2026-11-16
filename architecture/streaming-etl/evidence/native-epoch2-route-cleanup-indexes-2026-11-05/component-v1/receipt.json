@@ -1,0 +1,137 @@
+{
+  "causal_experiment": {
+    "actual_exit": 0,
+    "baseline": {
+      "exception": "TimeoutError",
+      "exception_text": "",
+      "sql": [
+        "DELETE FROM stream_record WHERE stream_record.stream_id IN ('01a1acbd-7449-78b7-a42d-3a31db131644', '01a1acbd-7449-7ee2-9cf1-41349f2fb679', '01a1acbd-7449-7c67-adde-b4ac9c7bba37', '01a1acbd-74a6-7cea-8d5e-b575dcb5bfa4', '01a1acbd-7478-7c0b-9b32-0fa50af4779d', '01a1acbd-7492-7963-9742-62fe3524a321', '01a1acbd-7454-7466-b055-3aa1475a0e3a') AND stream_record.record_kind = 'REFERENCE'"
+      ],
+      "statement_seconds": [],
+      "status": "ERROR",
+      "total_seconds": 10.029895323998062
+    },
+    "baseline_explain_note": "EXPLAIN ANALYZE first DELETE timed out; no completed baseline JSON plan is claimed. Indexed complete per-statement JSON plans include RI trigger timings.",
+    "counts": {
+      "stream_completion": 15000,
+      "stream_record": 35000,
+      "stream_route_receipt": 20000
+    },
+    "exit_file": "raw/probe-v2.exit",
+    "indexed_commit_seconds": 0.17684541000926401,
+    "indexed_first_delete_seconds": 0.23942459300451446,
+    "indexed_full_commit_seconds": 1.043717167005525,
+    "indexed_rollback_seconds": 0.8741656030033482,
+    "no_concurrent_application_body": true,
+    "no_timeout_override": true,
+    "same_rows_note": "Baseline rolled back; only four CREATE INDEX statements intervened before the indexed rollback and commit runs. No data reseed between measurements.",
+    "shape": "four-stage DDL-valid three-hop chain, 5000 per producer; no route service/runtime claim"
+  },
+  "compatibility": "Existing routed migrations23/23 + execution migrations34/34 preserve historical revision targets and finally restore current head; new module adds5PG/3SQLite controls including normal and control service cleanup.",
+  "database_receipts": {
+    "database_fixture_cleanup": "Each completed pytest process used its existing owned database fixture teardown; no soak/container changes.",
+    "postgres_execution_compat_namespace": "native_cleanup_execution_compat_v1_tests_master",
+    "postgres_migration_namespace": "native_cleanup_index_gates_v1_tests_master",
+    "postgres_proof_namespace": "native_cleanup_index_proof_v1_tests_master",
+    "private_dsn": "Excluded; canonical log copies explicitly redact DSN strings. Original raw logs remain unchanged locally."
+  },
+  "failure_qualification": "First harness used dialect class instead of instance; no DELETE ran. It is an import/compile harness failure, not a behavioral RED.",
+  "failures": [
+    "raw/harness-failure-01/probe.log",
+    "raw/harness-failure-01/report.json"
+  ],
+  "format_exit": 0,
+  "gates": {
+    "execution-postgres": {
+      "errors": 0,
+      "exit": 0,
+      "failures": 0,
+      "junit": "raw/gates/execution-postgres.xml",
+      "passed": 34,
+      "skipped": 0
+    },
+    "execution-sqlite": {
+      "errors": 0,
+      "exit": 0,
+      "failures": 0,
+      "junit": "raw/gates/execution-sqlite.xml",
+      "passed": 34,
+      "skipped": 0
+    },
+    "postgres": {
+      "errors": 0,
+      "exit": 0,
+      "failures": 0,
+      "junit": "raw/gates/postgres.xml",
+      "passed": 28,
+      "skipped": 0
+    },
+    "sqlite": {
+      "errors": 0,
+      "exit": 0,
+      "failures": 0,
+      "junit": "raw/gates/sqlite.xml",
+      "passed": 26,
+      "skipped": 0
+    }
+  },
+  "indexes": {
+    "ix_stream_record__payload_record_id": [
+      "stream_record",
+      "payload_record_id"
+    ],
+    "ix_stream_record__route_receipt_id": [
+      "stream_record",
+      "route_receipt_id"
+    ],
+    "ix_stream_route_receipt__input_payload_record_id": [
+      "stream_route_receipt",
+      "input_payload_record_id"
+    ],
+    "ix_stream_route_receipt__input_reference_record_id": [
+      "stream_route_receipt",
+      "input_reference_record_id"
+    ]
+  },
+  "owned_product_and_test_sha256": {
+    "src/prefect/server/database/_migrations/versions/postgresql/2026_11_05_000003_39c32d418d9a_add_stream_route_cleanup_indexes.py": "63571b98a7f1aac771f2175553d758a89599f500b26ef4a77fc75612e586f86c",
+    "src/prefect/server/database/_migrations/versions/sqlite/2026_11_05_000003_4ad43e529eab_add_stream_route_cleanup_indexes.py": "dea796949eb129e37acc797f0125d2cd4cd9d03bceac53f6804613c48f812399",
+    "src/prefect/server/database/orm_models.py": "228623b2336e0888522b94ba70ac222d3a5c9afb378daca4c9807ec2e4473e1f",
+    "tests/server/database/test_stream_route_cleanup_indexes.py": "6a12a83026a0de2b10827c1b7b48a154d7da8178184369fa94d97f6f84623736"
+  },
+  "owned_source_drift": {},
+  "paired_heads": {
+    "postgresql": {
+      "head": "39c32d418d9a",
+      "previous": "14e7dbaf6034"
+    },
+    "sqlite": {
+      "head": "4ad43e529eab",
+      "previous": "25f8ecb07145"
+    }
+  },
+  "patch": "raw/owned-change.patch",
+  "pid_qualification": "Proof API PIDs were logged; DB backend PIDs were not captured. No runtime process/OS-death proof is claimed.",
+  "proof_source": "raw/probe-source.py.log",
+  "recorded_api_pids": {
+    "harness-failure-01/probe.log": [
+      {
+        "currently_exists": false,
+        "pid": 309568
+      }
+    ],
+    "probe-v2.log": [
+      {
+        "currently_exists": false,
+        "pid": 309662
+      }
+    ]
+  },
+  "ruff_exit": 0,
+  "scope": "Four child-FK lookup indexes; no DATA, FK/CHECK, cleanup order, lock order, timeout or wire change. Not full native5000/ADR acceptance.",
+  "source_binding_qualification": "Four owned paths were frozen across gates; held map was captured after gate commands started. No whole-tree pre-start fingerprint or full-union zero-drift claim. Isolated worker owner had two separate authorized paths.",
+  "source_bridge": "raw/orm-index-only-bridge.json",
+  "source_head": "6a3ee28278de22b04ff4895f7abc2551f13b1cda",
+  "source_root": "/tmp/ariadne-native-5000-diagnosis-v1",
+  "status": "PRINCIPAL_REVIEW_ACCEPTED_COMPONENT_ONLY"
+}

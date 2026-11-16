@@ -1,0 +1,59 @@
+from pathlib import Path
+from urllib.parse import urlsplit
+import asyncio,asyncpg,datetime,hashlib,json,re,runpy,subprocess,xml.etree.ElementTree as ET
+BASE=Path('/tmp/native-ni012-restored-principal-2026-11-05/coordinator-personal-v2-b4a5f1ed7abc-1f6a8ec8');ROOT=Path('/tmp/ariadne-native-5000-diagnosis-v1')
+holds={'pg':BASE/'final-hold.json','native':BASE/'final-hold-native-v3.json','preseal':BASE/'final-hold-native-v3.json'}
+trials={'pg':BASE/'pg-0d046b66','native':BASE/'native-16aa10e0','preseal':BASE/'preseal-4bdb9e77'}
+expected={'pg':45,'native':5,'preseal':2};phases={};owned=[];observed={};native=[]
+for phase,trial in trials.items():
+ hold=json.loads(holds[phase].read_text());assert len(hold['files'])==1599
+ assert json.loads((trial/'source-before.json').read_text())==json.loads((trial/'source-after.json').read_text())==hold['files']
+ assert int((trial/'exit').read_text())==0 and json.loads((trial/'drift.json').read_text())==[] and json.loads((trial/'import-mismatches.json').read_text())==[]
+ cases=ET.parse(trial/'pytest.xml').findall('.//testcase');assert len(cases)==expected[phase]
+ assert all(x.find(tag) is None for x in cases for tag in ['failure','error','skipped'])
+ cleanup=json.loads((trial/'cleanup.json').read_text());assert cleanup['sessions']==cleanup['remaining']==[] and len(cleanup['dropped'])==2 and not cleanup['force_used'];owned+=cleanup['dropped']
+ close=json.loads((trial/'process-closure.json').read_text());assert close['remaining_same_identity_live']==close['remaining_same_identity_zombies']==[];observed.update(close['observed_pid_start_pairs'])
+ log=(trial/'pytest.private.log').read_text(errors='replace');plain=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',log);summary=[line for line in plain.splitlines() if re.search(r'\b'+str(expected[phase])+r' passed\b',line)]
+ command=json.loads((trial/'command.json').read_text());assert command['driver_sha256']==hold['driver_sha256'];assert command['head']==hold['head']
+ artifact_names=['pytest.xml','command.json','cleanup.json','process-closure.json','source-before.json','source-after.json','import-mismatches.json','drift.json','exit','private-log-sha256']
+ phases[phase]={'trial':str(trial),'passed':len(cases),'failed':0,'errors':0,'skips':0,'pytest_summary':summary[-1] if summary else None,'junit_case_seconds_sum':round(sum(float(x.get('time')) for x in cases),6),'driver_sha256':command['driver_sha256'],'hold_sha256':hashlib.sha256(holds[phase].read_bytes()).hexdigest(),'source_files':1599,'drift':[],'import_mismatches':[],'audit_rows':close['audit_rows'],'captured_pids':len(close['observed_pid_start_pairs']),'harness_ResourceWarning_mentions':log.count('ResourceWarning:'),'cleanup':cleanup,'artifacts':{name:hashlib.sha256((trial/name).read_bytes()).hexdigest() for name in artifact_names}}
+ if phase=='pg':continue
+ for directory in sorted((trial/'pytest').iterdir()):
+  if not directory.is_dir() or directory.is_symlink() or not (directory/'observations.json').exists():continue
+  obs=json.loads((directory/'observations.json').read_text());coor=json.loads((directory/'coordinator-retirement.json').read_text());health=json.loads((directory/'worker-health.json').read_text())
+  assert coor['authority_state']==coor['snapshot_state']=='RELEASED' and coor['launch_states'] and set(coor['launch_states'])=={'RELEASED'}
+  assert health['rejected']==[]
+  item={'phase':phase,'directory':str(directory),'asynchronous':obs['asynchronous'],'mode':obs['mode'],'flow_state':obs['flow_state'],'task_runs':obs['task_runs'],'coordinator':coor,'observed_ERROR_headers':len(health['errors']),'rejected_postterminal_infrastructure_errors':0,'health_strict_all':health['strict_all_errors'],'physical_user_markers':len(list(directory.glob('*.pid.json')))}
+  if obs['mode']=='normal':
+   assert obs['flow_state']=='COMPLETED' and obs['task_runs']==4 and len(health['errors'])==0 and item['physical_user_markers']==4
+   documents={}
+   for branch in ['B-0','C-0','C-1']:
+    files=list((directory/branch).glob('document-*.json'));assert len(files)==8
+    for number in range(1,9):assert json.loads((directory/branch/f'document-{number}.json').read_text())=={'document_id':f'document-{number}','number':number}
+    documents[branch]=8
+   item['independently_verified_client_documents']=documents
+  elif obs['mode']=='preview':assert obs['flow_state']=='COMPLETED' and item['physical_user_markers']==0
+  elif obs['mode']=='failure':assert obs['flow_state']=='FAILED'
+  elif obs['mode']=='cancel':assert obs['flow_state']=='CANCELLED'
+  elif obs['mode']=='preseal-failure':
+   assert obs['flow_state']=='FAILED' and obs['task_runs']==0 and obs['graph_revision_id'] is None and len(obs['zero_execution_counts'])==14 and set(obs['zero_execution_counts'].values())=={0} and item['physical_user_markers']==0
+   item['zero_execution_counts']=obs['zero_execution_counts']
+  else:raise AssertionError('Unexpected native scenario')
+  native.append(item)
+assert len(native)==7 and sum(x['mode']=='normal' for x in native)==2 and sum(x['mode']=='preseal-failure' for x in native)==2
+live=[];zombies=[]
+for pid,ticks in observed.items():
+ try:fields=Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()
+ except FileNotFoundError:continue
+ if fields[19]!=str(ticks):continue
+ (zombies if fields[0]=='Z' else live).append(int(pid))
+assert live==zombies==[]
+config=json.loads(Path('/tmp/native-ni012-runtime-test-env.json').read_text())
+async def db_final():
+ c=await asyncpg.connect(config['admin_dsn'],timeout=3)
+ try:
+  dbs=[x['datname'] for x in await c.fetch('SELECT datname FROM pg_database WHERE datname=ANY($1::text[])',owned)];sessions=[dict(x) for x in await c.fetch('SELECT pid,datname,state FROM pg_stat_activity WHERE datname=ANY($1::text[])',owned)];assert dbs==sessions==[];return {'dropped_exact_owned_databases':owned,'remaining_databases':dbs,'remaining_sessions':sessions,'old_soak_and_prior_forensic_DBs_touched':False}
+ finally:await c.close()
+db=asyncio.run(db_final());driver=BASE.parent/'principal_coordinator_repeat_v3.py';snapshot=runpy.run_path(str(driver))['source_snapshot']();hold=json.loads((BASE/'final-hold-native-v3.json').read_text());assert snapshot==hold['files'];assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()==hold['head']
+r={'schema':'ariadne-independent-terminal-coordinator-component-v1','utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'verdict':'SCOPED_COORDINATOR_RETIREMENT_INDEPENDENT_PASS','all_owned_phases_STOPPED':True,'source_head':hold['head'],'source_files':1599,'final_source_drift':[],'component_source_sha256':hold['expected_component_hashes'],'phase_results':phases,'actual_native_scenarios':native,'captured_process_count':len(observed),'same_identity_processes_remaining':live,'same_identity_zombies_remaining':zombies,'process_scope':'Captured startup/import identities, not an exhaustive historical OSprocess catalogue; nativefixture also independently validates ownphysicalbirth/closure metadata.','database_final':db,'independent_total_actual_tests':52,'read_only_scope_review_sha256':hashlib.sha256((BASE/'held-scope-review-v1.json').read_bytes()).hexdigest(),'fixture_bridge_review_sha256':hashlib.sha256((BASE.parent/'preseal-fixture-bridge-review-v1.json').read_bytes()).hexdigest(),'qualification':['This personally executed actual45PGmodel/control tests plus5native lifecycle and2nativepreseal tests onfinalheldf1fcfixture; no oldc171 orf416executions relabelled.','PGphase usesv2driver with214instrumentationResourceWarning mentions; its source/procfilehandles were corrected only in separatev3driver fornewnativephases. No warningfilters/product/tests/oracles/budgets changed.','v2andv3runtimeleases arebyte-identical1599files; actualdriver/hold hashes remainphase-specific.','Legacyreleasebranch/dataguard andallexistingDAGfunctions/classes ASTexactequal; no publicAPI/runner/SDKshapechanges.','The component closes terminalcoordinator retirement integration only. Historicalconsumerreadcause, b4native64/500deadline-before-release cases andcorrectednative5000/fullhosted acceptance remainunresolved.','NoADRaccepted/noN2.2exit/no27percent/no5000GO/readinesscredit0.'],'readiness_credit':0,'earned_epoch2_percent':15}
+p=BASE/'principal-final-component-receipt-v1.json';p.write_text(json.dumps(r,indent=2,sort_keys=True)+'\n');p.chmod(0o600);print(json.dumps({'receipt':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'verdict':r['verdict'],'total_actual_tests':52,'phase_summaries':{x:phases[x]['pytest_summary'] for x in phases},'source_files':1599,'drift':[],'captured_pids':len(observed),'live':[],'zombies':[],'ownedDBsDropped':6,'native_scenarios':[{k:v for k,v in x.items() if k in ['mode','asynchronous','flow_state','observed_ERROR_headers','rejected_postterminal_infrastructure_errors']} for x in native]}))

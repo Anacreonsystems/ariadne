@@ -1,0 +1,126 @@
+{
+  "schema": "ariadne-readonly-ci-recovery-failure-v1",
+  "recorded_at": "2026-11-05T21:02:35.612932+00:00",
+  "source_head": "b4a5f1ed7abc9cdd35ebb4451c2c1ef628e4c145",
+  "run_id": 42099724610,
+  "job_id": 127501239596,
+  "case": "tests/test_native_stream_dag_execution_http.py::test_public_dag_branch_recovery_postgres[False-accepted200]",
+  "conclusion": "failure",
+  "junit_seconds": "827.647",
+  "actual_failure": "AssertionError: Failed('Streaming DAG execution failed')\nassert 'FAILED' == 'COMPLETED'\n  \n  #x1B[0m#x1B[91m- COMPLETED#x1B[39;49;00m#x1B[90m#x1B[39;49;00m\n  #x1B[92m+ FAILED#x1B[39;49;00m#x1B[90m#x1B[39;49;00m",
+  "direct_wait_failure": {
+    "logged_at": "2026-11-05T20:58:53.439Z",
+    "runtime_seconds": 750.38,
+    "configured_wait_seconds": 750,
+    "exception": "TimeoutError: DAG wait timed out; observation did not mutate the graph"
+  },
+  "partial_recovery_observation": {
+    "loss_input_sequence": 200,
+    "loss_pid": 596,
+    "replacement_first_sequence": 201,
+    "replacement_pid": 681,
+    "same_task_run_id": true,
+    "fault_to_replacement_seconds": 60.123438698,
+    "B_call_count": 407,
+    "B_unique_sequence_count": 407,
+    "B_attempts": [
+      1,
+      2
+    ],
+    "C_call_counts": [
+      452,
+      449
+    ],
+    "source_accepted_records": 500,
+    "qualification": "These retained events demonstrate this observed cut/replacement progression only. Required whole-case terminal/effect/signature assertions afterline887 were not passed; no full recovery acceptance or global exactly-once claim."
+  },
+  "replacement_api_errors": [
+    {
+      "time": "2026-11-05T20:52:42.903Z",
+      "endpoint": "POST /dags/workers/{worker}/subtasks/{B}/launches/prepare",
+      "status": 500,
+      "stack": "api/stream_dag_launches.py:64 prepare_worker_stream_dag_launch \u2192 models/stream_dag_launches.py:265 \u2192 lock_worker_subtask:94 \u2192 stream_dag_executions.py:205 lock_dag_graph \u2192 SELECT flow_run FOR UPDATE \u2192 asyncpg TimeoutError",
+      "pg_time": "2026-11-05T20:52:42.788Z"
+    },
+    {
+      "time": "2026-11-05T20:53:06.364Z",
+      "endpoint": "POST /dags/workers/{worker}/subtasks/{B}/launches/{id}/record",
+      "status": 500,
+      "stack": "api/stream_dag_launches.py:83 record_worker_stream_dag_launch \u2192 models/stream_dag_launches.py:435 \u2192 lock_worker_subtask:94 \u2192 stream_dag_executions.py:205 lock_dag_graph \u2192 SELECT flow_run FOR UPDATE \u2192 asyncpg TimeoutError",
+      "pg_time": "2026-11-05T20:53:06.278Z"
+    }
+  ],
+  "pg_observation": {
+    "ERROR_count": 2,
+    "CONTEXT_count": 2,
+    "exact_error": "canceling statement due to user request",
+    "exact_context": "while locking tuple (0,10) in relation flow_run",
+    "qualification": "Observed lock waiter timeouts. Blocking transaction/deadlock cycle not captured. No extrapolation from historical e4e lock storms or CPU attribution."
+  },
+  "finalization": {
+    "api_fail200": "2026-11-05T20:59:01.115Z",
+    "worker_errors_after_fail": "DAG execution is fenced by control (expected consequence, not initiating cause)",
+    "final_graph_state": "RELEASED",
+    "final_estimated_wall": "2026-11-05T20:59:06.246421+00:00",
+    "final_tasks": [
+      [
+        "A",
+        0,
+        "FAILED",
+        1,
+        1
+      ],
+      [
+        "B",
+        0,
+        "FAILED",
+        2,
+        2
+      ],
+      [
+        "C",
+        0,
+        "FAILED",
+        1,
+        1
+      ],
+      [
+        "C",
+        1,
+        "FAILED",
+        1,
+        1
+      ]
+    ],
+    "last_consumers": [
+      [
+        407,
+        null,
+        2
+      ],
+      [
+        448,
+        449,
+        1
+      ],
+      [
+        451,
+        452,
+        1
+      ]
+    ]
+  },
+  "unresolved": [
+    "Identity and scope of transaction blocking Flow row during replacement launch prepare/record",
+    "Whether two launch timeouts dominate the remaining volume deadline failure or only contribute latency",
+    "Performance/closure cause of unfinished volume within unchanged750s wait"
+  ],
+  "artifact": {
+    "id": 13452762452,
+    "zip_path": "/workspace/attachments/4884684c-e0e6-4d31-a514-7d6c01a17871/github-actions-artifact-13452762452.zip",
+    "bytes": 247649,
+    "sha256": "2ac93634eec501f0f1cae9bbd594ef47c9b3ea0cd5d4e24904c93c7d8e010a56",
+    "verified_manifest_copies": 21
+  },
+  "scope": "Read-only diagnosis; product/test/source/budget/oracle unchanged. No new local runtime/DB tests, reruns or hooks."
+}

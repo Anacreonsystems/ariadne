@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="18.319" timestamp="2026-11-05T18:38:26.735837+00:00" hostname="f8abb611283c"><testcase classname="tests.server.models.test_stream_dag_launches" name="test_worker_renewal_commits_under_data_reader_prefix_postgres" time="18.026"><failure message="TimeoutError">fut = &lt;Future cancelled created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448&gt;
+timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+E           asyncio.exceptions.CancelledError
+
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/tasks.py:520: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f531de80860&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7f531c323aa0&gt;
+execution_api = &lt;httpx.AsyncClient object at 0x7f531c15c860&gt;
+deployment = Deployment(id=dbc8ac41-7fb5-45d2-99f6-a35dececa1a6)
+tmp_path = PosixPath('/tmp/native-ni014-renewal-liveness-v1/red/pytest/test_worker_renewal_commits_un0')
+
+    async def test_worker_renewal_commits_under_data_reader_prefix_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+        tmp_path: Path,
+    ):
+        plan, _, children = await ready_deployed_region(
+            db, session, execution_api, deployment
+        )
+        child = children[0]
+        subtask_id, grant_id = child.bootstrap.assignment.id, child.bootstrap.grant.id
+        request = physical.StreamWorkerRenewRequest(
+            principal=child.principal, grant_id=grant_id
+        )
+        started: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+    
+        async def rows() -&gt; dict[str, list[Any]]:
+            async with db.session_context() as check:
+                return {
+                    model.__tablename__: (
+                        await check.execute(sa.select(model.__table__).order_by(model.id))
+                    ).all()
+                    for model in (
+                        db.FlowRun,
+                        db.StreamExecutionAuthority,
+                        db.StreamGraphRevision,
+                        db.StreamPhysicalSubtask,
+                        db.StreamDAGLaunchAttempt,
+                        db.StreamPhysicalSlotAllocation,
+                        db.StreamSubtaskAllocation,
+                    )
+                }
+    
+        async def renew() -&gt; physical.StreamSubtaskGrant:
+            async with db.session_context(begin_transaction=True) as transaction:
+                pid = await transaction.scalar(sa.text("SELECT pg_backend_pid()"))
+                assert isinstance(pid, int)
+                started.set_result(pid)
+                return await stream_workers.renew_subtask(
+                    transaction, db, child.worker_id, subtask_id, request
+                )
+    
+        before = await rows()
+        task: asyncio.Task[physical.StreamSubtaskGrant] | None = None
+        try:
+            async with db.session_context(begin_transaction=True) as holder:
+                holder_pid = await holder.scalar(sa.text("SELECT pg_backend_pid()"))
+                assert isinstance(holder_pid, int)
+                for model, condition in (
+                    (db.FlowRun, db.FlowRun.id == plan.flow_run_id),
+                    (
+                        db.StreamExecutionAuthority,
+                        db.StreamExecutionAuthority.flow_run_id == plan.flow_run_id,
+                    ),
+                    (db.StreamGraphRevision, db.StreamGraphRevision.id == plan.id),
+                ):
+                    await holder.execute(
+                        sa.select(model.id).where(condition).with_for_update(read=True)
+                    )
+                task = asyncio.create_task(renew())
+                waiter_pid = await asyncio.wait_for(asyncio.shield(started), timeout=5)
+                try:
+&gt;                   result = await asyncio.wait_for(asyncio.shield(task), timeout=5)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/server/models/test_stream_dag_launches.py:104: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x7f531ccfa600&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,55 @@
+import ast
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+import zipfile
+
+import yaml
+
+ROOT=Path('/workspace/ariadne');BASE=Path('/tmp/native-ni013-sqlite-ci-diagnosis-v1')
+OLD='6a3ee28278de22b04ff4895f7abc2551f13b1cda';NEW='835b8c21c83e4d0a2d95ddc6abe0b06fb9d75db5'
+ART=Path('/workspace/attachments/e77e84b0-bffa-4af3-a309-91bd2d32caff/github-actions-artifact-13437988843.zip')
+WORKFLOW='.github/workflows/python-tests.yaml';MODULE='tests/server/models/test_stream_dag_launches.py'
+
+def content(head,path):return subprocess.check_output(['git','show',head+':'+path],cwd=ROOT,text=True)
+def get_steps(workflow):return yaml.safe_load(workflow)['jobs']['run-stream-dag-execution-tests']['steps']
+def guard(steps):return next(s['run'] for s in steps if s.get('name')=='Require every declared DAG module to pass without skips')
+def command(steps):return next(s['run'] for s in steps if s.get('name')=='Require SQLite DAG capability and migration controls')
+old=content(OLD,WORKFLOW);new=content(NEW,WORKFLOW);old_steps=get_steps(old);new_steps=get_steps(new)
+assert guard(old_steps)==guard(new_steps)
+assert MODULE in command(old_steps) and MODULE in command(new_steps)
+assert content(OLD,MODULE)==content(NEW,MODULE)
+names=[n.name for n in ast.parse(content(NEW,MODULE)).body if isinstance(n,(ast.AsyncFunctionDef,ast.FunctionDef)) and n.name.startswith('test_')]
+assert names and all(name.endswith('_postgres') for name in names)
+actual=BASE/'actual';actual.mkdir(exist_ok=True)
+with zipfile.ZipFile(ART) as z:
+ for name in z.namelist():
+  assert name in {'native-dag-contract.xml','native-dag-sqlite.xml'}
+  (actual/name).write_bytes(z.read(name))
+reports={}
+for p in sorted(actual.glob('*.xml')):
+ cases=ET.parse(p).findall('.//testcase');reports[p.name]={'cases':len(cases),'classnames':sorted({case.get('classname','') for case in cases}),'nonpassing':sum(case.find(tag)is not None for case in cases for tag in ('skipped','failure','error')),'duplicates':len(cases)-len({(case.get('classname'),case.get('name')) for case in cases}),'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+assert reports['native-dag-contract.xml']['cases']==459
+assert reports['native-dag-sqlite.xml']['cases']==59
+assert all(x['nonpassing']==x['duplicates']==0 for x in reports.values())
+results=[]
+program=guard(old_steps).split('\n',1)[1].rsplit('\nPY',1)[0]
+for label,workflow in [('actual-old',old),('counterfactual-one-path-removal',None)]:
+ if workflow is None:
+  d=yaml.safe_load(old);steps=d['jobs']['run-stream-dag-execution-tests']['steps'];target=next(s for s in steps if s.get('name')=='Require SQLite DAG capability and migration controls');assert target['run'].count(MODULE)==1;target['run']=target['run'].replace(MODULE+' ','',1);workflow=yaml.safe_dump(d,sort_keys=False)
+ directory=BASE/label;target=directory/WORKFLOW;target.parent.mkdir(parents=True,exist_ok=True);target.write_text(workflow)
+ for name in reports:(directory/name).write_bytes((actual/name).read_bytes())
+ r=subprocess.run([sys.executable,'-'],input=program,cwd=directory,env={**os.environ,'NATIVE_DAG_DATABASE':'sqlite'},capture_output=True,text=True)
+ (directory/'stdout.log').write_text(r.stdout);(directory/'stderr.log').write_text(r.stderr);(directory/'exit').write_text(str(r.returncode)+'\n');results.append({'label':label,'exit':r.returncode,'stdout':r.stdout,'stderr':r.stderr})
+assert results[0]['exit']==1 and MODULE[:-3].replace('/','.') in results[0]['stderr']
+assert results[1]['exit']==0
+raw=(BASE/'old-sqlite-job.private.log').read_bytes();public,count=re.subn(r'(?i)(postgres(?:ql)?(?:\+asyncpg)?://)[^\s\'"<>]+',r'\1[redacted-test-dsn]',raw.decode(errors='replace'));(BASE/'old-sqlite-job.log').write_text(public)
+report={'schema':'ariadne-native-sqlite-ci-diagnosis-v1','mode':'read-only-source-investigation','old_head':OLD,'current_head':NEW,'run_id':42071413034,'job_id':127400035459,'source_unchanged':content(OLD,MODULE)==content(NEW,MODULE),'guard_unchanged':guard(old_steps)==guard(new_steps),'sqlite_command_still_declares_pg_only_module':True,'all_module_test_names':names,'actual_reports':reports,'actual_ci':{'contracts':459,'contract_subtests':33,'sqlite':59,'sqlite_deselected':52,'failed_step':'Require every declared DAG module to pass without skips'},'root_cause':'SQLite command declares a module whose five test functions all end in _postgres, then -k not postgres deselects every item. The unchanged coverage guard correctly rejects the missing declared module. No executed testcase failed.','counterfactual':results,'proposed_minimal_fix':'Remove only tests/server/models/test_stream_dag_launches.py from the SQLite pytest invocation; retain the PostgreSQL invocation and unchanged completeness/no-skips guard. Confirm actual collection and both report guards after the permitted workflow-only successor.','limitations':['Counterfactual reuses actual historical 6a reports and changes only applicability of one declared module. It is not a fresh pytest execution or a green CI claim for835.','835 adds two component test modules, so its future reports must include those modules; historical reports cannot prove its full CI.','No source, test, config or documentation file was mutated. Main source hold remains intact.'],'artifact':{'id':13437988843,'bytes':ART.stat().st_size,'sha256':hashlib.sha256(ART.read_bytes()).hexdigest()},'raw_log':{'source_bytes':len(raw),'source_sha256':hashlib.sha256(raw).hexdigest(),'public_bytes':len(public.encode()),'public_sha256':hashlib.sha256(public.encode()).hexdigest(),'uri_redactions':count}}
+(BASE/'report.json').write_text(json.dumps(report,indent=2)+'\n')
+print(json.dumps({'report':str(BASE/'report.json'),'module_test_names':names,'reports':{k:v['cases'] for k,v in reports.items()},'guard_actual_exit':results[0]['exit'],'counterfactual_exit':results[1]['exit'],'artifact_sha256':report['artifact']['sha256']},indent=2))

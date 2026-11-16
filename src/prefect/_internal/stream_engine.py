@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
 from prefect._flow_run_suspension import raise_if_flow_run_suspension_requested
+from prefect._internal.stream_execution import (
+    DAGSubtaskExecutionContext,
+    get_stream_subtask_execution,
+)
 from prefect.client.orchestration._streams.client import StreamRequestError
 from prefect.states import Failed
 from prefect.streams import (
@@ -28,6 +32,8 @@ from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.utilities.callables import call_with_parameters
 
 if TYPE_CHECKING:
+    from prefect.client.schemas.objects import TaskRun
+    from prefect.client.schemas.stream_dag_executions import StreamDAGSubtaskBootstrap
     from prefect.task_engine import AsyncTaskRunEngine, SyncTaskRunEngine
 
 
@@ -87,6 +93,84 @@ class _StreamRun:
         self.partition = _PartitionMetadata()
 
 
+def create_dag_stream_task_run(
+    bootstrap: StreamDAGSubtaskBootstrap, storage: Any
+) -> _StreamRun:
+    """Build one ordinary Task invocation from its own validated DAG bootstrap.
+
+    Private engine metadata stays owned here; the process entrypoint does not
+    construct provisional identities or reach into the public context internals.
+    """
+    run = _StreamRun(
+        Stream[Any](
+            storage,
+            str(bootstrap.output.stream_id),
+            producer_task_run_id=bootstrap.task_run.id,
+        ),
+        bootstrap.task_run,
+        source=bootstrap.assignment.manifest.role == "SOURCE",
+    )
+    run.registration_verified = True
+    run.partition = _PartitionMetadata(
+        index=bootstrap.assignment.subtask_index,
+        count=bootstrap.operator_parallelism,
+        operator_uid=bootstrap.assignment.operator_uid,
+        assignment_epoch=bootstrap.assignment.assignment_epoch,
+    )
+    return run
+
+
+def fail_dag_stream_task_before_start(task_run: TaskRun, *, error: str) -> None:
+    """Report one deterministic post-activation setup failure for an own Pending Task.
+
+    The caller has already observed private GO. This is never a substitute for
+    fencing unknown event acknowledgements or for pre-activation startup abort.
+    Ordinary TaskEngine transitions own every Running or terminal attempt.
+    """
+    # TaskEngine imports this module, so event utilities/signals must be deferred.
+    from prefect._internal.stream_subtask_entrypoint import (
+        PhysicalStreamExecutionStopped,
+    )
+    from prefect.client.orchestration import get_client
+    from prefect.utilities.engine import (
+        build_task_run_state_change_event,
+        emit_dag_task_event,
+    )
+
+    execution = get_stream_subtask_execution()
+    if (
+        type(execution) is not DAGSubtaskExecutionContext
+        or task_run.id != execution.task_run_id
+        or task_run.flow_run_id != execution.flow_run_id
+    ):
+        raise PhysicalStreamExecutionStopped(
+            "DAG setup failure has no exact own Task scope"
+        )
+    if (
+        task_run.run_count != 0
+        or task_run.state is None
+        or not task_run.state.is_pending()
+    ):
+        return
+    if (
+        type(error) is not str
+        or not 1 <= len(error.encode("utf-8", errors="strict")) <= 4096
+    ):
+        raise StreamProtocolError("DAG setup failure requires bounded nonsecret text")
+    initial = task_run.state
+    failed = Failed(message=f"Stream startup failed: {error}")
+    failed.state_details.task_run_id = task_run.id
+    failed.state_details.flow_run_id = task_run.flow_run_id
+    failed.state_details.retriable = False
+    task_run.state = failed
+    task_run.state_id = failed.id
+    task_run.state_type = failed.type
+    task_run.state_name = failed.name
+    event = build_task_run_state_change_event(task_run, initial, failed)
+    with get_client(sync_client=True) as client:
+        emit_dag_task_event(client, event)
+
+
 def _fail_unstarted_run(run: _StreamRun, error: str) -> None:
     """Compensate a confirmed Pending registration through normal task events."""
     # utilities.engine imports Task; defer until Task initialization is complete.
@@ -120,17 +204,27 @@ def _fail_unstarted_run(run: _StreamRun, error: str) -> None:
     else:
         from prefect._internal.stream_subtask_entrypoint import emit_physical_task_event
         from prefect.client.orchestration import get_client
-        from prefect.utilities.engine import build_task_run_state_change_event
+        from prefect.utilities.engine import (
+            build_task_run_state_change_event,
+            emit_dag_task_event,
+        )
 
         event = build_task_run_state_change_event(task_run, initial, failed)
         with get_client(sync_client=True) as client:
-            emit_physical_task_event(client, event)
+            if type(physical) is DAGSubtaskExecutionContext:
+                emit_dag_task_event(client, event)
+            else:
+                emit_physical_task_event(client, event)
 
 
 async def reject_stream_submission(run: _StreamRun, error: str) -> None:
     storage = run.output.storage
     if isinstance(storage, NativeStreamStorage):
         _fail_unstarted_run(run, error)
+    if type(get_stream_subtask_execution()) is DAGSubtaskExecutionContext:
+        # The accepted signed terminal event owns graph failure/producer closure.
+        # Child code cannot create an independent legacy failure or EOF.
+        return
     status = await storage.status(run.output.stream_id)
     if status.state != "OPEN":
         return
@@ -242,6 +336,8 @@ def execute_stream_sync(
             task_run.run_count,
         )
     )
+    if type(get_stream_subtask_execution()) is DAGSubtaskExecutionContext:
+        consumer_id = str(binding.consumer_id)
     while True:
         _check_execution(engine)
         record = run_coro_as_sync(storage.read(binding))
@@ -310,6 +406,8 @@ async def execute_stream_async(
         uuid4().hex,
         task_run.run_count,
     )
+    if type(get_stream_subtask_execution()) is DAGSubtaskExecutionContext:
+        consumer_id = str(binding.consumer_id)
     while True:
         _check_execution(engine)
         record = await storage.read(binding)

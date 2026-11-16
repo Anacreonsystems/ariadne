@@ -1,0 +1,59 @@
+"""Strict selected-API startup only; never profiles or changes signal handling."""
+import sys
+
+
+def activate():
+    argv=list(sys.orig_argv)
+    if len(argv)!=11 or argv[1:5]!=['-m','uvicorn','--factory','prefect.server.api.server:create_app']:
+        return
+    if argv[5]!='--fd' or argv[7]!='--header' or argv[9:]!=['--log-level','warning']:
+        return
+    from api_selector import api_identity
+    identity=api_identity(argv)
+    if identity is None:return
+    import json
+    import os
+    import resource
+    import time
+    from pathlib import Path
+    trial=Path(os.environ['NATIVE_MEASURE500_TRIAL'])
+    def marker(name,value):
+        try:
+            pending=trial/(name+'.pending');pending.write_text(json.dumps(value,indent=2,sort_keys=True)+'\n');pending.replace(trial/name)
+        except OSError:pass
+    try:
+        pid=os.getpid()
+        with Path('/proc',str(pid),'stat').open() as handle:ticks=handle.read().rsplit(')',1)[1].split()[19]
+        selected={**identity,'pid':pid,'start_ticks':ticks,'argv':argv,'executable':sys.executable,'selection':'exact original11argv/factory/fd/nativeheader'}
+        marker('api-selected.json',selected)
+        config=json.loads((trial/'measurement-config.json').read_text())
+        assert config['mode'] in {'counters'}
+        import uvicorn
+        original=uvicorn.Server._serve
+        async def observed_serve(server,*args,**kwargs):
+            try:
+                owner=json.loads((trial/'api-owner.json').read_text())
+                for key in ('pid','start_ticks','factory','fd','header','argv'):assert owner[key]==selected[key]
+            except Exception as error:
+                marker('api-measurement-inconclusive.json',{'stage':'pre-enable-owner-match','error_type':type(error).__name__,'no_wait_or_instrumentation':True})
+                return await original(server,*args,**kwargs)
+            recorder=None;started=time.monotonic_ns();usage_before=resource.getrusage(resource.RUSAGE_SELF)
+            try:
+                if config['mode']=='counters':
+                    try:
+                        from counters_runtime import Recorder
+                        recorder=Recorder(trial);recorder.install()
+                    except Exception as error:
+                        if recorder is not None:recorder.error('install',error)
+                        marker('api-measurement-inconclusive.json',{'stage':'install','error_type':type(error).__name__})
+                return await original(server,*args,**kwargs)
+            finally:
+                # Inside Server.serve capture_signals: no custom signals/atexit,
+                # and dump precedes uvicorn's original SIGTERM re-raise.
+                try:
+                    measured=recorder.finish() if recorder is not None else {'status':'CONTROL_PROCESS_COUNTERS_ONLY' if config['mode']=='control' else 'COUNTERS_INCONCLUSIVE'}
+                    usage=resource.getrusage(resource.RUSAGE_SELF)
+                    marker('api-measurement-complete.json',{'mode':config['mode'],'selection':selected,'owner_match':True,'measurement':measured,'serve_elapsed_seconds':(time.monotonic_ns()-started)/1e9,'process_elapsed_seconds':time.clock_gettime(time.CLOCK_BOOTTIME)-int(ticks)/os.sysconf('SC_CLK_TCK'),'process_rusage_user_seconds':usage.ru_utime,'process_rusage_system_seconds':usage.ru_stime,'serve_process_rusage_user_delta_seconds':usage.ru_utime-usage_before.ru_utime,'serve_process_rusage_system_delta_seconds':usage.ru_stime-usage_before.ru_stime,'maxrss_kib':usage.ru_maxrss,'qualification':'Whole API process RUSAGE includes all its threads; not per-request CPU, DB CPU or worker/Flow/Task CPU. Native shutdown/signal budgets remain original.'})
+                except Exception as error:marker('api-measurement-inconclusive.json',{'stage':'dump-finally','error_type':type(error).__name__})
+        uvicorn.Server._serve=observed_serve
+    except Exception as error:marker('api-measurement-inconclusive.json',{'stage':'selected-api-startup','error_type':type(error).__name__})

@@ -1,0 +1,5 @@
+# Later one-shot CI status supplement
+
+This is a later status capture, not a rewrite of the closed failed-case package or its original UNKNOWN underlying cause. The exact [public index](public-final-index.json) records Root/monitor one-shot 05:36:18.437UTC on published 1812460: **15 native PASS / 1 known FAIL / 1 ACTIVE / 2 QUEUED**. DAG async5000 exact step is active since 05:26:07; P2 sync/async5000 remain queued. No additional RED is reported, no active case PASS is inferred. Only the public index/snapshot digests are retained here; no raw API response, snapshot, signed URLs, ZIP or logs are copied.
+
+The failed sync5000 SDK wait 3960.31s→/fail→CANCEL_REQUESTED evidence remains exact eb673; underlying slow-progress/resource cause remains UNKNOWN. Original failed-case index 5a104ec8…, original metadata 6c265785…, blocked AC map 3359592e… and earlier status 15PASS/1FAIL/3QUEUED remain immutable at their capture times. No CI query/runtime/import/DB/repo write occurred here. NI2-012…014 OPEN/BLOCKED, NI2-020 implementation blocked, earned 15%, no 27% acceptance. Root canonical routing is pending.

@@ -1,0 +1,23 @@
+from pathlib import Path
+from urllib.parse import urlsplit,urlunsplit
+import asyncpg,asyncio,hashlib,json,datetime
+base=Path('/tmp/native-ni012-restored-principal-2026-11-05/normal1000-f416080900b5-7c343978')
+config=json.loads(Path('/tmp/native-ni012-runtime-test-env.json').read_text());u=urlsplit(config['admin_dsn'])
+async def main():
+ c=await asyncpg.connect(urlunsplit((u.scheme,u.netloc,'/native_ni012_runtime_bf642c6d_tests_master',u.query,'')),timeout=3)
+ try:
+  async with c.transaction(readonly=True):
+   statements={
+    'flow':'SELECT id,state_type,run_count FROM flow_run ORDER BY id',
+    'authority':'SELECT flow_run_id,generation,prepared_generation,state,flow_run_run_count,cancel_requested,source_admission_closed FROM stream_execution_authority ORDER BY flow_run_id',
+    'graph':'SELECT id,flow_run_id,profile,state,startup_completed_at,terminal_operation_id FROM stream_graph_revision ORDER BY id',
+    'lifecycle':'SELECT id,graph_revision_id,flow_run_id,operation_id,profile,kind,flow_generation,flow_run_run_count,state,terminal_state,completed_at FROM stream_dag_lifecycle_operation ORDER BY created',
+    'deployment_snapshot':'SELECT id,flow_run_id,profile,state FROM native_stream_deployment_snapshot ORDER BY id',
+    'launch':'SELECT id,flow_run_id,generation,state FROM native_stream_launch_identity ORDER BY id',
+    'flow_state_events':'SELECT id,type,name,timestamp FROM flow_run_state ORDER BY timestamp'}
+   result={k:[dict(x) for x in await c.fetch(v)] for k,v in statements.items()}
+ finally:await c.close()
+ r={'schema':'ariadne-native-normal1000-terminal-readonly-catalog-v1','utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'database':'native_ni012_runtime_bf642c6d_tests_master','transaction_readonly':True,'no_credentials_or_sql_text_in_receipt':True,'result':result}
+ p=base/'terminal-readonly-catalog-v1.json';p.write_text(json.dumps(r,default=str,indent=2,sort_keys=True)+'\n');p.chmod(0o600)
+ print(json.dumps({'path':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'result':result},default=str))
+asyncio.run(main())

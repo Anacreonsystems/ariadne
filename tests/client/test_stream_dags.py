@@ -443,10 +443,14 @@ def test_malformed_projected_plan_fails_closed(mutation: str):
 
 
 def test_dag_routes_are_public_but_admission_is_not_a_client_method():
-    assert {"/streams/v2/dags/seal", "/streams/v2/dags/{graph_id}"} <= set(
-        get_args(ServerRoutes)
-    )
+    assert {
+        "/streams/v2/dags/seal",
+        "/streams/v2/dags/{graph_id}",
+        "/streams/v2/dags/{graph_id}/start",
+        "/streams/v2/dags/{graph_id}/activate",
+    } <= set(get_args(ServerRoutes))
     for client in (StreamClient, StreamAsyncClient):
+        assert callable(getattr(client, "start_stream_dag"))
+        assert callable(getattr(client, "activate_stream_dag"))
         assert not hasattr(client, "admit_stream_dag_region")
-        assert not hasattr(client, "activate_stream_dag")
     assert not hasattr(client_schemas, "StreamDAGAdmissionRequest")

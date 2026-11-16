@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="38.608" timestamp="2026-11-05T13:25:39.906111+00:00" hostname="f8abb611283c"><testcase classname="tests.test_native_stream_dag_execution_http" name="test_public_dag_lifecycle_two_real_workers_postgres[False-normal]" time="38.347"><failure message="AssertionError: Failed('Streaming DAG execution failed')&#10;assert 'FAILED' == 'COMPLETED'&#10;  &#10;  - COMPLETED&#10;  + FAILED">execution_api = &lt;tests.test_native_stream_recovery_http.RestartableAPI object at 0x7f9d30f8ae40&gt;
+tmp_path = PosixPath('/tmp/native-ni012-runtime-live/run-sync-364f3e56/pytest/test_public_dag_lifecycle_two_0')
+db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7f9d32705b80&gt;
+asynchronous = False, mode = 'normal'
+
+    @pytest.mark.parametrize(
+        "asynchronous,mode",
+        [
+            (False, "normal"),
+            (True, "normal"),
+            (False, "preview"),
+            (False, "failure"),
+            (False, "cancel"),
+        ],
+    )
+    @pytest.mark.timeout(300)
+    async def test_public_dag_lifecycle_two_real_workers_postgres(
+        execution_api: RestartableAPI,
+        tmp_path: Path,
+        db: Any,
+        asynchronous: bool,
+        mode: str,
+    ):
+        server = execution_api
+        user_module = tmp_path / "native_dag_example.py"
+        user_module.write_text(_USER_MODULE)
+        definition = load_flow_from_entrypoint(
+            str(user_module) + ":" + ("documents_async" if asynchronous else "documents")
+        )
+        pool = "dag-runtime-" + uuid4().hex
+        names = ["dag-left-" + uuid4().hex, "dag-right-" + uuid4().hex]
+        with temporary_settings(
+            {PREFECT_API_URL: server.url, PREFECT_API_AUTH_STRING: server.auth}
+        ):
+            async with get_client() as client:
+                try:
+                    await client.create_global_concurrency_limit(
+                        GlobalConcurrencyLimitCreate(name="tag:" + _TAG, limit=4)
+                    )
+                except ObjectAlreadyExists:
+                    limit = await client.read_global_concurrency_limit_by_name(
+                        "tag:" + _TAG
+                    )
+                    assert limit.limit == 4 and limit.active_slots == 0
+                template = ProcessWorker.get_default_base_job_template()
+                template["prefect_native_streaming"] = {
+                    "schema_version": 1,
+                    "profile": "bounded-linear-v1",
+                }
+                await client.create_work_pool(
+                    WorkPoolCreate(name=pool, type="process", base_job_template=template)
+                )
+                deployment = RunnerDeployment.from_flow(
+                    definition,
+                    name="dag-lifecycle",
+                    work_pool_name=pool,
+                    concurrency_limit=1,
+                    job_variables={"working_dir": str(Path.cwd()), "stream_output": True},
+                )
+                deployment_id = await deployment.aapply()
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key
+            not in {
+                "PREFECT_SERVER_DATABASE_CONNECTION_URL",
+                "PREFECT_API_DATABASE_CONNECTION_URL",
+                "ARIADNE_NATIVE_STREAM_TEST_DSN",
+            }
+        }
+        environment.update(
+            PREFECT_API_URL=server.url,
+            PREFECT_API_AUTH_STRING=server.auth,
+            PREFECT_LOGGING_LEVEL="INFO",
+            PREFECT_LOGGING_INTERNAL_LEVEL="WARNING",
+            PREFECT_DEBUG_MODE="false",
+            PREFECT_WORKER_QUERY_SECONDS="1",
+            PREFECT_WORKER_HEARTBEAT_SECONDS="1",
+        )
+        workers = []
+        logs = [tmp_path / "worker-left.log", tmp_path / "worker-right.log"]
+        try:
+            for name, log in zip(names, logs):
+                with log.open("wb") as output:
+                    workers.append(
+                        subprocess.Popen(
+                            [
+                                sys.executable,
+                                "-m",
+                                "prefect",
+                                "worker",
+                                "start",
+                                "--pool",
+                                pool,
+                                "--type",
+                                "process",
+                                "--name",
+                                name,
+                                "--limit",
+                                "1",
+                            ],
+                            env=environment,
+                            stdout=output,
+                            stderr=subprocess.STDOUT,
+                        )
+                    )
+            deadline = time.monotonic() + 60
+            registered = []
+            while time.monotonic() &lt; deadline:
+                assert all(worker.poll() is None for worker in workers)
+                with server.client() as client:
+                    registered = [
+                        worker
+                        for worker in client.read_workers_for_work_pool(pool)
+                        if worker.name in names and worker.status.value == "ONLINE"
+                    ]
+                if len(registered) == 2:
+                    async with db.session_context() as session:
+                        capable = (
+                            await session.scalars(
+                                sa.select(db.StreamWorkerCapability.worker_id).where(
+                                    db.StreamWorkerCapability.worker_id.in_(
+                                        [worker.id for worker in registered]
+                                    ),
+                                    db.StreamWorkerCapability.protocol
+                                    == "partitioned-dag-v1",
+                                )
+                            )
+                        ).all()
+                    if len(capable) == 2:
+                        break
+                await asyncio.sleep(0.2)
+            else:
+                raise AssertionError("Two real workers did not advertise the DAG profile")
+            with server.client() as client:
+                run = client.create_flow_run_from_deployment(
+                    deployment_id,
+                    parameters={"directory": str(tmp_path), "count": 8, "mode": mode},
+                )
+            deadline = time.monotonic() + 210
+            while time.monotonic() &lt; deadline:
+                assert all(worker.poll() is None for worker in workers)
+                with server.client() as client:
+                    current = client.read_flow_run(run.id)
+                if current.state is not None and current.state.is_final():
+                    break
+                await asyncio.sleep(0.2)
+            else:
+                raise AssertionError("DAG Flow did not reach a verified terminal state")
+            expected = (
+                "CANCELLED"
+                if mode == "cancel"
+                else "FAILED"
+                if mode == "failure"
+                else "COMPLETED"
+            )
+&gt;           assert current.state.type.value == expected, str(current.state)
+E           AssertionError: Failed('Streaming DAG execution failed')
+E           assert 'FAILED' == 'COMPLETED'
+E             
+E             - COMPLETED
+E             + FAILED
+
+tests/test_native_stream_dag_execution_http.py:305: AssertionError</failure></testcase></testsuite></testsuites>

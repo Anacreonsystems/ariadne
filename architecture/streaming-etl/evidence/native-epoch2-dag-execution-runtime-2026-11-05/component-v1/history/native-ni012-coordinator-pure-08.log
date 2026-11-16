@@ -1,0 +1,50 @@
+.....................................FF....                              [100%]
+=================================== FAILURES ===================================
+____ test_termination_signal_joins_only_authoritative_cancel_journal[False] ____
+
+journal_exists = False
+
+    @pytest.mark.parametrize("journal_exists", [False, True])
+    async def test_termination_signal_joins_only_authoritative_cancel_journal(
+        journal_exists: bool,
+    ):
+        from prefect.exceptions import TerminationSignal
+    
+        registry = RecordingRegistry()
+        await registry.start(registry.sealed, timeout=0.2)
+        if journal_exists:
+            registry.phase = "STOPPING"
+            registry.control = "CANCEL"
+            with pytest.raises(CancelledRun):
+                await registry.finalize(TerminationSignal())
+        else:
+>           await registry.finalize(TerminationSignal())
+                                    ^^^^^^^^^^^^^^^^^^^
+E           TypeError: TerminationSignal.__init__() missing 1 required positional argument: 'signal'
+
+tests/test_stream_dag_execution.py:508: TypeError
+____ test_termination_signal_joins_only_authoritative_cancel_journal[True] _____
+
+journal_exists = True
+
+    @pytest.mark.parametrize("journal_exists", [False, True])
+    async def test_termination_signal_joins_only_authoritative_cancel_journal(
+        journal_exists: bool,
+    ):
+        from prefect.exceptions import TerminationSignal
+    
+        registry = RecordingRegistry()
+        await registry.start(registry.sealed, timeout=0.2)
+        if journal_exists:
+            registry.phase = "STOPPING"
+            registry.control = "CANCEL"
+            with pytest.raises(CancelledRun):
+>               await registry.finalize(TerminationSignal())
+                                        ^^^^^^^^^^^^^^^^^^^
+E               TypeError: TerminationSignal.__init__() missing 1 required positional argument: 'signal'
+
+tests/test_stream_dag_execution.py:506: TypeError
+=========================== short test summary info ============================
+FAILED tests/test_stream_dag_execution.py::test_termination_signal_joins_only_authoritative_cancel_journal[False]
+FAILED tests/test_stream_dag_execution.py::test_termination_signal_joins_only_authoritative_cancel_journal[True]
+2 failed, 41 passed in 0.38s

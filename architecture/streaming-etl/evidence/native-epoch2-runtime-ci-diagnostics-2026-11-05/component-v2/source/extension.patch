@@ -1,0 +1,77 @@
+--- a/.github/workflows/python-tests.yaml
++++ b/.github/workflows/python-tests.yaml
+@@ -524,6 +524,7 @@
+         with:
+           node-version-file: ui-v2/.nvmrc
+       - name: Install packages
++        id: physical-dependencies
+         run: uv sync --locked --python 3.12.14
+       - name: Set native test database connection URL
+         if: ${{ startsWith(matrix.database, 'postgres') }}
+@@ -621,7 +622,8 @@
+         if: matrix.database == 'postgres:17'
+         run: >-
+           uv run pytest tests/test_native_partitioned_stream_http.py
+-          -k 'not 5000' -vv --durations=11 --junitxml=native-physical-runtime.xml
++          -k 'not 5000' -vv --durations=11
++          --basetemp=native-physical-runtime-work --junitxml=native-physical-runtime.xml
+       - name: Require successful cases without conditional skips
+         run: |
+           uv run python - <<'PY'
+@@ -672,6 +674,11 @@
+               ), f"Physical cases did not all pass: {path}"
+               print(f"{path}: {len(cases)} cases passed without skips")
+           PY
++      - name: Preserve physical runtime diagnostics and final resources
++        if: always() && matrix.database == 'postgres:17' && steps.physical-dependencies.outcome == 'success'
++        run: >-
++          uv run --no-sync python scripts/native_runtime_diagnostics.py
++          --source native-physical-runtime-work --destination native-physical-runtime-diagnostics
+       - name: Preserve physical stream results
+         if: always()
+         uses: actions/upload-artifact@v7
+@@ -681,6 +688,7 @@
+             native-physical-*.xml
+             native-physical-types.json
+             native-physical-types.stderr.log
++            native-physical-runtime-diagnostics/
+           if-no-files-found: error
+ 
+   run-stream-dag-execution-tests:
+--- a/scripts/native_runtime_diagnostics.py
++++ b/scripts/native_runtime_diagnostics.py
+@@ -21,7 +21,12 @@
+     "branch-loss.json",
+     "replacement-started.json",
+ }
+-LOG_NAMES = {"worker-left.log", "worker-right.log", "progress.jsonl"}
++LOG_NAMES = {
++    "worker-left.log",
++    "worker-right.log",
++    "progress.jsonl",
++    "source-accepted.jsonl",
++}
+ RESOURCE_NAMES = (
+     "cpu.max",
+     "cpu.stat",
+@@ -115,6 +120,10 @@
+         path.name in JSON_NAMES | LOG_NAMES
+         or re.fullmatch(r"[A-Za-z0-9_-]+\.pid\.json", path.name) is not None
+         or re.fullmatch(r"api-[0-9a-f]{32}\.log", path.name) is not None
++        or re.fullmatch(r"(?:source|operator)-[0-9]+-[0-9]+\.pid", path.name)
++        is not None
++        or re.fullmatch(r"calls-[0-9]+-[0-9]+\.jsonl", path.name) is not None
++        or re.fullmatch(r"calls-[ABC]-[0-9]+\.jsonl", path.name) is not None
+     )
+ 
+ 
+@@ -188,6 +197,9 @@
+             "logs": sorted(LOG_NAMES),
+             "pid_filename_regex": r"[A-Za-z0-9_-]+\.pid\.json",
+             "api_log_filename_regex": r"api-[0-9a-f]{32}\.log",
++            "p2_pid_filename_regex": r"(?:source|operator)-[0-9]+-[0-9]+\.pid",
++            "p2_calls_filename_regex": r"calls-[0-9]+-[0-9]+\.jsonl",
++            "dag_calls_filename_regex": r"calls-[ABC]-[0-9]+\.jsonl",
+         },
+         "scope": "Selected diagnostic copies and post-command resources; no execution acceptance claim",
+     }

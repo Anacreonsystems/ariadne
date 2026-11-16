@@ -1,0 +1,195 @@
+"""Exercise applied generated fixture code without importing Prefect or opening DBs."""
+
+import ast
+import asyncio
+import hashlib
+import json
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import UUID, uuid4
+
+ROOT = Path('/tmp/ariadne-native-5000-diagnosis-v1')
+HERE = Path(__file__).parent
+SOURCE = ROOT / 'tests/test_native_stream_dag_execution_http.py'
+tree = ast.parse(SOURCE.read_text())
+assignment = next(n for n in tree.body if isinstance(n, ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == '_USER_MODULE' for t in n.targets))
+user = ast.literal_eval(assignment.value)
+approved = Path('/tmp/native-dag-flow-failure-visibility-0213-v1/generated-user-module.candidate.py').read_text()
+assert user == approved, 'Generated fixture changed after reviewed candidate'
+selected = [n for n in ast.parse(user).body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.name in {'_record_flow_failure', 'documents', 'documents_async'}]
+assert len(selected) == 3
+for node in selected:
+    node.decorator_list = []
+namespace = {'json': json, 'time': time, 'Path': Path, 'UUID': UUID}
+exec(compile(ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])),
+             'native_dag_example.py', 'exec'), namespace)
+checks = []
+
+
+def record(name, condition):
+    assert condition, name
+    checks.append(name)
+
+
+def run_body(directory, error, asynchronous=False):
+    def author(*args):
+        raise error
+    namespace['author'] = author
+    try:
+        if asynchronous:
+            asyncio.run(namespace['documents_async'](str(directory)))
+        else:
+            namespace['documents'](str(directory))
+    except BaseException as caught:
+        assert caught is error
+        return caught
+    raise AssertionError('Original exception was swallowed')
+
+
+with tempfile.TemporaryDirectory(prefix='dag-failure-principal-') as name:
+    base = Path(name)
+    for asynchronous in (False, True):
+        directory = base / ('async' if asynchronous else 'sync')
+        directory.mkdir()
+        sentinel = ValueError('PRIVATE_ARGUMENT_SENTINEL')
+        caught = run_body(directory, sentinel, asynchronous)
+        data = json.loads((directory / 'dag-flow-failure.json').read_text())
+        record(f'original_exception_identity_{asynchronous}', caught is sentinel)
+        record(f'graph_null_before_authoring_{asynchronous}', data['graph_revision_id'] is None)
+        record(f'qualified_type_only_{asynchronous}', data['exception_type'] == 'builtins.ValueError'
+               and 'PRIVATE_ARGUMENT_SENTINEL' not in json.dumps(data))
+        frames = []
+        tb = caught.__traceback__
+        while tb:
+            frames.append(tb.tb_frame.f_code.co_name)
+            tb = tb.tb_next
+        record(f'bare_raise_preserves_failure_origin_{asynchronous}', frames[-1] == 'author'
+               and '_record_flow_failure' not in frames)
+        first = (directory / 'dag-flow-failure.json').read_bytes()
+        namespace['_record_flow_failure'](directory, uuid4(), RuntimeError('later'))
+        record(f'first_capture_unchanged_{asynchronous}', first == (directory / 'dag-flow-failure.json').read_bytes())
+
+    for index, error in enumerate((
+        TimeoutError('DAG wait timed out; observation did not mutate the graph'),
+        TimeoutError('another timeout'),
+        type('DerivedTimeout', (TimeoutError,), {})('DAG wait timed out; observation did not mutate the graph'),
+    )):
+        directory = base / f'timeout-{index}'
+        directory.mkdir()
+        graph = uuid4()
+        namespace['_record_flow_failure'](directory, graph, error)
+        data = json.loads((directory / 'dag-flow-failure.json').read_text())
+        record(f'exact_timeout_type_and_literal_{index}', data['sdk_wait_timeout'] is (index == 0))
+        record(f'graph_UUID_canonical_{index}', data['graph_revision_id'] == str(graph))
+
+    secret = 'PRIVATE_EXCEPTION_ARGUMENT'
+    def hostile_str(self):
+        raise AssertionError('Exception text must not be rendered')
+    hostile = type('HostileError', (Exception,), {'__str__': hostile_str})(secret)
+    compiled = compile('def leaf(error):\n    raise error\n', '/PRIVATE_DIRECTORY_SENTINEL/leaf.py', 'exec')
+    leaf_ns = {}
+    exec(compiled, leaf_ns)
+    directory = base / 'privacy'
+    directory.mkdir()
+    try:
+        leaf_ns['leaf'](hostile)
+    except BaseException as error:
+        namespace['_record_flow_failure'](directory, None, error)
+    data = json.loads((directory / 'dag-flow-failure.json').read_text())
+    serialized = json.dumps(data)
+    record('no_exception_string_args_or_absolute_frame_directories', secret not in serialized
+           and 'PRIVATE_DIRECTORY_SENTINEL' not in serialized
+           and any(frame['file'] == 'leaf.py' for frame in data['frames']))
+
+    directory = base / 'deep'
+    directory.mkdir()
+    def recurse(depth):
+        if depth:
+            return recurse(depth - 1)
+        raise ValueError('private')
+    try:
+        recurse(24)
+    except ValueError as error:
+        namespace['_record_flow_failure'](directory, None, error)
+    data = json.loads((directory / 'dag-flow-failure.json').read_text())
+    record('bounded16_frames_and_explicit_truncation', len(data['frames']) == 16 and data['frames_truncated'])
+
+    missing = base / 'missing-parent' / 'child'
+    file_parent = base / 'file-parent'
+    file_parent.write_text('owned file')
+    stale = base / 'stale-temporary'
+    stale.mkdir()
+    (stale / 'dag-flow-failure.tmp').write_text('existing temporary')
+    for index, directory in enumerate((missing, file_parent / 'child', stale)):
+        for asynchronous in (False, True):
+            sentinel = ValueError('original')
+            record(f'real_FS_failure_preserves_original_{index}_{asynchronous}',
+                   run_body(directory, sentinel, asynchronous) is sentinel)
+
+    directory = base / 'rename-failure'
+    directory.mkdir()
+    original_json = namespace['json']
+    def dump_then_block_replace(value, stream):
+        json.dump(value, stream)
+        (directory / 'dag-flow-failure.json').mkdir()
+    namespace['json'] = SimpleNamespace(dump=dump_then_block_replace)
+    try:
+        sentinel = ValueError('original')
+        record('actual_replace_failure_preserves_original', run_body(directory, sentinel) is sentinel)
+    finally:
+        namespace['json'] = original_json
+
+    success = base / 'normal'
+    success.mkdir()
+    class Running:
+        def wait(self, *, timeout):
+            assert timeout == 150
+    class Sealed:
+        graph_revision_id = uuid4()
+        def start(self, *, timeout):
+            assert timeout == 90
+            return Running()
+    namespace['author'] = lambda *args: Sealed()
+    record('normal_body_result_unchanged', namespace['documents'](str(success)) == {'documents': 8})
+    record('normal_body_no_diagnostic_write', not list(success.iterdir()))
+
+    source = base / 'collector-source'
+    source.mkdir()
+    diagnostic = {'exception_type': 'builtins.ValueError', 'capability': 'PRIVATE_COLLECTOR_SENTINEL'}
+    raw = json.dumps(diagnostic).encode()
+    (source / 'dag-flow-failure.json').write_bytes(raw)
+    (source / 'unapproved.json').write_text('{}')
+    external = base / 'external.json'
+    external.write_text('{}')
+    (source / 'symlink' ).mkdir()
+    (source / 'symlink' / 'dag-flow-failure.json').symlink_to(external)
+    destination = base / 'collector-copy'
+    completed = subprocess.run([sys.executable, str(ROOT / 'scripts/native_runtime_diagnostics.py'),
+        '--source', str(source), '--destination', str(destination)],
+        capture_output=True, text=True, check=True)
+    manifest = json.loads((destination / 'manifest.json').read_text())
+    copied = json.loads((destination / 'files' / 'dag-flow-failure.json').read_text())
+    record('collector_real_CLI_new_file_only_and_symlink_excluded', manifest['copy_count'] == 1
+           and manifest['files'][0]['source_relative_path'] == 'dag-flow-failure.json')
+    record('collector_existing_redaction_preserved', copied['capability'] == '[REDACTED]'
+           and copied['exception_type'] == 'builtins.ValueError')
+    record('collector_raw_source_unchanged', (source / 'dag-flow-failure.json').read_bytes() == raw)
+
+result = {
+    'status': 'PASS', 'closed_at_utc': datetime.now(timezone.utc).isoformat(),
+    'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+    'applied_test_sha256': hashlib.sha256(SOURCE.read_bytes()).hexdigest(),
+    'generated_module_sha256': hashlib.sha256(user.encode()).hexdigest(),
+    'checks': checks, 'check_count': len(checks),
+    'scope': 'Actual applied helper/body AST with decorators removed; real temporary filesystem and asyncio; no Prefect/project import, API, DB or native flow execution',
+    'project_source_edits': 0, 'temporary_files_removed': True,
+}
+(HERE / 'personal-controls-result.json').write_text(json.dumps(result, indent=2) + '\n')
+print(json.dumps({'status': result['status'], 'checks': len(checks), 'result': str(HERE / 'personal-controls-result.json')}))

@@ -110,6 +110,8 @@ API_ROUTERS = (
     api.stream_subtasks.router,
     api.stream_workers.router,
     api.stream_dags.router,
+    api.stream_dag_executions.router,
+    api.stream_dag_launches.router,
     api.stream_routes.router,
     api.native_deployments.router,
     api.deployments.router,

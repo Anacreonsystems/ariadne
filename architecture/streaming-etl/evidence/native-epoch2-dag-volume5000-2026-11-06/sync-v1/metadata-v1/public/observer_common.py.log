@@ -1,0 +1,267 @@
+"""Explicitly authorized, current-owned sync5000 MVCC metadata only."""
+import argparse
+import asyncio
+import datetime
+import hashlib
+import json
+import os
+import pathlib
+import re
+import time
+from urllib.parse import urlsplit, urlunsplit
+from uuid import UUID
+
+BASE = pathlib.Path(__file__).resolve().parent
+OWNER = pathlib.Path('/tmp/native-n2-2-sync5000-verification-18124-v1')
+SOURCE = pathlib.Path('/tmp/ariadne-native-5000-diagnosis-v1')
+HEAD = '18124603882fe9196a6eec6063a4619e7087f48f'
+SELECTOR = pathlib.Path('/tmp/native-ni012-runtime-test-env.json')
+NODE = 'tests/test_native_stream_dag_execution_http.py::test_public_dag_bounded_volume_postgres[False-5000]'
+DISCOVERY_SQL = 'SELECT id AS graph_id,flow_run_id FROM stream_graph_revision WHERE id=$1'
+CONTEXT_SQL = "SELECT current_database() AS database,current_setting('server_version_num') AS server_version,current_setting('transaction_read_only') AS read_only,pg_backend_pid() AS backend_pid,clock_timestamp() AS observed_utc,txid_current_snapshot()::text AS mvcc_snapshot"
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load(path):
+    return json.loads(path.read_text())
+
+
+def write(path, value):
+    with path.open('x') as handle:
+        json.dump(value, handle, sort_keys=True, indent=2, default=str)
+        handle.write('\n')
+    path.chmod(0o600)
+
+
+def ticks(pid):
+    return pathlib.Path('/proc', str(pid), 'stat').read_text().rsplit(')', 1)[1].split()[19]
+
+
+def arguments():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--scope', type=pathlib.Path, required=True)
+    parser.add_argument('--execute-root-go', action='store_true', required=True)
+    return parser.parse_args()
+
+
+def checked_scope(path, mode):
+    assert path.is_absolute() and path.parent.resolve() == BASE
+    scope = load(path)
+    expected = 'ROOT_AUTHORIZED_LIVE_READONLY_SYNC5000' if mode == 'live' else 'ROOT_AUTHORIZED_POSTTERMINAL_READONLY_SYNC5000'
+    assert scope['status'] == expected and scope['authorized_by'] == '/root'
+    assert scope['head'] == HEAD and scope['preparation_sha256'] == sha(BASE / 'preparation-manifest-v1.json')
+    prepared = load(BASE / 'preparation-manifest-v1.json')
+    for record in prepared['artifacts']:
+        item = BASE / record['path']
+        assert sha(item) == record['sha256'] and item.stat().st_size == record['bytes']
+    for record in prepared['source_bindings']:
+        assert sha(SOURCE / record['path']) == record['sha256']
+    trial = pathlib.Path(scope['trial'])
+    assert trial.is_absolute() and trial.parent.resolve() == OWNER
+    assert re.fullmatch(r'sync5000-[0-9a-f]{8}', trial.name)
+    command_path = trial / 'command.json'
+    assert sha(command_path) == scope['command_sha256']
+    command = load(command_path)
+    assert command['head'] == HEAD and command['phase'] == 'sync5000' and command['nodeid'] == NODE
+    assert command['cwd'] == str(SOURCE) and command['count'] == 5000
+    assert command['asynchronous'] is False and command['mode'] == 'normal' and command['profiling'] is False
+    assert command['budgets'] == {'wait': 3960, 'observe': 4080, 'pytest': 4200}
+    assert command['only_provisioning_fixture_override'] is True
+    assert command['derived_tests_master_database_created'] is False
+    assert command['database_retained_always'] is True and command['drop_or_terminate_backend_allowed'] is False
+    assert command['private_selector_path'] == str(SELECTOR)
+    assert command['database'] == scope['database']
+    assert re.fullmatch(r'native_ni012_runtime_s2_[0-9a-f]{8}', command['database'])
+    creation = load(trial / 'database-creation.json')
+    assert creation == {'database': command['database'], 'server_major': 17,
+                        'created_fresh': True, 'existing_database_reused': False}
+    process = load(trial / 'process.json')
+    assert process['pytest_pid'] == scope['pytest_pid']
+    assert str(process['pytest_start_ticks']) == str(scope['pytest_start_ticks'])
+    if mode == 'final':
+        stop_ref = scope['live_observer_stop']
+        stop_path = pathlib.Path(stop_ref['path'])
+        assert stop_path.parent.resolve() == BASE and sha(stop_path) == stop_ref['sha256']
+        stop = load(stop_path)
+        assert stop['status'] == 'LIVE_DB_OBSERVER_STOPPED_NO_MORE_CONNECTIONS'
+        assert stop['outstanding_connections'] == 0 and stop['scope_sha256'] == scope['live_scope_sha256']
+        native_ref = scope['native_stop_receipt']
+        native_path = pathlib.Path(native_ref['path'])
+        assert native_path.parent.resolve() == trial and sha(native_path) == native_ref['sha256']
+        native = load(native_path)
+        assert native['runtime_STOPPED'] is True and native['phase'] == 'sync5000' and native['head'] == HEAD
+        assert native['database']['database'] == command['database']
+        assert native['database']['retained'] is True and native['database']['sessions'] == []
+        assert (trial / 'pytest-exit').exists()
+    return scope, trial, command
+
+
+def last_progress(fixture):
+    path = fixture / 'progress.jsonl'
+    with path.open('rb') as handle:
+        handle.seek(0, 2)
+        handle.seek(max(0, handle.tell() - 131072))
+        lines = handle.read().splitlines(keepends=True)
+    for line in reversed(lines):
+        if line.endswith(b'\n'):
+            value = json.loads(line)
+            UUID(value['snapshot']['graph_revision_id'])
+            assert len(value['snapshot']['subtasks']) == 4
+            assert len({row['task_run_id'] for row in value['snapshot']['subtasks']}) == 4
+            return value
+    raise ValueError('NO_COMPLETE_OWN_PROGRESS_RECORD')
+
+
+def stop_reason(scope, trial, fixture):
+    if (BASE / 'STOP_REQUESTED').exists():
+        return 'ROOT_STOP_REQUESTED'
+    if (trial / 'pytest-exit').exists() or (trial / 'native5000-receipt-v2.json').exists():
+        return 'NATIVE_STOPPED_NO_MORE_LIVE_CONNECTIONS'
+    try:
+        if ticks(scope['pytest_pid']) != str(scope['pytest_start_ticks']):
+            return 'NATIVE_PID_IDENTITY_CHANGED'
+    except FileNotFoundError:
+        return 'NATIVE_PID_GONE'
+    if (fixture / 'all-cursors-observed').exists():
+        return 'PRETERMINAL_ALL_CURSORS_MARKER'
+    try:
+        progress = last_progress(fixture)
+    except FileNotFoundError:
+        return None
+    cursors = [row['completed_through'] for row in progress['snapshot'].get('consumers', [])]
+    if len(cursors) == 3 and min(cursors) >= 4900:
+        return 'PRETERMINAL_ALL_THREE_CURSORS_GE4900'
+    return None
+
+
+def scoped_identity(fixture, progress):
+    graph = UUID(progress['snapshot']['graph_revision_id'])
+    tasks = {UUID(row['task_run_id']) for row in progress['snapshot']['subtasks']}
+    matches = set()
+    for name in ['worker-left.log', 'worker-right.log']:
+        path = fixture / name
+        if path.exists():
+            matches.update(re.findall(r'/runs/flow-run/([0-9a-f-]{36})', path.read_text(errors='replace')))
+    assert len(matches) <= 1, 'AMBIGUOUS_OWN_WORKER_FLOW'
+    resolved_path = BASE / 'resolved-owned-identity.json'
+    resolved = load(resolved_path) if resolved_path.exists() else None
+    flow = UUID(resolved['flow_id']) if resolved else (UUID(next(iter(matches))) if matches else None)
+    if resolved:
+        assert resolved['graph_id'] == str(graph) and set(resolved['task_ids']) == {str(item) for item in tasks}
+    if flow and matches:
+        assert matches == {str(flow)}
+    return graph, tasks, flow, resolved_path
+
+
+async def capture(scope_path, mode):
+    os.umask(0o077)
+    scope, trial, command = checked_scope(scope_path, mode)
+    fixture = trial / 'pytest/test_public_dag_bounded_volume0'
+    if mode == 'live':
+        reason = stop_reason(scope, trial, fixture)
+        if reason:
+            return {'status': 'PRECONNECTION_STOP', 'reason': reason}
+        previous = sorted(BASE.glob('live-sample-*.json'))
+        if previous:
+            latest = max(load(path)['started_monotonic_ns'] for path in previous)
+            assert time.monotonic_ns() - latest >= 60_000_000_000
+        progress = last_progress(fixture)
+    else:
+        assert not list(BASE.glob('final-sample-*.json')), 'FINAL_CAPTURE_ALREADY_ATTEMPTED'
+        progress = {'snapshot': load(fixture / 'final-progress.json')}
+    graph, expected_tasks, flow, resolved_path = scoped_identity(fixture, progress)
+    if mode == 'final':
+        assert resolved_path.exists() and sha(resolved_path) == scope['resolved_identity_sha256']
+        assert flow == UUID(scope['flow_id']) and graph == UUID(scope['graph_id'])
+    sql = load(BASE / 'queries.json')
+    assert len(sql) == 18
+    for query in [CONTEXT_SQL, DISCOVERY_SQL, *sql.values()]:
+        assert query.startswith('SELECT ') and not re.search(r'\b(FOR\s+UPDATE|FOR\s+SHARE|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|LOCK|TRUNCATE|CALL|pg_terminate_backend|pg_cancel_backend)\b', query, re.I)
+    # The private selector is first read only after explicit Root scope validation.
+    config = load(SELECTOR)
+    parsed = urlsplit(config['admin_dsn'])
+    assert parsed.hostname in {'localhost', '127.0.0.1', '::1'} and parsed.port == 55436
+    assert config['sqlalchemy_scheme'] == 'postgresql+asyncpg'
+    assert command['database'].startswith(config['database_prefix'] + '_s2_')
+    dsn = urlunsplit((parsed.scheme, parsed.netloc, '/' + command['database'], parsed.query, ''))
+    # Optional runtime client dependency: no imports, connection or hooks during preparation.
+    import asyncpg
+    connection = None
+    now = time.monotonic_ns()
+    result = {'schema': 'owned-sync5000-readonly-mvcc-snapshot-v1', 'mode': mode,
+              'status': 'CAPTURE_STARTED', 'head': HEAD, 'trial': str(trial),
+              'database': command['database'], 'graph_id': str(graph),
+              'scope_sha256': sha(scope_path), 'command_sha256': sha(trial / 'command.json'),
+              'preparation_sha256': scope['preparation_sha256'], 'sql_sha256': sha(BASE / 'queries.json'),
+              'started_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'started_monotonic_ns': now, 'progress_record': progress,
+              'controller_pid': os.getpid(), 'controller_start_ticks': ticks(os.getpid()),
+              'readonly': True, 'explicit_row_locks': False,
+              'flow_discovery': 'UNIQUE_OWN_WORKER_VIEW_OR_PREVIOUS_BOUND_CAPTURE' if flow else 'ONE_CAPTURED_GRAPH_ID_SCOPED_SELECT',
+              'limitations': ['Discrete MVCC snapshot, not every intervening transition',
+                              'Persisted Flow lease UUID/counters only; external KV lease backend not inspected',
+                              'Actual positions are labels; no retroactive500 or activation snapshot claim',
+                              'Plain SELECTs acquire ordinary relation AccessShare internally',
+                              'No payload/parameters/capabilities/env/DSN selected or serialized']}
+    async def transaction():
+        nonlocal connection, flow
+        connection = await asyncpg.connect(dsn, timeout=3, command_timeout=2,
+            server_settings={'default_transaction_read_only': 'on',
+                             'application_name': 'principal_owned_sync5000_metadata',
+                             'statement_timeout': '2000', 'lock_timeout': '100',
+                             'idle_in_transaction_session_timeout': '3000'})
+        if mode == 'live':
+            reason = stop_reason(scope, trial, fixture)
+            if reason:
+                result.update(status='CONNECTED_STOP_BEFORE_METADATA', reason=reason)
+                return
+        async with connection.transaction(isolation='repeatable_read', readonly=True):
+            context = dict(await connection.fetchrow(CONTEXT_SQL))
+            assert context['database'] == command['database']
+            assert int(context['server_version']) // 10000 == 17 and context['read_only'] == 'on'
+            result['database_context'] = context
+            if flow is None:
+                discovered = await connection.fetch(DISCOVERY_SQL, graph)
+                assert len(discovered) == 1 and discovered[0]['graph_id'] == graph
+                flow = discovered[0]['flow_run_id']
+            result['flow_id'] = str(flow)
+            data = {'scope': [dict(row) for row in await connection.fetch(sql['scope'], graph, flow)]}
+            assert len(data['scope']) == 1 and data['scope'][0]['flow_run_id'] == flow
+            assert data['scope'][0]['profile'] == 'partitioned-dag-v1'
+            params = {'flow_lease': (flow,), 'lease_history': (flow,), 'operators': (graph,),
+                      'ports': (graph,), 'edges': (graph,), 'edge_partitions': (graph, flow),
+                      'launches': (graph,), 'authority': (flow,), 'coordinator_launches': (flow,),
+                      'tasks': (flow,), 'partitions': (flow,)}
+            for name, query in sql.items():
+                if name != 'scope':
+                    data[name] = [dict(row) for row in await connection.fetch(query, *params.get(name, (flow, graph)))]
+            assert {row['id'] for row in data['tasks']} == expected_tasks
+            assert {row['task_run_id'] for row in data['subtasks']} == expected_tasks
+            result.update(metadata=data, counts={key: len(rows) for key, rows in data.items()},
+                          status='ACTUAL_READONLY_MVCC_CAPTURE')
+    try:
+        await asyncio.wait_for(transaction(), timeout=6)
+    except Exception as error:
+        result.update(status='READONLY_CAPTURE_FAILED_OR_INCONCLUSIVE', error_type=type(error).__name__)
+    finally:
+        if connection is not None:
+            try:
+                await connection.close(timeout=3)
+            except Exception as error:
+                result.update(status='CONNECTION_CLOSE_INCONCLUSIVE', close_error_type=type(error).__name__)
+        result['connection_closed'] = connection is None or connection.is_closed()
+    result['ended_monotonic_ns'] = time.monotonic_ns()
+    path = BASE / (('live' if mode == 'live' else 'final') + '-sample-' + str(now) + '.json')
+    write(path, result)
+    if result['status'] == 'ACTUAL_READONLY_MVCC_CAPTURE' and not resolved_path.exists():
+        write(resolved_path, {'head': HEAD, 'trial': str(trial), 'database': command['database'],
+                             'flow_id': str(flow), 'graph_id': str(graph),
+                             'task_ids': sorted(str(item) for item in expected_tasks),
+                             'scope_sha256': sha(scope_path), 'command_sha256': sha(trial / 'command.json'),
+                             'first_actual_sample': str(path), 'first_actual_sample_sha256': sha(path)})
+    return {'status': result['status'], 'path': str(path), 'sha256': sha(path),
+            'counts': result.get('counts'), 'connection_closed': result['connection_closed'],
+            'cursors': [row['completed_through'] for row in progress['snapshot'].get('consumers', [])]}

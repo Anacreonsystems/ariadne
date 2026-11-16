@@ -1,0 +1,26 @@
+import asyncio,json,os,re
+from pathlib import Path
+from urllib.parse import urlsplit,urlunsplit
+import asyncpg
+
+trial=Path('/tmp/native-ni012-runtime-live/run-sync-7656fd8d')
+config=json.loads(Path('/tmp/native-ni012-runtime-test-env.json').read_text())
+meta=json.loads((trial/'database.json').read_text())
+pids=set()
+for p in (trial/'audit').glob('*.jsonl'):
+ for line in p.read_text().splitlines():
+  pids.add(json.loads(line)['pid'])
+for p in (trial/'pytest').rglob('*.log'):
+ for value in re.findall(r'Started server process \[(\d+)\]',p.read_text(errors='replace')):
+  pids.add(int(value))
+async def inspect():
+ c=await asyncpg.connect(config['admin_dsn'])
+ try:
+  dbs=await c.fetch('SELECT datname FROM pg_database WHERE datname=$1 OR datname=$2',meta['name'],meta['name']+'_tests_master')
+  sessions=await c.fetch('SELECT pid,datname,state FROM pg_stat_activity WHERE datname=$1 OR datname=$2',meta['name'],meta['name']+'_tests_master')
+  return [dict(row) for row in dbs],[dict(row) for row in sessions]
+ finally: await c.close()
+databases,sessions=asyncio.run(inspect())
+result={'pytest_exit':int((trial/'exit').read_text()),'signal_sent':False,'signal_result':'none; trial ran through natural pytest exit','observed_pids':sorted(pids),'remaining_observed_pids':[pid for pid in pids if Path('/proc',str(pid)).exists()],'remaining_database_sessions':sessions,'remaining_owned_databases':databases,'worker_or_task_processes_spawned':{'workers':2,'flow_coordinator':1,'physical_tasks':4},'failure_boundary':'Successful protected DAG normal8; two workers/four physical tasks/Flow COMPLETED','source_drift':json.loads((trial/'drift.json').read_text())}
+(trial/'cleanup.json').write_text(json.dumps(result,sort_keys=True,indent=2)+'\n')
+print(json.dumps(result,sort_keys=True))

@@ -1,0 +1,353 @@
+"""Root-scoped personal DAG5000:18 frozen families plus Consumer SELECT in one MVCC."""
+import argparse
+import asyncio
+import datetime
+import hashlib
+import json
+import os
+import pathlib
+import re
+import time
+from urllib.parse import urlsplit, urlunsplit
+from uuid import UUID
+
+BASE = pathlib.Path(__file__).resolve().parent
+OWNERS = {'async5000': pathlib.Path('/tmp/native-principal-dag5000-18124-v1/async-v4'), 'sync5000': pathlib.Path('/tmp/native-principal-dag5000-18124-v1/sync-v2')}
+SOURCE = pathlib.Path('/tmp/ariadne-native-5000-diagnosis-v1')
+HEAD = '18124603882fe9196a6eec6063a4619e7087f48f'
+SELECTOR = pathlib.Path('/tmp/native-ni012-runtime-test-env.json')
+NODES = {phase: 'tests/test_native_stream_dag_execution_http.py::test_public_dag_bounded_volume_postgres[' + ('True' if phase == 'async5000' else 'False') + '-5000]' for phase in OWNERS}
+CONTEXT_SQL = "SELECT current_database() AS database,current_setting('server_version_num') AS server_version,current_setting('transaction_read_only') AS read_only,pg_backend_pid() AS backend_pid,clock_timestamp() AS observed_utc,txid_current_snapshot()::text AS mvcc_snapshot"
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load(path):
+    return json.loads(path.read_text())
+
+
+def write(path, value):
+    with path.open('x') as handle:
+        json.dump(value, handle, sort_keys=True, indent=2, default=str)
+        handle.write('\n')
+    path.chmod(0o600)
+
+
+def ticks(pid):
+    return pathlib.Path('/proc', str(pid), 'stat').read_text().rsplit(')', 1)[1].split()[19]
+
+
+def arguments():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--scope', type=pathlib.Path, required=True)
+    parser.add_argument('--execute-root-go', action='store_true', required=True)
+    return parser.parse_args()
+
+
+def output(scope):
+    path = BASE / scope['phase']
+    assert path.resolve().parent == BASE
+    return path
+
+
+def checked_scope(path, mode):
+    assert path.is_absolute() and path.parent.resolve() == BASE
+    scope = load(path)
+    expected = 'ROOT_AUTHORIZED_PERSONAL_DAG5000_LIVE_READONLY' if mode == 'live' else 'ROOT_AUTHORIZED_PERSONAL_DAG5000_POSTTERMINAL_READONLY'
+    assert scope['status'] == expected and scope['authorized_by'] == '/root'
+    assert scope['personal_executor'] == '/root/etl_principal_recovery2'
+    assert scope['head'] == HEAD and scope['preparation_sha256'] == sha(BASE / 'preparation-manifest-v1.json')
+    prepared = load(BASE / 'preparation-manifest-v1.json')
+    for record in prepared['artifacts']:
+        item = BASE / record['path']
+        assert sha(item) == record['sha256'] and item.stat().st_size == record['bytes']
+    for record in prepared['source_bindings']:
+        assert sha(SOURCE / record['path']) == record['sha256']
+    phase = scope['phase']; assert phase in OWNERS
+    owner = OWNERS[phase]; bindings = prepared['native_actor_bindings'][phase]
+    for name, digest in bindings['assets'].items():
+        assert sha(owner / name) == digest
+    trial = pathlib.Path(scope['trial'])
+    assert trial.is_absolute() and trial.parent.resolve() == owner
+    assert re.fullmatch(phase + r'-[0-9a-f]{8}', trial.name)
+    command_path = trial / 'command.json'
+    assert sha(command_path) == scope['command_sha256']
+    command = load(command_path)
+    assert command['head'] == HEAD and command['phase'] == phase and command['nodeid'] == NODES[phase]
+    assert command['cwd'] == str(SOURCE) and command['count'] == 5000
+    assert command['asynchronous'] is (phase == 'async5000') and command['mode'] == 'normal' and command['profiling'] is False
+    assert command['budgets'] == {'wait':3960,'observe':4080,'pytest':4200}
+    assert command['only_provisioning_fixture_override'] is True and command['derived_tests_master_database_created'] is False
+    assert command['database_retained_always'] is True and command['drop_or_terminate_backend_allowed'] is False
+    assert command['private_selector_path'] == str(SELECTOR)
+    assert command['database'] == scope['database'] and re.fullmatch(r'native_ni012_runtime_s2_[0-9a-f]{8}', command['database'])
+    assert command['assets'] == bindings['assets'] == load(trial / 'external-assets.json')
+    hold_ref = scope['native_hold']; hold_path = pathlib.Path(hold_ref['path'])
+    assert hold_path.is_absolute() and hold_path.parent.resolve() == owner
+    assert sha(hold_path) == hold_ref['sha256'] == command['hold_sha256']
+    native_hold = load(hold_path)
+    assert native_hold['status'] == bindings['authorized_hold_status']
+    assert native_hold['runtime_authorized_by'] == '/root' and native_hold['publication_hooks_status'] == 'STOPPED_PASS'
+    assert native_hold['head'] == HEAD and native_hold['authorized_nodes'] == [NODES[phase]]
+    assert native_hold['source_root'] == str(SOURCE) and native_hold['assets'] == bindings['assets'] and native_hold['budgets'] == command['budgets']
+    assert native_hold['retain_owned_database_on_pass_and_fail'] is True and native_hold['only_provisioning_fixture_override'] is True
+    assert sha(trial / 'source-before.json') == scope['source_before_sha256']
+    assert load(trial / 'source-before.json') == native_hold['files']
+    for record in prepared['source_bindings']:
+        assert native_hold['files'][record['path']]['sha256'] == record['sha256']
+    creation = load(trial / 'database-creation.json')
+    assert creation == {'database':command['database'],'server_major':17,'created_fresh':True,'existing_database_reused':False}
+    process = load(trial / 'process.json')
+    for name in ('pytest_pid','pytest_start_ticks','runner_pid','runner_start_ticks'):
+        assert str(process[name]) == str(scope[name])
+    assert process['subreaper_verified_before_popen'] is True and process['pgid'] == process['pytest_pid']
+    UUID(scope['flow_id']); UUID(scope['graph_id'])
+    if mode == 'final':
+        assert scope['separate_postterminal_root_go'] is True
+        out = output(scope)
+        stop_ref = scope['live_observer_stop']; stop_path = pathlib.Path(stop_ref['path'])
+        assert stop_path.parent.resolve() == out and sha(stop_path) == stop_ref['sha256']
+        stop = load(stop_path)
+        assert stop['status'] == 'LIVE_DB_OBSERVER_STOPPED_NO_MORE_CONNECTIONS' and stop['outstanding_connections'] == 0
+        assert stop['scope_sha256'] == scope['live_scope_sha256'] and stop['trial'] == str(trial)
+        reap_ref = scope['live_observer_reap']; reap_path = pathlib.Path(reap_ref['path'])
+        assert reap_path.parent.resolve() == out and sha(reap_path) == reap_ref['sha256']
+        reap = load(reap_path)
+        assert reap['tool_process_exit_code'] == 0 and reap['same_controller_pid_start_identity_alive'] is False
+        assert reap['all_sample_connections_closed'] is True and reap['signals_sent'] == []
+        assert reap['live_stop_receipt'] == stop_ref and reap['controller_identity'] == stop['identity']
+        try: assert ticks(stop['identity']['pid']) != str(stop['identity']['start_ticks'])
+        except FileNotFoundError: pass
+        native_ref = scope['native_stop_receipt']; native_path = pathlib.Path(native_ref['path'])
+        assert native_path.parent.resolve() == trial and sha(native_path) == native_ref['sha256']
+        native = load(native_path)
+        assert native['runtime_STOPPED'] is True and native['phase'] == phase and native['head'] == HEAD
+        assert native['database']['database'] == command['database'] and native['database']['retained'] is True and native['database']['sessions'] == []
+        assert native['process_closure']['remaining_same_identity_live'] == native['process_closure']['remaining_same_identity_zombies'] == []
+        assert native['assets'] == bindings['assets'] and native['source_drift'] == [] and native['import_audit']['mismatches'] == []
+        assert (trial / 'pytest-exit').exists()
+    return scope, trial, command
+
+
+def last_progress(fixture):
+    path = fixture / 'progress.jsonl'
+    with path.open('rb') as handle:
+        handle.seek(0, 2)
+        handle.seek(max(0, handle.tell() - 131072))
+        lines = handle.read().splitlines(keepends=True)
+    for line in reversed(lines):
+        if line.endswith(b'\n'):
+            value = json.loads(line)
+            UUID(value['snapshot']['graph_revision_id'])
+            assert len(value['snapshot']['subtasks']) == 4
+            assert len({row['task_run_id'] for row in value['snapshot']['subtasks']}) == 4
+            return value
+    raise ValueError('NO_COMPLETE_OWN_PROGRESS_RECORD')
+
+
+def stop_reason(scope, trial, fixture):
+    if (output(scope) / 'STOP_REQUESTED').exists():
+        return 'ROOT_STOP_REQUESTED'
+    if (trial / 'pytest-exit').exists() or (trial / 'native5000-receipt-v2.json').exists():
+        return 'NATIVE_STOPPED_NO_MORE_LIVE_CONNECTIONS'
+    for prefix in ('pytest','runner'):
+        try:
+            if ticks(scope[prefix+'_pid']) != str(scope[prefix+'_start_ticks']):
+                return 'NATIVE_PID_IDENTITY_CHANGED'
+        except FileNotFoundError:
+            return 'NATIVE_PID_GONE'
+    if (fixture / 'all-cursors-observed').exists():
+        return 'PRETERMINAL_ALL_CURSORS_MARKER'
+    try:
+        progress = last_progress(fixture)
+    except FileNotFoundError:
+        return None
+    cursors = [row['completed_through'] for row in progress['snapshot'].get('consumers', [])]
+    if len(cursors) == 3 and min(cursors) >= 4900:
+        return 'PRETERMINAL_ALL_THREE_CURSORS_GE4900'
+    return None
+
+
+def scoped_identity(scope, fixture, progress):
+    graph = UUID(progress['snapshot']['graph_revision_id'])
+    tasks = {UUID(row['task_run_id']) for row in progress['snapshot']['subtasks']}
+    matches = set()
+    for name in ['worker-left.log', 'worker-right.log']:
+        path = fixture / name
+        if path.exists():
+            matches.update(re.findall(r'/runs/flow-run/([0-9a-f-]{36})', path.read_text(errors='replace')))
+    assert len(matches) == 1, 'OWN_WORKER_FLOW_NOT_UNIQUE_OR_NOT_YET_VISIBLE'
+    assert str(graph) == scope['graph_id'] and matches == {scope['flow_id']}
+    resolved_path = output(scope) / 'resolved-owned-identity.json'
+    resolved = load(resolved_path) if resolved_path.exists() else None
+    flow = UUID(resolved['flow_id']) if resolved else (UUID(next(iter(matches))) if matches else None)
+    if resolved:
+        assert resolved['graph_id'] == str(graph) and set(resolved['task_ids']) == {str(item) for item in tasks}
+    if flow and matches:
+        assert matches == {str(flow)}
+    return graph, tasks, flow, resolved_path
+
+
+async def capture(scope_path, mode):
+    os.umask(0o077)
+    scope, trial, command = checked_scope(scope_path, mode)
+    fixture = trial / 'pytest/test_public_dag_bounded_volume0'
+    out = output(scope)
+    if mode == 'live':
+        reason = stop_reason(scope, trial, fixture)
+        if reason:
+            return {'status': 'PRECONNECTION_STOP', 'reason': reason}
+        previous = sorted(out.glob('live-sample-*.json'))
+        if previous:
+            latest = max(load(path)['started_monotonic_ns'] for path in previous)
+            assert time.monotonic_ns() - latest >= 65_000_000_000
+        progress = last_progress(fixture)
+    else:
+        assert not list(out.glob('final-sample-*.json')), 'FINAL_CAPTURE_ALREADY_ATTEMPTED'
+        progress = {'snapshot': load(fixture / 'final-progress.json')}
+    graph, expected_tasks, flow, resolved_path = scoped_identity(scope, fixture, progress)
+    if mode == 'final':
+        assert resolved_path.exists() and sha(resolved_path) == scope['resolved_identity_sha256']
+        assert flow == UUID(scope['flow_id']) and graph == UUID(scope['graph_id'])
+    sql = load(BASE / 'queries.json')
+    assert len(sql) == 18
+    sql['consumers'] = (BASE / 'postterminal-consumer-select-v1.sql').read_text().strip()
+    assert len(sql) == 19
+    for query in [CONTEXT_SQL, *sql.values()]:
+        assert query.startswith('SELECT ') and not re.search(r'\b(FOR\s+UPDATE|FOR\s+SHARE|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|LOCK|TRUNCATE|CALL|pg_terminate_backend|pg_cancel_backend)\b', query, re.I)
+    # The private selector is first read only after explicit Root scope validation.
+    config = load(SELECTOR)
+    parsed = urlsplit(config['admin_dsn'])
+    assert parsed.hostname in {'localhost', '127.0.0.1', '::1'} and parsed.port == 55436
+    assert config['sqlalchemy_scheme'] == 'postgresql+asyncpg'
+    assert command['database'].startswith(config['database_prefix'] + '_s2_')
+    dsn = urlunsplit((parsed.scheme, parsed.netloc, '/' + command['database'], parsed.query, ''))
+    # Optional runtime client dependency: no imports, connection or hooks during preparation.
+    import asyncpg
+    connection = None
+    now = time.monotonic_ns()
+    result = {'schema': 'personal-dag5000-readonly-19family-mvcc-snapshot-v1', 'mode': mode,
+              'status': 'CAPTURE_STARTED', 'head': HEAD, 'trial': str(trial),
+              'database': command['database'], 'phase': scope['phase'], 'graph_id': str(graph),
+              'scope_sha256': sha(scope_path), 'command_sha256': sha(trial / 'command.json'),
+              'preparation_sha256': scope['preparation_sha256'], 'sql_sha256': sha(BASE / 'queries.json'), 'consumer_sql_sha256': sha(BASE / 'postterminal-consumer-select-v1.sql'), 'metadata_query_families':19,
+              'started_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'started_monotonic_ns': now, 'author_direct_pg_progress_record': progress, 'progress_record_provenance':'Unchanged author test ordinary direct-PG multi-SELECT snapshots; not HTTP/API and not this observer SQL transaction',
+              'controller_pid': os.getpid(), 'controller_start_ticks': ticks(os.getpid()),
+              'readonly': True, 'explicit_row_locks': False,
+              'flow_discovery': 'ROOT_BOUND_OWN_PROGRESS_AND_UNIQUE_OWN_WORKER_VIEW',
+              'limitations': ['Discrete MVCC snapshot, not every intervening transition',
+                              'Persisted Flow lease UUID/counters only; external KV lease backend not inspected',
+                              'Actual first/last SQL Consumer positions are discrete labels; no retroactive50/500 or activation snapshot claim',
+                              'All19 metadata families including consumers share this repeatable-read transaction; author progress file is outside it',
+                              'Consumer rows may be absent after retention cleanup; absence never proves literal5000 cursor rows',
+                              'Plain SELECTs acquire ordinary relation AccessShare internally',
+                              'No payload/parameters/capabilities/env/DSN selected or serialized']}
+    async def transaction():
+        nonlocal connection, flow
+        connection = await asyncpg.connect(dsn, timeout=3, command_timeout=2,
+            server_settings={'default_transaction_read_only': 'on',
+                             'application_name': 'principal_personal_dag5000_metadata',
+                             'statement_timeout': '2000', 'lock_timeout': '100',
+                             'idle_in_transaction_session_timeout': '3000'})
+        if mode == 'live':
+            reason = stop_reason(scope, trial, fixture)
+            if reason:
+                result.update(status='CONNECTED_STOP_BEFORE_METADATA', reason=reason)
+                return
+        async with connection.transaction(isolation='repeatable_read', readonly=True):
+            context = dict(await connection.fetchrow(CONTEXT_SQL))
+            assert context['database'] == command['database']
+            assert int(context['server_version']) // 10000 == 17 and context['read_only'] == 'on'
+            result['database_context'] = context
+            assert flow == UUID(scope['flow_id']) and graph == UUID(scope['graph_id'])
+            result['flow_id'] = str(flow)
+            data = {'scope': [dict(row) for row in await connection.fetch(sql['scope'], graph, flow)]}
+            assert len(data['scope']) == 1 and data['scope'][0]['flow_run_id'] == flow
+            assert data['scope'][0]['profile'] == 'partitioned-dag-v1'
+            params = {'flow_lease': (flow,), 'lease_history': (flow,), 'operators': (graph,),
+                      'ports': (graph,), 'edges': (graph,), 'edge_partitions': (graph, flow),
+                      'launches': (graph,), 'authority': (flow,), 'coordinator_launches': (flow,),
+                      'tasks': (flow,), 'partitions': (flow,), 'consumers': (flow,graph)}
+            for name, query in sql.items():
+                if name != 'scope':
+                    data[name] = [dict(row) for row in await connection.fetch(query, *params.get(name, (flow, graph)))]
+            assert all(row['flow_run_id'] == flow and row['graph_revision_id'] == graph for row in data['consumers'])
+            assert {row['id'] for row in data['tasks']} == expected_tasks
+            assert {row['task_run_id'] for row in data['subtasks']} == expected_tasks
+            result.update(metadata=data, counts={key: len(rows) for key, rows in data.items()},
+                          status='ACTUAL_READONLY_MVCC_CAPTURE')
+    try:
+        await asyncio.wait_for(transaction(), timeout=6)
+    except Exception as error:
+        result.update(status='READONLY_CAPTURE_FAILED_OR_INCONCLUSIVE', error_type=type(error).__name__)
+    finally:
+        if connection is not None:
+            try:
+                await connection.close(timeout=3)
+            except Exception as error:
+                result.update(status='CONNECTION_CLOSE_INCONCLUSIVE', close_error_type=type(error).__name__)
+        result['connection_closed'] = connection is None or connection.is_closed()
+    if result['status'] == 'ACTUAL_READONLY_MVCC_CAPTURE':
+        consumers=result['metadata']['consumers']
+        result['sql_cursors']=[row['completed_through'] for row in consumers]
+        result['sql_terminal_window']=('SQL_THREE_CURSORS_GE4900' if len(consumers)==3 and min(result['sql_cursors'])>=4900 else ('SQL_CONSUMERS_ABSENT_OR_TERMINAL' if not consumers or result['metadata']['scope'][0]['state']=='RELEASED' else None))
+        if mode=='final':
+            result['literal_release_checks']=literal_release_checks(result,out)
+            if not all(result['literal_release_checks'].values()):
+                result['status']='POSTTERMINAL_LITERAL_RELEASE_CHECKS_FAILED'
+    result['ended_monotonic_ns'] = time.monotonic_ns()
+    path = out / (('live' if mode == 'live' else 'final') + '-sample-' + str(now) + '.json')
+    write(path, result)
+    if result['status'] == 'ACTUAL_READONLY_MVCC_CAPTURE' and not resolved_path.exists():
+        write(resolved_path, {'head': HEAD, 'trial': str(trial), 'database': command['database'],
+                             'flow_id': str(flow), 'graph_id': str(graph),
+                             'task_ids': sorted(str(item) for item in expected_tasks),
+                             'scope_sha256': sha(scope_path), 'command_sha256': sha(trial / 'command.json'),
+                             'first_actual_sample': str(path), 'first_actual_sample_sha256': sha(path)})
+    return {'status': result['status'], 'path': str(path), 'sha256': sha(path),
+            'counts': result.get('counts'), 'connection_closed': result['connection_closed'],
+            'sql_cursors': [row['completed_through'] for row in result.get('metadata',{}).get('consumers',[])],
+            'author_pg_cursors': [row['completed_through'] for row in progress['snapshot'].get('consumers',[])],
+            'sql_terminal_window': result.get('sql_terminal_window'), 'literal_release_checks':result.get('literal_release_checks')}
+
+
+def literal_release_checks(result, out):
+    """Check literal final rows and their mappings to the first actual sample."""
+    m=result['metadata']
+    samples=[load(path) for path in out.glob('live-sample-*.json')]
+    samples=[row for row in samples if row['status']=='ACTUAL_READONLY_MVCC_CAPTURE' and row['connection_closed'] is True]
+    assert samples, 'NO_CLOSED_ACTUAL_LIVE_SAMPLE_TO_COMPARE'
+    first=min(samples,key=lambda row:row['started_monotonic_ns'])
+    mutable={
+        'scope':{'state','terminal_operation_id','flow_state'},
+        'flow_lease':{'state_id','state_type','deployment_active_slots','deployment_concurrency_lease_id'},
+        'tasks':{'state_type'},'subtasks':{'physical_slot_released'},
+        'partitions':{'state','last_sequence','tail_sequence','producer_position','released'},
+        'physical_slots':{'released','release_operation_id','released_at'},
+        'tag_allocations':{'released'},'assigned_workers':{'status'},'limits':{'active_slots'},
+        'grants':{'state'},'launches':{'state'},'authority':{'state'},'coordinator_launches':{'state'}}
+    def projection(data,family):
+        return sorted(json.dumps({k:v for k,v in row.items() if k not in mutable.get(family,set())},sort_keys=True,default=str) for row in data['metadata'][family])
+    stable=all(projection(first,family)==projection(result,family) for family in set(m)-{'lease_history','consumers'})
+    lease_ids={str(row['lease_id']) for row in m['lease_history'] if row['lease_id']}
+    first_lease_ids={str(row['lease_id']) for row in first['metadata']['lease_history'] if row['lease_id']}
+    task_ids={row['id'] for row in m['tasks']};subtask_ids={row['id'] for row in m['subtasks']};grant_ids={row['id'] for row in m['grants']}
+    return {
+        'same_flow_graph_command_trial':all(result[key]==first[key] for key in ('flow_id','graph_id','command_sha256','trial','database','phase')),
+        'stable_literal_immutable_mapping_families':stable,
+        'graph_released_flow_completed':len(m['scope'])==1 and m['scope'][0]['state']=='RELEASED' and m['scope'][0]['flow_state']=='COMPLETED',
+        'four_tasks_completed_run_count1':len(task_ids)==4 and all(row['state_type']=='COMPLETED' and row['run_count']==1 for row in m['tasks']),
+        'four_subtasks_exact_tasks_epoch1_released':len(subtask_ids)==4 and {row['task_run_id'] for row in m['subtasks']}==task_ids and all(row['assignment_epoch']==row['physical_epoch']==1 and row['physical_slot_released'] for row in m['subtasks']),
+        'four_grants_retired_exact_current_grants':len(grant_ids)==4 and {row['current_grant_id'] for row in m['subtasks']}==grant_ids and all(row['state']=='RETIRED' for row in m['grants']),
+        'four_launches_closed_attempt1':len(m['launches'])==4 and {row['subtask_id'] for row in m['launches']}==subtask_ids and all(row['state']=='CLOSED' and row['attempt_index']==row['planned_physical_epoch']==1 for row in m['launches']),
+        'four_physical_slots_literal_release_operations':len(m['physical_slots'])==4 and {row['subtask_id'] for row in m['physical_slots']}==subtask_ids and all(row['released'] and row['release_operation_id'] is not None and row['released_at'] is not None for row in m['physical_slots']),
+        'four_tag_allocations_released':len(m['tag_allocations'])==4 and {row['subtask_id'] for row in m['tag_allocations']}==subtask_ids and all(row['released'] for row in m['tag_allocations']),
+        'two_limits_actual_active_slots0':len(m['limits'])==2 and all(row['active_slots']==0 for row in m['limits']),
+        'flow_deployment_slots0':len(m['flow_lease'])==1 and m['flow_lease'][0]['deployment_active_slots']==0,
+        'authority_and_coordinator_released':len(m['authority'])==len(m['coordinator_launches'])==1 and m['authority'][0]['state']==m['coordinator_launches'][0]['state']=='RELEASED',
+        'seven_partitions_literal_completed_released5000':len(m['partitions'])==7 and all(row['state']=='COMPLETED' and row['released'] and row['last_sequence']==row['tail_sequence']==row['producer_position']==5000 for row in m['partitions']),
+        'same_single_persisted_lease_uuid':len(lease_ids)==1 and lease_ids==first_lease_ids,
+        'consumer_retention_rows_literally_empty':m['consumers']==[]}

@@ -1,0 +1,200 @@
+--- a/src/prefect/server/models/stream_routes.py
++++ b/src/prefect/server/models/stream_routes.py
+@@ -8,6 +8,7 @@
+ import sqlalchemy as sa
+ from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+ from sqlalchemy.ext.asyncio import AsyncSession
++from sqlalchemy.orm import aliased
+ 
+ from prefect._internal.stream_key_wire import decode_tagged_key_wire_v1
+ from prefect._internal.stream_route_plan import (
+@@ -345,6 +346,18 @@
+     edge_partition_id: UUID
+ 
+ 
++@dataclass(frozen=True)
++class _ReferenceTopologyFacts:
++    edge_partition_id: UUID | None
++    graph_revision_id: UUID | None
++    target_subtask_id: UUID | None
++    stream_id: UUID | None
++    edge_id: UUID | None
++    matched_edge_id: UUID | None
++    producer_port_id: UUID | None
++    producer_subtask_id: UUID | None
++
++
+ class NativeDAGRouteStore:
+     """Existing-partition DAG transactions under a current internal authority."""
+ 
+@@ -637,29 +650,75 @@
+                 "IDENTITY_CONFLICT",
+                 "Reference is outside the assigned subscriber cursor",
+             )
+-        record = await self.session.scalar(
+-            sa.select(self.db.StreamRecord)
++        reference = aliased(self.db.StreamRecord, name="reference")
++        payload = aliased(self.db.StreamRecord, name="payload")
++        edge_partition = self.db.StreamGraphEdgePartition
++        edge = self.db.StreamGraphEdge
++        port = self.db.StreamGraphPort
++        producer = self.db.StreamPhysicalSubtask
++        statement = (
++            sa.select(
++                reference,
++                payload,
++                self.db.StreamRouteReceipt,
++                edge_partition.id.label("edge_partition_id"),
++                edge_partition.graph_revision_id.label("graph_revision_id"),
++                edge_partition.target_subtask_id.label("target_subtask_id"),
++                edge_partition.stream_id.label("stream_id"),
++                edge_partition.edge_id.label("edge_id"),
++                edge.id.label("matched_edge_id"),
++                port.id.label("producer_port_id"),
++                producer.id.label("producer_subtask_id"),
++            )
++            .select_from(reference)
++            .outerjoin(edge_partition, edge_partition.id == reference.edge_partition_id)
++            .outerjoin(
++                self.db.StreamRouteReceipt,
++                self.db.StreamRouteReceipt.id == reference.route_receipt_id,
++            )
++            .outerjoin(payload, payload.id == reference.payload_record_id)
++            .outerjoin(edge, edge.id == edge_partition.edge_id)
++            .outerjoin(port, port.id == edge.producer_port_id)
++            .outerjoin(
++                producer,
++                sa.and_(
++                    producer.output_stream_id == payload.stream_id,
++                    producer.operator_run_id == port.operator_run_id,
++                    producer.graph_revision_id == self.authorization.graph.id,
++                ),
++            )
+             .where(
+-                self.db.StreamRecord.stream_id == input_stream_id,
+-                self.db.StreamRecord.sequence == sequence,
++                reference.stream_id == input_stream_id,
++                reference.sequence == sequence,
+             )
+             .execution_options(populate_existing=True)
+         )
+-        if record is None:
++        row = (await self.session.execute(statement)).one_or_none()
++        if row is None:
+             raise NativeStreamError(
+                 "ROUTE_HORIZON_EXPIRED", "The input reference is no longer retained"
+             )
+-        return await self._resolve_record(record)
++        record, payload_record, receipt = row[:3]
++        facts = _ReferenceTopologyFacts(
++            edge_partition_id=row.edge_partition_id,
++            graph_revision_id=row.graph_revision_id,
++            target_subtask_id=row.target_subtask_id,
++            stream_id=row.stream_id,
++            edge_id=row.edge_id,
++            matched_edge_id=row.matched_edge_id,
++            producer_port_id=row.producer_port_id,
++            producer_subtask_id=row.producer_subtask_id,
++        )
++        return await self._resolve_record(record, payload_record, receipt, facts)
+ 
+     async def _resolve_record(
+-        self, record: orm_models.StreamRecord
++        self,
++        record: orm_models.StreamRecord,
++        payload: orm_models.StreamRecord | None,
++        receipt: orm_models.StreamRouteReceipt | None,
++        facts: _ReferenceTopologyFacts,
+     ) -> ResolvedDAGValue:
+         graph_id = self.authorization.graph.id
+-        edge_partition = await self.session.scalar(
+-            sa.select(self.db.StreamGraphEdgePartition).where(
+-                self.db.StreamGraphEdgePartition.id == record.edge_partition_id
+-            )
+-        )
+         if (
+             record.record_kind != "REFERENCE"
+             or record.graph_revision_id != graph_id
+@@ -667,10 +726,10 @@
+             or record.payload_record_kind != "PAYLOAD"
+             or record.payload_record_id is None
+             or record.route_receipt_id is None
+-            or edge_partition is None
+-            or edge_partition.graph_revision_id != graph_id
+-            or edge_partition.target_subtask_id != self.authorization.subtask.id
+-            or edge_partition.stream_id != record.stream_id
++            or facts.edge_partition_id is None
++            or facts.graph_revision_id != graph_id
++            or facts.target_subtask_id != self.authorization.subtask.id
++            or facts.stream_id != record.stream_id
+         ):
+             raise NativeStreamError(
+                 "REFERENCE_IDENTITY_CONFLICT",
+@@ -696,9 +755,6 @@
+                 "REFERENCE_IDENTITY_CONFLICT",
+                 "Reference envelope identity or digest differs",
+             )
+-        receipt = await self.session.get(
+-            self.db.StreamRouteReceipt, record.route_receipt_id, populate_existing=True
+-        )
+         if receipt is None:
+             raise NativeStreamError(
+                 "ROUTE_HORIZON_EXPIRED",
+@@ -713,7 +769,7 @@
+             ) from error
+         if not any(
+             item.record_id == record.id
+-            and item.edge_id == edge_partition.edge_id
++            and item.edge_id == facts.edge_id
+             and item.stream_id == record.stream_id
+             and item.sequence == record.sequence
+             and item.edge_partition_id == record.edge_partition_id
+@@ -724,9 +780,6 @@
+                 "REFERENCE_IDENTITY_CONFLICT",
+                 "Reference is not part of its accepted parent route",
+             )
+-        payload = await self.session.get(
+-            self.db.StreamRecord, record.payload_record_id, populate_existing=True
+-        )
+         if payload is None:
+             raise NativeStreamError(
+                 "ROUTE_HORIZON_EXPIRED", "Referenced payload is no longer retained"
+@@ -737,26 +790,14 @@
+             raise NativeStreamError(
+                 "REFERENCE_IDENTITY_CONFLICT", "Original payload is not canonical"
+             ) from error
+-        edge = await self.session.get(self.db.StreamGraphEdge, edge_partition.edge_id)
+-        assert edge is not None
+-        producer_port = await self.session.get(
+-            self.db.StreamGraphPort, edge.producer_port_id
+-        )
+-        assert producer_port is not None
+-        actual_producer = await self.session.scalar(
+-            sa.select(self.db.StreamPhysicalSubtask).where(
+-                self.db.StreamPhysicalSubtask.output_stream_id == payload.stream_id,
+-                self.db.StreamPhysicalSubtask.operator_run_id
+-                == producer_port.operator_run_id,
+-                self.db.StreamPhysicalSubtask.graph_revision_id == graph_id,
+-            )
+-        )
++        assert facts.matched_edge_id is not None
++        assert facts.producer_port_id is not None
+         if (
+             payload.record_kind != "PAYLOAD"
+             or payload.payload_record_id is not None
+             or payload.graph_revision_id != graph_id
+             or payload.flow_run_id != self.authorization.flow_run_id
+-            or actual_producer is None
++            or facts.producer_subtask_id is None
+             or envelope.payload_stream_id != str(payload.stream_id)
+             or envelope.payload_sequence != payload.sequence
+             or envelope.payload_value_digest != digest
+@@ -776,7 +817,7 @@
+             payload_value_digest=digest,
+             payload_size_bytes=payload.size_bytes,
+             reference_record_id=record.id,
+-            edge_partition_id=edge_partition.id,
++            edge_partition_id=facts.edge_partition_id,
+         )
+ 
+     async def read_consumer(self, binding: ConsumerBinding) -> StreamDelivery | None:

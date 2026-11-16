@@ -1,0 +1,213 @@
+import json
+import os
+import time
+from pathlib import Path
+import anyio
+from prefect import flow, task
+from prefect.streams import (NativeStreamFlowConfig, SourceRecord, StreamGraph,
+    StreamSourceConfig, StreamTaskConfig, StreamPort, StreamInput, StreamExchange,
+    StreamPartitionCall, KeyedStreamOutput)
+
+
+def mark(directory, role, ctx):
+    for name in ("PREFECT_API_AUTH_STRING", "PREFECT_SERVER_API_AUTH_STRING",
+                 "PREFECT_API_KEY", "ARIADNE_NATIVE_STREAM_TEST_DSN"):
+        assert name not in os.environ, "Task process inherited administrative credentials"
+    root = Path(directory)
+    marker = root / (role + "-" + str(ctx.partition_index) + ".pid.json")
+    if not marker.exists():
+        marker.write_text(json.dumps({"pid": os.getpid(), "parent": os.getppid(),
+            "partition": ctx.partition_index, "partitions": ctx.partition_count,
+            "task_run_id": str(ctx.task_run_id), "attempt": ctx.attempt,
+            "accepted_source_position": getattr(ctx, "accepted_source_position", None)}))
+    processes = root / "processes"
+    processes.mkdir(exist_ok=True)
+    process_marker = processes / (role + "-" + str(ctx.partition_index) + "-" + str(os.getpid()) + ".pid.json")
+    if not process_marker.exists():
+        process_marker.write_text(json.dumps({"pid": os.getpid(), "parent": os.getppid(),
+            "role": role, "partition": ctx.partition_index, "task_run_id": str(ctx.task_run_id),
+            "attempt": ctx.attempt, "accepted_source_position": getattr(ctx, "accepted_source_position", None)}))
+
+
+def trace(directory, name, value):
+    with (Path(directory) / (name + ".jsonl")).open("a") as output:
+        output.write(json.dumps({**value, "pid": os.getpid(),
+            "monotonic_ns": time.monotonic_ns()}) + "\n")
+
+
+def wait_for_file(directory, name, timeout=720):
+    deadline = time.monotonic() + timeout
+    while not (Path(directory) / name).exists():
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Observer did not release the bounded fixture barrier")
+        time.sleep(0.02)
+
+
+async def wait_for_file_async(directory, name, timeout=720):
+    deadline = time.monotonic() + timeout
+    while not (Path(directory) / name).exists():
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Observer did not release the bounded fixture barrier")
+        await anyio.sleep(0.02)
+
+
+def final_cursor_budget(count):
+    return 3900 if count == 5000 else 720
+
+
+def cut_ready(ctx, directory, mode):
+    value = {"pid": os.getpid(), "task_run_id": str(ctx.task_run_id),
+        "sequence": ctx.input_sequence, "attempt": ctx.attempt,
+        "mode": mode, "monotonic_ns": time.monotonic_ns()}
+    marker = Path(directory) / "branch-cut-ready.json"
+    temporary = marker.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value))
+    temporary.replace(marker)
+    return value
+
+
+def exit_at_cut(directory, value):
+    (Path(directory) / "branch-loss.json").write_text(json.dumps(
+        {**value, "monotonic_ns": time.monotonic_ns()}))
+    os._exit(77)
+
+
+@task(version="dag-lifecycle-v1", retries=2, tags={"native-dag-runtime-capacity"}, stream=StreamSourceConfig())
+def source(ctx, directory: str, count: int, mode: str, keyed: bool = False):
+    mark(directory, "A", ctx)
+    for position in range(ctx.accepted_source_position + 1, count + 1):
+        value = {"document_id": "document-" + str(position), "number": position}
+        if keyed:
+            value = KeyedStreamOutput(value, key=position)
+        yield SourceRecord(position, value)
+        trace(directory, "source-accepted", {"position": position})
+        if count > 8 and position == count and mode in {"normal", "accepted200", "incomplete200"}:
+            if mode != "normal":
+                wait_for_file(directory, "replacement-started.json")
+            wait_for_file(directory, "all-cursors-observed", final_cursor_budget(count))
+        if mode in {"failure", "cancel"}:
+            time.sleep(60)
+
+
+@task(version="dag-lifecycle-v1", retries=2, tags={"native-dag-runtime-capacity"}, stream=StreamSourceConfig())
+async def source_async(ctx, directory: str, count: int, mode: str, keyed: bool = False):
+    mark(directory, "A", ctx)
+    for position in range(ctx.accepted_source_position + 1, count + 1):
+        value = {"document_id": "document-" + str(position), "number": position}
+        if keyed:
+            value = KeyedStreamOutput(value, key=position)
+        yield SourceRecord(position, value)
+        trace(directory, "source-accepted", {"position": position})
+        if count > 8 and position == count and mode in {"normal", "accepted200", "incomplete200"}:
+            if mode != "normal":
+                await wait_for_file_async(directory, "replacement-started.json")
+            await wait_for_file_async(directory, "all-cursors-observed", final_cursor_budget(count))
+        if mode in {"failure", "cancel"}:
+            await anyio.sleep(60)
+
+
+def signed(ctx, document, directory, role):
+    mark(directory, role, ctx)
+    root = Path(directory) / (role + "-" + str(ctx.partition_index))
+    root.mkdir(exist_ok=True)
+    (root / (document["document_id"] + ".json")).write_text(json.dumps(document))
+    trace(directory, "calls-" + role + "-" + str(ctx.partition_index),
+        {"sequence": ctx.input_sequence, "number": document["number"],
+         "task_run_id": str(ctx.task_run_id), "attempt": ctx.attempt})
+    return {**document, "signed_by": role}
+
+
+@task(version="dag-lifecycle-v1", retries=2, tags={"native-dag-runtime-capacity"}, stream=StreamTaskConfig(input="document"))
+def operator(ctx, document, directory: str, role: str, count: int = 8, mode: str = "normal"):
+    value = signed(ctx, document, directory, role)
+    if role == "B" and ctx.input_sequence == 5 and not (Path(directory) / "ordinary-retry-raised.json").exists():
+        (Path(directory) / "ordinary-retry-raised.json").write_text(json.dumps({
+            "pid": os.getpid(), "task_run_id": str(ctx.task_run_id),
+            "sequence": ctx.input_sequence, "attempt": ctx.attempt}))
+        raise ValueError("Intentional ordinary task retry before yield on input 5")
+    cut = role == "B" and ctx.attempt == 1 and ctx.input_sequence == 200
+    if cut and mode == "incomplete200":
+        ready = cut_ready(ctx, directory, mode)
+        wait_for_file(directory, "branch-cut-observed", 120)
+        exit_at_cut(directory, ready)
+    if role == "C" and document["number"] == count and mode in {"accepted200", "incomplete200"}:
+        wait_for_file(directory, "replacement-started.json")
+    try:
+        yield value
+    finally:
+        if cut and mode == "accepted200":
+            ready = cut_ready(ctx, directory, mode)
+            wait_for_file(directory, "branch-cut-observed", 120)
+            exit_at_cut(directory, ready)
+        if count > 8 and document["number"] == count and mode in {"normal", "accepted200", "incomplete200"}:
+            wait_for_file(directory, "all-cursors-observed", final_cursor_budget(count))
+
+
+@task(version="dag-lifecycle-v1", retries=2, tags={"native-dag-runtime-capacity"}, stream=StreamTaskConfig(input="document"))
+async def operator_async(ctx, document, directory: str, role: str, count: int = 8, mode: str = "normal"):
+    value = signed(ctx, document, directory, role)
+    cut = role == "B" and ctx.attempt == 1 and ctx.input_sequence == 200
+    if cut and mode == "incomplete200":
+        ready = cut_ready(ctx, directory, mode)
+        await wait_for_file_async(directory, "branch-cut-observed", 120)
+        exit_at_cut(directory, ready)
+    if role == "C" and document["number"] == count and mode in {"accepted200", "incomplete200"}:
+        await wait_for_file_async(directory, "replacement-started.json")
+    try:
+        yield value
+    finally:
+        if cut and mode == "accepted200":
+            ready = cut_ready(ctx, directory, mode)
+            await wait_for_file_async(directory, "branch-cut-observed", 120)
+            exit_at_cut(directory, ready)
+        if count > 8 and document["number"] == count and mode in {"normal", "accepted200", "incomplete200"}:
+            await wait_for_file_async(directory, "all-cursors-observed", final_cursor_budget(count))
+
+
+def author(directory, count, mode, asynchronous, c_exchange="broadcast"):
+    with StreamGraph() as graph:
+        a = graph.add(source_async if asynchronous else source, operator_uid="A",
+            partitions=(StreamPartitionCall(parameters={"directory": directory, "count": count,
+                "mode": mode, "keyed": c_exchange == "keyed"}),),
+            output=StreamPort("documents"))
+        for role, parallelism, exchange in (("B", 1, "forward"), ("C", 2, c_exchange)):
+            graph.add(operator_async if asynchronous else operator, operator_uid=role,
+                partitions=tuple(StreamPartitionCall(parameters={"directory": directory, "role": role,
+                    "count": count, "mode": mode}) for _ in range(parallelism)),
+                input=StreamInput(port=StreamPort("input"), upstream=a.output("documents"),
+                    edge_uid="A-"+role, subscriber_uid="subscriber-"+role,
+                    exchange=StreamExchange(kind=exchange,
+                        key_group_count=16 if exchange == "keyed" else None)), output=StreamPort("result"))
+    return graph.seal()
+
+
+@flow(version="dag-lifecycle-v1", retries=0, persist_result=False,
+      streaming=NativeStreamFlowConfig(profile="partitioned-dag-v1", partition_count=None))
+def documents(directory: str, count: int = 8, mode: str = "normal", wait_timeout: float = 150, c_exchange: str = "broadcast"):
+    sealed = author(directory, count, mode, False, c_exchange)
+    if mode == "preview":
+        return {"preview": True}
+    running = sealed.start(timeout=90)
+    if mode == "failure":
+        raise ValueError("Application failure after durable activation")
+    if mode == "cancel":
+        running.cancel(reason="Explicit application cancellation")
+        raise AssertionError("Cancellation returned normally")
+    running.wait(timeout=wait_timeout)
+    return {"documents": count}
+
+
+@flow(version="dag-lifecycle-v1", retries=0, persist_result=False,
+      streaming=NativeStreamFlowConfig(profile="partitioned-dag-v1", partition_count=None))
+async def documents_async(directory: str, count: int = 8, mode: str = "normal", wait_timeout: float = 150, c_exchange: str = "broadcast"):
+    sealed = author(directory, count, mode, True, c_exchange)
+    if mode == "preview":
+        return {"preview": True}
+    running = await sealed.start(timeout=90)
+    if mode == "failure":
+        raise ValueError("Application failure after durable activation")
+    if mode == "cancel":
+        await running.cancel(reason="Explicit application cancellation")
+        raise AssertionError("Cancellation returned normally")
+    await running.wait(timeout=wait_timeout)
+    return {"documents": count}

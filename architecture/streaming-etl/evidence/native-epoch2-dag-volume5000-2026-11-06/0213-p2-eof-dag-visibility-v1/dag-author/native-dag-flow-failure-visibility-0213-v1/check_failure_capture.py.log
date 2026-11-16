@@ -1,0 +1,122 @@
+"""Actual applied helper/Flow-body FS and exception controls; no app/DB imports."""
+import ast
+import asyncio
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from uuid import UUID,uuid4
+
+ROOT=Path('/tmp/ariadne-native-5000-diagnosis-v1');BASE=Path(__file__).resolve().parent
+file=ROOT/'tests/test_native_stream_dag_execution_http.py'
+tree=ast.parse(file.read_text());source=ast.literal_eval(next(n.value for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='_USER_MODULE' for t in n.targets)))
+module=ast.parse(source);names={'_record_flow_failure','documents','documents_async'}
+selected=[n for n in module.body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name in names]
+for node in selected:node.decorator_list=[]
+ns={'Path':Path,'UUID':UUID,'json':json,'time':time}
+exec(compile(ast.Module(body=selected,type_ignores=[]),'/owned/generated/native_dag_example.py','exec'),ns)
+actual_recorder=ns['_record_flow_failure'];graph=uuid4();state={'error':None,'waits':0}
+class Running:
+ def wait(self,**kwargs):
+  assert kwargs=={'timeout':150};state['waits']+=1
+  if state['error'] is not None:raise state['error']
+class AsyncRunning:
+ async def wait(self,**kwargs):return Running().wait(**kwargs)
+class Sealed:
+ graph_revision_id=graph
+ def start(self,**kwargs):assert kwargs=={'timeout':90};return Running()
+class AsyncSealed:
+ graph_revision_id=graph
+ async def start(self,**kwargs):assert kwargs=={'timeout':90};return AsyncRunning()
+ns['author']=lambda directory,count,mode,asynchronous,c_exchange:AsyncSealed() if asynchronous else Sealed()
+seen={}
+def observed_recorder(directory,identity,error):
+ before=error.__traceback__;actual_recorder(directory,identity,error)
+ assert error.__traceback__ is before
+ seen['error']=error;seen['traceback']=before
+ns['_record_flow_failure']=observed_recorder
+literal='DAG wait timed out; observation did not mutate the graph'
+secret='PRIVATE_PAYLOAD_SENTINEL_67'
+class NoStringError(Exception):
+ def __str__(self):raise AssertionError('Exception string must never be read')
+class TimeoutSubclass(TimeoutError):pass
+controls=[]
+def call(directory,mode='normal',asynchronous=False):
+ if asynchronous:return asyncio.run(ns['documents_async'](str(directory),mode=mode))
+ return ns['documents'](str(directory),mode=mode)
+def expect(directory,mode='normal',asynchronous=False):
+ try:call(directory,mode,asynchronous)
+ except BaseException as error:
+  assert error is seen['error']
+  current=error.__traceback__;chain=[]
+  while current is not None:chain.append(current);current=current.tb_next
+  assert any(tb is seen['traceback'] for tb in chain)
+  assert all(tb.tb_frame.f_code.co_name!='_record_flow_failure' for tb in chain)
+  return error
+ raise AssertionError('Expected original error')
+with tempfile.TemporaryDirectory() as d:
+ root=Path(d)
+ for name,mode,asynchronous,error,expected_timeout in [
+  ('sync_body','failure',False,None,False),('async_body','failure',True,None,False),
+  ('known_wait','normal',False,TimeoutError(literal),True),('other_wait','normal',True,TimeoutError(secret),False),
+  ('subclass','normal',False,TimeoutSubclass(literal),False),('no_string','normal',True,NoStringError(secret),False),
+  ('preseal','preseal-failure',True,None,False)]:
+  directory=root/name;directory.mkdir();state['error']=error
+  original=expect(directory,mode,asynchronous)
+  if error is not None:assert original is error
+  raw=(directory/'dag-flow-failure.json').read_text();data=json.loads(raw)
+  assert secret not in raw and '/owned/generated/' not in raw and 'Application failure' not in raw
+  assert set(data)=={'schema_version','exception_type','sdk_wait_timeout','graph_revision_id','monotonic_ns','frames','frames_truncated'}
+  assert data['sdk_wait_timeout'] is expected_timeout
+  assert data['graph_revision_id']==(None if mode=='preseal-failure' else str(graph))
+  assert all(set(row)=={'file','function','line'} and '/' not in row['file'] for row in data['frames'])
+  assert len(data['frames'])<=16 and len(raw.encode())<8192
+  controls.append(name)
+ normal=root/'normal';normal.mkdir();state['error']=None
+ assert call(normal,asynchronous=True)=={'documents':8}
+ assert not (normal/'dag-flow-failure.json').exists();controls.append('normal_no_failure_IO')
+ # Real filesystem failures: not a directory, then a pre-existing temp file.
+ bad=root/'not_directory';bad.write_text('unchanged')
+ state['error']=NoStringError(secret);expected=state['error'];assert expect(bad) is expected
+ assert bad.read_text()=='unchanged'
+ blocked=root/'temp_exists';blocked.mkdir();(blocked/'dag-flow-failure.tmp').write_text('preserved')
+ assert expect(blocked) is expected and not (blocked/'dag-flow-failure.json').exists()
+ assert (blocked/'dag-flow-failure.tmp').read_text()=='preserved'
+ controls+=['IO_failure_original_object_and_traceback_preserved','exclusive_temp_failure_preserved']
+ # First captured error remains authoritative if the recorder is called again.
+ first=root/'first';first.mkdir();state['error']=ValueError(secret);expect(first)
+ original=(first/'dag-flow-failure.json').read_bytes();state['error']=TimeoutError(literal);expect(first)
+ assert (first/'dag-flow-failure.json').read_bytes()==original;controls.append('first_capture_preserved')
+ def deep(n):
+  if n:return deep(n-1)
+  raise NoStringError(secret)
+ deepdir=root/'deep';deepdir.mkdir()
+ try:deep(24)
+ except NoStringError as error:actual_recorder(str(deepdir),graph,error)
+ deepdata=json.loads((deepdir/'dag-flow-failure.json').read_text())
+ assert len(deepdata['frames'])==16 and deepdata['frames_truncated'] is True
+ controls.append('frame_bound_and_truncation')
+ # Real collector CLI: only the new exact filename is retained; existing
+ # credential redaction still applies, without exporting any raw test value.
+ source_dir=root/'collector_source';source_dir.mkdir();destination=root/'collector_output'
+ payload=json.loads(original);payload['token']=secret
+ (source_dir/'dag-flow-failure.json').write_text(json.dumps(payload))
+ (source_dir/'unrelated.json').write_text('{}')
+ command=[sys.executable,str(ROOT/'scripts/native_runtime_diagnostics.py'),'--source',str(source_dir),'--destination',str(destination)]
+ completed=subprocess.run(command,check=True,text=True,capture_output=True)
+ captured=list(destination.rglob('dag-flow-failure.json'));assert len(captured)==1
+ captured_data=json.loads(captured[0].read_text());assert captured_data['token']=='[REDACTED]'
+ assert secret not in captured[0].read_text() and not list(destination.rglob('unrelated.json'))
+ controls.append('real_collector_inclusion_and_existing_redaction')
+result={'status':'APPLIED_FLOW_FAILURE_FS_PRIVACY_EXCEPTION_CONTROLS_PASS','controls':controls,
+ 'actual_application_API_DB_native_or_profiler_execution':False,'real_collector_CLI_exit':completed.returncode,
+ 'test_source_sha256':hashlib.sha256(file.read_bytes()).hexdigest(),
+ 'collector_source_sha256':hashlib.sha256((ROOT/'scripts/native_runtime_diagnostics.py').read_bytes()).hexdigest(),
+ 'sdk_timeout_control':'Synthetic exact type/literal classification only; no real SDK timeout/native wait was run',
+ 'qualification':'Actual applied helper and original wrapped bodies are AST-loaded without application imports/decorators; real files and waited collector child. Fake sealed/running handles isolate exception propagation. Existing real native selectors are separate required controls.'}
+p=BASE/'failure-control-receipt.json';p.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+print(json.dumps(result))

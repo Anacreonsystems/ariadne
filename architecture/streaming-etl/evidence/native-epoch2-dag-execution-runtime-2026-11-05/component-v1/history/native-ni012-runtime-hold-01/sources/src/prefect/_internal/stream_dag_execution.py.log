@@ -1,0 +1,192 @@
+"""Trusted Flow coordination for one sealed DAG lifetime.
+
+Public handles contain only graph identities. Frozen operation material lives
+in the process-local Flow registry and never contains a client or capability.
+The server remains the authority for admission, activation and exact cleanup.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import threading
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
+from uuid import UUID, uuid5
+
+from prefect._internal.stream_route_plan import graph_routing_digest
+from prefect.context import TaskRunContext
+from prefect.streams import RunningStreamGraph, SealedStreamGraph, StreamProtocolError
+
+if TYPE_CHECKING:
+    from prefect.client.schemas.stream_dag_executions import StreamDAGExecution
+
+DAGAction = Literal["start", "activate", "abort-preview", "cancel", "fail"]
+DAGFailureKind = Literal[
+    "FLOW_SCOPE_EXCEPTION", "START_EXCEPTION", "START_TIMEOUT", "COORDINATOR_ERROR"
+]
+_ACTIONS = {"start", "activate", "abort-preview", "cancel", "fail"}
+_FAILURES = {
+    "FLOW_SCOPE_EXCEPTION",
+    "START_EXCEPTION",
+    "START_TIMEOUT",
+    "COORDINATOR_ERROR",
+}
+_DIGEST = re.compile(r"[0-9a-f]{64}")
+
+
+class DAGLifecycleBackend(Protocol):
+    """The Flow-owned backend; public handles never retain this object."""
+
+    async def start(
+        self, sealed: SealedStreamGraph, *, timeout: float | None
+    ) -> RunningStreamGraph: ...
+
+    async def abort_preview(self, sealed: SealedStreamGraph) -> StreamDAGExecution: ...
+
+    async def wait(
+        self, running: RunningStreamGraph, *, timeout: float | None
+    ) -> StreamDAGExecution: ...
+
+    async def cancel(self, running: RunningStreamGraph, *, reason: str) -> NoReturn: ...
+
+
+_CURRENT_DAG: ContextVar[DAGLifecycleBackend | None] = ContextVar(
+    "native_stream_dag_lifecycle", default=None
+)
+
+
+def _backend() -> DAGLifecycleBackend:
+    backend = _CURRENT_DAG.get()
+    if backend is None or TaskRunContext.get() is not None:
+        raise StreamProtocolError("DAG lifecycle requires its trusted Flow scope")
+    return backend
+
+
+async def start_stream_graph(
+    sealed: SealedStreamGraph, *, timeout: float | None = None
+) -> RunningStreamGraph:
+    return await _backend().start(sealed, timeout=timeout)
+
+
+async def abort_stream_graph_preview(sealed: SealedStreamGraph) -> StreamDAGExecution:
+    return await _backend().abort_preview(sealed)
+
+
+async def wait_stream_graph(
+    running: RunningStreamGraph, *, timeout: float | None = None
+) -> StreamDAGExecution:
+    return await _backend().wait(running, timeout=timeout)
+
+
+async def cancel_stream_graph(running: RunningStreamGraph, *, reason: str) -> NoReturn:
+    await _backend().cancel(running, reason=reason)
+    raise StreamProtocolError("DAG cancellation returned without its terminal signal")
+
+
+def dag_operation_id(graph_revision_id: UUID, action: DAGAction) -> UUID:
+    """Return the versioned natural identity, independent of a process/attempt."""
+    if type(graph_revision_id) is not UUID or action not in _ACTIONS:
+        raise StreamProtocolError("Invalid DAG operation identity")
+    return uuid5(graph_revision_id, f"prefect-stream-dag-{action}-v1")
+
+
+@dataclass(frozen=True)
+class DAGFlowBinding:
+    """A credential-free identity of the trusted enclosing Flow attempt."""
+
+    flow_run_id: UUID
+    flow_run_count: int
+    generation: int
+    holder_id: UUID
+    api_url: str
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.flow_run_id) is not UUID
+            or type(self.holder_id) is not UUID
+            or type(self.flow_run_count) is not int
+            or self.flow_run_count < 1
+            or type(self.generation) is not int
+            or not 1 <= self.generation <= 64
+        ):
+            raise StreamProtocolError("Invalid trusted DAG Flow attempt")
+
+
+@dataclass(frozen=True, init=False)
+class DAGOperationIntents:
+    """Retain the first immutable request across retries and finalization.
+
+    Failure uses its first cause even when another cleanup path observes a
+    later exception. Other operations refuse different material under the
+    same natural operation identity. Returned dictionaries are detached.
+    """
+
+    graph_revision_id: UUID
+    graph_digest: str
+    routing_digest: str
+    _requests: dict[str, bytes] = field(repr=False, compare=False)
+    _lock: Any = field(repr=False, compare=False)
+
+    def __init__(self, graph_revision_id: UUID, graph_digest: str) -> None:
+        if (
+            type(graph_revision_id) is not UUID
+            or type(graph_digest) is not str
+            or _DIGEST.fullmatch(graph_digest) is None
+        ):
+            raise StreamProtocolError("Invalid sealed DAG identity")
+        object.__setattr__(self, "graph_revision_id", graph_revision_id)
+        object.__setattr__(self, "graph_digest", graph_digest)
+        object.__setattr__(self, "routing_digest", graph_routing_digest(graph_digest))
+        object.__setattr__(self, "_requests", {})
+        object.__setattr__(self, "_lock", threading.RLock())
+
+    def request(
+        self,
+        action: DAGAction,
+        *,
+        reason: str | None = None,
+        failure_kind: DAGFailureKind | None = None,
+    ) -> dict[str, Any]:
+        if action not in _ACTIONS:
+            raise StreamProtocolError("Unknown DAG action")
+        if action == "cancel":
+            if type(reason) is not str:
+                raise StreamProtocolError("DAG cancellation requires its reason")
+            try:
+                size = len(reason.encode("utf-8", errors="strict"))
+            except UnicodeError as error:
+                raise StreamProtocolError("DAG reason requires strict UTF-8") from error
+            if not 1 <= size <= 4096:
+                raise StreamProtocolError("DAG reason requires 1..4096 UTF-8 bytes")
+        elif reason is not None:
+            raise StreamProtocolError("Only cancellation accepts a reason")
+        if action == "fail":
+            if type(failure_kind) is not str or failure_kind not in _FAILURES:
+                raise StreamProtocolError("DAG failure requires a supported cause")
+        elif failure_kind is not None:
+            raise StreamProtocolError("Only failure accepts a failure kind")
+        body: dict[str, Any] = {
+            "operation_id": str(dag_operation_id(self.graph_revision_id, action)),
+            "graph_digest": self.graph_digest,
+            "routing_digest": self.routing_digest,
+        }
+        if reason is not None:
+            body["reason"] = reason
+        if failure_kind is not None:
+            body["failure_kind"] = failure_kind
+        frozen = json.dumps(
+            body,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        with self._lock:
+            previous = self._requests.setdefault(action, frozen)
+            if previous != frozen and action != "fail":
+                raise StreamProtocolError(
+                    "DAG operation cannot change its first intent"
+                )
+            return json.loads(previous)

@@ -10,6 +10,7 @@ from prefect._internal.stream_finite import _reserve
 from prefect.cache_policies import NO_CACHE
 from prefect.streams import (
     PartitionedStream,
+    RunningStreamGraph,
     SealedStreamGraph,
     Stream,
     StreamGraph,
@@ -30,6 +31,11 @@ def graph_metadata() -> list[Any]:
         operator,
         operator.output("out"),
         SealedStreamGraph(graph_revision_id=uuid4(), graph_digest="a" * 64),
+        RunningStreamGraph(
+            graph_revision_id=uuid4(),
+            graph_digest="a" * 64,
+            routing_digest="b" * 64,
+        ),
     ]
 
 
@@ -67,10 +73,13 @@ async def test_ordinary_task_body_is_not_entered_for_dag_metadata(asynchronous: 
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("metadata_index", [2, 4])
 @pytest.mark.timeout(180)
-async def test_task_future_result_cannot_deliver_metadata_to_a_body(asynchronous: bool):
+async def test_task_future_result_cannot_deliver_metadata_to_a_body(
+    asynchronous: bool, metadata_index: int
+):
     entered = []
-    metadata = graph_metadata()[2]
+    metadata = graph_metadata()[metadata_index]
 
     @task(cache_policy=NO_CACHE, persist_result=False)
     def producer():
@@ -125,7 +134,7 @@ async def test_ordinary_task_parameters_still_enter_the_body(asynchronous: bool)
     assert entered == [value]
 
 
-@pytest.mark.parametrize("metadata_index", range(4))
+@pytest.mark.parametrize("metadata_index", range(5))
 async def test_finite_reservation_refuses_metadata_before_flow_or_task_lookup(
     metadata_index: int,
 ):
@@ -136,13 +145,16 @@ async def test_finite_reservation_refuses_metadata_before_flow_or_task_lookup(
         await _reserve(None, (), {"nested": [({"input": metadata},)]})
 
 
-def test_dependency_guard_handles_container_cycles_and_ordinary_values():
+@pytest.mark.parametrize("metadata_index", range(5))
+def test_dependency_guard_handles_container_cycles_and_ordinary_values(
+    metadata_index: int,
+):
     cycle: list[Any] = []
     cycle.append(cycle)
     refuse_stream_graph_dependencies(
         {"plain": [1, "data", (None, True)], "cycle": cycle}
     )
-    cycle.append(graph_metadata()[2])
+    cycle.append(graph_metadata()[metadata_index])
     with pytest.raises(StreamProtocolError, match="metadata"):
         refuse_stream_graph_dependencies(cycle)
 

@@ -1,0 +1,770 @@
+"""Trusted Flow coordination for one sealed DAG lifetime.
+
+Public handles contain only graph identities. Frozen operation material lives
+in the process-local Flow registry and never contains a client or capability.
+The server remains the authority for admission, activation and exact cleanup.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import re
+import threading
+import time
+from collections.abc import AsyncGenerator, Callable, Generator
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+from typing import Any, Literal, NoReturn, Protocol
+from uuid import UUID, uuid5
+
+import anyio
+import httpx
+from anyio.to_thread import run_sync
+
+from prefect._internal.stream_execution import get_stream_execution
+from prefect._internal.stream_route_plan import graph_routing_digest
+from prefect._internal.stream_subtask_protocol import METADATA_POLL_INTERVAL_SECONDS
+from prefect.client.orchestration import get_client
+from prefect.client.orchestration._streams.client import StreamRequestError
+from prefect.client.schemas.stream_dag_executions import (
+    StreamDAGExecution,
+    StreamDAGOperationResult,
+)
+from prefect.context import FlowRunContext, TaskRunContext
+from prefect.exceptions import CancelledRun
+from prefect.streams import RunningStreamGraph, SealedStreamGraph, StreamProtocolError
+from prefect.utilities.asyncutils import run_coro_as_sync
+
+DAGAction = Literal["start", "activate", "abort-preview", "cancel", "fail"]
+DAGFailureKind = Literal[
+    "FLOW_SCOPE_EXCEPTION", "START_EXCEPTION", "START_TIMEOUT", "COORDINATOR_ERROR"
+]
+_ACTIONS = {"start", "activate", "abort-preview", "cancel", "fail"}
+_FAILURES = {
+    "FLOW_SCOPE_EXCEPTION",
+    "START_EXCEPTION",
+    "START_TIMEOUT",
+    "COORDINATOR_ERROR",
+}
+_DIGEST = re.compile(r"[0-9a-f]{64}")
+
+
+class DAGLifecycleBackend(Protocol):
+    """The Flow-owned backend; public handles never retain this object."""
+
+    async def start(
+        self, sealed: SealedStreamGraph, *, timeout: float | None
+    ) -> RunningStreamGraph: ...
+
+    async def abort_preview(self, sealed: SealedStreamGraph) -> StreamDAGExecution: ...
+
+    async def wait(
+        self, running: RunningStreamGraph, *, timeout: float | None
+    ) -> StreamDAGExecution: ...
+
+    async def cancel(self, running: RunningStreamGraph, *, reason: str) -> NoReturn: ...
+
+
+_CURRENT_DAG: ContextVar[DAGLifecycleBackend | None] = ContextVar(
+    "native_stream_dag_lifecycle", default=None
+)
+
+
+def _backend() -> DAGLifecycleBackend:
+    backend = _CURRENT_DAG.get()
+    if backend is None or TaskRunContext.get() is not None:
+        raise StreamProtocolError(
+            "DAG_LIFECYCLE_SCOPE_REQUIRED: DAG lifecycle requires its trusted Flow scope"
+        )
+    return backend
+
+
+async def start_stream_graph(
+    sealed: SealedStreamGraph, *, timeout: float | None = None
+) -> RunningStreamGraph:
+    return await _backend().start(sealed, timeout=timeout)
+
+
+async def abort_stream_graph_preview(sealed: SealedStreamGraph) -> StreamDAGExecution:
+    return await _backend().abort_preview(sealed)
+
+
+async def wait_stream_graph(
+    running: RunningStreamGraph, *, timeout: float | None = None
+) -> StreamDAGExecution:
+    return await _backend().wait(running, timeout=timeout)
+
+
+async def cancel_stream_graph(running: RunningStreamGraph, *, reason: str) -> NoReturn:
+    await _backend().cancel(running, reason=reason)
+    raise StreamProtocolError("DAG cancellation returned without its terminal signal")
+
+
+def dag_operation_id(graph_revision_id: UUID, action: DAGAction) -> UUID:
+    """Return the versioned natural identity, independent of a process/attempt."""
+    if (
+        type(graph_revision_id) is not UUID
+        or type(action) is not str
+        or action not in _ACTIONS
+    ):
+        raise StreamProtocolError("Invalid DAG operation identity")
+    return uuid5(graph_revision_id, f"prefect-stream-dag-{action}-v1")
+
+
+@dataclass(frozen=True)
+class DAGFlowBinding:
+    """A credential-free identity of the trusted enclosing Flow attempt."""
+
+    flow_run_id: UUID
+    flow_run_count: int
+    generation: int
+    holder_id: UUID
+    api_url: str
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.flow_run_id) is not UUID
+            or type(self.holder_id) is not UUID
+            or type(self.flow_run_count) is not int
+            or self.flow_run_count < 1
+            or type(self.generation) is not int
+            or not 1 <= self.generation <= 64
+        ):
+            raise StreamProtocolError("Invalid trusted DAG Flow attempt")
+
+
+@dataclass(frozen=True, init=False)
+class DAGOperationIntents:
+    """Retain the first immutable request across retries and finalization.
+
+    Failure uses its first cause even when another cleanup path observes a
+    later exception. Other operations refuse different material under the
+    same natural operation identity. Returned dictionaries are detached.
+    """
+
+    graph_revision_id: UUID
+    graph_digest: str
+    routing_digest: str
+    _requests: dict[str, bytes] = field(repr=False, compare=False)
+    _lock: Any = field(repr=False, compare=False)
+
+    def __init__(self, graph_revision_id: UUID, graph_digest: str) -> None:
+        if (
+            type(graph_revision_id) is not UUID
+            or type(graph_digest) is not str
+            or _DIGEST.fullmatch(graph_digest) is None
+        ):
+            raise StreamProtocolError("Invalid sealed DAG identity")
+        object.__setattr__(self, "graph_revision_id", graph_revision_id)
+        object.__setattr__(self, "graph_digest", graph_digest)
+        object.__setattr__(self, "routing_digest", graph_routing_digest(graph_digest))
+        object.__setattr__(self, "_requests", {})
+        object.__setattr__(self, "_lock", threading.RLock())
+
+    def request(
+        self,
+        action: DAGAction,
+        *,
+        reason: str | None = None,
+        failure_kind: DAGFailureKind | None = None,
+    ) -> dict[str, Any]:
+        if type(action) is not str or action not in _ACTIONS:
+            raise StreamProtocolError("Unknown DAG action")
+        if action == "cancel":
+            if type(reason) is not str:
+                raise StreamProtocolError("DAG cancellation requires its reason")
+            try:
+                size = len(reason.encode("utf-8", errors="strict"))
+            except UnicodeError as error:
+                raise StreamProtocolError("DAG reason requires strict UTF-8") from error
+            if not 1 <= size <= 4096:
+                raise StreamProtocolError("DAG reason requires 1..4096 UTF-8 bytes")
+        elif reason is not None:
+            raise StreamProtocolError("Only cancellation accepts a reason")
+        if action == "fail":
+            if type(failure_kind) is not str or failure_kind not in _FAILURES:
+                raise StreamProtocolError("DAG failure requires a supported cause")
+        elif failure_kind is not None:
+            raise StreamProtocolError("Only failure accepts a failure kind")
+        body: dict[str, Any] = {
+            "operation_id": str(dag_operation_id(self.graph_revision_id, action)),
+            "graph_digest": self.graph_digest,
+            "routing_digest": self.routing_digest,
+        }
+        if reason is not None:
+            body["reason"] = reason
+        if failure_kind is not None:
+            body["failure_kind"] = failure_kind
+        frozen = json.dumps(
+            body,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        with self._lock:
+            previous = self._requests.setdefault(action, frozen)
+            if previous != frozen and action != "fail":
+                raise StreamProtocolError(
+                    "DAG operation cannot change its first intent"
+                )
+            return json.loads(previous)
+
+
+@dataclass
+class _DAGRegistration:
+    intents: DAGOperationIntents
+    activation_accepted: bool = False
+    completed: bool = False
+
+
+class DAGFlowRegistry:
+    """One Flow attempt owns pending seals, operation intents and finalization."""
+
+    def __init__(
+        self, binding: DAGFlowBinding, *, cleanup_timeout: float = 120.0
+    ) -> None:
+        self.binding = binding
+        self.cleanup_timeout = _timeout(cleanup_timeout, default=120.0)
+        self._graphs: dict[UUID, _DAGRegistration] = {}
+        self._pending: dict[UUID, tuple[bytes, Callable[[], SealedStreamGraph]]] = {}
+        self._lock = threading.RLock()
+        self._finalizing = False
+        self._closed = False
+        self._inflight = 0
+
+    def _guard(self, *, retry_policy: bool = False) -> None:
+        context = FlowRunContext.get()
+        execution = get_stream_execution()
+        if (
+            context is None
+            or context.flow is None
+            or context.flow_run is None
+            or TaskRunContext.get() is not None
+            or execution is None
+            or context.flow.streaming is None
+            or context.flow.streaming.profile != "partitioned-dag-v1"
+            or context.flow_run.id != self.binding.flow_run_id
+            or context.flow_run.run_count != self.binding.flow_run_count
+            or execution.flow_run_id != self.binding.flow_run_id
+            or execution.generation != self.binding.generation
+            or execution.holder_id != self.binding.holder_id
+            or execution.api_url != self.binding.api_url
+        ):
+            raise StreamProtocolError(
+                "DAG lifecycle differs from its trusted Flow attempt"
+            )
+        if retry_policy:
+            if _flow_can_retry(context.flow_run.run_count, context.flow.retries):
+                raise StreamProtocolError(
+                    "UNSUPPORTED_FLOW_RETRY: DAG requires the final Flow attempt"
+                )
+
+    def register_pending(
+        self,
+        operation_id: UUID,
+        frozen: bytes,
+        recover: Callable[[], SealedStreamGraph],
+    ) -> None:
+        self._guard(retry_policy=True)
+        with self._lock:
+            if self._closed or (self._finalizing and operation_id not in self._pending):
+                raise StreamProtocolError(
+                    "DAG Flow scope is closing; no new seal is allowed"
+                )
+            old = self._pending.get(operation_id)
+            if old is not None and old[0] != frozen:
+                raise StreamProtocolError(
+                    "A pending DAG seal cannot change its frozen request"
+                )
+            self._pending.setdefault(operation_id, (bytes(frozen), recover))
+
+    def register(self, operation_id: UUID, sealed: SealedStreamGraph) -> None:
+        self._guard()
+        with self._lock:
+            existing = self._graphs.get(sealed.graph_revision_id)
+            if (
+                existing is not None
+                and existing.intents.graph_digest != sealed.graph_digest
+            ):
+                raise StreamProtocolError("A registered graph cannot change its digest")
+            self._graphs.setdefault(
+                sealed.graph_revision_id,
+                _DAGRegistration(
+                    DAGOperationIntents(sealed.graph_revision_id, sealed.graph_digest)
+                ),
+            )
+            self._pending.pop(operation_id, None)
+
+    def _entry(
+        self, handle: SealedStreamGraph | RunningStreamGraph
+    ) -> _DAGRegistration:
+        self._guard()
+        if self._finalizing or self._closed:
+            raise StreamProtocolError(
+                "DAG Flow scope is closing; no new lifecycle action is allowed"
+            )
+        entry = self._graphs.get(handle.graph_revision_id)
+        if entry is None or entry.intents.graph_digest != handle.graph_digest:
+            raise StreamProtocolError("DAG handle is not registered in this Flow scope")
+        if (
+            isinstance(handle, RunningStreamGraph)
+            and handle.routing_digest != entry.intents.routing_digest
+        ):
+            raise StreamProtocolError("Running DAG routing identity changed")
+        return entry
+
+    def _open_action(self) -> None:
+        with self._lock:
+            if self._finalizing or self._closed:
+                raise StreamProtocolError(
+                    "DAG_SCOPE_CLOSING: lifecycle result belongs to a closing Flow scope"
+                )
+
+    async def _call(self, method: str, *, cleanup: bool = False, **body: Any) -> Any:
+        # Closing admission and counting a call are one atomic decision. The
+        # finalizer joins calls admitted earlier before it reads the phase.
+        with self._lock:
+            if not cleanup:
+                self._open_action()
+                self._inflight += 1
+        try:
+            result = await self._dispatch(method, **body)
+        finally:
+            if not cleanup:
+                with self._lock:
+                    self._inflight -= 1
+        if not cleanup:
+            self._open_action()
+        return result
+
+    async def _dispatch(self, method: str, **body: Any) -> Any:
+        self._guard()
+        async with get_client() as client:
+            if str(client.api_url).rstrip("/") != self.binding.api_url:
+                raise StreamProtocolError(
+                    "DAG lifecycle client differs from its Flow authority"
+                )
+            return await getattr(client, method)(**body)
+
+    def _checked(
+        self, entry: _DAGRegistration, value: StreamDAGExecution
+    ) -> StreamDAGExecution:
+        current = StreamDAGExecution.model_validate(value)
+        if (
+            current.graph_revision_id != entry.intents.graph_revision_id
+            or current.flow_run_id != self.binding.flow_run_id
+            or current.graph_digest != entry.intents.graph_digest
+            or current.routing_digest != entry.intents.routing_digest
+        ):
+            raise StreamProtocolError(
+                "DAG execution response changed its frozen identity"
+            )
+        return current
+
+    async def _read(
+        self, entry: _DAGRegistration, *, cleanup: bool = False
+    ) -> StreamDAGExecution:
+        value = await self._call(
+            "read_stream_dag_execution",
+            graph_revision_id=entry.intents.graph_revision_id,
+            cleanup=cleanup,
+        )
+        return self._checked(entry, value)
+
+    async def _operate(
+        self,
+        entry: _DAGRegistration,
+        action: DAGAction,
+        *,
+        deadline: float,
+        reason: str | None = None,
+        failure_kind: DAGFailureKind | None = None,
+        cleanup: bool = False,
+    ) -> StreamDAGExecution:
+        # Cache before the first await. In particular, a later finalizer cannot
+        # replace a START_TIMEOUT with a different FAIL body after a lost ACK.
+        frozen = json.dumps(
+            entry.intents.request(action, reason=reason, failure_kind=failure_kind),
+            sort_keys=True,
+        ).encode()
+        method = {
+            "start": "start_stream_dag",
+            "activate": "activate_stream_dag",
+            "abort-preview": "abort_stream_dag_preview",
+            "cancel": "cancel_stream_dag",
+            "fail": "fail_stream_dag",
+        }[action]
+        while True:
+            body = json.loads(frozen)
+            body["operation_id"] = UUID(body["operation_id"])
+            try:
+                raw = await self._call(
+                    method,
+                    cleanup=cleanup,
+                    graph_revision_id=entry.intents.graph_revision_id,
+                    **body,
+                )
+                result = StreamDAGOperationResult.model_validate(raw)
+                receipt = result.receipt
+                if receipt.operation_id != body[
+                    "operation_id"
+                ] or receipt.kind != action.upper().replace("-", "_"):
+                    raise StreamProtocolError(
+                        "DAG receipt differs from its frozen operation"
+                    )
+                current = self._checked(entry, result.execution)
+                if action == "activate":
+                    if current.activation_operation_id != receipt.operation_id:
+                        raise StreamProtocolError(
+                            "DAG activation receipt has no matching durable activation"
+                        )
+                    entry.activation_accepted = True
+                return current
+            except httpx.TransportError:
+                if time.monotonic() >= deadline:
+                    raise
+            await anyio.sleep(METADATA_POLL_INTERVAL_SECONDS)
+
+    async def _settle(
+        self,
+        entry: _DAGRegistration,
+        current: StreamDAGExecution,
+        *,
+        deadline: float,
+        cleanup: bool = False,
+    ) -> StreamDAGExecution:
+        while current.phase != "TERMINAL":
+            if time.monotonic() >= deadline:
+                raise StreamProtocolError(
+                    "DAG_CLEANUP_PENDING: verified process cleanup has not completed"
+                )
+            await anyio.sleep(METADATA_POLL_INTERVAL_SECONDS)
+            current = await self._read(entry, cleanup=cleanup)
+        if not cleanup:
+            self._open_action()
+        if not current.cleanup_complete:
+            raise StreamProtocolError("DAG terminal outcome lacks verified cleanup")
+        return current
+
+    def _terminal(
+        self, entry: _DAGRegistration, current: StreamDAGExecution
+    ) -> StreamDAGExecution:
+        if current.phase != "TERMINAL" or not current.cleanup_complete:
+            raise StreamProtocolError("DAG is not durably terminal")
+        if current.terminal_state == "CANCELLED":
+            raise CancelledRun(
+                "DAG cancellation completed after verified process cleanup"
+            )
+        if current.terminal_state == "FAILED":
+            raise StreamProtocolError(
+                "DAG execution failed after verified process cleanup"
+            )
+        entry.completed = True
+        return current
+
+    async def start(
+        self, sealed: SealedStreamGraph, *, timeout: float | None
+    ) -> RunningStreamGraph:
+        self._guard(retry_policy=True)
+        entry = self._entry(sealed)
+        deadline = time.monotonic() + _timeout(timeout, default=120.0)
+        try:
+            current = await self._operate(entry, "start", deadline=deadline)
+            while True:
+                if entry.activation_accepted:
+                    self._open_action()
+                    return RunningStreamGraph(
+                        graph_revision_id=entry.intents.graph_revision_id,
+                        graph_digest=entry.intents.graph_digest,
+                        routing_digest=entry.intents.routing_digest,
+                    )
+                if current.activation_operation_id == dag_operation_id(
+                    entry.intents.graph_revision_id, "activate"
+                ):
+                    # Recovered authoring/start must obtain its exact immutable
+                    # ACTIVATE receipt even if current state already advanced.
+                    current = await self._operate(entry, "activate", deadline=deadline)
+                    continue
+                if (
+                    current.phase == "STARTING"
+                    and current.counts.bootstrap_ready == current.counts.total
+                ):
+                    current = await self._operate(entry, "activate", deadline=deadline)
+                    continue
+                if current.phase in {"STOPPING", "TERMINAL"}:
+                    current = await self._settle(
+                        entry, current, deadline=time.monotonic() + self.cleanup_timeout
+                    )
+                    self._terminal(entry, current)
+                    raise StreamProtocolError(
+                        "DAG start ended without its activation receipt"
+                    )
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("DAG start timed out before durable activation")
+                await anyio.sleep(METADATA_POLL_INTERVAL_SECONDS)
+                current = await self._read(entry)
+        except BaseException as error:
+            if self._finalizing or self._closed:
+                # The finalizer has closed admission and owns phase selection.
+                # A late public continuation must not launch competing cleanup.
+                raise
+            kind: DAGFailureKind = (
+                "START_TIMEOUT"
+                if isinstance(error, (TimeoutError, httpx.TimeoutException))
+                else "START_EXCEPTION"
+            )
+            # Freeze the first failure even if read/cleanup itself loses ACK.
+            entry.intents.request("fail", failure_kind=kind)
+            with anyio.CancelScope(shield=True):
+                await self._cleanup_entry(entry, failure_kind=kind)
+            raise
+
+    async def abort_preview(self, sealed: SealedStreamGraph) -> StreamDAGExecution:
+        entry = self._entry(sealed)
+        deadline = time.monotonic() + self.cleanup_timeout
+        current = await self._operate(entry, "abort-preview", deadline=deadline)
+        current = await self._settle(entry, current, deadline=deadline)
+        if current.control is None or current.control.kind != "PREVIEW_ABORT":
+            raise StreamProtocolError("Preview abort returned another control outcome")
+        self._open_action()
+        entry.completed = True
+        return current
+
+    async def wait(
+        self, running: RunningStreamGraph, *, timeout: float | None
+    ) -> StreamDAGExecution:
+        entry = self._entry(running)
+        deadline = (
+            None
+            if timeout is None
+            else time.monotonic() + _timeout(timeout, default=120.0)
+        )
+        while True:
+            current = await self._read(entry)
+            if current.phase == "TERMINAL":
+                self._open_action()
+                return self._terminal(entry, current)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(
+                    "DAG wait timed out; observation did not mutate the graph"
+                )
+            await anyio.sleep(METADATA_POLL_INTERVAL_SECONDS)
+
+    async def cancel(self, running: RunningStreamGraph, *, reason: str) -> NoReturn:
+        entry = self._entry(running)
+        deadline = time.monotonic() + self.cleanup_timeout
+        current = await self._operate(entry, "cancel", deadline=deadline, reason=reason)
+        current = await self._settle(entry, current, deadline=deadline)
+        self._open_action()
+        self._terminal(entry, current)
+        raise StreamProtocolError("DAG cancel lost to a completed graph")
+
+    async def _cleanup_entry(
+        self, entry: _DAGRegistration, *, failure_kind: DAGFailureKind
+    ) -> StreamDAGExecution | None:
+        if entry.completed:
+            return None
+        deadline = time.monotonic() + self.cleanup_timeout
+        current = await self._read(entry, cleanup=True)
+        while True:
+            observed = current
+            try:
+                if current.phase == "PREVIEW":
+                    current = await self._operate(
+                        entry, "abort-preview", deadline=deadline, cleanup=True
+                    )
+                elif current.phase in {"STARTING", "ACTIVE"}:
+                    entry.intents.request("fail", failure_kind=failure_kind)
+                    current = await self._operate(
+                        entry,
+                        "fail",
+                        deadline=deadline,
+                        failure_kind=failure_kind,
+                        cleanup=True,
+                    )
+                break
+            except StreamRequestError as conflict:
+                if conflict.code not in {"CONTROL_CONFLICT", "TERMINAL_CONFLICT"}:
+                    raise
+                # Unknown ACK/cancelled transport does not prove its server
+                # transaction stopped. Re-read after a real phase/control race;
+                # never reinterpret identity or authentication refusals.
+                while True:
+                    current = await self._read(entry, cleanup=True)
+                    if current.phase == "TERMINAL" and current.cleanup_complete:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise StreamProtocolError(
+                            "DAG_CLEANUP_PENDING: phase reconciliation deadline elapsed"
+                        ) from conflict
+                    if (
+                        current.phase != observed.phase
+                        or current.control != observed.control
+                    ):
+                        break
+                    # A conflict proves neither cleanup nor release. Observe
+                    # only; do not repeat a mutation against unchanged metadata.
+                    await anyio.sleep(METADATA_POLL_INTERVAL_SECONDS)
+        # STOPPING joins the existing control without creating another FAIL.
+        current = await self._settle(entry, current, deadline=deadline, cleanup=True)
+        if current.control is not None and current.control.kind == "PREVIEW_ABORT":
+            entry.completed = True
+            return current
+        if current.terminal_state == "CANCELLED":
+            self._terminal(entry, current)
+        if current.terminal_state == "COMPLETED":
+            entry.completed = True
+        return current
+
+    async def finalize(self, error: BaseException | None) -> None:
+        with self._lock:
+            self._finalizing = True
+        try:
+            deadline = time.monotonic() + self.cleanup_timeout
+            while True:
+                with self._lock:
+                    pending = self._inflight
+                if pending == 0:
+                    break
+                if time.monotonic() >= deadline:
+                    raise StreamProtocolError(
+                        "DAG_CLEANUP_PENDING: admitted lifecycle RPC remains unresolved"
+                    )
+                await anyio.sleep(METADATA_POLL_INTERVAL_SECONDS)
+            await self._finalize_registered(error)
+        finally:
+            with self._lock:
+                self._closed = True
+
+    async def _finalize_registered(self, error: BaseException | None) -> None:
+        first: BaseException | None = None
+        # A seal's ACK may be missing while its graph rows already exist. Recover
+        # the same frozen seal before deciding which lifecycle cleanup applies.
+        for _, recover in list(self._pending.values()):
+            try:
+                await run_sync(recover)
+            except BaseException as pending_error:
+                first = first or pending_error
+        for entry in list(self._graphs.values()):
+            try:
+                current = await self._cleanup_entry(
+                    entry,
+                    failure_kind="FLOW_SCOPE_EXCEPTION"
+                    if error is not None
+                    else "COORDINATOR_ERROR",
+                )
+                if (
+                    error is None
+                    and current is not None
+                    and current.terminal_state == "FAILED"
+                    and not (
+                        current.control is not None
+                        and current.control.kind == "PREVIEW_ABORT"
+                    )
+                ):
+                    first = first or StreamProtocolError(
+                        "DAG was abandoned or failed before Flow completion"
+                    )
+            except CancelledRun:
+                raise
+            except BaseException as cleanup_error:
+                first = first or cleanup_error
+        if first is not None:
+            if error is not None:
+                raise first from error
+            raise first
+
+
+def _flow_can_retry(run_count: int, retries: int | None) -> bool:
+    return retries is not None and run_count <= retries
+
+
+def _timeout(value: float | None, *, default: float) -> float:
+    chosen = default if value is None else value
+    if type(chosen) not in (int, float) or not math.isfinite(chosen) or chosen <= 0:
+        raise StreamProtocolError("DAG timeout must be positive and finite")
+    return float(chosen)
+
+
+def current_dag_registry() -> DAGFlowRegistry:
+    backend = _backend()
+    if not isinstance(backend, DAGFlowRegistry):
+        raise StreamProtocolError(
+            "DAG_LIFECYCLE_SCOPE_REQUIRED: seal requires its Flow registry"
+        )
+    return backend
+
+
+@contextmanager
+def dag_registry_context(
+    registry: DAGFlowRegistry,
+) -> Generator[DAGFlowRegistry, None, None]:
+    """Install a bounded Flow-owned registry; never serialize it into Task context."""
+    token = _CURRENT_DAG.set(registry)
+    try:
+        yield registry
+    finally:
+        _CURRENT_DAG.reset(token)
+
+
+def _new_registry() -> DAGFlowRegistry | None:
+    context = FlowRunContext.get()
+    if (
+        context is None
+        or context.flow is None
+        or context.flow.streaming is None
+        or context.flow.streaming.profile != "partitioned-dag-v1"
+    ):
+        return None
+    execution = get_stream_execution()
+    if execution is None or context.flow_run is None:
+        raise StreamProtocolError(
+            "DAG_LIFECYCLE_SCOPE_REQUIRED: Flow launch authority is missing"
+        )
+    return DAGFlowRegistry(
+        DAGFlowBinding(
+            context.flow_run.id,
+            context.flow_run.run_count,
+            execution.generation,
+            execution.holder_id,
+            execution.api_url,
+        )
+    )
+
+
+@contextmanager
+def dag_flow_scope() -> Generator[None, None, None]:
+    registry = _new_registry()
+    if registry is None:
+        yield
+        return
+    with dag_registry_context(registry):
+        try:
+            yield
+        except BaseException as error:
+            run_coro_as_sync(registry.finalize(error))
+            raise
+        else:
+            run_coro_as_sync(registry.finalize(None))
+
+
+@asynccontextmanager
+async def async_dag_flow_scope() -> AsyncGenerator[None, None]:
+    registry = _new_registry()
+    if registry is None:
+        yield
+        return
+    with dag_registry_context(registry):
+        try:
+            yield
+        except BaseException as error:
+            # Cleanup is proof-based, even when the user's cancel scope fired.
+            with anyio.CancelScope(shield=True):
+                await registry.finalize(error)
+            raise
+        else:
+            with anyio.CancelScope(shield=True):
+                await registry.finalize(None)

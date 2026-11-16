@@ -1,0 +1,27 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ TestStreamDagAuthoring.test_complete_fork_freezes_four_physical_tasks_without_execution _
+
+self = <tests.test_stream_dag_authoring.TestStreamDagAuthoring testMethod=test_complete_fork_freezes_four_physical_tasks_without_execution>
+
+    def test_complete_fork_freezes_four_physical_tasks_without_execution(self):
+        boundary = RecordingMetadataBoundary()
+        fork(boundary)
+        definition = boundary.definition()
+        self.assertEqual(
+            [
+                (item["operator_uid"], item["parallelism"])
+                for item in definition["operators"]
+            ],
+            [("A", 1), ("B", 1), ("C", 2)],
+        )
+        self.assertIs(boundary.seal(), boundary.reply)
+        self.assertIs(boundary.seal(), boundary.reply)
+        self.assertEqual(len(boundary.snapshots), 1)
+>       self.assertFalse(hasattr(boundary.reply, "start"))
+E       AssertionError: True is not false
+
+tests/test_stream_dag_authoring.py:243: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_stream_dag_authoring.py::TestStreamDagAuthoring::test_complete_fork_freezes_four_physical_tasks_without_execution
+1 failed, 24 deselected in 0.22s

@@ -1,0 +1,64 @@
+"""Known disjoint CPU markers test shared-clock cross-thread attribution."""
+import cProfile
+import hashlib
+import json
+from pathlib import Path
+import pstats
+import sys
+import threading
+import time
+import greenlet
+
+BASE=Path(__file__).resolve().parent
+measured={}
+def main_burn(count=1_200_000):
+    started=time.thread_time_ns();value=1
+    for number in range(count):value=(value*33+number)%65521
+    measured.setdefault('main_burn',[]).append((time.thread_time_ns()-started)/1e9)
+    return value
+
+def foreign_burn(count=1_200_000):
+    started=time.thread_time_ns();value=1
+    for number in range(count):value=(value*33+number)%65521
+    measured.setdefault('foreign_burn',[]).append((time.thread_time_ns()-started)/1e9)
+    return value
+
+def main_wait(event):
+    started=time.thread_time_ns();event.wait()
+    measured.setdefault('main_wait',[]).append((time.thread_time_ns()-started)/1e9)
+
+results=[]
+for case in ['sequential','preemptive','blocked_wait','greenlet_and_thread']:
+    measured={};barrier=threading.Barrier(2);done=threading.Event()
+    def child():
+        if case!='sequential':barrier.wait()
+        foreign_burn();done.set()
+    profile=cProfile.Profile(timer=time.process_time_ns,timeunit=1e-9)
+    assert sys.monitoring.get_tool(sys.monitoring.PROFILER_ID) is None
+    wall,process=time.monotonic(),time.process_time()
+    profile.enable()
+    if case=='sequential':
+        main_burn();worker=threading.Thread(target=child);worker.start()
+    else:
+        worker=threading.Thread(target=child);worker.start();barrier.wait()
+        if case=='preemptive':main_burn()
+        elif case=='blocked_wait':main_wait(done)
+        else:
+            parent=greenlet.getcurrent()
+            def branch():
+                for _ in range(12):main_burn(20_000);parent.switch()
+            co=greenlet.greenlet(branch)
+            for _ in range(12):main_burn(20_000);co.switch()
+            if not co.dead:co.switch()
+            assert co.dead
+    worker.join();profile.disable();elapsed=time.monotonic()-wall;cpu=time.process_time()-process
+    file=BASE/('process-attribution-'+case+'.pstats');profile.dump_stats(str(file));stats=pstats.Stats(str(file)).stats
+    markers=[]
+    for name,samples in measured.items():
+        matching=[v for k,v in stats.items() if k[2]==name]
+        assert len(matching)==1
+        value=matching[0];actual=sum(samples)
+        markers.append({'function':name,'measured_own_thread_CPU_seconds':actual,'measured_calls':len(samples),'profile_calls':value[1],'profile_self_process_CPU_seconds':value[2],'profile_cumulative_process_CPU_seconds':value[3],'self_minus_measured_seconds':value[2]-actual,'self_to_measured_ratio':value[2]/actual if actual else None})
+    results.append({'case':case,'wall_seconds':elapsed,'whole_process_cpu_seconds':cpu,'markers':markers,'sum_self_seconds':sum(v[2] for v in stats.values()),'negative_self_count':sum(v[2]<0 for v in stats.values()),'cum_less_than_self_count':sum(v[3]+1e-12<v[2] for v in stats.values()),'all_owned_threads_joined':not worker.is_alive(),'pstats_sha256':hashlib.sha256(file.read_bytes()).hexdigest()})
+result={'status':'BENIGN_FUNCTION_ATTRIBUTION_PROBE_CLOSED','results':results,'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'switch_interval_seconds':sys.getswitchinterval(),'application_imported':any(k=='prefect' or k.startswith('prefect.') for k in sys.modules),'owned_threads_remaining':[t.name for t in threading.enumerate() if t is not threading.main_thread()],'qualification':'Per-function marker thread CPU is direct ground truth inside its own pure Python loop. Process-clock profile is not presumed correct merely because sums match and negatives vanish.'}
+p=BASE/'process-attribution-result.json';p.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n');print(json.dumps(result,indent=2));print(hashlib.sha256(p.read_bytes()).hexdigest())

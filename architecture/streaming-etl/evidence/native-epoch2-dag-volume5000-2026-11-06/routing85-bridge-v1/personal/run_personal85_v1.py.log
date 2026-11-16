@@ -1,0 +1,74 @@
+"""Execute Root's one exact routing85 command; preserve direct wait exit first."""
+import hashlib
+import json
+import os
+import platform
+import shutil
+import socket
+import subprocess
+import time
+from pathlib import Path
+
+BASE = Path('/tmp/native-principal-routing-85-18124-v1')
+HOLD = BASE / 'ROOT_AUTHORIZED_ROUTING_85.json'
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+def put(name, value):
+    with (BASE / name).open('x') as f:
+        json.dump(value, f, indent=2, sort_keys=True)
+        f.write('\n')
+assert sha(HOLD) == 'fe1217fe032cc482d06a42eea5e3c57b5b09d220ded215cc9e11ab0922f4302d'
+hold = json.loads(HOLD.read_text())
+assert hold['status'] == 'ROOT_AUTHORIZED_ONE_PERSONAL_ROUTING_85' and hold['authorized_by'] == '/root'
+root = Path(hold['source_root'])
+assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip() == hold['head']
+assert not subprocess.check_output(['git', 'status', '--porcelain'], cwd=root, text=True).strip()
+for name, expected in hold['files'].items():
+    assert sha(root / name) == expected, name
+old = json.loads(Path('/tmp/native-n2-2-sync5000-verification-18124-v1/sync5000-02edb1c0/source-before.json').read_text())
+def snapshot():
+    return {name: {'sha256': sha(root / name), 'bytes': (root / name).stat().st_size} for name in sorted(old)}
+before = snapshot()
+put('source-before.json', before)
+assert not Path(hold['sqlite_path']).exists()
+env = dict(os.environ)
+env['PATH'] = '/workspace/ariadne/.venv/bin:/home/agent/.local/bin:' + env['PATH']
+env['PYTHONPATH'] = str(root / 'src')
+env['PYTHONDONTWRITEBYTECODE'] = '1'
+env['PREFECT_HOME'] = hold['prefect_home']
+env['PREFECT_SERVER_DATABASE_CONNECTION_URL'] = 'sqlite+aiosqlite:///' + hold['sqlite_path']
+for key in ['PREFECT_API_DATABASE_CONNECTION_URL', 'PREFECT_API_URL', 'PYTEST_ADDOPTS']:
+    env.pop(key, None)
+interpreters = {v: shutil.which('python'+v, path=env['PATH']) for v in hold['expected']['python_versions']}
+assert all(interpreters.values())
+host = {'platform': platform.platform(), 'uname': list(platform.uname()), 'hostname': socket.gethostname(),
+        'os_release': Path('/etc/os-release').read_text(),
+        'scope': 'Managed Cloud OS instance identifiers; no physical host attestation or ADR47 claim',
+        'interpreters': {v: str(Path(p).resolve()) for v,p in interpreters.items()}}
+for name, path in [('boot_id_sha256', '/proc/sys/kernel/random/boot_id'), ('machine_id_sha256', '/etc/machine-id')]:
+    p=Path(path)
+    host[name] = sha(p) if p.exists() else None
+put('managed-cloud-instance.json', host)
+put('executed-command.json', {'argv': hold['command'], 'cwd': str(root), 'hold_sha256': sha(HOLD),
+                            'source_prebound_count': len(before), 'db_kind': 'fresh_owned_sqlite',
+                            'PREFECT_HOME': hold['prefect_home'], 'sqlite_path': hold['sqlite_path'],
+                            'explicit_pythonpath': env['PYTHONPATH'], 'pg_selector_read': False})
+started = time.monotonic()
+with (BASE / 'pytest.log').open('x') as log:
+    proc = subprocess.Popen(hold['command'], cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
+    stat = Path(f'/proc/{proc.pid}/stat').read_text().rsplit(')',1)[1].split()
+    put('process.json', {'pid': proc.pid, 'start_ticks': stat[19], 'runner_pid': os.getpid()})
+    print(json.dumps({'status': 'RUNNING', 'pid': proc.pid, 'start_ticks': stat[19]}), flush=True)
+    code = proc.wait()
+    put('pytest-exit.json', {'actual_wait_returncode': code, 'elapsed_seconds': time.monotonic()-started,
+                             'recorded_before_postprocessing': True, 'signals_sent_by_runner': []})
+after = snapshot()
+put('source-after.json', after)
+drift = [name for name in before if before[name] != after[name]]
+put('postrun-runner-summary.json', {'exit': code, 'source_count': len(before), 'source_drift': drift,
+                                   'same_pytest_pid_exists': Path(f'/proc/{proc.pid}').exists(),
+                                   'import_limit': 'Explicit PYTHONPATH and child codec source assertions; no independent parent sys.modules audit',
+                                   'runtime_STOP': True, 'no_automatic_next_phase': True})
+print(json.dumps({'status': 'STOP', 'exit': code, 'source_drift': drift,
+                  'elapsed_seconds': time.monotonic()-started}), flush=True)
+raise SystemExit(code)

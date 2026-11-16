@@ -1,0 +1,121 @@
+import hashlib,json,marshal,os,sys,time
+_seen=set()
+def _profile_import_audit(event,args):
+ if event!='exec' or not args:return
+ code=args[0];path=getattr(code,'co_filename','')
+ if not isinstance(path,str) or not path.endswith('.py') or path in _seen:return
+ if not (path.startswith('/tmp/ariadne-native-5000-diagnosis-v1/src/prefect/') or '/src/prefect/' in path or '/site-packages/prefect/' in path):return
+ _seen.add(path)
+ try:
+  pid=os.getpid()
+  with open('/proc/'+str(pid)+'/stat') as state:ticks=state.read().rsplit(')',1)[1].split()[19]
+  with open(path,'rb') as source:source_digest=hashlib.sha256(source.read()).hexdigest()
+  row={'pid':pid,'start_ticks':ticks,'path':path,'source_sha256':source_digest,'code_sha256':hashlib.sha256(marshal.dumps(code)).hexdigest()}
+  fd=os.open('/tmp/native-api-cprofile64-preparation-recovery2-v1/profile-e45939e7/audit'+'/'+str(pid)+'.jsonl',os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
+  try:os.write(fd,(json.dumps(row,sort_keys=True)+chr(10)).encode())
+  finally:os.close(fd)
+ except OSError:pass
+sys.addaudithook(_profile_import_audit)
+
+"""External diagnostic startup shim. Copy as sitecustomize.py for one trial."""
+
+import sys
+
+
+def activate() -> None:
+    # Inspect original interpreter argv before optional profiling imports.
+    argv = list(sys.orig_argv)
+    if len(argv) != 11 or argv[1:5] != [
+        "-m", "uvicorn", "--factory", "prefect.server.api.server:create_app"
+    ]:
+        return
+    if argv[5] != "--fd" or argv[7] != "--header" or argv[9:] != ["--log-level", "warning"]:
+        return
+    from api_selector import api_identity
+
+    identity = api_identity(argv)
+    if identity is None:
+        return
+    import hashlib
+    import json
+    import os
+    import resource
+    import time
+    from pathlib import Path
+
+    trial = Path(os.environ["ARIADNE_PROFILE64_DIRECTORY"])
+    pid = os.getpid()
+    ticks = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+    selected = {
+        **identity, "pid": pid, "start_ticks": ticks, "argv": argv,
+        "executable": sys.executable, "cwd": str(Path.cwd()),
+        "monotonic_ns": time.monotonic_ns(),
+    }
+    (trial / "api-selected.json").write_text(json.dumps(selected, indent=2) + "\n")
+    config = json.loads((trial / "profile-config.json").read_text())
+    if config["mode"] != "profile":
+        return
+
+    import uvicorn
+
+    original = uvicorn.Server._serve
+
+    async def profiled(server, *args, **kwargs):
+        try:
+            owner = json.loads((trial / "api-owner.json").read_text())
+            keys = ("pid", "start_ticks", "fd", "header", "factory", "argv")
+            if any(owner[key] != selected[key] for key in keys):
+                raise ValueError("Owned API manifest mismatch")
+        except Exception as error:
+            try:
+                (trial / "profile-inconclusive.json").write_text(json.dumps({
+                    "reason": "pre-enable manifest missing/mismatched; no wait or profiling",
+                    "error_type": type(error).__name__, "pid": pid, "start_ticks": ticks,
+                }) + "\n")
+            except OSError:
+                pass
+            return await original(server, *args, **kwargs)
+        import cProfile
+
+        profile = cProfile.Profile()
+        started = time.monotonic_ns()
+        usage_before = resource.getrusage(resource.RUSAGE_SELF)
+        profile.enable()
+        try:
+            return await original(server, *args, **kwargs)
+        finally:
+            profile.disable()
+            # This executes inside Server.serve's capture_signals context,
+            # before uvicorn restores handlers/re-raises the captured SIGTERM.
+            try:
+                output = trial / "api.pstats"
+                profile.dump_stats(str(output))
+                usage = resource.getrusage(resource.RUSAGE_SELF)
+                marker = {
+                    "pid": pid, "start_ticks": ticks, "header": identity["header"],
+                    "profile_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+                    "serve_wall_seconds": (time.monotonic_ns()-started)/1e9,
+                    "process_cpu_user_seconds": usage.ru_utime,
+                    "process_cpu_system_seconds": usage.ru_stime,
+                    "process_elapsed_seconds": time.clock_gettime(time.CLOCK_BOOTTIME) - int(ticks)/os.sysconf("SC_CLK_TCK"),
+                    "serve_cpu_user_seconds": usage.ru_utime-usage_before.ru_utime,
+                    "serve_cpu_system_seconds": usage.ru_stime-usage_before.ru_stime,
+                    "maxrss_kib": usage.ru_maxrss,
+                    "qualification": "API main event-loop thread only; async resumptions are not query counts or direct SQL wait timing",
+                }
+                temporary = trial / "profile-complete.pending.json"
+                temporary.write_text(json.dumps(marker, indent=2) + "\n")
+                temporary.replace(trial / "profile-complete.json")
+            except Exception as error:
+                try:
+                    (trial / "profile-inconclusive.json").write_text(json.dumps({
+                        "reason": "dump failed", "error_type": type(error).__name__,
+                        "pid": pid, "start_ticks": ticks,
+                    }) + "\n")
+                except OSError:
+                    pass
+
+    uvicorn.Server._serve = profiled
+
+
+activate()

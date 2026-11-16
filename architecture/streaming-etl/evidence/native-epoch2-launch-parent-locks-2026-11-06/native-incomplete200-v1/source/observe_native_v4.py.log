@@ -1,0 +1,47 @@
+"""Read only owned native artifacts; no DB connection or process control."""
+import datetime,json,pathlib,re,sys,time
+trial=pathlib.Path(sys.argv[1]);assert trial.is_absolute() and trial.parent==pathlib.Path('/tmp/native-launch-parent-lock-principal-recovery2-v1')
+ansi=re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
+http5xx=re.compile(r'\bHTTP/\d(?:\.\d)?[\"\']?\s+5\d{2}\b')
+row={'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'monotonic_ns':time.monotonic_ns(),'trial':str(trial),'fixtures':[],'health':{'exact_api_access_5xx':[],'TimeoutError':[],'healthy_retry':[]}}
+def lines(path):
+ try:return path.read_text(errors='replace').splitlines()
+ except FileNotFoundError:return []
+def values(path):
+ result=[]
+ for line in lines(path):
+  try:result.append(json.loads(line))
+  except json.JSONDecodeError:continue
+ return result
+for directory in sorted((trial/'pytest').glob('*')):
+ if not directory.is_dir() or directory.is_symlink():continue
+ item={'directory':str(directory),'files':{}}
+ for name in ['source-accepted.jsonl','calls-B-0.jsonl','calls-C-0.jsonl','calls-C-1.jsonl']:
+  records=values(directory/name)
+  if records:
+   last=records[-1];item['files'][name]={'rows':len(records),'last_position':last.get('position'),'last_sequence':last.get('sequence'),'pids':sorted({v['pid'] for v in records if 'pid' in v})}
+ records=values(directory/'progress.jsonl')
+ if records:
+  progress=records[-1];progress=progress.get('snapshot',progress.get('progress',progress));item['progress_keys']=sorted(progress)
+  if isinstance(progress.get('subtasks'),list):
+   item['subtasks']=[{k:v.get(k) for k in ['operator_uid','partition_index','run_count','physical_epoch','physical_slot_released','lifecycle_state']} for v in progress['subtasks']]
+   for v in progress['subtasks']:
+    limit=2 if v.get('operator_uid')=='B' else 1
+    if v.get('run_count',0)>limit:row['health']['healthy_retry'].append(v)
+ for name in ['operator-loss.json','replacement-started.json','coordinator-retirement.json','worker-health.json','observations.json']:
+  p=directory/name
+  if p.exists():
+   try:
+    value=json.loads(p.read_text())
+    item[name]=({k:value[k] for k in ['asynchronous','c_exchange','count','flow_state','mode','task_runs'] if k in value} if name=='observations.json' else value)
+   except json.JSONDecodeError:pass
+ for log in [*directory.glob('api-*.log'),directory/'worker-left.log',directory/'worker-right.log']:
+  for number,line in enumerate(lines(log),1):
+   plain=ansi.sub('',line)
+   if log.name.startswith('api-') and http5xx.search(plain):row['health']['exact_api_access_5xx'].append({'file':log.name,'line':number,'text':plain})
+   if re.search(r'\bTimeoutError\b',plain):row['health']['TimeoutError'].append({'file':log.name,'line':number,'text':plain})
+ row['fixtures'].append(item)
+row['unexpected_health_observed']=any(row['health'].values())
+row=json.loads(re.sub(r'(?i)(postgres(?:ql)?(?:\+asyncpg)?://)[^\s\'\"<>]+',r'\1[redacted-owned-test-dsn]',json.dumps(row)))
+with (trial/'principal-live-observations.jsonl').open('a') as f:f.write(json.dumps(row,sort_keys=True)+'\n')
+print(json.dumps(row,sort_keys=True))

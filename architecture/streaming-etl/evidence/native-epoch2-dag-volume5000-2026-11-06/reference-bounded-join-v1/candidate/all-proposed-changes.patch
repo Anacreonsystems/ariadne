@@ -1,0 +1,517 @@
+--- a/src/prefect/server/models/stream_routes.py
++++ b/src/prefect/server/models/stream_routes.py
+@@ -8,6 +8,7 @@
+ import sqlalchemy as sa
+ from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+ from sqlalchemy.ext.asyncio import AsyncSession
++from sqlalchemy.orm import aliased
+ 
+ from prefect._internal.stream_key_wire import decode_tagged_key_wire_v1
+ from prefect._internal.stream_route_plan import (
+@@ -345,6 +346,18 @@
+     edge_partition_id: UUID
+ 
+ 
++@dataclass(frozen=True)
++class _ReferenceTopologyFacts:
++    edge_partition_id: UUID | None
++    graph_revision_id: UUID | None
++    target_subtask_id: UUID | None
++    stream_id: UUID | None
++    edge_id: UUID | None
++    matched_edge_id: UUID | None
++    producer_port_id: UUID | None
++    producer_subtask_id: UUID | None
++
++
+ class NativeDAGRouteStore:
+     """Existing-partition DAG transactions under a current internal authority."""
+ 
+@@ -637,29 +650,75 @@
+                 "IDENTITY_CONFLICT",
+                 "Reference is outside the assigned subscriber cursor",
+             )
+-        record = await self.session.scalar(
+-            sa.select(self.db.StreamRecord)
++        reference = aliased(self.db.StreamRecord, name="reference")
++        payload = aliased(self.db.StreamRecord, name="payload")
++        edge_partition = self.db.StreamGraphEdgePartition
++        edge = self.db.StreamGraphEdge
++        port = self.db.StreamGraphPort
++        producer = self.db.StreamPhysicalSubtask
++        statement = (
++            sa.select(
++                reference,
++                payload,
++                self.db.StreamRouteReceipt,
++                edge_partition.id.label("edge_partition_id"),
++                edge_partition.graph_revision_id.label("graph_revision_id"),
++                edge_partition.target_subtask_id.label("target_subtask_id"),
++                edge_partition.stream_id.label("stream_id"),
++                edge_partition.edge_id.label("edge_id"),
++                edge.id.label("matched_edge_id"),
++                port.id.label("producer_port_id"),
++                producer.id.label("producer_subtask_id"),
++            )
++            .select_from(reference)
++            .outerjoin(edge_partition, edge_partition.id == reference.edge_partition_id)
++            .outerjoin(
++                self.db.StreamRouteReceipt,
++                self.db.StreamRouteReceipt.id == reference.route_receipt_id,
++            )
++            .outerjoin(payload, payload.id == reference.payload_record_id)
++            .outerjoin(edge, edge.id == edge_partition.edge_id)
++            .outerjoin(port, port.id == edge.producer_port_id)
++            .outerjoin(
++                producer,
++                sa.and_(
++                    producer.output_stream_id == payload.stream_id,
++                    producer.operator_run_id == port.operator_run_id,
++                    producer.graph_revision_id == self.authorization.graph.id,
++                ),
++            )
+             .where(
+-                self.db.StreamRecord.stream_id == input_stream_id,
+-                self.db.StreamRecord.sequence == sequence,
++                reference.stream_id == input_stream_id,
++                reference.sequence == sequence,
+             )
+             .execution_options(populate_existing=True)
+         )
+-        if record is None:
++        row = (await self.session.execute(statement)).one_or_none()
++        if row is None:
+             raise NativeStreamError(
+                 "ROUTE_HORIZON_EXPIRED", "The input reference is no longer retained"
+             )
+-        return await self._resolve_record(record)
++        record, payload_record, receipt = row[:3]
++        facts = _ReferenceTopologyFacts(
++            edge_partition_id=row.edge_partition_id,
++            graph_revision_id=row.graph_revision_id,
++            target_subtask_id=row.target_subtask_id,
++            stream_id=row.stream_id,
++            edge_id=row.edge_id,
++            matched_edge_id=row.matched_edge_id,
++            producer_port_id=row.producer_port_id,
++            producer_subtask_id=row.producer_subtask_id,
++        )
++        return await self._resolve_record(record, payload_record, receipt, facts)
+ 
+     async def _resolve_record(
+-        self, record: orm_models.StreamRecord
++        self,
++        record: orm_models.StreamRecord,
++        payload: orm_models.StreamRecord | None,
++        receipt: orm_models.StreamRouteReceipt | None,
++        facts: _ReferenceTopologyFacts,
+     ) -> ResolvedDAGValue:
+         graph_id = self.authorization.graph.id
+-        edge_partition = await self.session.scalar(
+-            sa.select(self.db.StreamGraphEdgePartition).where(
+-                self.db.StreamGraphEdgePartition.id == record.edge_partition_id
+-            )
+-        )
+         if (
+             record.record_kind != "REFERENCE"
+             or record.graph_revision_id != graph_id
+@@ -667,10 +726,10 @@
+             or record.payload_record_kind != "PAYLOAD"
+             or record.payload_record_id is None
+             or record.route_receipt_id is None
+-            or edge_partition is None
+-            or edge_partition.graph_revision_id != graph_id
+-            or edge_partition.target_subtask_id != self.authorization.subtask.id
+-            or edge_partition.stream_id != record.stream_id
++            or facts.edge_partition_id is None
++            or facts.graph_revision_id != graph_id
++            or facts.target_subtask_id != self.authorization.subtask.id
++            or facts.stream_id != record.stream_id
+         ):
+             raise NativeStreamError(
+                 "REFERENCE_IDENTITY_CONFLICT",
+@@ -696,9 +755,6 @@
+                 "REFERENCE_IDENTITY_CONFLICT",
+                 "Reference envelope identity or digest differs",
+             )
+-        receipt = await self.session.get(
+-            self.db.StreamRouteReceipt, record.route_receipt_id, populate_existing=True
+-        )
+         if receipt is None:
+             raise NativeStreamError(
+                 "ROUTE_HORIZON_EXPIRED",
+@@ -713,7 +769,7 @@
+             ) from error
+         if not any(
+             item.record_id == record.id
+-            and item.edge_id == edge_partition.edge_id
++            and item.edge_id == facts.edge_id
+             and item.stream_id == record.stream_id
+             and item.sequence == record.sequence
+             and item.edge_partition_id == record.edge_partition_id
+@@ -724,9 +780,6 @@
+                 "REFERENCE_IDENTITY_CONFLICT",
+                 "Reference is not part of its accepted parent route",
+             )
+-        payload = await self.session.get(
+-            self.db.StreamRecord, record.payload_record_id, populate_existing=True
+-        )
+         if payload is None:
+             raise NativeStreamError(
+                 "ROUTE_HORIZON_EXPIRED", "Referenced payload is no longer retained"
+@@ -737,26 +790,14 @@
+             raise NativeStreamError(
+                 "REFERENCE_IDENTITY_CONFLICT", "Original payload is not canonical"
+             ) from error
+-        edge = await self.session.get(self.db.StreamGraphEdge, edge_partition.edge_id)
+-        assert edge is not None
+-        producer_port = await self.session.get(
+-            self.db.StreamGraphPort, edge.producer_port_id
+-        )
+-        assert producer_port is not None
+-        actual_producer = await self.session.scalar(
+-            sa.select(self.db.StreamPhysicalSubtask).where(
+-                self.db.StreamPhysicalSubtask.output_stream_id == payload.stream_id,
+-                self.db.StreamPhysicalSubtask.operator_run_id
+-                == producer_port.operator_run_id,
+-                self.db.StreamPhysicalSubtask.graph_revision_id == graph_id,
+-            )
+-        )
++        assert facts.matched_edge_id is not None
++        assert facts.producer_port_id is not None
+         if (
+             payload.record_kind != "PAYLOAD"
+             or payload.payload_record_id is not None
+             or payload.graph_revision_id != graph_id
+             or payload.flow_run_id != self.authorization.flow_run_id
+-            or actual_producer is None
++            or facts.producer_subtask_id is None
+             or envelope.payload_stream_id != str(payload.stream_id)
+             or envelope.payload_sequence != payload.sequence
+             or envelope.payload_value_digest != digest
+@@ -776,7 +817,7 @@
+             payload_value_digest=digest,
+             payload_size_bytes=payload.size_bytes,
+             reference_record_id=record.id,
+-            edge_partition_id=edge_partition.id,
++            edge_partition_id=facts.edge_partition_id,
+         )
+ 
+     async def read_consumer(self, binding: ConsumerBinding) -> StreamDelivery | None:
+--- a/tests/server/models/test_stream_routes.py
++++ b/tests/server/models/test_stream_routes.py
+@@ -1198,3 +1198,314 @@
+                         other, db, authorization
+                     ).claim_source(uuid4())
+                 assert refused.value.code == "IDENTITY_CONFLICT"
++
++
++async def _assert_reference_refusal_left_data_unchanged(
++    session: AsyncSession,
++    db: PrefectDBInterface,
++    region: RoutingRegion,
++    binding: ConsumerBinding,
++    record_ids: set[UUID],
++    receipt_ids: set[UUID],
++) -> None:
++    cursor = (
++        await session.execute(
++            sa.select(
++                db.StreamConsumer.completed_through,
++                db.StreamConsumer.inflight_sequence,
++                db.StreamConsumer.delivery_id,
++                db.StreamConsumer.managed_state,
++            ).where(db.StreamConsumer.id == binding.consumer_id)
++        )
++    ).one()
++    assert tuple(cursor) == (0, None, None, {})
++    output = (
++        await session.execute(
++            sa.select(
++                db.StreamPartition.last_sequence,
++                db.StreamPartition.producer_position,
++                db.StreamPartition.record_count,
++                db.StreamPartition.byte_count,
++            ).where(db.StreamPartition.id == binding.output_stream_id)
++        )
++    ).one()
++    assert tuple(output) == (0, 0, 0, 0)
++    assert (
++        set(
++            (
++                await session.scalars(
++                    sa.select(db.StreamRecord.id).where(
++                        db.StreamRecord.graph_revision_id == region.plan.id
++                    )
++                )
++            ).all()
++        )
++        == record_ids
++    )
++    assert (
++        set(
++            (
++                await session.scalars(
++                    sa.select(db.StreamRouteReceipt.id).where(
++                        db.StreamRouteReceipt.graph_revision_id == region.plan.id
++                    )
++                )
++            ).all()
++        )
++        == receipt_ids
++    )
++
++
++@pytest.mark.parametrize("poison", ["reference", "receipt", "payload"])
++async def test_postgres_reference_resolution_refreshes_cached_record_material(
++    db: PrefectDBInterface, flow_run: orm_models.FlowRun, poison: str
++):
++    region = await routing_region(db, flow_run)
++    source = await claim_source(db, region)
++    outcome = await append(
++        db, region, source_request(region, source, 1, {"kept": True})
++    )
++    reference = outcome.references[0]
++    target = next(
++        row
++        for row in region.plan.subtasks
++        if row.input_stream_id == reference.stream_id
++    )
++    binding = await open_input(db, region, target.operator_uid, target.subtask_index)
++    before = await contents(db, region)
++    async with route_store(db, region, target.operator_uid, target.subtask_index) as (
++        session,
++        store,
++        _,
++    ):
++        cached_reference = await session.get(db.StreamRecord, reference.record_id)
++        cached_payload = await session.get(db.StreamRecord, outcome.payload_record_id)
++        cached_receipt = await session.get(db.StreamRouteReceipt, outcome.receipt_id)
++        assert (
++            cached_reference is not None
++            and cached_payload is not None
++            and cached_receipt is not None
++        )
++        assert (
++            await store.resolve_reference(reference.stream_id, reference.sequence)
++        ).value == {"kept": True}
++        async with session.begin_nested() as savepoint:
++            if poison == "reference":
++                original = cached_reference.value
++                corrupted = {**original, "graph_revision_id": str(uuid4())}
++                _, encoded, digest = stream_routes.canonical_stream_payload(corrupted)
++                update = (
++                    sa.update(db.StreamRecord)
++                    .where(db.StreamRecord.id == cached_reference.id)
++                    .values(
++                        value=corrupted, value_digest=digest, size_bytes=len(encoded)
++                    )
++                )
++            elif poison == "receipt":
++                original = cached_receipt.outcome
++                corrupted = {
++                    **original,
++                    "references": [dict(item) for item in original["references"]],
++                }
++                corrupted["references"][0]["edge_id"] = str(uuid4())
++                corrupted["references"].sort(
++                    key=lambda item: (
++                        UUID(item["edge_id"]).bytes,
++                        UUID(item["edge_partition_id"]).bytes,
++                        UUID(item["record_id"]).bytes,
++                    )
++                )
++                corrupted["outcome_digest"] = route_outcome_digest(corrupted)
++                wire.StreamDAGRouteOutcome.model_validate(corrupted)
++                update = (
++                    sa.update(db.StreamRouteReceipt)
++                    .where(db.StreamRouteReceipt.id == cached_receipt.id)
++                    .values(
++                        outcome=corrupted,
++                        outcome_digest=corrupted["outcome_digest"],
++                        outcome_size=len(canonical_route_json(corrupted)),
++                    )
++                )
++            else:
++                original = cached_payload.value
++                update = (
++                    sa.update(db.StreamRecord)
++                    .where(db.StreamRecord.id == cached_payload.id)
++                    .values(value={"changed_without_digest": True})
++                )
++            await session.execute(update.execution_options(synchronize_session=False))
++            assert (
++                cached_reference.value
++                if poison == "reference"
++                else cached_receipt.outcome
++                if poison == "receipt"
++                else cached_payload.value
++            ) == original
++            with pytest.raises(NativeStreamError) as refused:
++                await store.read_consumer(binding)
++            assert refused.value.code == "REFERENCE_IDENTITY_CONFLICT"
++            await _assert_reference_refusal_left_data_unchanged(
++                session,
++                db,
++                region,
++                binding,
++                {row.id for row in before["records"]},
++                set(before["receipts"]),
++            )
++            await savepoint.rollback()
++    assert await contents(db, region) == before
++
++
++async def test_postgres_reference_resolution_distinguishes_missing_input_from_bad_envelope(
++    db: PrefectDBInterface, flow_run: orm_models.FlowRun
++):
++    region = await routing_region(db, flow_run)
++    source = await claim_source(db, region)
++    outcome = await append(
++        db, region, source_request(region, source, 1, {"kept": True})
++    )
++    reference = outcome.references[0]
++    target = next(
++        row
++        for row in region.plan.subtasks
++        if row.input_stream_id == reference.stream_id
++    )
++    binding = await open_input(db, region, target.operator_uid, target.subtask_index)
++    before = await contents(db, region)
++    async with route_store(db, region, target.operator_uid, target.subtask_index) as (
++        session,
++        store,
++        _,
++    ):
++        with pytest.raises(NativeStreamError) as missing:
++            await store.resolve_reference(reference.stream_id, reference.sequence + 1)
++        assert missing.value.code == "ROUTE_HORIZON_EXPIRED"
++        async with session.begin_nested() as savepoint:
++            await session.execute(
++                sa.update(db.StreamRecord)
++                .where(db.StreamRecord.id == reference.record_id)
++                .values(value={"malformed": True})
++                .execution_options(synchronize_session=False)
++            )
++            await session.execute(
++                sa.update(db.StreamRouteReceipt)
++                .where(db.StreamRouteReceipt.id == outcome.receipt_id)
++                .values(outcome={"also_malformed": True})
++                .execution_options(synchronize_session=False)
++            )
++            with pytest.raises(
++                NativeStreamError, match="Reference envelope is invalid"
++            ) as refused:
++                await store.read_consumer(binding)
++            assert refused.value.code == "REFERENCE_IDENTITY_CONFLICT"
++            await _assert_reference_refusal_left_data_unchanged(
++                session,
++                db,
++                region,
++                binding,
++                {row.id for row in before["records"]},
++                set(before["receipts"]),
++            )
++            await savepoint.rollback()
++    assert await contents(db, region) == before
++
++
++async def test_postgres_reference_resolution_uses_fresh_topology_with_cached_edge(
++    db: PrefectDBInterface, flow_run: orm_models.FlowRun
++):
++    region = await routing_region(db, flow_run)
++    source = await claim_source(db, region)
++    outcome = await append(
++        db, region, source_request(region, source, 1, {"kept": True})
++    )
++    reference = outcome.references[0]
++    target = next(
++        row
++        for row in region.plan.subtasks
++        if row.input_stream_id == reference.stream_id
++    )
++    binding = await open_input(db, region, target.operator_uid, target.subtask_index)
++    before = await contents(db, region)
++    async with route_store(db, region, target.operator_uid, target.subtask_index) as (
++        session,
++        store,
++        _,
++    ):
++        cached_edge = await session.get(db.StreamGraphEdge, reference.edge_id)
++        assert cached_edge is not None
++        original_port = cached_edge.producer_port_id
++        alternate_port = next(
++            row.output_port.id
++            for row in region.plan.operators
++            if row.operator_uid == target.operator_uid
++        )
++        assert (
++            alternate_port != original_port
++            and alternate_port != cached_edge.consumer_port_id
++        )
++        async with session.begin_nested() as savepoint:
++            await session.execute(
++                sa.update(db.StreamGraphEdge)
++                .where(db.StreamGraphEdge.id == cached_edge.id)
++                .values(producer_port_id=alternate_port)
++                .execution_options(synchronize_session=False)
++            )
++            assert cached_edge.producer_port_id == original_port
++            with pytest.raises(
++                NativeStreamError,
++                match="Original payload identity, content or producer differs",
++            ) as refused:
++                await store.read_consumer(binding)
++            assert refused.value.code == "REFERENCE_IDENTITY_CONFLICT"
++            assert cached_edge.producer_port_id == original_port
++            await _assert_reference_refusal_left_data_unchanged(
++                session,
++                db,
++                region,
++                binding,
++                {row.id for row in before["records"]},
++                set(before["receipts"]),
++            )
++            await savepoint.rollback()
++    assert await contents(db, region) == before
++
++
++async def test_postgres_reference_resolution_autoflushes_pending_payload_poison(
++    db: PrefectDBInterface, flow_run: orm_models.FlowRun
++):
++    region = await routing_region(db, flow_run)
++    source = await claim_source(db, region)
++    outcome = await append(
++        db, region, source_request(region, source, 1, {"kept": True})
++    )
++    reference = outcome.references[0]
++    target = next(
++        row
++        for row in region.plan.subtasks
++        if row.input_stream_id == reference.stream_id
++    )
++    binding = await open_input(db, region, target.operator_uid, target.subtask_index)
++    before = await contents(db, region)
++    async with route_store(db, region, target.operator_uid, target.subtask_index) as (
++        session,
++        store,
++        _,
++    ):
++        cached_payload = await session.get(db.StreamRecord, outcome.payload_record_id)
++        assert cached_payload is not None
++        async with session.begin_nested() as savepoint:
++            cached_payload.value = {"pending_without_digest": True}
++            assert cached_payload in session.dirty
++            with pytest.raises(NativeStreamError) as refused:
++                await store.resolve_reference(reference.stream_id, reference.sequence)
++            assert refused.value.code == "REFERENCE_IDENTITY_CONFLICT"
++            await _assert_reference_refusal_left_data_unchanged(
++                session,
++                db,
++                region,
++                binding,
++                {row.id for row in before["records"]},
++                set(before["receipts"]),
++            )
++            await savepoint.rollback()
++    assert await contents(db, region) == before

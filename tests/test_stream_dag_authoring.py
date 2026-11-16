@@ -12,7 +12,15 @@ import httpx
 
 from prefect import task
 from prefect._internal.stream_dag import StreamGraphAuthoring
-from prefect._internal.stream_execution import StreamExecutionContext
+from prefect._internal.stream_dag_execution import (
+    DAGFlowBinding,
+    DAGFlowRegistry,
+    dag_registry_context,
+)
+from prefect._internal.stream_execution import (
+    StreamExecutionContext,
+    stream_execution_context,
+)
 from prefect._internal.stream_finite import _reserve
 from prefect._internal.stream_reconstruction import (
     async_stream_flow_scope,
@@ -240,7 +248,7 @@ class TestStreamDagAuthoring(unittest.TestCase):
         self.assertIs(boundary.seal(), boundary.reply)
         self.assertIs(boundary.seal(), boundary.reply)
         self.assertEqual(len(boundary.snapshots), 1)
-        self.assertFalse(hasattr(boundary.reply, "start"))
+        self.assertTrue(callable(boundary.reply.start))
         self.assertFalse(hasattr(boundary.reply, "wait"))
         self.assertFalse(hasattr(boundary.reply, "admit"))
 
@@ -535,10 +543,13 @@ class TestStreamDagAuthoring(unittest.TestCase):
         api_url = "http://127.0.0.1:4200/api"
         context = SimpleNamespace(
             flow=SimpleNamespace(
-                version="v1", streaming=SimpleNamespace(profile="partitioned-dag-v1")
+                version="v1",
+                retries=0,
+                streaming=SimpleNamespace(profile="partitioned-dag-v1"),
             ),
             flow_run=SimpleNamespace(
                 id=flow_id,
+                run_count=1,
                 deployment_id=uuid4(),
                 deployment_version="deployed-v1",
                 labels={"prefect.native-streaming": "partitioned-dag-v1"},
@@ -551,6 +562,9 @@ class TestStreamDagAuthoring(unittest.TestCase):
             api_url=api_url,
             capability="a" * 64,
             event_private_key=b"b" * 32,
+        )
+        registry = DAGFlowRegistry(
+            DAGFlowBinding(flow_id, 1, 1, execution.holder_id, api_url)
         )
         calls = []
 
@@ -584,6 +598,8 @@ class TestStreamDagAuthoring(unittest.TestCase):
                 "prefect._internal.stream_dag.get_client",
                 return_value=LostMetadataAck(),
             ),
+            stream_execution_context(execution),
+            dag_registry_context(registry),
         ):
             original = StreamGraphAuthoring()
             fork(original)

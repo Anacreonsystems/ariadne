@@ -99,6 +99,71 @@ async def renew_worker_capability_metadata(
     Other protocols are expired on rotation. A new supervisor cannot inherit a
     fresh protocol advertisement it has not explicitly renewed itself.
     """
+    # Ordinary polls only renew metadata for an existing supervisor. Their
+    # Worker lock must coexist with the shared lock held through a DATA turn.
+    # Roll back this savepoint before the exclusive registration/rotation path;
+    # upgrading a retained shared Worker lock can deadlock concurrent renewals.
+    identity = (
+        principal.work_pool_id,
+        principal.host_id,
+        principal.boot_id,
+        principal.launcher_process_id,
+        principal.launcher_start_ticks,
+    )
+    async with session.begin_nested() as renewal:
+        shared_worker = await session.scalar(
+            sa.select(db.Worker)
+            .where(db.Worker.id == worker_id)
+            .with_for_update(read=True)
+            .execution_options(populate_existing=True)
+        )
+        if (
+            shared_worker is None
+            or shared_worker.work_pool_id != principal.work_pool_id
+            or shared_worker.status != WorkerStatus.ONLINE
+        ):
+            raise NativeStreamError(
+                "WORKER_NOT_READY",
+                "A registered online worker in the requested pool is required",
+            )
+        shared_rows = list(
+            (
+                await session.scalars(
+                    sa.select(db.StreamWorkerCapability)
+                    .where(db.StreamWorkerCapability.worker_id == worker_id)
+                    .order_by(
+                        db.StreamWorkerCapability.protocol,
+                        db.StreamWorkerCapability.protocol_version,
+                    )
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        )
+        existing = next(
+            (
+                item
+                for item in shared_rows
+                if item.protocol == protocol and item.protocol_version == 1
+            ),
+            None,
+        )
+        if existing is not None and all(
+            (
+                item.work_pool_id,
+                item.host_id,
+                item.boot_id,
+                item.launcher_process_id,
+                item.launcher_start_ticks,
+            )
+            == identity
+            for item in shared_rows
+        ):
+            existing.last_renewed_at = cast(DateTime, now("UTC"))
+            await session.flush()
+            return
+        await renewal.rollback()
+
     worker = await session.scalar(
         sa.select(db.Worker)
         .where(db.Worker.id == worker_id)
@@ -127,13 +192,6 @@ async def renew_worker_capability_metadata(
                 .execution_options(populate_existing=True)
             )
         ).all()
-    )
-    identity = (
-        principal.work_pool_id,
-        principal.host_id,
-        principal.boot_id,
-        principal.launcher_process_id,
-        principal.launcher_start_ticks,
     )
     different = any(
         (

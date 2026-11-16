@@ -1,0 +1,89 @@
+"""Independently reconcile closed native artifacts without opening a DB."""
+import collections,datetime,hashlib,json,pathlib,re,sys,xml.etree.ElementTree as E
+base=pathlib.Path('/tmp/native-launch-parent-lock-principal-recovery2-v1');trial=pathlib.Path(sys.argv[1]);assert trial.parent==base
+failures=[]
+def check(value,label):
+ if not value:failures.append(label)
+def load(path):
+ try:return json.loads(path.read_text())
+ except (FileNotFoundError,json.JSONDecodeError) as error:failures.append(str(path)+':'+type(error).__name__);return {}
+def rows(path):
+ result=[]
+ try:
+  for line in path.read_text().splitlines():result.append(json.loads(line))
+ except (FileNotFoundError,json.JSONDecodeError) as error:failures.append(str(path)+':'+type(error).__name__)
+ return result
+def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+hold=load(base/'native-recovery-final-hold-v1.json');command=load(trial/'command.json');mode=command.get('phase');check(mode in {'accepted200','incomplete200'},'expected mode')
+before=load(trial/'source-before.json');after=load(trial/'source-after.json');check(before==after==hold['files'],'source hold drift');check(load(trial/'drift.json')==[],'source drift report');check(load(trial/'import-mismatches.json')==[],'import audit mismatch')
+exitcode=int((trial/'exit').read_text());check(exitcode==0,'pytest exit')
+suites=E.parse(trial/'pytest.xml').findall('.//testsuite');check(len(suites)==1,'one suite');suite=suites[0].attrib
+body_pass=suite['tests']=='1' and all(suite[k]=='0' for k in ['failures','errors','skipped']) and exitcode==0
+check(body_pass,'one exact existing native testcase PASS')
+cleanup=load(trial/'cleanup.json');processes=load(trial/'process-closure.json');check(cleanup.get('sessions')==cleanup.get('remaining')==[] and len(cleanup.get('dropped',[]))==2 and not cleanup.get('force_used'),'owned DB closure')
+check(processes.get('remaining_same_identity_live')==processes.get('remaining_same_identity_zombies')==[],'owned process closure')
+directories=[p for p in (trial/'pytest').glob('*') if p.is_dir() and not p.is_symlink() and (p/'observations.json').exists()];check(len(directories)==1,'one complete native fixture observation')
+health={'exact_api_access_5xx':[],'TimeoutError':[],'api_asgi_unhandled':[],'unexpected_healthy_retry':[]};business={};native={};coordinator={};workerhealth={};phase_times={};fixture=None
+ansi=re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]');http5xx=re.compile(r'\bHTTP/\d(?:\.\d)?[\"\']?\s+5\d{2}\b')
+# Inspect every owned fixture log, including when final observations are missing.
+for log in sorted((trial/'pytest').rglob('*.log')):
+ if not (log.name.startswith('api-') or log.name in {'worker-left.log','worker-right.log'}):continue
+ for number,line in enumerate(log.read_text(errors='replace').splitlines(),1):
+  plain=ansi.sub('',line);record={'file':str(log.relative_to(trial)),'line':number,'text':plain}
+  if log.name.startswith('api-') and http5xx.search(plain):health['exact_api_access_5xx'].append(record)
+  if re.search(r'\bTimeoutError\b',plain):health['TimeoutError'].append(record)
+  if log.name.startswith('api-') and 'Exception in ASGI application' in plain:health['api_asgi_unhandled'].append(record)
+for path in (trial/'pytest').rglob('progress.jsonl'):
+ for item in rows(path):
+  snapshot=item.get('snapshot',item.get('progress',item))
+  if not snapshot:continue
+  for subtask in snapshot.get('subtasks',[]):
+   maximum=2 if subtask['operator_uid']=='B' else 1
+   if subtask['run_count']>maximum:health['unexpected_healthy_retry'].append({'monotonic_ns':item.get('monotonic_ns'),'subtask':subtask})
+if directories:
+ fixture=directories[0];obs=load(fixture/'observations.json');final=load(fixture/'final-progress.json');accepted=load(fixture/'accepted-cursors.json');coordinator=load(fixture/'coordinator-retirement.json');workerhealth=load(fixture/'worker-health.json');phase_times=load(fixture/'phases.json')
+ check(obs.get('mode')==mode and obs.get('count')==500 and obs.get('asynchronous') is False and obs.get('c_exchange')=='broadcast' and obs.get('flow_state')=='COMPLETED' and obs.get('task_runs')==4,'native workload and final Flow shape')
+ check(coordinator.get('authority_state')==coordinator.get('snapshot_state')=='RELEASED' and coordinator.get('launch_states') and set(coordinator['launch_states'])=={'RELEASED'},'coordinator authority/snapshot/launch RELEASED')
+ check(workerhealth.get('rejected')==[],'fixture rejected terminal infrastructure errors')
+ check(final.get('graph_state')=='RELEASED' and final.get('task_run_count')==4 and len(final.get('channels',[]))==7 and final.get('consumers')==[],'graph normal physical closure')
+ check(len(final.get('subtasks',[]))==4,'four physical subtasks')
+ for subtask in final.get('subtasks',[]):
+  expected=2 if subtask['operator_uid']=='B' else 1
+  check(subtask['physical_epoch']==subtask['run_count']==expected and subtask['physical_slot_released'],'subtask attempt/epoch/slot')
+ for channel in final.get('channels',[]):check(channel['state']=='COMPLETED' and channel['last_sequence']==channel['tail_sequence']==500,'channel complete tail500')
+ check(len(accepted.get('consumers',[]))==3,'three accepted cursor observations')
+ for cursor in accepted.get('consumers',[]):check(cursor['completed_through']==500 and cursor['inflight_sequence'] is None,'accepted cursor500 no in-flight')
+ source=rows(fixture/'source-accepted.jsonl');check([v['position'] for v in source]==list(range(1,501)) and len({v['pid'] for v in source})==1,'source positions exact once and one process')
+ replacement=load(fixture/'replacement-started.json');original=load(fixture/'B-0.pid.json');first=201 if mode=='accepted200' else 200
+ check(replacement.get('sequence')==first and replacement.get('pid')!=original.get('pid'),'exact replacement input and changed process')
+ for branch in ['B-0','C-0','C-1']:
+  calls=rows(fixture/('calls-'+branch+'.jsonl'));expected=list(range(1,501))
+  if branch=='B-0' and mode=='incomplete200':expected.insert(200,200)
+  check([v['sequence'] for v in calls]==expected and [v['number'] for v in calls]==expected,'exact '+branch+' body calls')
+  check(len({v['task_run_id'] for v in calls})==1,'stable '+branch+' TaskRun')
+  if branch=='B-0':
+   check([v['sequence'] for v in calls if v['pid']==original.get('pid')]==list(range(1,201)),'old B inputs1..200')
+   check([v['sequence'] for v in calls if v['pid']==replacement.get('pid')]==list(range(first,501)),'replacement B exact suffix')
+   check(len({v['pid'] for v in calls})==2,'exact two B processes')
+  else:check(len({v['pid'] for v in calls})==1,'healthy '+branch+' process continuity')
+  files=list((fixture/branch).glob('document-*.json'));check(len(files)==500,'500 distinct '+branch+' effects')
+  for number in range(1,501):check(load(fixture/branch/f'document-{number}.json')=={'document_id':f'document-{number}','number':number},'exact '+branch+' document'+str(number))
+  business[branch]={'body_calls':len(calls),'distinct_client_documents':len(files),'body_processes':len({v['pid'] for v in calls}),'task_runs':len({v['task_run_id'] for v in calls})}
+ markers=[load(p) for p in (fixture/'processes').glob('*.pid.json')];check(len(markers)==5,'five actual physical birth markers')
+ for marker in markers:check(str(marker['pid']) in processes.get('observed_pid_start_pairs',{}),'physical marker PID has exact audited identity')
+ check(len(final.get('launches',[]))==5 and all(v['state']=='CLOSED' for v in final['launches']),'five exact launch births closed')
+ check(len(final.get('grants',[]))==5,'five grants across exact attempts')
+ native={'flow':obs['flow_state'],'graph':final.get('graph_state'),'task_runs':4,'subtasks':final.get('subtasks'),'channels':len(final.get('channels',[])),'accepted_cursors':[v['completed_through'] for v in accepted.get('consumers',[])],'grant_states':collections.Counter(v['state'] for v in final.get('grants',[])),'closed_births':len(final.get('launches',[])),'replacement':replacement,'body_process_markers':len(markers)}
+check(not any(health.values()),'wider health detected5xx/TimeoutError/ASGI exception/healthy retry')
+status='PERSONALLY_VERIFIED_REAL_NATIVE_PASS' if not failures else 'PERSONAL_NATIVE_OR_WIDER_HEALTH_RED'
+# Private raw outputs stay private; this receipt and public XML redact DSNs.
+public_xml=trial/'pytest.public.xml'
+with public_xml.open('x') as f:f.write(re.sub(r'(?i)(postgres(?:ql)?(?:\+asyncpg)?://)[^\s\'\"<>]+',r'\1[redacted-owned-test-dsn]',(trial/'pytest.xml').read_text()))
+public_xml.chmod(0o600)
+receipt={'schema':'ariadne-principal-personal-native-recovery-verification-v1','recorded_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'status':status,'phase':mode,'actual_execution_by':'/root/etl_principal_recovery2','runtime_STOPPED':True,'head':hold['head'],'source_files':len(before),'candidate_hashes':{p:before[p]['sha256'] for p in ['src/prefect/server/models/stream_dag_launches.py','tests/server/models/test_stream_dag_launches.py','tests/test_native_stream_dag_execution_http.py']},'source_drift':[] if before==after else ['MISMATCH'],'source_body_pass':body_pass,'wider_health_pass':not any(health.values()) and workerhealth.get('rejected')==[],'failed_independent_checks':failures,'pytest_suite':suite,'trial':str(trial),'hold_sha256':sha(base/'native-recovery-final-hold-v1.json'),'driver_sha256':sha(base/'principal_native_recovery_v1.py'),'verifier_sha256':sha(pathlib.Path(__file__)),'original_budgets':hold['budgets'],'count':500,'asynchronous':False,'native':native,'business':business,'coordinator':coordinator,'fixture_worker_health':workerhealth,'wider_health':health,'phases':phase_times,'cleanup':cleanup,'process_closure':processes,'import_mismatches':load(trial/'import-mismatches.json'),'artifacts':{p:{'path':str(trial/p),'sha256':sha(trial/p)} for p in ['command.json','pytest.log','pytest.public.xml','source-before.json','source-after.json','drift.json','import-mismatches.json','cleanup.json','process-closure.json']},'qualification':['Actual unchanged existing native SDK/TCP/PG17/OS500 recovery case, not the ASGI component tests.','Injected old B exit77 is expected fault; healthy A/C retries and genuine5xx/TimeoutError are independently rejected.','Sourcebody and broader infrastructure health are reported separately. Typed409 fences are not counted as5xx.','No cache/optimization/profile/budget/oracle/source edit; old soak/forensic databases untouched.','Historical b4 blocker remains UNKNOWN; this trial does not prove causal attribution, throughput,5000 or full N2.2 acceptance.'],'readiness_credit':0,'earned_epoch2_percent':15}
+raw=json.dumps(receipt,indent=2,sort_keys=True);raw=re.sub(r'(?i)(postgres(?:ql)?(?:\+asyncpg)?://)[^\s\'\"<>]+',r'\1[redacted-owned-test-dsn]',raw)
+p=trial/'principal-native-receipt-v1.json'
+with p.open('x') as f:f.write(raw+'\n')
+p.chmod(0o600)
+print(json.dumps({'status':status,'receipt':str(p),'sha256':sha(p),'mode':mode,'pytest_tests':suite['tests'],'suite_seconds':suite['time'],'source_body_pass':body_pass,'wider_health_pass':receipt['wider_health_pass'],'failures':failures,'source_files':len(before),'coordinator':coordinator,'health_counts':{k:len(v) for k,v in health.items()},'observed_process_identities':len(processes.get('observed_pid_start_pairs',{})),'business':business,'STOP':True}))
+raise SystemExit(bool(failures))

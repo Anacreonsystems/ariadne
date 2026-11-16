@@ -1,0 +1,72 @@
+{
+  "marker": "MODEL_IMPORT_READY",
+  "scope": "NI2-012 finite server model/schema component only; API/native/whole-lifecycle acceptance separate",
+  "head": "8ad97915c8908c5175d6e6efbe47ee747704d868",
+  "server_wire_sha256": "77c8a8488641cd1d0aae931690a7a1bfde1dbf966fb2f17080de963a1fde01b3",
+  "paired_heads": {
+    "postgresql": "14e7dbaf6034",
+    "sqlite": "25f8ecb07145"
+  },
+  "results": {
+    "postgres": {
+      "passed": 40,
+      "skipped": 0,
+      "deselected": 1,
+      "duration_seconds": 55.76,
+      "exit": 0
+    },
+    "sqlite": {
+      "passed": 29,
+      "skipped": 0,
+      "deselected": 9,
+      "duration_seconds": 15.99,
+      "exit": 0
+    },
+    "pyright": {
+      "filesAnalyzed": 28,
+      "errors": 0,
+      "warnings": 0,
+      "ignore": [],
+      "exit": 0
+    },
+    "ruff": {
+      "version": "0.15.19",
+      "exit": 0
+    },
+    "source": {
+      "inputs": 967,
+      "drifts": 0
+    }
+  },
+  "commands": {
+    "postgres": "uv run --no-sync pytest tests/server/models/test_stream_dag_executions.py tests/server/models/test_stream_dag_launches.py tests/server/schemas/test_stream_dag_executions.py -k 'not sqlite' -q --tb=short",
+    "sqlite": "uv run --no-sync pytest tests/server/models/test_stream_dag_executions.py tests/server/schemas/test_stream_dag_executions.py -k 'not postgres' -q --tb=short",
+    "types": "uv run --no-sync pyright -p pyrightconfig-native-dag.json --outputjson"
+  },
+  "environment": {
+    "UV_NO_SYNC": "1",
+    "postgres_database_base": "native_epoch2_dag_final_pg12",
+    "postgres_port": 55436,
+    "sqlite_file": "/tmp/native-ni012-server-model-final-v1/sqlite.db"
+  },
+  "model_fixture": "Genuine deployed snapshot/enrollment via protected HTTP; server process-journal calls are explicit model fixtures with synthetic PID/wait values, no claim of actual kernel/process execution. Task transitions use signed events/CoreTaskPolicy; Flow terminal control uses CoreFlowPolicy(force=False), no direct state SQL.",
+  "covered": [
+    "exact preview abort/replay/auth",
+    "atomic whole region START and server-derived readiness",
+    "all4 signed bootstrap acknowledgements plus receipt/signature drift",
+    "own signed Running events and exact replay",
+    "durable source fanout, stable independent consumer cursors, success EOF, normal retirement",
+    "normal graph COMPLETED and Running parent",
+    "closed complete launch set before STOP, no missing-grant death inference",
+    "record after stop returns STOP_REQUIRED",
+    "retired worker capability absent during mixed-state CANCEL",
+    "private immutable admission witness distinct from current execution counts and public typed refusal",
+    "generic Flow cancel control precedes Cancelling visibility and final Cancelled waits STOP"
+  ],
+  "excluded": [
+    "whole native execution readiness/acceptance",
+    "actual two-worker OS process/kernel proof (runtime/worker gates pending)",
+    "baseline main CI job failure diagnosis",
+    "new ADR completion or earned percentage"
+  ]
+}

@@ -1,0 +1,70 @@
+# Полное чтение исходников Apache Flink: рабочая архитектурная карта
+
+Исследуется весь tracked checkout Apache Flink на ревизии [`068f428b29f4d9ee587fa1006d2f1a69b43c0000`](https://github.com/apache/flink/tree/068f428b29f4d9ee587fa1006d2f1a69b43c0000). Цель — документировать фактические контракты исходников, тестов и ресурсов до проектирования собственного движка Ariadne. Встраивание Flink runtime и совместимость с прежним Prefect этим исследованием не предусматриваются. Эта папка не меняет утверждённые ADR Ariadne.
+
+**Чтение всего корпуса не завершено.** `corpus.json` и `inventory.jsonl` описывают объём: 27 476 файлов, из них 21 373 UTF-8 текста, 4 084 544 строки. Это учёт файлов, а не свидетельство понимания их содержимого. Бинарные файлы учитываются отдельно и не обозначаются как прочитанный текст. Полное чтение файла означает потребление всех его строк без усечения; чтение production-класса не закрывает его тесты, ресурсы или зависимости.
+
+В том же inventory отдельно отмечены 6 102 binary resources и один недоступный вложенный corpus: `docs/themes/book` — gitlink на `a486adf8462c0abfc9034436ddd72927d6656809` из `alex-shpak/hugo-book`. Прочитана его регистрация в `.gitmodules`; содержимое theme repository пока не загружено и не прочитано. Оно не засчитывается в текстовые 4,08 млн строк и не считается закрытым исследованием.
+
+[Сквозная архитектура и наблюдаемые критерии](chapters/00-architecture-overview.md) связывает уже изученные пути графа, deployment, mailbox, state, checkpoint и sink. Это развивающийся свод с явными границами доказательств.
+
+## Навигация
+
+Проверки последнего сохранённого промежуточного среза: [verification.md](verification.md).
+
+Локальный порядок продолжения работы: [SKILL.md](../../../../.agents/skills/flink-source-study/SKILL.md).
+
+| Область | Ответственный reader | Состав |
+|---|---|---|
+| [Управление кластером и job](chapters/01-control-plane-scheduling.md) | `control` | JobMaster, scheduler, execution graph, resource/slot management, deployment и HA |
+| [Исполнение и обмен](chapters/02-task-execution-network-backpressure.md) | `execution` | Task/StreamTask, mailbox, graph translation, network, shuffle, backpressure |
+| [Состояние, checkpoint и время](chapters/03-state-checkpoints-windows-timers.md) | `state` | State backend, snapshots/recovery, checkpoint, timers/windows |
+| [API, типы и сериализация](chapters/04-api-types-serialization-python.md) | `api` | API contracts, transformations, serializers и API-adjacent модули |
+| [Table/SQL](chapters/05-table-sql-planner-runtime.md) | `table` | Planner, code generation, SQL runtime/operators и associated tests/resources |
+| [Коннекторы, форматы, storage, библиотеки и метрики](chapters/06-connectors-formats-storage-metrics.md) | `architect` | In-tree connectors, formats, filesystems, CEP, state-processing API, queryable state, metrics |
+| [Остальная поверхность репозитория](chapters/07-build-boundaries-tests-web.md) | `root` | Общие файлы, build/CI, docs, packaging/examples и прочие строки inventory |
+| [Planner fixtures: evidence](chapters/08-planner-fixtures-evidence.md) | `state`, дополнительное чтение | Remaining TEXT `flink-table/flink-table-planner/src/test/resources`; immutable owner остаётся `table`, чтение учитывается union без смены denominator |
+| [Planner main: архитектура lowering](chapters/10-planner-main-architecture.md) | `architect`, дополнительное чтение | Remaining TEXT planner `src/main/` после личного закрытия исходных1942files/277494lines; immutable owner=`table` |
+| [Planner Java/Scala tests: evidence](chapters/11-planner-tests-evidence.md) | `execution`, дополнительное чтение | Remaining TEXT planner `src/test/java/` и `src/test/scala/` после union-closure исходного execution owner; immutable owner остаётся `table` |
+| [Chinese docs: evidence](chapters/12-chinese-docs-evidence.md) | `state`, дополнительное чтение | Remaining TEXT `docs/content.zh/` после полного личного чтения planner resources; immutable owner остаётся `root` |
+
+После личного полного закрытия исходного owner `control` (2 451 текстовый файл, 388 013 строк) reader полностью прочитал переданный остаток TEXT `flink-tests/src/test/resources/`: 776 файлов, 152 357 строк; весь subtree закрыт union без повторного присвоения чужого personal credit. [Глава09 — форматы и визуальные ресурсы](chapters/09-test-resource-formats.md) теперь также ведёт новый exclusive handoff: remaining TEXT `docs/static/fig/` и `docs/static/font-awesome/`. Root прекратил новые чтения этих prefixes; immutable owner остаётся `root`, исходный denominator не меняется. Новый handoff остаётся открыт; binaries учитываются отдельно.
+
+Для выравнивания дальнейшего чтения согласованы ещё два непересекающихся reserve внутри owner `table`: после личного полного закрытия исходных1942textfiles/277494lines `architect` читает remaining TEXT `flink-table/flink-table-planner/src/main/`, а `execution` — remaining TEXT `flink-table/flink-table-planner/src/test/java/` и `src/test/scala/`. Table reader больше не начинает новые файлы этих subtrees; его последний ExecNodeBase1–369 подтверждён до handoff, pending ranges отсутствуют. `state` сохраняет planner test/resources. Уже прочитанное исключается по union всех ledgers; immutable ownership и исходные denominators не меняются. Эти reservations не означают прочтения ещё открытых файлов.
+
+Ещё один будущий reserve согласован после полного завершения state reader текущего planner test/resources: весь remaining TEXT `docs/content.zh/` (фиксированный prefix — 427 текстовых файлов, 96 705 строк; фактический остаток определяется union). Root не начинает там новые файлы, pending=0; state до закрытия fixture slice китайские страницы не начинает. Immutable owner остаётся `root`, denominator неизменен; inventory estimate не означает чтения.
+
+Точная принадлежность каждого файла записана в `inventory.jsonl`; таблица выше служит навигацией, а не заменяет этот перечень. Главы добавляются по мере чтения. Ссылки на готовность, если они появятся, должны опираться на проверку ledger, а не на наличие главы.
+
+## Как сохраняются доказательства
+
+`tools/read_source.py` печатает полные нумерованные диапазоны и записывает `readers/<reader>.exposures.jsonl`. Exposure означает только предъявление текста инструментом. После фактического чтения reader вручную добавляет в `readers/<reader>.confirmed.jsonl` запись с `path`, `start`, `end`, `file_sha256`, `note`. Подтверждение диапазона запрещено выводить автоматически из hash, скачивания, inventory, числа строк либо краткого описания.
+
+Для следующей сессии сначала читается confirmed ledger. Непокрытые строки продолжаются с первого разрыва. Полное покрытие файла получается объединением действительно прочитанных диапазонов от 1 до последней строки при совпадающем SHA-256. Повторное чтение диапазона допустимо, но не увеличивает уникальное покрытие. Инструментальный вывод с усечением требует повторного предъявления пропавших строк.
+
+Документируемый контракт включает владельца компонента, поток выполнения, lifecycle, состояние, сообщения/вызовы, успешное завершение, failure/retry/recovery, освобождение ресурсов и инварианты прочитанных тестов. Утверждения сопровождаются ссылками GitHub на закреплённый commit и строки. Тесты, прочитанные без запуска, прямо так и обозначаются; результаты исполнения не выдумываются.
+
+`tools/coverage.py` проверяет confirmed receipts по закреплённому inventory и объединяет диапазоны всех readers. Результаты: [coverage.json](coverage.json) и [reading-status.jsonl](reading-status.jsonl). Эти файлы показывают подтверждённое покрытие текста; они не заменяют проверку содержательных выводов главы.
+
+## Отдельная инспекция binary resources
+
+6 102 binary resources остаются отдельным незавершённым обязательством. Их hash/размер/расширение подтверждают идентичность объекта, но не чтение или понимание. Массовый hex dump также не становится архитектурным review. Пока binary receipt format не определён и не проверяется инструментом, текстовые confirmed ledgers не получают бинарных записей и процент строк не меняется.
+
+После чтения соответствующих serializers/consumers нужна инспекция по формату:
+
+- Изображения и диаграммы: визуально просмотреть каждый объект, записать назначение и существенное содержимое; OCR или имя файла сами по себе не закрывают просмотр.
+- Архивы и контейнеры данных: перечислить внутренние entries, затем осмотреть содержимое применимым к каждому entry способом. Listing доказывает только listing, а не чтение вложенных объектов. Не исполнять вложенные программы/fixtures.
+- Сериализованные snapshots и golden fixtures: сначала установить writer/reader и version из исходников, затем сопоставить payload/схему с конкретными assertions. Различать просмотр header, частичное decoding и полное покрытие полей; значения, которые существующие средства не декодируют, остаются открытыми.
+- Шрифты, compiled artifacts и прочие форматы: явно определить пригодный способ структурного/визуального осмотра и ограничения. Недоступный decoder не заменять отметкой «прочитано» на основании magic bytes/hash.
+
+Будущая отдельная запись инспекции должна связывать path+SHA-256 с форматом, реально просмотренными entries/страницами/полями или byte ranges, методом, содержательными наблюдениями и непросмотренным остатком. Это план evidence accounting, не результат выполненной инспекции и не разрешение на запуск fixtures, installation/build или изменение pinned source. Gitlink theme также остаётся отдельным внешним corpus с собственным inventory после доступности; его отсутствие не исключается из открытых вопросов.
+
+## Порядок продолжающегося чтения
+
+1. Полностью читать критические цепочки исполнения, управления, checkpoint/state и connector I/O; сразу связывать вызовы между областями, не присваивая себе чтение соседней области.
+2. Полностью читать связанные тесты, вспомогательные классы, serializers, resources и error paths. Если зависимость ещё не прочитана, оставлять её открытым вопросом.
+3. Продолжать оставшуюся часть каждой области по inventory, включая build, documentation и непродукционные файлы. Приоритизация не создаёт исключений из исходного требования «весь исходный код».
+4. Согласовать межкомпонентные контракты по реальным вызовам и устранить расхождения комментариев с кодом. Наличие классов с похожими именами в разных API не означает общий lifecycle.
+5. Только после фактического завершения чтения и проверки диапазонов закрывать кампанию. Проектирование/реализация Ariadne — отдельный последующий этап с существующим процессом ADR.
+
+Ни один пункт этого порядка не заменяет полного исходного корпуса выборкой центральных файлов. Непрочитанное остаётся видимым в inventory и отсутствующих confirmed ranges.

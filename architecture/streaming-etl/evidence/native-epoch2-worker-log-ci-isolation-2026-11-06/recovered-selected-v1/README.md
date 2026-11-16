@@ -1,0 +1,5 @@
+# Closed recovered selected-case execution
+
+Seven actual selected test bodies passed in12.53s. The launcher exited1 after a postwait /proc children query failed; the pytest wait code was not persisted and remains **UNKNOWN**. [Recovery receipt](actual-run/recovery-receipt.json), [failure observation](actual-run/launcher-failure-observation.txt), public recovered stdout/XML and original bindings remain exact. No successful automatic wrapper receipt or pytest-exit file is invented.
+
+Recovery read closed metadata only:1756 source files drift0,1201 imports mismatch0, all five new actor PID/start identities gone, and a fresh retained database with zero observed sessions/no DROP/FORCE. No adopted-reap proof is inferred. The [interrupted v2](../failed-candidate-module-v1/index.json), including its prior dead unreaped orphan, stays separate; [later full-module v4](../actualpassed-module-v1/index.json) carries its own successful closure. This node grants zero readiness credit; earned15% is unchanged. No private selector/config/env/log/profile or raw runtime URL is copied.

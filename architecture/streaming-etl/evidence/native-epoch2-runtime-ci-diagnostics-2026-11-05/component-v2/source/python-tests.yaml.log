@@ -1,0 +1,1627 @@
+name: Unit tests
+
+env:
+  # enable colored output
+  # https://github.com/pytest-dev/pytest/issues/7443
+  PY_COLORS: 1
+  # These modules run in the dedicated native DAG job below, with PG17 and
+  # SQLite capability controls. Broad PG14/Docker collections must not run them.
+  NATIVE_DAG_TEST_EXCLUSIONS: >-
+    --ignore=tests/client/test_stream_dag_executions.py
+    --ignore=tests/client/test_stream_dag_launches.py
+    --ignore=tests/test_stream_graph_execution_contracts.py
+    --ignore=tests/test_native_dag_execution_client_http.py
+    --ignore=tests/server/schemas/test_stream_dag_executions.py
+    --ignore=tests/server/models/test_stream_dag_executions.py
+    --ignore=tests/server/models/test_stream_dag_launches.py
+    --ignore=tests/server/database/test_stream_dag_execution_migrations.py
+    --ignore=tests/server/api/test_stream_dag_executions.py
+    --ignore=tests/server/api/test_stream_dag_launches.py
+    --ignore=tests/test_stream_dag_execution.py
+    --ignore=tests/test_stream_dag_bootstrap.py
+    --ignore=tests/test_native_stream_dag_execution_http.py
+    --ignore=tests/workers/test_stream_dag_subtasks.py
+    --ignore=tests/workers/test_native_recovery_poll.py
+    --ignore=tests/server/database/test_stream_route_cleanup_indexes.py
+    --ignore=tests/workers/test_stream_dag_launches.py
+    --ignore=tests/workers/test_stream_dag_bootstrap.py
+
+on:
+  # repository_dispatch executes the workflow definition from the default branch.
+  repository_dispatch:
+    types:
+      - logfire-test-profile
+  pull_request:
+    paths:
+      - .github/workflows/python-tests.yaml
+      - "src/prefect/**/*.py"
+      - "tests/**/*.py"
+      - pyproject.toml
+      - uv.lock
+      - Dockerfile
+      - scripts/entrypoint.sh
+      - scripts/verify_test_selection.py
+      - pyrightconfig-native-physical.json
+      - pyrightconfig-native-dag.json
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/python-tests.yaml
+      - "src/prefect/**/*.py"
+      - "tests/**/*.py"
+      - pyproject.toml
+      - uv.lock
+      - Dockerfile
+      - scripts/entrypoint.sh
+      - scripts/verify_test_selection.py
+      - pyrightconfig-native-physical.json
+      - pyrightconfig-native-dag.json
+permissions:
+  contents: read
+  actions: write
+
+# Limit concurrency by workflow/branch combination.
+#
+# For pull request builds, pushing additional changes to the
+# branch will cancel prior in-progress and pending builds.
+#
+# For builds triggered on a branch push, additional changes
+# will wait for prior builds to complete before starting.
+#
+# https://docs.github.com/en/actions/using-jobs/using-concurrency
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  run-tests:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    runs-on: ubuntu-latest
+    name: ${{ matrix.test-type.name }} - python:${{ matrix.python-version }}, ${{ matrix.database }}
+
+    services: &python-test-services
+      redis:
+        image: redis:latest
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      postgres:
+        image: ${{ startsWith(matrix.database, 'postgres') && matrix.database || '' }}
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: prefect
+          POSTGRES_PASSWORD: prefect
+          POSTGRES_DB: prefect
+          LANG: C.UTF-8
+          LANGUAGE: C.UTF-8
+          LC_ALL: C.UTF-8
+          LC_COLLATE: C.UTF-8
+          LC_CTYPE: C.UTF-8
+        options: >-
+          --health-cmd "pg_isready"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --tmpfs /var/lib/postgresql/data
+
+    strategy:
+      fail-fast: false
+      matrix:
+        test-type: &python-test-types
+          - id: server
+            name: Server Tests
+            modules: tests/server/ tests/events/server --ignore=tests/server/database/ --ignore=tests/server/orchestration/
+          - id: database
+            name: Database Tests
+            modules: tests/server/database/
+          - id: orchestration-core
+            name: "Orchestration Tests: Core"
+            modules: tests/server/orchestration/ --ignore=tests/server/orchestration/api/
+          - id: orchestration-api
+            name: "Orchestration Tests: API"
+            modules: tests/server/orchestration/api/
+          - id: client-modules
+            name: "Client Tests: Modules"
+            modules: >-
+              tests/
+              --ignore=tests/typesafety
+              --ignore=tests/server/
+              --ignore=tests/events/server
+              --ignore=tests/test_task_runners.py
+              --ignore=tests/runner
+              --ignore=tests/workers
+              --ignore=tests/cli/
+              --ignore=tests/test_settings.py
+              --ignore=tests/input/
+              --ignore-glob="tests/test_*.py"
+          - id: client-top-level
+            name: "Client Tests: Top-Level"
+            modules: >-
+              tests/test_artifacts.py
+              tests/test_assets.py
+              tests/test_automations.py
+              tests/test_background_tasks.py
+              tests/test_cache_policies.py
+              tests/test_context.py
+              tests/test_datetime.py
+              tests/test_exceptions.py
+              tests/test_filesystems.py
+              tests/test_highlighters.py
+              tests/test_import_smoke.py
+              tests/test_infrastructure_bound_flow.py
+              tests/test_locking.py
+              tests/test_log_prints.py
+              tests/test_logging.py
+              tests/test_observers.py
+              tests/test_plugins.py
+              tests/test_schedules.py
+              tests/test_serializers.py
+              tests/test_types.py
+              tests/test_ui_build_validation.py
+              tests/test_variables.py
+              tests/test_versioning.py
+          - id: client-execution
+            name: "Client Tests: Execution"
+            modules: >-
+              tests/test_flow_engine.py
+              tests/test_flow_runs.py
+              tests/test_flows.py
+              tests/test_flows_compat.py
+              tests/test_futures.py
+              tests/test_states.py
+              tests/test_subprocess_logging.py
+              tests/test_stream_tasks.py
+              tests/test_stream_sources.py
+              tests/test_stream_routing.py
+              tests/test_stream_partitioned_runtime.py
+              tests/test_stream_graph_contracts.py
+              tests/test_stream_key_wire.py
+              tests/test_stream_route_terminals.py
+              tests/test_stream_route_plan.py
+              tests/test_stream_dag_authoring.py
+              tests/test_stream_dag_dependencies.py
+              tests/test_native_partitioned_stream_http.py
+              tests/test_native_dag_client_http.py
+              tests/test_native_stream_dag_http.py
+              tests/test_native_source_recovery_http.py
+              tests/test_native_submission_http.py
+              tests/test_native_execution_http.py
+              tests/test_native_execution_recovery_http.py
+              tests/test_native_flow_recovery_http.py
+              tests/test_native_finite_http.py
+              tests/test_native_mixed_flow_http.py
+              tests/test_native_worker_deployment_http.py
+              tests/test_native_worker_recovery_http.py
+              tests/test_native_stream_http.py
+              tests/test_native_stream_recovery_http.py
+              tests/test_native_stream_client_package.py
+              tests/test_native_physical_client_package.py
+              tests/test_native_stream_code.py
+              tests/test_task_engine.py
+              tests/test_task_runs.py
+              tests/test_task_worker.py
+              tests/test_tasks.py
+              tests/test_transactions.py
+              tests/test_waiters.py
+          - id: runner-worker-settings-input-cli
+            name: Runner, Worker, Settings, Input, and CLI Tests
+            modules: tests/test_task_runners.py tests/runner tests/workers tests/cli/ tests/test_settings.py tests/input/
+        database:
+          - "postgres:14"
+          - "sqlite"
+        python-version:
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
+        exclude:
+          # The canonical Python 3.12/Postgres lane uses duration-balanced
+          # groups in run-canonical-tests instead of these static test types.
+          - database: "postgres:14"
+            python-version: "3.12"
+          - database: "sqlite"
+            test-type:
+              id: client-modules
+              name: "Client Tests: Modules"
+              modules: >-
+                tests/
+                --ignore=tests/typesafety
+                --ignore=tests/server/
+                --ignore=tests/events/server
+                --ignore=tests/test_task_runners.py
+                --ignore=tests/runner
+                --ignore=tests/workers
+                --ignore=tests/cli/
+                --ignore=tests/test_settings.py
+                --ignore=tests/input/
+                --ignore-glob="tests/test_*.py"
+          - database: "sqlite"
+            test-type:
+              id: client-top-level
+              name: "Client Tests: Top-Level"
+              modules: >-
+                tests/test_artifacts.py
+                tests/test_assets.py
+                tests/test_automations.py
+                tests/test_background_tasks.py
+                tests/test_cache_policies.py
+                tests/test_context.py
+                tests/test_datetime.py
+                tests/test_exceptions.py
+                tests/test_filesystems.py
+                tests/test_highlighters.py
+                tests/test_import_smoke.py
+                tests/test_infrastructure_bound_flow.py
+                tests/test_locking.py
+                tests/test_log_prints.py
+                tests/test_logging.py
+                tests/test_observers.py
+                tests/test_plugins.py
+                tests/test_schedules.py
+                tests/test_serializers.py
+                tests/test_types.py
+                tests/test_ui_build_validation.py
+                tests/test_variables.py
+                tests/test_versioning.py
+          - database: "sqlite"
+            test-type:
+              id: client-execution
+              name: "Client Tests: Execution"
+              modules: >-
+                tests/test_flow_engine.py
+                tests/test_flow_runs.py
+                tests/test_flows.py
+                tests/test_flows_compat.py
+                tests/test_futures.py
+                tests/test_states.py
+                tests/test_subprocess_logging.py
+                tests/test_stream_tasks.py
+                tests/test_stream_sources.py
+                tests/test_stream_routing.py
+                tests/test_stream_partitioned_runtime.py
+                tests/test_stream_graph_contracts.py
+                tests/test_stream_key_wire.py
+                tests/test_stream_route_terminals.py
+                tests/test_stream_route_plan.py
+                tests/test_stream_dag_authoring.py
+                tests/test_stream_dag_dependencies.py
+                tests/test_native_partitioned_stream_http.py
+                tests/test_native_dag_client_http.py
+                tests/test_native_stream_dag_http.py
+                tests/test_native_source_recovery_http.py
+                tests/test_native_submission_http.py
+                tests/test_native_execution_http.py
+                tests/test_native_execution_recovery_http.py
+                tests/test_native_flow_recovery_http.py
+                tests/test_native_finite_http.py
+                tests/test_native_mixed_flow_http.py
+                tests/test_native_worker_deployment_http.py
+                tests/test_native_worker_recovery_http.py
+                tests/test_native_stream_http.py
+                tests/test_native_stream_recovery_http.py
+                tests/test_native_stream_client_package.py
+                tests/test_native_physical_client_package.py
+                tests/test_native_stream_code.py
+                tests/test_task_engine.py
+                tests/test_task_runs.py
+                tests/test_task_worker.py
+                tests/test_tasks.py
+                tests/test_transactions.py
+                tests/test_waiters.py
+          - database: "sqlite"
+            test-type:
+              id: runner-worker-settings-input-cli
+              name: Runner, Worker, Settings, Input, and CLI Tests
+              modules: tests/test_task_runners.py tests/runner tests/workers tests/cli/ tests/test_settings.py tests/input/
+
+    timeout-minutes: 15
+
+    steps:
+      - name: Display current test matrix
+        run: echo '${{ toJSON(matrix) }}'
+
+      - &python-test-checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+
+      - &python-test-setup-uv
+        name: Set up uv and Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Install packages
+        run: uv sync --locked
+
+      - &python-test-database-url
+        name: Set database connection URL
+        if: ${{ startsWith(matrix.database, 'postgres') }}
+        run: |
+          echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://prefect:prefect@localhost/prefect" >> $GITHUB_ENV
+
+      - name: Run tests
+        run: |
+          uv run pytest ${{ matrix.test-type.modules }} ${NATIVE_DAG_TEST_EXCLUSIONS} \
+          -m "not windows" \
+          --numprocesses auto \
+          --maxprocesses 6 \
+          --dist worksteal \
+          --disable-docker-image-builds \
+          --exclude-service kubernetes \
+          --exclude-service docker \
+          --durations 26 \
+
+      - &python-test-check-database
+        name: Check database container
+        # Only applicable for Postgres, but we want this to run even when tests fail
+        if: always()
+        run: |
+          docker container inspect ${{ job.services.postgres.id }} \
+          && docker container logs ${{ job.services.postgres.id }} \
+          || echo "Ignoring bad exit code"
+
+  run-native-stream-tests:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    runs-on: ubuntu-latest
+    name: Native stream tasks - python:3.12, ${{ matrix.database }}
+    # Real 500-document process cuts and the 120-second orphan eligibility horizon.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        database: [sqlite, "postgres:17"]
+    services:
+      postgres:
+        image: postgres:17
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: prefect
+          POSTGRES_PASSWORD: prefect
+          POSTGRES_DB: prefect
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      ARIADNE_NATIVE_STREAM_TEST_DSN: postgresql://prefect:prefect@localhost/prefect
+    steps:
+      - *python-test-checkout
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install packages
+        run: uv sync --locked
+      - *python-test-database-url
+      - name: Run task-contract regressions with retained PostgreSQL test adapter
+        run: uv run pytest tests/test_stream_tasks.py -q --junitxml=native-stream-tests.xml
+      - name: Run native storage transactions on PostgreSQL 17
+        if: matrix.database == 'postgres:17'
+        run: uv run pytest tests/server/models/test_streams.py tests/server/models/test_stream_executions.py tests/server/models/test_finite_submissions.py -q --junitxml=native-stream-storage.xml
+      - name: Require SQLite data-plane refusal before writes
+        if: matrix.database == 'sqlite'
+        run: uv run pytest tests/server/models/test_streams.py::test_backend_capability_fails_before_sqlite_writes -q --junitxml=native-stream-storage.xml
+      - name: Run native SDK HTTP, process recovery and stripped-client package
+        if: matrix.database == 'postgres:17'
+        run: >-
+          uv run pytest tests/test_native_stream_http.py
+          tests/test_native_stream_recovery_http.py
+          tests/test_native_stream_client_package.py
+          tests/test_stream_sources.py
+          tests/test_native_source_recovery_http.py
+          tests/test_native_submission_http.py
+          tests/test_native_execution_http.py
+          tests/test_native_execution_recovery_http.py
+          tests/test_native_flow_recovery_http.py
+          tests/test_native_finite_http.py
+          tests/test_native_mixed_flow_http.py
+          tests/test_native_worker_deployment_http.py
+          tests/test_native_worker_recovery_http.py
+          tests/test_native_stream_code.py
+          tests/client/test_stream_storage_native.py
+          tests/client/test_native_deployment_schemas.py
+          -n2 --dist worksteal -q --junitxml=native-stream-http.xml
+      - name: Run native HTTP server contract
+        if: matrix.database == 'postgres:17'
+        run: >-
+          uv run pytest tests/server/api/test_streams.py tests/server/api/test_stream_executions.py
+          tests/server/api/test_stream_finite_plan.py
+          tests/server/api/test_native_deployments.py
+          tests/server/api/test_native_worker_registration.py
+          -k 'not (test_backend_capability_error_has_stable_wire_shape or test_execution_claim_fails_closed_on_sqlite or test_finite_plan_fails_closed_on_sqlite or test_sqlite_enrollment_refuses_before_mutation)'
+          -q --junitxml=native-stream-api.xml
+      - name: Require SQLite HTTP capability and version refusal
+        if: matrix.database == 'sqlite'
+        run: >-
+          uv run pytest
+          tests/server/api/test_streams.py::test_backend_capability_error_has_stable_wire_shape
+          tests/server/api/test_streams.py::test_boolean_protocol_version_is_rejected_before_mutation
+          tests/server/api/test_stream_executions.py::test_execution_claim_fails_closed_on_sqlite
+          tests/server/api/test_stream_executions.py::test_invalid_complete_execution_headers_are_typed_and_secret_free
+          tests/server/api/test_stream_executions.py::test_execution_claim_rejects_boolean_generation_before_storage
+          tests/server/api/test_stream_executions.py::test_ordinary_flow_exception_retries_remain_enabled
+          tests/server/api/test_stream_executions.py::test_explicit_non_retriable_flow_failure_remains_final
+          tests/server/api/test_stream_finite_plan.py::test_finite_plan_fails_closed_on_sqlite
+          tests/server/api/test_native_deployments.py::test_sqlite_enrollment_refuses_before_mutation
+          tests/server/api/test_native_deployments.py::test_flow_run_cannot_override_deployment_declaration
+          tests/server/api/test_native_deployments.py::test_zero_retry_declaration_rolls_back_flow_run
+          tests/server/api/test_native_deployments.py::test_native_local_profile_rejects_custom_launch_configuration
+          tests/server/api/test_native_worker_registration.py
+          -k 'not test_concurrent_native_bind_preserves_pool_discovery_marker'
+          -q --junitxml=native-stream-api.xml
+      - name: Verify native storage migration upgrade and downgrade
+        run: uv run pytest tests/server/database/test_stream_storage_migrations.py -q --junitxml=native-stream-migrations.xml
+      - name: Require every native case to execute
+        run: |
+          uv run python - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          paths = [Path("native-stream-tests.xml"), Path("native-stream-storage.xml"), Path("native-stream-migrations.xml"), Path("native-stream-api.xml")]
+          if "${{ matrix.database }}" == "postgres:17":
+              paths.append(Path("native-stream-http.xml"))
+          for path in paths:
+              cases = ET.parse(path).findall(".//testcase")
+              assert cases, f"Native cases were not collected: {path}"
+              assert not any(case.find("skipped") is not None for case in cases), f"Native cases were skipped: {path}"
+          PY
+      - name: Upload native test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-stream-tests-${{ strategy.job-index }}
+          path: native-stream*.xml
+
+  run-partitioned-stream-tests:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    runs-on: anacreon-runners
+    name: Native physical streams - python:3.12, ${{ matrix.database }}
+    # Includes both sync/async cardinality and real process-fault controls.
+    timeout-minutes: 75
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+    strategy:
+      fail-fast: false
+      matrix:
+        database: [sqlite, "postgres:17"]
+    services:
+      postgres:
+        image: postgres:17
+        ports:
+          - "5432/tcp"
+        env:
+          POSTGRES_USER: prefect
+          POSTGRES_PASSWORD: prefect
+          POSTGRES_DB: prefect
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - *python-test-checkout
+      - name: Set up uv and managed Python 3.12.14
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12.14"
+          enable-cache: true
+      - name: Set up Node for the type checker
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ui-v2/.nvmrc
+      - name: Install packages
+        id: physical-dependencies
+        run: uv sync --locked --python 3.12.14
+      - name: Set native test database connection URL
+        if: ${{ startsWith(matrix.database, 'postgres') }}
+        env:
+          NATIVE_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://prefect:prefect@localhost:${NATIVE_POSTGRES_PORT}/prefect" >> "$GITHUB_ENV"
+      - name: Check new server modules without inherited type exclusions
+        if: matrix.database == 'postgres:17'
+        run: |
+          uv run pyright -p pyrightconfig-native-physical.json --level error --outputjson > native-physical-types.json 2> native-physical-types.stderr.log && type_status=0 || type_status=$?
+          uv run python scripts/check_pyright_report.py native-physical-types.json --pyright-status "$type_status"
+          uv run python - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path("pyrightconfig-native-physical.json").read_text())
+          included = config["include"]
+          assert config["ignore"] == []
+          assert len(included) == len(set(included)) == 17
+          assert all(Path(path).is_file() for path in included)
+          report = json.loads(Path("native-physical-types.json").read_text())
+          assert report["summary"]["filesAnalyzed"] == len(included), report["summary"]
+          assert report["summary"]["errorCount"] == 0
+          PY
+      - name: Verify paired clients and physical task contracts
+        run: >-
+          uv run pytest tests/client/test_stream_subtasks.py
+          tests/client/test_stream_worker_subtasks.py
+          tests/client/test_stream_dags.py
+          tests/client/test_stream_routes.py
+          tests/server/schemas/test_stream_routes.py
+          tests/test_stream_partitioned_runtime.py
+          tests/test_stream_graph_contracts.py
+          tests/test_stream_key_wire.py
+          tests/test_stream_route_terminals.py
+          tests/test_stream_route_plan.py
+          tests/test_stream_dag_authoring.py
+          tests/test_stream_dag_dependencies.py
+          -q --junitxml=native-physical-contract.xml
+      - name: Run physical authority, concurrency and paired migration controls
+        if: matrix.database == 'postgres:17'
+        run: >-
+          uv run pytest tests/server/models/test_stream_subtasks.py
+          tests/server/api/test_stream_subtasks.py
+          tests/server/api/test_stream_subtask_controls.py
+          tests/server/api/test_stream_workers.py
+          tests/server/database/test_stream_subtask_migrations.py
+          tests/server/models/test_stream_dags.py
+          tests/server/api/test_stream_dags.py
+          tests/server/api/test_stream_dag_execution_fences.py
+          tests/server/database/test_stream_dag_migrations.py
+          tests/server/models/test_stream_routes.py
+          tests/server/api/test_stream_routes.py
+          tests/server/api/test_stream_route_prefix_fences.py
+          tests/server/database/test_stream_route_migrations.py
+          tests/test_native_dag_client_http.py
+          tests/test_native_stream_dag_http.py
+          tests/workers/test_stream_subtasks.py
+          tests/workers/test_stream_startup_cleanup_http.py
+          -k 'not sqlite'
+          -q --junitxml=native-physical-server.xml
+      - name: Require SQLite refusal and migration compatibility
+        if: matrix.database == 'sqlite'
+        run: >-
+          uv run pytest tests/server/api/test_stream_subtasks.py
+          tests/server/api/test_stream_workers.py
+          tests/server/database/test_stream_subtask_migrations.py
+          tests/server/models/test_stream_dags.py
+          tests/server/api/test_stream_dags.py
+          tests/server/api/test_stream_dag_execution_fences.py
+          tests/server/database/test_stream_dag_migrations.py
+          tests/server/models/test_stream_routes.py
+          tests/server/api/test_stream_routes.py
+          tests/server/api/test_stream_route_prefix_fences.py
+          tests/server/database/test_stream_route_migrations.py
+          tests/test_native_dag_client_http.py
+          -k 'not (test_child_http_scope_events_and_no_basic_or_anonymous_escape
+          or test_csrf_enabled_scoped_transport_is_exactly_exempt
+          or test_profile_admission_fails_closed_without_protected_api
+          or test_worker_poll_advertises_p2_without_assignments
+          or test_worker_poll_wrong_pool_never_registers_capability
+          or test_deployed_worker_poll_contains_only_own_assignments_and_parameters
+          or test_worker_control_proof_rejects_sibling_session_and_weak_locks
+          or test_startup_abort_and_competing_admission_lock_workers_in_one_order
+          or test_public_partitioned_seal_requires_deployment_before_any_topology_rows
+          or test_public_admission_cannot_promote_internal_local_discovery_graph) and not postgres'
+          -q --junitxml=native-physical-sqlite.xml
+      - name: Build and run the stripped physical client wheel and source distribution
+        if: matrix.database == 'postgres:17'
+        run: >-
+          uv run pytest tests/test_native_physical_client_package.py
+          -q --junitxml=native-physical-package.xml
+      - name: Run real deployment and process-loss cases on PostgreSQL
+        if: matrix.database == 'postgres:17'
+        run: >-
+          uv run pytest tests/test_native_partitioned_stream_http.py
+          -k 'not 5000' -vv --durations=11
+          --basetemp=native-physical-runtime-work --junitxml=native-physical-runtime.xml
+      - name: Require successful cases without conditional skips
+        run: |
+          uv run python - <<'PY'
+          from pathlib import Path
+          import shlex
+          import xml.etree.ElementTree as ET
+
+          import yaml
+
+          workflow = yaml.safe_load(Path(".github/workflows/python-tests.yaml").read_text())
+          required_modules = {}
+          for step in workflow["jobs"]["run-partitioned-stream-tests"]["steps"]:
+              command = step.get("run", "").strip()
+              if not command.startswith("uv run pytest "):
+                  continue
+              arguments = shlex.split(command)
+              report = next(arg.split("=", 1)[1] for arg in arguments if arg.startswith("--junitxml="))
+              required_modules[report] = {
+                  arg.split("::", 1)[0][:-3].replace("/", ".")
+                  for arg in arguments
+                  if arg.startswith("tests/") and arg.split("::", 1)[0].endswith(".py")
+              }
+          paths = [Path("native-physical-contract.xml")]
+          if "${{ matrix.database }}" == "postgres:17":
+              paths.extend([Path("native-physical-server.xml"), Path("native-physical-package.xml"), Path("native-physical-runtime.xml")])
+          else:
+              paths.append(Path("native-physical-sqlite.xml"))
+          for path in paths:
+              cases = ET.parse(path).findall(".//testcase")
+              assert cases, f"Physical cases were not collected: {path}"
+              classnames = {case.get("classname", "") for case in cases}
+              missing_modules = {
+                  module for module in required_modules[path.name]
+                  if not any(name == module or name.startswith(module + ".") for name in classnames)
+              }
+              assert not missing_modules, f"Physical modules were silently deselected: {path}: {missing_modules}"
+              if path.name == "native-physical-runtime.xml":
+                  assert len(cases) == 11, "The eleven bounded physical cases must execute; both 5000 cases have separate jobs"
+              if path.name == "native-physical-sqlite.xml":
+                  names = {case.get("name", "").split("[", 1)[0] for case in cases}
+                  assert "test_sqlite_metadata_admission_refuses_without_mutation" in names, "SQLite admission refusal did not execute"
+              identities = {(case.get("classname"), case.get("name")) for case in cases}
+              assert len(identities) == len(cases), f"Physical cases were duplicated: {path}"
+              assert not any(
+                  case.find(tag) is not None
+                  for case in cases
+                  for tag in ("skipped", "failure", "error")
+              ), f"Physical cases did not all pass: {path}"
+              print(f"{path}: {len(cases)} cases passed without skips")
+          PY
+      - name: Preserve physical runtime diagnostics and final resources
+        if: always() && matrix.database == 'postgres:17' && steps.physical-dependencies.outcome == 'success'
+        run: >-
+          uv run --no-sync python scripts/native_runtime_diagnostics.py
+          --source native-physical-runtime-work --destination native-physical-runtime-diagnostics
+      - name: Preserve physical stream results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-physical-streams-${{ strategy.job-index }}
+          path: |
+            native-physical-*.xml
+            native-physical-types.json
+            native-physical-types.stderr.log
+            native-physical-runtime-diagnostics/
+          if-no-files-found: error
+
+  run-stream-dag-execution-tests:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    runs-on: anacreon-runners
+    name: Native DAG execution - python:3.12, ${{ matrix.database }}
+    timeout-minutes: 75
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+    strategy:
+      fail-fast: false
+      matrix:
+        database: [sqlite, "postgres:17"]
+    services:
+      postgres:
+        image: postgres:17
+        ports:
+          - "5432/tcp"
+        env:
+          POSTGRES_USER: prefect
+          POSTGRES_PASSWORD: prefect
+          POSTGRES_DB: prefect
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - *python-test-checkout
+      - name: Set up uv and managed Python 3.12.14
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12.14"
+          enable-cache: true
+      - name: Set up Node for the type checker
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ui-v2/.nvmrc
+      - name: Install packages
+        run: uv sync --locked --python 3.12.14
+      - name: Set native DAG test database connection URL
+        if: matrix.database == 'postgres:17'
+        env:
+          NATIVE_DAG_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://prefect:prefect@localhost:${NATIVE_DAG_POSTGRES_PORT}/prefect" >> "$GITHUB_ENV"
+      - name: Check all native DAG modules without inherited exclusions
+        if: matrix.database == 'postgres:17'
+        run: |
+          uv run pyright -p pyrightconfig-native-dag.json --level error --outputjson > native-dag-types.json 2> native-dag-types.stderr.log && type_status=0 || type_status=$?
+          uv run python scripts/check_pyright_report.py native-dag-types.json --pyright-status "$type_status"
+          uv run python - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path("pyrightconfig-native-dag.json").read_text())
+          included = config["include"]
+          assert config["ignore"] == []
+          assert len(included) == len(set(included)) == 29
+          assert all(Path(path).is_file() for path in included)
+          report = json.loads(Path("native-dag-types.json").read_text())
+          assert report["summary"]["filesAnalyzed"] == len(included), report["summary"]
+          assert report["summary"]["errorCount"] == 0
+          PY
+      - name: Run paired DAG client and bootstrap contracts
+        run: >-
+          uv run pytest tests/client/test_stream_dag_executions.py
+          tests/client/test_stream_dag_launches.py
+          tests/server/schemas/test_stream_dag_executions.py
+          tests/test_stream_graph_execution_contracts.py
+          tests/test_stream_dag_execution.py
+          tests/test_stream_dag_bootstrap.py
+          tests/workers/test_stream_dag_subtasks.py
+          tests/workers/test_stream_dag_launches.py
+          tests/workers/test_stream_dag_bootstrap.py
+          tests/workers/test_native_recovery_poll.py
+          -q --junitxml=native-dag-contract.xml
+      - name: Run real PostgreSQL DAG lifecycle and launch controls
+        if: matrix.database == 'postgres:17'
+        run: >-
+          uv run pytest tests/server/models/test_stream_dag_executions.py
+          tests/server/models/test_stream_dag_launches.py
+          tests/server/api/test_stream_dag_executions.py
+          tests/server/api/test_stream_dag_launches.py
+          tests/server/database/test_stream_dag_execution_migrations.py
+          tests/server/database/test_stream_route_cleanup_indexes.py
+          tests/test_native_dag_execution_client_http.py
+          -k 'not sqlite'
+          -q --junitxml=native-dag-server.xml
+      - name: Require SQLite DAG capability and migration controls
+        if: matrix.database == 'sqlite'
+        run: >-
+          uv run pytest tests/server/models/test_stream_dag_executions.py
+          tests/server/api/test_stream_dag_executions.py
+          tests/server/api/test_stream_dag_launches.py
+          tests/server/database/test_stream_dag_execution_migrations.py
+          tests/server/database/test_stream_route_cleanup_indexes.py
+          tests/test_native_dag_execution_client_http.py
+          tests/test_native_stream_dag_execution_http.py
+          -k 'not postgres'
+          -q --junitxml=native-dag-sqlite.xml
+      - name: Require every declared DAG module to pass without skips
+        env:
+          NATIVE_DAG_DATABASE: ${{ matrix.database }}
+        run: |
+          uv run python - <<'PY'
+          import os
+          import shlex
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          import yaml
+
+          workflow = yaml.safe_load(Path(".github/workflows/python-tests.yaml").read_text())
+          declared = {}
+          for step in workflow["jobs"]["run-stream-dag-execution-tests"]["steps"]:
+              command = step.get("run", "").strip()
+              if not command.startswith("uv run pytest "):
+                  continue
+              arguments = shlex.split(command)
+              report = next(arg.split("=", 1)[1] for arg in arguments if arg.startswith("--junitxml="))
+              declared[report] = {
+                  arg.split("::", 1)[0][:-3].replace("/", ".")
+                  for arg in arguments
+                  if arg.startswith("tests/") and arg.split("::", 1)[0].endswith(".py")
+              }
+          reports = ["native-dag-contract.xml"]
+          if os.environ["NATIVE_DAG_DATABASE"] == "postgres:17":
+              reports.append("native-dag-server.xml")
+          else:
+              reports.append("native-dag-sqlite.xml")
+          for report in reports:
+              cases = ET.parse(report).findall(".//testcase")
+              assert cases, f"DAG cases were not collected: {report}"
+              classnames = {case.get("classname", "") for case in cases}
+              missing = {
+                  module for module in declared[report]
+                  if not any(name == module or name.startswith(module + ".") for name in classnames)
+              }
+              assert not missing, f"DAG modules were silently deselected: {report}: {missing}"
+              identities = {(case.get("classname"), case.get("name")) for case in cases}
+              assert len(identities) == len(cases), f"DAG cases were duplicated: {report}"
+              assert not any(case.find(tag) is not None for case in cases for tag in ("skipped", "failure", "error")), f"DAG cases did not all pass: {report}"
+              print(f"{report}: {len(cases)} cases passed without skips")
+          PY
+      - name: Preserve native DAG execution results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-dag-execution-${{ strategy.job-index }}
+          path: |
+            native-dag-*.xml
+            native-dag-types.json
+            native-dag-types.stderr.log
+          if-no-files-found: error
+
+  plan-native-runtime-cases:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    runs-on: anacreon-runners
+    name: Plan every native runtime case
+    timeout-minutes: 10
+    outputs:
+      cases: ${{ steps.matrix.outputs.cases }}
+    steps:
+      - *python-test-checkout
+      - name: Set up uv and managed Python 3.12.14
+        uses: astral-sh/setup-uv@v10.0.1
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
+        with:
+          python-version: "3.12.14"
+          enable-cache: true
+      - name: Install packages
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
+        run: uv sync --locked --python 3.12.14
+      - name: Collect all native runtime cases
+        run: >-
+          uv run pytest tests/test_native_stream_dag_execution_http.py
+          tests/test_native_partitioned_stream_http.py
+          --collect-only -q -k 'not sqlite' > native-runtime-collection.log
+      - name: Require complete coverage and create one job per large case
+        id: matrix
+        run: |
+          uv run python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          dag = "tests/test_native_stream_dag_execution_http.py::"
+          p2 = "tests/test_native_partitioned_stream_http.py::"
+          required = {
+              dag + "test_public_dag_lifecycle_two_real_workers_postgres[" + case + "]"
+              for case in ("False-normal", "True-normal", "False-preview", "False-failure", "False-cancel")
+          }
+          required.update(
+              dag + "test_public_dag_bounded_volume_postgres[" + case + "]"
+              for case in ("False-500", "True-500", "False-5000", "True-5000")
+          )
+          required.update(
+              dag + "test_public_dag_branch_recovery_postgres[" + case + "]"
+              for case in ("False-accepted200", "False-incomplete200", "True-accepted200", "True-incomplete200")
+          )
+          required.update(
+              dag + "test_public_dag_exchange_modes_postgres[" + case + "]"
+              for case in ("rebalance", "keyed")
+          )
+          required.update(
+              p2 + "test_actual_process_worker_runs_four_partition_tasks[" + case + "]"
+              for case in ("5000-none-False", "5000-none-True")
+          )
+          collected = [
+              line.strip()
+              for line in Path("native-runtime-collection.log").read_text().splitlines()
+              if line.startswith((dag, p2))
+          ]
+          assert collected, "Native runtime collection was empty"
+          assert len(collected) == len(set(collected)), "Native runtime nodes were duplicated"
+          nodes = [node for node in collected if node.startswith(dag) or "[5000-" in node]
+          assert not required.difference(nodes), f"Required native runtime cases missing: {required.difference(nodes)}"
+          assert not any("sqlite" in node for node in nodes)
+          assert len(nodes) <= 64, "Review runner capacity before expanding the native runtime matrix"
+          matrix = {
+              "include": [
+                  {"node": node, "id": hashlib.sha256(node.encode()).hexdigest()[:12]}
+                  for node in nodes
+              ]
+          }
+          Path("native-runtime-matrix.json").write_text(json.dumps(matrix, indent=2) + "\n")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write("cases=" + json.dumps(matrix, separators=(",", ":")) + "\n")
+          print(f"All {len(nodes)} required native runtime cases have their own job")
+          PY
+      - name: Preserve collection and exact case matrix
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-runtime-plan
+          path: |
+            native-runtime-collection.log
+            native-runtime-matrix.json
+          if-no-files-found: error
+
+  run-native-runtime-case:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    needs: plan-native-runtime-cases
+    runs-on: anacreon-runners
+    name: Native runtime - ${{ matrix.node }}
+    # The longest test watchdog is 70 minutes; preserve setup and exact
+    # cleanup/artifact time before the enclosing job can cancel the test.
+    timeout-minutes: 85
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan-native-runtime-cases.outputs.cases) }}
+    services:
+      postgres:
+        image: postgres:17
+        ports:
+          - "5432/tcp"
+        env:
+          POSTGRES_USER: prefect
+          POSTGRES_PASSWORD: prefect
+          POSTGRES_DB: prefect
+        options: >-
+          --health-cmd "pg_isready -U prefect -d prefect"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - *python-test-checkout
+      - name: Set up uv and managed Python 3.12.14
+        uses: astral-sh/setup-uv@v10.0.1
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
+        with:
+          python-version: "3.12.14"
+          enable-cache: true
+      - name: Install packages
+        id: runtime-dependencies
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
+        run: uv sync --locked --python 3.12.14
+      - name: Configure the isolated PostgreSQL database
+        env:
+          NATIVE_RUNTIME_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://prefect:prefect@127.0.0.1:${NATIVE_RUNTIME_POSTGRES_PORT}/prefect" >> "$GITHUB_ENV"
+      - name: Record the declared runner and Python profile
+        run: |
+          uv run python - <<'PY'
+          import json
+          import os
+          import platform
+          import sysconfig
+          from importlib.metadata import version
+          from pathlib import Path
+
+          assert platform.python_version() == "3.12.14"
+          limits = {}
+          for name in ("cpu.max", "cpu.stat", "memory.max", "memory.events"):
+              path = Path("/sys/fs/cgroup") / name
+              if path.is_file():
+                  limits[name] = path.read_text()
+          result = {
+              "python": platform.python_version(),
+              "platform": platform.platform(),
+              "python_build": sysconfig.get_config_var("CONFIG_ARGS"),
+              "cpu_affinity": sorted(os.sched_getaffinity(0)),
+              "cgroup": limits,
+              "dependencies": {name: version(name) for name in ("sqlalchemy", "pydantic", "asyncpg", "uvicorn", "fastapi")},
+              "acceptance_scope": "Functional native execution; no throughput SLO acceptance",
+          }
+          Path("native-runtime-profile.json").write_text(json.dumps(result, indent=2) + "\n")
+          PY
+      - name: Run the exact native runtime case
+        env:
+          NATIVE_RUNTIME_NODE: ${{ matrix.node }}
+        run: >-
+          uv run pytest "$NATIVE_RUNTIME_NODE" -vv --durations=1
+          --basetemp=native-runtime-work --junitxml=native-runtime-case.xml
+      - name: Require that exact case to pass without skips
+        env:
+          NATIVE_RUNTIME_NODE: ${{ matrix.node }}
+        run: |
+          uv run python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          node = os.environ["NATIVE_RUNTIME_NODE"]
+          module, expected_name = node.split("::", 1)
+          expected_class = module[:-3].replace("/", ".")
+          cases = ET.parse("native-runtime-case.xml").findall(".//testcase")
+          assert len(cases) == 1, "A native runtime shard must execute exactly its requested case"
+          case = cases[0]
+          assert case.get("classname") == expected_class, case.attrib
+          assert case.get("name") == expected_name, case.attrib
+          assert all(case.find(tag) is None for tag in ("skipped", "failure", "error")), "Native runtime case did not pass"
+          print(f"{node}: one actual passing case, no skips")
+          PY
+      - name: Preserve selected runtime diagnostics and final resources
+        if: always() && steps.runtime-dependencies.outcome == 'success'
+        run: >-
+          uv run --no-sync python scripts/native_runtime_diagnostics.py
+          --source native-runtime-work --destination native-runtime-diagnostics
+      - name: Preserve native runtime case results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-runtime-${{ matrix.id }}
+          path: |
+            native-runtime-case.xml
+            native-runtime-profile.json
+            native-runtime-diagnostics/
+          if-no-files-found: error
+
+  run-stream-routing-tests:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    runs-on: ubuntu-latest
+    name: Native key routing - Python 3.11-3.14
+    timeout-minutes: 10
+    steps:
+      - *python-test-checkout
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install packages
+        run: uv sync --locked
+      - name: Make all supported Python minors discoverable
+        run: |
+          uv python install 3.11 3.12 3.13 3.14
+          for version in 3.11 3.12 3.13 3.14; do
+            executable=$(uv python find --managed-python --system "$version")
+            dirname "$executable" >> "$GITHUB_PATH"
+            "$executable" --version
+          done
+      - name: Run canonical key and cross-runtime routing tests
+        env:
+          PREFECT_HOME: ${{ runner.temp }}/native-stream-routing-home
+          PREFECT_SERVER_DATABASE_CONNECTION_URL: sqlite+aiosqlite:///${{ runner.temp }}/native-stream-routing.db
+        run: uv run pytest tests/test_stream_routing.py -q --junitxml=native-stream-routing.xml
+      - name: Require all 85 cases and all four runtime controls
+        run: |
+          uv run python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          cases = ET.parse("native-stream-routing.xml").findall(".//testcase")
+          assert len(cases) == 85, f"Expected 85 routing cases, got {len(cases)}"
+          assert all(case.get("classname") == "tests.test_stream_routing" for case in cases)
+          assert not any(case.find(tag) is not None for case in cases for tag in ("skipped", "failure", "error"))
+          names = {case.get("name") for case in cases}
+          assert len(names) == 85, "Routing cases were duplicated"
+          runtime_cases = {
+              name for name in names
+              if name.startswith("test_mapping_across_real_python_processes_and_hash_seeds[")
+          }
+          assert runtime_cases == {
+              f"test_mapping_across_real_python_processes_and_hash_seeds[python_version{index}]"
+              for index in range(4)
+          }, f"Incomplete Python 3.11-3.14 controls: {runtime_cases}"
+          print("85 routing cases passed; all four Python minors and 16 child processes executed")
+          PY
+      - name: Upload canonical routing test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-stream-routing-python-3.11-3.14
+          path: native-stream-routing.xml
+          if-no-files-found: error
+
+  prepare-canonical-test-durations:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    runs-on: ubuntu-latest
+    name: Prepare canonical test durations
+
+    steps:
+      - name: Restore previous test durations
+        uses: actions/cache/restore@v6
+        with:
+          path: test-durations.json
+          key: pytest-split-v1-python-3.12-postgres-14-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            pytest-split-v1-python-3.12-postgres-14-
+
+      - name: Validate test durations
+        run: |
+          if [[ -f test-durations.json ]] \
+            && jq -e '
+              type == "object"
+              and all(
+                to_entries[];
+                (.value | type == "number")
+                and (.value >= 0)
+              )
+            ' test-durations.json > /dev/null
+          then
+            echo "Using cached test durations"
+          else
+            echo "::notice::No valid cached durations; splitting tests by count"
+            jq -n '{}' > test-durations.json
+          fi
+          jq 'length' test-durations.json
+
+      - name: Upload test duration baseline
+        uses: actions/upload-artifact@v7
+        with:
+          name: canonical-test-duration-baseline
+          path: test-durations.json
+          retention-days: 7
+          overwrite: true
+
+  run-canonical-tests:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    needs: prepare-canonical-test-durations
+    runs-on: ubuntu-latest
+    name: >-
+      Canonical Tests: group ${{ matrix.group }}/18 - python:3.12, postgres:14
+    timeout-minutes: 15
+
+    services: *python-test-services
+
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+        database: ["postgres:14"]
+        python-version: ["3.12"]
+
+    steps:
+      - *python-test-checkout
+
+      - *python-test-setup-uv
+
+      - name: Install packages
+        run: uv sync --locked
+
+      - name: Download test duration baseline
+        uses: actions/download-artifact@v8
+        with:
+          name: canonical-test-duration-baseline
+
+      - *python-test-database-url
+
+      - name: Run tests
+        id: canonical_tests
+        run: |
+          # Start every group from the same baseline. Cleaning leaves only this
+          # group's observations for the single-writer merge job below.
+          duration_path="test-durations-${{ matrix.group }}.json"
+          # A normal pytest session replaces this sentinel when it stores clean
+          # group timings. If pytest is interrupted before session finish, the
+          # untouched input cannot be mistaken for a valid group result.
+          jq '."__pytest_split_incomplete__" = -1' \
+            test-durations.json > "$duration_path"
+          set +e
+          uv run pytest tests --ignore=tests/typesafety ${NATIVE_DAG_TEST_EXCLUSIONS} \
+          -m "not windows" \
+          --numprocesses logical \
+          --maxprocesses 6 \
+          --dist worksteal \
+          --disable-docker-image-builds \
+          --exclude-service kubernetes \
+          --exclude-service docker \
+          --durations 26 \
+          --splits 18 \
+          --group "${{ matrix.group }}" \
+          --splitting-algorithm least_duration \
+          --durations-path "$duration_path" \
+          --store-durations \
+          --clean-durations
+          pytest_exit_code=$?
+          set -e
+          echo "exit_code=${pytest_exit_code}" >> "$GITHUB_OUTPUT"
+          exit "$pytest_exit_code"
+
+      - name: Validate group test durations
+        id: validate_canonical_durations
+        if: >-
+          ${{ !cancelled()
+          && (steps.canonical_tests.outputs.exit_code == '0'
+          || steps.canonical_tests.outputs.exit_code == '1') }}
+        run: |
+          duration_path="test-durations-${{ matrix.group }}.json"
+          jq -e '
+            type == "object"
+            and length > 0
+            and (has("__pytest_split_incomplete__") | not)
+            and all(
+              to_entries[];
+              (.key | length > 0)
+              and (.value | type == "number")
+              and (.value >= 0)
+            )
+          ' "$duration_path" > /dev/null
+
+      - name: Upload group test durations
+        if: ${{ !cancelled() && steps.validate_canonical_durations.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: canonical-test-durations-${{ matrix.group }}
+          path: test-durations-${{ matrix.group }}.json
+          retention-days: 7
+          overwrite: true
+
+      - *python-test-check-database
+
+  save-canonical-test-durations:
+    if: ${{ !cancelled() && github.event_name != 'repository_dispatch' }}
+    needs: run-canonical-tests
+    runs-on: ubuntu-latest
+    name: Save canonical test durations
+
+    steps:
+      - name: Download group test durations
+        uses: actions/download-artifact@v8
+        with:
+          pattern: canonical-test-durations-*
+          path: test-duration-groups
+          merge-multiple: true
+
+      - name: Merge group test durations
+        run: |
+          duration_files=(test-duration-groups/test-durations-*.json)
+          if [[ ${#duration_files[@]} -ne 18 ]]; then
+            echo "::error::Expected 18 duration files, found ${#duration_files[@]}"
+            exit 1
+          fi
+
+          jq -S -s '
+            reduce .[] as $group ({};
+              reduce ($group | to_entries[]) as $entry (.;
+                if has($entry.key) then
+                  error("duplicate test duration: \($entry.key)")
+                else
+                  .[$entry.key] = $entry.value
+                end
+              )
+            )
+          ' "${duration_files[@]}" > test-durations.json
+
+          jq 'length' test-durations.json
+
+      - name: Cache merged test durations
+        uses: actions/cache/save@v6
+        with:
+          path: test-durations.json
+          key: pytest-split-v1-python-3.12-postgres-14-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload merged test durations
+        uses: actions/upload-artifact@v7
+        with:
+          name: canonical-test-durations
+          path: test-durations.json
+          retention-days: 30
+          overwrite: true
+
+  profile-tests-with-logfire:
+    if: ${{ github.event_name == 'repository_dispatch' }}
+    runs-on: ubuntu-latest
+    name: "Logfire: ${{ matrix.test-type.name }}"
+    timeout-minutes: 30
+    environment:
+      name: logfire-profiling
+      deployment: false
+
+    services:
+      redis:
+        image: redis:latest
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      postgres:
+        image: postgres:14
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: prefect
+          POSTGRES_PASSWORD: prefect
+          POSTGRES_DB: prefect
+          LANG: C.UTF-8
+          LANGUAGE: C.UTF-8
+          LC_ALL: C.UTF-8
+          LC_COLLATE: C.UTF-8
+          LC_CTYPE: C.UTF-8
+        options: >-
+          --health-cmd "pg_isready"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --tmpfs /var/lib/postgresql/data
+
+    strategy:
+      fail-fast: false
+      matrix:
+        test-type: *python-test-types
+
+    steps:
+      - name: Display current test matrix
+        run: echo '${{ toJSON(matrix) }}'
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          python-version: "3.12"
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Install packages
+        run: uv sync --locked --group perf
+
+      - name: Set database connection URL
+        run: echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://prefect:prefect@localhost/prefect" >> $GITHUB_ENV
+
+      - name: Run tests with Logfire
+        env:
+          LOGFIRE_CONSOLE: "false"
+          LOGFIRE_DISTRIBUTED_TRACING: "true"
+          LOGFIRE_RESOURCE_ATTRIBUTES: >-
+            vcs.repository.url.full=${{ github.server_url }}/${{ github.repository }},
+            cicd.pipeline.run.id=${{ github.run_id }},
+            github.actions.run.attempt=${{ github.run_attempt }},
+            cicd.pipeline.run.url.full=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }},
+            github.actions.job.check_run_id=${{ job.check_run_id }},
+            prefect.pytest.shard.id=${{ matrix.test-type.id }}
+          LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TEST_PROFILE_TOKEN }}
+          PREFECT_LOGFIRE_ENABLED: "false"
+        run: |
+          if [[ -z "$LOGFIRE_TOKEN" ]]; then
+            echo "::error::Logfire profiling requires the" \
+              "LOGFIRE_TEST_PROFILE_TOKEN secret in the" \
+              "logfire-profiling environment"
+            exit 1
+          fi
+
+          # These tests assert that Prefect's outermost run span has no parent.
+          uv run --no-sync pytest ${{ matrix.test-type.modules }} ${NATIVE_DAG_TEST_EXCLUSIONS} \
+          --ignore=tests/telemetry/test_run_telemetry.py \
+          -m "not windows" \
+          --numprocesses auto \
+          --maxprocesses 6 \
+          --dist worksteal \
+          --disable-docker-image-builds \
+          --exclude-service kubernetes \
+          --exclude-service docker \
+          --durations 26 \
+          --logfire \
+          --logfire-trace-phases \
+          --logfire-service-name prefect-pytest-profile
+
+      - name: Add Logfire filters to job summary
+        if: always()
+        env:
+          LOGFIRE_REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+          LOGFIRE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          LOGFIRE_RUN_ID: ${{ github.run_id }}
+          LOGFIRE_SHARD_ID: ${{ matrix.test-type.id }}
+        run: |
+          printf '%s\n' \
+            '### Logfire filters' \
+            '' \
+            'All shards in this workflow attempt:' \
+            '' \
+            '```sql' \
+            "otel_resource_attributes->>'vcs.repository.url.full' = '$LOGFIRE_REPOSITORY_URL'" \
+            "AND otel_resource_attributes->>'cicd.pipeline.run.id' = '$LOGFIRE_RUN_ID'" \
+            "AND otel_resource_attributes->>'github.actions.run.attempt' = '$LOGFIRE_RUN_ATTEMPT'" \
+            '```' \
+            '' \
+            "Shard $LOGFIRE_SHARD_ID:" \
+            '' \
+            '```sql' \
+            "otel_resource_attributes->>'vcs.repository.url.full' = '$LOGFIRE_REPOSITORY_URL'" \
+            "AND otel_resource_attributes->>'cicd.pipeline.run.id' = '$LOGFIRE_RUN_ID'" \
+            "AND otel_resource_attributes->>'github.actions.run.attempt' = '$LOGFIRE_RUN_ATTEMPT'" \
+            "AND otel_resource_attributes->>'prefect.pytest.shard.id' = '$LOGFIRE_SHARD_ID'" \
+            '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check database container
+        if: always()
+        run: |
+          docker container inspect ${{ job.services.postgres.id }} \
+          && docker container logs ${{ job.services.postgres.id }} \
+          || echo "Ignoring bad exit code"
+
+  verify-test-selection:
+    name: Verify test selection coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+
+      - name: Verify all test modules are selected
+        run: uv run --with pyyaml --no-project -s scripts/verify_test_selection.py
+
+  run-docker-tests:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    runs-on: ubuntu-latest
+    name: docker, python:${{ matrix.python-version }}
+    env:
+      DOCKERHUB_LOGIN_AVAILABLE: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+
+    services:
+      redis:
+        image: redis:latest
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      postgres:
+        image: ${{ matrix.database }}
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: prefect
+          POSTGRES_PASSWORD: prefect
+          POSTGRES_DB: prefect
+          LANG: C.UTF-8
+          LANGUAGE: C.UTF-8
+          LC_ALL: C.UTF-8
+          LC_COLLATE: C.UTF-8
+          LC_CTYPE: C.UTF-8
+        options: >-
+          --health-cmd "pg_isready"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --tmpfs /var/lib/postgresql/data
+
+    strategy:
+      matrix:
+        database:
+          - "postgres:14"
+        python-version:
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
+
+      fail-fast: false
+
+    timeout-minutes: 45
+
+    steps:
+      - name: Display current test matrix
+        run: echo '${{ toJSON(matrix) }}'
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Set up uv and Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Get image tag
+        id: get_image_tag
+        run: |
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          tmp="sha-$SHORT_SHA-python${{ matrix.python-version }}"
+          echo "image_tag=${tmp}" >> $GITHUB_OUTPUT
+
+      - name: Get node version
+        id: get_node_version
+        run: |
+          echo "NODE_VERSION=$(cat .nvmrc)" >> $GITHUB_OUTPUT
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v4.6.0
+        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && env.DOCKERHUB_LOGIN_AVAILABLE == 'true'
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build test image
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_SUMMARY: false
+          DOCKER_RECORD_UPLOAD: false
+        with:
+          context: .
+          build-args: |
+            PYTHON_VERSION=${{ matrix.python-version }}
+            PREFECT_EXTRAS=[dev]
+            NODE_VERSION=${{ steps.get_node_version.outputs.NODE_VERSION }}
+          tags: prefecthq/prefect-dev:${{ steps.get_image_tag.outputs.image_tag }}
+          outputs: type=docker,dest=/tmp/image.tar
+          cache-from: type=gha,scope=test-${{ matrix.python-version }},ignore-error=true
+          cache-to: type=gha,mode=max,scope=test-${{ matrix.python-version }},ignore-error=true
+
+      - name: Test Docker image
+        run: |
+          docker load --input /tmp/image.tar
+          docker run --rm prefecthq/prefect-dev:${{ steps.get_image_tag.outputs.image_tag }} prefect version
+
+      # The Dockerfile constrains the install to uv.lock; assert the built image matches it.
+      - name: Check image dependencies match uv.lock
+        run: |
+          docker run --rm -v "$PWD:/src:ro" -w /src -e UV_PROJECT_ENVIRONMENT=/usr/local \
+            prefecthq/prefect-dev:${{ steps.get_image_tag.outputs.image_tag }} \
+            uv sync --check --frozen --no-dev --inexact --no-install-project
+
+      - name: Install packages
+        run: uv sync --locked
+
+      - name: Set database connection URL
+        if: ${{ startsWith(matrix.database, 'postgres') }}
+        run: echo "PREFECT_SERVER_DATABASE_CONNECTION_URL=postgresql+asyncpg://prefect:prefect@localhost/prefect" >> $GITHUB_ENV
+
+      - name: Start docker registry
+        run: >
+          docker run
+          --name "prefect-test-registry"
+          --detach
+          --publish 5555:5000
+          registry:2
+
+      - name: Check git diff
+        run: |
+          git diff --exit-code
+
+      - name: Run tests
+        run: |
+          uv run pytest tests --ignore=tests/typesafety ${NATIVE_DAG_TEST_EXCLUSIONS} \
+          -m "not windows" \
+          --numprocesses auto \
+          --maxprocesses 6 \
+          --dist worksteal \
+          --disable-docker-image-builds \
+          --only-service docker \
+          --durations 26
+
+      - name: Check database container
+        # Only applicable for Postgres, but we want this to run even when tests fail
+        if: always()
+        run: |
+          docker container inspect ${{ job.services.postgres.id }} \
+          && docker container logs ${{ job.services.postgres.id }} \
+          || echo "Ignoring bad exit code"
+
+  run-typesafety-test:
+    if: ${{ github.event_name != 'repository_dispatch' }}
+    name: typesafety
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          python-version: "3.12"
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Install packages
+        run: uv sync --locked
+
+      - name: Run tests
+        run: |
+          uv run pytest tests/typesafety \
+          --disable-docker-image-builds

@@ -21,6 +21,74 @@ from prefect.server.schemas.stream_subtasks import (
 from prefect.settings import PREFECT_SERVER_API_AUTH_STRING
 
 _METADATA_TASK_CONTROL_KEY = object()
+_DAG_LIFECYCLE_CONTROL_KEY = object()
+
+
+@dataclass(frozen=True)
+class _DAGLifecycleControl:
+    session: AsyncSession
+    transaction: object
+    graph_id: UUID
+    flow_run_id: UUID
+    operation_id: UUID
+    task_run_id: UUID | None
+
+
+@contextmanager
+def dag_lifecycle_control(
+    session: AsyncSession,
+    graph: orm_models.StreamGraphRevision,
+    operation_id: UUID,
+    *,
+    task_run_id: UUID | None = None,
+) -> Generator[None]:
+    """Transaction-local exact control authority, never obtained from a request."""
+    if (
+        graph.profile != "partitioned-dag-v1"
+        or graph.current_control_operation_id != operation_id
+    ):
+        raise NativeStreamError("IDENTITY_CONFLICT", "DAG control journal differs")
+    previous = session.info.get(_DAG_LIFECYCLE_CONTROL_KEY)
+    session.info[_DAG_LIFECYCLE_CONTROL_KEY] = _DAGLifecycleControl(
+        session,
+        session.get_transaction(),
+        graph.id,
+        graph.flow_run_id,
+        operation_id,
+        task_run_id,
+    )
+    try:
+        yield
+    finally:
+        if previous is None:
+            session.info.pop(_DAG_LIFECYCLE_CONTROL_KEY, None)
+        else:
+            session.info[_DAG_LIFECYCLE_CONTROL_KEY] = previous
+
+
+def dag_lifecycle_control_active(session: AsyncSession, flow_run_id: UUID) -> bool:
+    proof = session.info.get(_DAG_LIFECYCLE_CONTROL_KEY)
+    return (
+        isinstance(proof, _DAGLifecycleControl)
+        and proof.session is session
+        and proof.transaction is session.get_transaction()
+        and proof.flow_run_id == flow_run_id
+    )
+
+
+def dag_lifecycle_control_matches(
+    session: AsyncSession,
+    graph: orm_models.StreamGraphRevision,
+    task_run_id: UUID | None,
+) -> bool:
+    proof = session.info.get(_DAG_LIFECYCLE_CONTROL_KEY)
+    return (
+        dag_lifecycle_control_active(session, graph.flow_run_id)
+        and isinstance(proof, _DAGLifecycleControl)
+        and proof.graph_id == graph.id
+        and proof.operation_id == graph.current_control_operation_id
+        and proof.task_run_id == task_run_id
+    )
 
 
 @dataclass(frozen=True)
@@ -175,6 +243,30 @@ class WorkerStreamAuthorization:
             raise NativeStreamError(
                 "SUBTASK_SCOPE_DENIED",
                 "Prelocked worker authority does not match this session or resource",
+            )
+
+
+@dataclass(frozen=True)
+class DAGWorkerStreamAuthorization(WorkerStreamAuthorization):
+    """Distinct server-issued proof for journal-linked DAG worker controls."""
+
+    def validate(
+        self,
+        session: AsyncSession,
+        *,
+        flow_run_id: UUID | None = None,
+        graph_revision_id: UUID | None = None,
+        subtask_id: UUID | None = None,
+    ) -> None:
+        super().validate(
+            session,
+            flow_run_id=flow_run_id,
+            graph_revision_id=graph_revision_id,
+            subtask_id=subtask_id,
+        )
+        if self.graph.profile != "partitioned-dag-v1":
+            raise NativeStreamError(
+                "SUBTASK_SCOPE_DENIED", "DAG worker proof requires its DAG graph"
             )
 
 

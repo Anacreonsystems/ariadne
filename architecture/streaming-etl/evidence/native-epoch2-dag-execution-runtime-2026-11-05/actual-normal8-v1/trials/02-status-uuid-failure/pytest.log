@@ -1,0 +1,237 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_public_dag_lifecycle_two_real_workers_postgres[False-normal] _______
+
+execution_api = <tests.test_native_stream_recovery_http.RestartableAPI object at 0x7f9d30f8ae40>
+tmp_path = PosixPath('/tmp/native-ni012-runtime-live/run-sync-364f3e56/pytest/test_public_dag_lifecycle_two_0')
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7f9d32705b80>
+asynchronous = False, mode = 'normal'
+
+    @pytest.mark.parametrize(
+        "asynchronous,mode",
+        [
+            (False, "normal"),
+            (True, "normal"),
+            (False, "preview"),
+            (False, "failure"),
+            (False, "cancel"),
+        ],
+    )
+    @pytest.mark.timeout(300)
+    async def test_public_dag_lifecycle_two_real_workers_postgres(
+        execution_api: RestartableAPI,
+        tmp_path: Path,
+        db: Any,
+        asynchronous: bool,
+        mode: str,
+    ):
+        server = execution_api
+        user_module = tmp_path / "native_dag_example.py"
+        user_module.write_text(_USER_MODULE)
+        definition = load_flow_from_entrypoint(
+            str(user_module) + ":" + ("documents_async" if asynchronous else "documents")
+        )
+        pool = "dag-runtime-" + uuid4().hex
+        names = ["dag-left-" + uuid4().hex, "dag-right-" + uuid4().hex]
+        with temporary_settings(
+            {PREFECT_API_URL: server.url, PREFECT_API_AUTH_STRING: server.auth}
+        ):
+            async with get_client() as client:
+                try:
+                    await client.create_global_concurrency_limit(
+                        GlobalConcurrencyLimitCreate(name="tag:" + _TAG, limit=4)
+                    )
+                except ObjectAlreadyExists:
+                    limit = await client.read_global_concurrency_limit_by_name(
+                        "tag:" + _TAG
+                    )
+                    assert limit.limit == 4 and limit.active_slots == 0
+                template = ProcessWorker.get_default_base_job_template()
+                template["prefect_native_streaming"] = {
+                    "schema_version": 1,
+                    "profile": "bounded-linear-v1",
+                }
+                await client.create_work_pool(
+                    WorkPoolCreate(name=pool, type="process", base_job_template=template)
+                )
+                deployment = RunnerDeployment.from_flow(
+                    definition,
+                    name="dag-lifecycle",
+                    work_pool_name=pool,
+                    concurrency_limit=1,
+                    job_variables={"working_dir": str(Path.cwd()), "stream_output": True},
+                )
+                deployment_id = await deployment.aapply()
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key
+            not in {
+                "PREFECT_SERVER_DATABASE_CONNECTION_URL",
+                "PREFECT_API_DATABASE_CONNECTION_URL",
+                "ARIADNE_NATIVE_STREAM_TEST_DSN",
+            }
+        }
+        environment.update(
+            PREFECT_API_URL=server.url,
+            PREFECT_API_AUTH_STRING=server.auth,
+            PREFECT_LOGGING_LEVEL="INFO",
+            PREFECT_LOGGING_INTERNAL_LEVEL="WARNING",
+            PREFECT_DEBUG_MODE="false",
+            PREFECT_WORKER_QUERY_SECONDS="1",
+            PREFECT_WORKER_HEARTBEAT_SECONDS="1",
+        )
+        workers = []
+        logs = [tmp_path / "worker-left.log", tmp_path / "worker-right.log"]
+        try:
+            for name, log in zip(names, logs):
+                with log.open("wb") as output:
+                    workers.append(
+                        subprocess.Popen(
+                            [
+                                sys.executable,
+                                "-m",
+                                "prefect",
+                                "worker",
+                                "start",
+                                "--pool",
+                                pool,
+                                "--type",
+                                "process",
+                                "--name",
+                                name,
+                                "--limit",
+                                "1",
+                            ],
+                            env=environment,
+                            stdout=output,
+                            stderr=subprocess.STDOUT,
+                        )
+                    )
+            deadline = time.monotonic() + 60
+            registered = []
+            while time.monotonic() < deadline:
+                assert all(worker.poll() is None for worker in workers)
+                with server.client() as client:
+                    registered = [
+                        worker
+                        for worker in client.read_workers_for_work_pool(pool)
+                        if worker.name in names and worker.status.value == "ONLINE"
+                    ]
+                if len(registered) == 2:
+                    async with db.session_context() as session:
+                        capable = (
+                            await session.scalars(
+                                sa.select(db.StreamWorkerCapability.worker_id).where(
+                                    db.StreamWorkerCapability.worker_id.in_(
+                                        [worker.id for worker in registered]
+                                    ),
+                                    db.StreamWorkerCapability.protocol
+                                    == "partitioned-dag-v1",
+                                )
+                            )
+                        ).all()
+                    if len(capable) == 2:
+                        break
+                await asyncio.sleep(0.2)
+            else:
+                raise AssertionError("Two real workers did not advertise the DAG profile")
+            with server.client() as client:
+                run = client.create_flow_run_from_deployment(
+                    deployment_id,
+                    parameters={"directory": str(tmp_path), "count": 8, "mode": mode},
+                )
+            deadline = time.monotonic() + 210
+            while time.monotonic() < deadline:
+                assert all(worker.poll() is None for worker in workers)
+                with server.client() as client:
+                    current = client.read_flow_run(run.id)
+                if current.state is not None and current.state.is_final():
+                    break
+                await asyncio.sleep(0.2)
+            else:
+                raise AssertionError("DAG Flow did not reach a verified terminal state")
+            expected = (
+                "CANCELLED"
+                if mode == "cancel"
+                else "FAILED"
+                if mode == "failure"
+                else "COMPLETED"
+            )
+>           assert current.state.type.value == expected, str(current.state)
+E           AssertionError: Failed('Streaming DAG execution failed')
+E           assert 'FAILED' == 'COMPLETED'
+E             
+E             - COMPLETED
+E             + FAILED
+
+tests/test_native_stream_dag_execution_http.py:305: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://[redacted-owned-test-dsn]'
+Connecting to postgres at 'postgres://[redacted-owned-test-dsn]'
+Creating test postgres database 'native_ni012_runtime_9ab6ce4e_tests_master'
+Using test database connection URL 'postgresql+asyncpg://[redacted-owned-test-dsn]'
+Running hosted API server on port 55125
+---------------------------- Captured stderr setup -----------------------------
+13:25:46.658 | INFO    | uvicorn.error - Started server process [264147]
+13:25:46.662 | INFO    | uvicorn.error - Waiting for application startup.
+13:25:47.002 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+13:25:47.009 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+13:25:47.010 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+13:25:47.010 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+13:25:47.010 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+13:25:47.010 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+13:25:47.011 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+13:25:47.011 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+13:25:47.011 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+13:25:47.011 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+13:25:47.011 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+13:25:47.011 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+13:25:47.011 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+13:25:47.012 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+13:25:47.012 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+13:25:47.012 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+13:25:47.012 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+13:25:47.014 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+13:25:47.015 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+13:25:47.017 | INFO    | uvicorn.error - Application startup complete.
+13:25:47.017 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 55125) (Press CTRL+C to quit)
+13:25:47.051 | INFO    | uvicorn.access - 127.0.0.1:37884 - "GET /api/health HTTP/1.1" 200
+----------------------------- Captured stderr call -----------------------------
+13:25:51.734 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:54897/api/
+13:25:52.602 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - Running call coroutine_wrapper() in thread 'RunSyncEventLoopThread'
+13:25:52.602 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - <WatcherThreadCancelScope, name='coroutine_wrapper' RUNNING, runtime=0.00> entered
+13:25:52.602 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - <WatcherThreadCancelScope, name='coroutine_wrapper' COMPLETED, runtime=0.00> exited
+13:25:52.602 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - Scheduling coroutine for call coroutine_wrapper(<dropped>) in running loop <_UnixSelectorEventLoop running=True closed=False debug=False>
+13:25:52.602 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - <AsyncCancelScope, name='coroutine_wrapper' RUNNING, runtime=0.00> entered
+13:25:52.633 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - <AsyncCancelScope, name='coroutine_wrapper' COMPLETED, runtime=0.03> exited
+13:25:52.634 | DEBUG   | RunSyncEventLoopThread | prefect._internal.concurrency - Finished async call coroutine_wrapper(<dropped>)
+13:25:52.642 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:54897/api/
+13:25:52.667 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:54897/api/
+Executing <Task pending name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:280> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.361 seconds
+13:25:54.405 | WARNING | asyncio - Executing <Task pending name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:280> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.361 seconds
+Executing <Task finished name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() done, defined at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:154> exception=AssertionError("Failed('Streaming DAG execution failed')\nassert 'FAILED' == 'COMPLETED'\n  \n  - COMPLETED\n  + FAILED") created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.568 seconds
+13:26:15.344 | WARNING | asyncio - Executing <Task finished name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() done, defined at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:154> exception=AssertionError("Failed('Streaming DAG execution failed')\nassert 'FAILED' == 'COMPLETED'\n  \n  - COMPLETED\n  + FAILED") created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.568 seconds
+------------------------------ Captured log call -------------------------------
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:54897/api/
+DEBUG    prefect._internal.concurrency:calls.py:322 Running call coroutine_wrapper() in thread 'RunSyncEventLoopThread'
+DEBUG    prefect._internal.concurrency:cancellation.py:152 <WatcherThreadCancelScope, name='coroutine_wrapper' RUNNING, runtime=0.00> entered
+DEBUG    prefect._internal.concurrency:cancellation.py:163 <WatcherThreadCancelScope, name='coroutine_wrapper' COMPLETED, runtime=0.00> exited
+DEBUG    prefect._internal.concurrency:calls.py:336 Scheduling coroutine for call coroutine_wrapper(<dropped>) in running loop <_UnixSelectorEventLoop running=True closed=False debug=False>
+DEBUG    prefect._internal.concurrency:cancellation.py:152 <AsyncCancelScope, name='coroutine_wrapper' RUNNING, runtime=0.00> entered
+DEBUG    prefect._internal.concurrency:cancellation.py:163 <AsyncCancelScope, name='coroutine_wrapper' COMPLETED, runtime=0.03> exited
+DEBUG    prefect._internal.concurrency:calls.py:468 Finished async call coroutine_wrapper(<dropped>)
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:54897/api/
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:54897/api/
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() running at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:280> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[_run_until_complete_cb() at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:181] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.361 seconds
+WARNING  asyncio:base_events.py:1994 Executing <Task finished name='Task-20' coro=<test_public_dag_lifecycle_two_real_workers_postgres() done, defined at /workspace/ariadne/tests/test_native_stream_dag_execution_http.py:154> exception=AssertionError("Failed('Streaming DAG execution failed')\nassert 'FAILED' == 'COMPLETED'\n  \n  - COMPLETED\n  + FAILED") created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/runners.py:100> took 0.568 seconds
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+13:26:16.929 | INFO    | uvicorn.error - Shutting down
+13:26:17.030 | INFO    | uvicorn.error - Waiting for application shutdown.
+13:26:17.032 | INFO    | uvicorn.error - Application shutdown complete.
+13:26:17.033 | INFO    | uvicorn.error - Finished server process [264147]
+=========================== short test summary info ============================
+FAILED tests/test_native_stream_dag_execution_http.py::test_public_dag_lifecycle_two_real_workers_postgres[False-normal]
+1 failed in 38.49s

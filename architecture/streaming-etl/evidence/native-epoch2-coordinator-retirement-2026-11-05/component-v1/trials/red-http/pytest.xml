@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="13.622" timestamp="2026-11-05T20:06:05.553750+00:00" hostname="f8abb611283c"><testcase classname="tests.server.models.test_stream_dag_executions" name="test_final_parent_release_retires_only_dag_coordinator_postgres" time="13.305"><failure message="AssertionError: {&quot;detail&quot;:{&quot;code&quot;:&quot;EXECUTION_PROFILE_NOT_READY&quot;,&quot;message&quot;:&quot;Topology-only DAG data access is not executable&quot;,&quot;retryable&quot;:false}}&#10;assert 409 == 200&#10; +  where 409 = &lt;Response [409 Conflict]&gt;.status_code">db = &lt;prefect.server.database.interface.PrefectDBInterface object at 0x7ffa902d1100&gt;
+session = &lt;sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7ffa8e576420&gt;
+execution_api = &lt;httpx.AsyncClient object at 0x7ffa8e5ab320&gt;
+deployment = Deployment(id=fc54177b-0801-4556-b884-5bffb31c3acc)
+
+    async def test_final_parent_release_retires_only_dag_coordinator_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+    ):
+        plan, credentials, children = await ready_deployed_region(
+            db, session, execution_api, deployment
+        )
+        await produce_and_finish_region(db, children)
+        async with db.session_context(begin_transaction=True) as transaction:
+            for child in children:
+                result = await dispatch_stream_subtask_event(
+                    transaction,
+                    db,
+                    child.bootstrap.assignment.id,
+                    signed_child_event(child, "COMPLETED"),
+                    child.credentials,
+                )
+                assert result.accepted
+        for child in children:
+            await retire_ready_child(db, child)
+        headers = {
+            "X-Prefect-Stream-Execution-Generation": str(credentials.generation),
+            "X-Prefect-Stream-Execution-Holder": str(credentials.holder_id),
+            "X-Prefect-Stream-Execution-Capability": credentials.capability,
+        }
+        response = await execution_api.post(
+            f"/flow_runs/{plan.flow_run_id}/set_state",
+            json={"state": {"type": "COMPLETED", "name": "Completed"}},
+            headers=headers,
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["status"] == "ACCEPT", response.text
+        response = await execution_api.post(
+            "/streams/v1/release",
+            json={"flow_run_id": str(plan.flow_run_id)},
+            headers=headers,
+        )
+&gt;       assert response.status_code == 200, response.text
+E       AssertionError: {"detail":{"code":"EXECUTION_PROFILE_NOT_READY","message":"Topology-only DAG data access is not executable","retryable":false}}
+E       assert 409 == 200
+E        +  where 409 = &lt;Response [409 Conflict]&gt;.status_code
+
+tests/server/models/test_stream_dag_executions.py:793: AssertionError</failure></testcase></testsuite></testsuites>

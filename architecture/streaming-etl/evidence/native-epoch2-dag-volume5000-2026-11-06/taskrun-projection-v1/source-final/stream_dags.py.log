@@ -1,0 +1,1777 @@
+"""Immutable topology publication and internal capacity admission, without DATA."""
+
+import hashlib
+from collections import Counter
+from datetime import timedelta
+from typing import Literal, cast
+from uuid import UUID
+
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from prefect._internal.uuid7 import uuid7
+from prefect.server.database import PrefectDBInterface, orm_models
+from prefect.server.models import task_runs as task_run_models
+from prefect.server.models._stream_errors import NativeStreamError
+from prefect.server.models.stream_executions import (
+    guard_task_lifecycle,
+    require_execution,
+    require_no_remaining_dag_flow_retry,
+)
+from prefect.server.models.stream_subtask_authority import (
+    metadata_task_control,
+    release_allocations,
+    require_physical_backend,
+)
+from prefect.server.models.stream_worker_capacity import (
+    physical_worker_occupancy,
+    renew_worker_capability_metadata,
+)
+from prefect.server.models.streams import (
+    NativeStreamStore,
+    canonical_stream_payload,
+    finish_stream_partition,
+)
+from prefect.server.orchestration.core_policy import CoreTaskPolicy
+from prefect.server.schemas import core, states
+from prefect.server.schemas import stream_dags as s
+from prefect.server.schemas import stream_subtasks as physical
+from prefect.server.schemas.responses import SetStateStatus
+from prefect.server.schemas.statuses import WorkerStatus
+from prefect.server.schemas.streams import (
+    StreamExecutionCredentials,
+    StreamSubmissionReserveRequest,
+)
+from prefect.types import DateTime
+from prefect.types._datetime import now
+
+DAG_PROFILE: Literal["partitioned-dag-v1"] = "partitioned-dag-v1"
+
+
+def _validated(request: s.StreamDAGSealRequest) -> tuple[s.StreamDAGSealRequest, str]:
+    validated = s.StreamDAGSealRequest.model_validate(request.model_dump(mode="json"))
+    _, _, digest = canonical_stream_payload(
+        validated.model_dump(mode="json"), s.MAX_DAG_MANIFEST_BYTES
+    )
+    return validated, digest
+
+
+async def _flow(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    flow_run_id: UUID,
+    execution: StreamExecutionCredentials | None,
+    *,
+    metadata_only: bool,
+    update: bool,
+) -> tuple[orm_models.FlowRun, orm_models.StreamExecutionAuthority | None]:
+    if not metadata_only:
+        await require_physical_backend(session, db)
+    flow = await session.scalar(
+        sa.select(db.FlowRun)
+        .where(db.FlowRun.id == flow_run_id)
+        .with_for_update(read=not update)
+        .execution_options(populate_existing=True)
+    )
+    if flow is None:
+        raise NativeStreamError("NOT_FOUND", "Unknown FlowRun")
+    if metadata_only:
+        authority = await session.scalar(
+            sa.select(db.StreamExecutionAuthority)
+            .where(db.StreamExecutionAuthority.flow_run_id == flow_run_id)
+            .with_for_update(read=not update)
+            .execution_options(populate_existing=True)
+        )
+    else:
+        authority = await require_execution(
+            session,
+            db,
+            flow_run_id,
+            execution,
+            allowed_states=("CLAIMED", "ACTIVE"),
+            update=update,
+        )
+        if authority is None:
+            raise NativeStreamError(
+                "SUBTASK_AUTH_REQUIRED",
+                "Current Flow execution credentials are required",
+            )
+        if authority.flow_run_run_count != flow.run_count:
+            raise NativeStreamError(
+                "RECOVERY_NOT_READY", "Flow attempt and execution authority differ"
+            )
+    return flow, authority
+
+
+async def _public_snapshot(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    flow: orm_models.FlowRun,
+    request: s.StreamDAGSealRequest,
+) -> None:
+    snapshot = await session.scalar(
+        sa.select(db.NativeStreamDeploymentSnapshot).where(
+            db.NativeStreamDeploymentSnapshot.flow_run_id == flow.id
+        )
+    )
+    if (
+        flow.deployment_id is None
+        or snapshot is None
+        or snapshot.profile != DAG_PROFILE
+    ):
+        raise NativeStreamError(
+            "UNSUPPORTED_PROFILE",
+            "Public DAG seal requires its deployed native DAG snapshot",
+        )
+    if (
+        snapshot.state != "ACTIVE"
+        or flow.deployment_id != snapshot.deployment_id
+        or request.deployment_id != snapshot.deployment_id
+        or request.deployment_version != snapshot.deployment_version
+        or request.flow_version != snapshot.flow_version
+        or request.working_directory is None
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT",
+            "DAG deployment, version, profile and workspace must match its immutable snapshot",
+        )
+
+
+async def dag_plan(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph: orm_models.StreamGraphRevision,
+    *,
+    _admission_witness: bool = False,
+) -> s.StreamDAGPlan:
+    request, digest = _validated(
+        s.StreamDAGSealRequest.model_validate(graph.declaration)
+    )
+    activation_valid = (
+        graph.startup_completed_at is None and graph.activation_operation_id is None
+    )
+    if (
+        graph.startup_completed_at is not None
+        and graph.activation_operation_id is not None
+    ):
+        activation = await session.get(
+            db.StreamDAGLifecycleOperation, graph.activation_operation_id
+        )
+        activation_valid = (
+            activation is not None
+            and activation.kind == "ACTIVATE"
+            and activation.graph_revision_id == graph.id
+            and activation.request_digest == graph.activation_request_digest
+            and activation.target_set_digest is not None
+            and graph.admission_operation_id is not None
+            and graph.state in {"ADMITTED", "RELEASED"}
+        )
+    if (
+        graph.profile != DAG_PROFILE
+        or graph.graph_digest != digest
+        or graph.request_digest != digest
+        or graph.flow_run_id != request.flow_run_id
+        or graph.operation_id != request.operation_id
+        or graph.assignment_epoch != request.assignment_epoch
+        or not activation_valid
+        or (
+            graph.state == "SEALED"
+            and any(
+                value is not None
+                for value in (
+                    graph.admission_operation_id,
+                    graph.admission_request_digest,
+                    graph.placement_digest,
+                    graph.abort_operation_id,
+                )
+            )
+        )
+        or (
+            graph.state == "ADMITTED"
+            and (
+                graph.admission_operation_id is None
+                or graph.admission_request_digest is None
+                or graph.placement_digest is None
+                or graph.abort_operation_id is not None
+            )
+        )
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT",
+            "Stored DAG declaration differs from its immutable digest",
+        )
+    operators = {
+        row.operator_uid: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamOperatorRun).where(
+                    db.StreamOperatorRun.graph_revision_id == graph.id
+                )
+            )
+        ).all()
+    }
+    ports = {
+        (row.operator_run_id, row.direction): row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamGraphPort).where(
+                    db.StreamGraphPort.graph_revision_id == graph.id
+                )
+            )
+        ).all()
+    }
+    subtasks = {
+        (row.operator_run_id, row.subtask_index): row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSubtask).where(
+                    db.StreamPhysicalSubtask.graph_revision_id == graph.id
+                )
+            )
+        ).all()
+    }
+    manifests = {
+        row.id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamSubmission).where(
+                    db.StreamSubmission.graph_revision_id == graph.id
+                )
+            )
+        ).all()
+    }
+    task_rows = {
+        row.id: row
+        for row in (
+            await session.execute(
+                sa.select(
+                    db.TaskRun.id,
+                    db.TaskRun.dynamic_key,
+                    db.TaskRun.flow_run_id,
+                    db.TaskRun.name,
+                    db.TaskRun.task_inputs,
+                    db.TaskRun.task_key,
+                    db.TaskRun.task_version,
+                    db.TaskRun.empirical_policy,
+                    db.TaskRun.tags,
+                ).where(
+                    db.TaskRun.id.in_([row.task_run_id for row in subtasks.values()])
+                )
+            )
+        ).all()
+    }
+    allocations = {
+        row.subtask_id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSlotAllocation).where(
+                    db.StreamPhysicalSlotAllocation.graph_revision_id == graph.id
+                )
+            )
+        ).all()
+    }
+    edges = {
+        row.edge_uid: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamGraphEdge).where(
+                    db.StreamGraphEdge.graph_revision_id == graph.id
+                )
+            )
+        ).all()
+    }
+    edge_partitions = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamGraphEdgePartition)
+                .where(db.StreamGraphEdgePartition.graph_revision_id == graph.id)
+                .order_by(db.StreamGraphEdgePartition.partition_index)
+            )
+        ).all()
+    )
+    expected_operators = {spec.operator_uid for spec in request.operators}
+    expected_edges = {spec.edge_uid for spec in request.edges}
+    expected_subtasks = sum(spec.parallelism for spec in request.operators)
+    expected_ports = sum(
+        1 + (spec.input_port is not None) for spec in request.operators
+    )
+    expected_edge_partitions = sum(
+        next(
+            spec.parallelism
+            for spec in request.operators
+            if spec.operator_uid == edge.consumer_operator_uid
+        )
+        for edge in request.edges
+    )
+    subtask_ids = {row.id for row in subtasks.values()}
+    manifest_ids = {row.submission_id for row in subtasks.values()}
+    reserved_ids = {
+        row.id for row in subtasks.values() if row.assigned_worker_id is not None
+    }
+    if (
+        set(operators) != expected_operators
+        or set(edges) != expected_edges
+        or len(ports) != expected_ports
+        or len(subtasks) != expected_subtasks
+        or len(manifests) != expected_subtasks
+        or set(manifests) != manifest_ids
+        or set(task_rows) != {row.task_run_id for row in subtasks.values()}
+        or len(edge_partitions) != expected_edge_partitions
+        or not set(allocations).issubset(subtask_ids)
+        or set(allocations) != reserved_ids
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT",
+            "DAG metadata does not exactly cover its sealed declaration",
+        )
+    projected_operators: list[s.StreamDAGOperatorProjection] = []
+    projected_subtasks: list[s.StreamDAGSubtaskProjection] = []
+    for spec in request.operators:
+        operator = operators.get(spec.operator_uid)
+        if (
+            operator is None
+            or operator.profile != DAG_PROFILE
+            or operator.parallelism != spec.parallelism
+            or operator.role != spec.role
+            or operator.specification != spec.model_dump(mode="json")
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Stored DAG operator differs from its declaration"
+            )
+        projected_ports: dict[str, s.StreamDAGPortProjection] = {}
+        for direction, port_spec in (
+            ("INPUT", spec.input_port),
+            ("OUTPUT", spec.output_port),
+        ):
+            if port_spec is None:
+                continue
+            port = ports.get((operator.id, direction))
+            if port is None or (
+                port.port_uid,
+                port.schema_id,
+                port.schema_version,
+                port.schema_digest,
+            ) != (
+                port_spec.uid,
+                port_spec.schema_id,
+                port_spec.schema_version,
+                port_spec.schema_digest,
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "Stored DAG port differs from its declaration"
+                )
+            projected_ports[direction] = s.StreamDAGPortProjection.model_validate(
+                {**port_spec.model_dump(), "id": port.id, "direction": direction}
+            )
+        projected_operators.append(
+            s.StreamDAGOperatorProjection(
+                id=operator.id,
+                operator_uid=spec.operator_uid,
+                role=spec.role,
+                parallelism=spec.parallelism,
+                input_port=projected_ports.get("INPUT"),
+                output_port=projected_ports["OUTPUT"],
+            )
+        )
+        for index in range(spec.parallelism):
+            subtask = subtasks.get((operator.id, index))
+            if subtask is None:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "Stored DAG physical subtask is missing"
+                )
+            manifest = manifests.get(subtask.submission_id)
+            if manifest is None:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "Stored DAG manifest is missing"
+                )
+            if (
+                subtask.profile != DAG_PROFILE
+                or subtask.assignment_epoch != graph.assignment_epoch
+                or subtask.task_run_id != manifest.task_run_id
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "DAG physical task and manifest binding differ"
+                )
+            reserve = StreamSubmissionReserveRequest(
+                flow_run_id=graph.flow_run_id,
+                submission_key=f"dag/{spec.operator_uid}/{index}",
+                role=spec.role,
+                protocol="source-v1" if spec.role == "SOURCE" else "yield-v2",
+                task_name=f"{spec.task_name}[{index}]",
+                task_key=spec.task_key,
+                task_version=spec.task_version,
+                flow_version=request.flow_version,
+                deployment_id=request.deployment_id,
+                deployment_version=request.deployment_version,
+                artifact_digest=spec.artifact_digest,
+                parameters=spec.parameters[index],
+                upstream_stream_id=subtask.input_stream_id,
+                input_key=spec.input_key,
+                limits=spec.limits,
+                task_policy=spec.task_policy,
+                tags=spec.tags,
+            )
+            params, canonical, submission_digest, params_digest, limits, tags = (
+                NativeStreamStore(db).submission_material(reserve)
+            )
+            expected_manifest_digest = hashlib.sha256(
+                b"native-stream-manifest-v1\0"
+                + submission_digest.encode("ascii")
+                + subtask.task_run_id.bytes
+                + subtask.output_stream_id.bytes
+            ).hexdigest()
+            expected_dynamic_key = (
+                "dag-"
+                + hashlib.sha256(reserve.submission_key.encode("utf-8")).hexdigest()[
+                    :32
+                ]
+            )
+            task_row = task_rows[subtask.task_run_id]
+            incoming_edge = next(
+                (
+                    edge
+                    for edge in request.edges
+                    if edge.consumer_operator_uid == spec.operator_uid
+                ),
+                None,
+            )
+            expected_inputs: dict[str, list[core.TaskRunResult]] = {}
+            if incoming_edge is not None and spec.input_key is not None:
+                upstream = operators[incoming_edge.producer_operator_uid]
+                expected_inputs[spec.input_key] = [
+                    core.TaskRunResult(id=value)
+                    for value in sorted(
+                        row.task_run_id
+                        for row in subtasks.values()
+                        if row.operator_run_id == upstream.id
+                    )
+                ]
+            if (
+                manifest.dynamic_key != expected_dynamic_key
+                or task_row.dynamic_key != expected_dynamic_key
+                or task_row.flow_run_id != graph.flow_run_id
+                or task_row.name != reserve.task_name
+                or task_row.task_inputs != expected_inputs
+                or task_row.task_key != spec.task_key
+                or task_row.task_version != spec.task_version
+                or task_row.empirical_policy != spec.task_policy
+                or sorted(task_row.tags) != tags
+                or (
+                    graph.state in {"SEALED", "ADMITTED"} and manifest.state != "ACTIVE"
+                )
+                or manifest.labels != {}
+                or manifest.request_digest != submission_digest
+                or manifest.parameters_digest != params_digest
+                or manifest.parameters != params
+                or manifest.canonical_size != len(canonical)
+                or manifest.manifest_digest != expected_manifest_digest
+                or manifest.submission_key != reserve.submission_key
+                or manifest.task_name != reserve.task_name
+                or manifest.task_key != spec.task_key
+                or manifest.task_version != spec.task_version
+                or manifest.artifact_digest != spec.artifact_digest
+                or manifest.upstream_stream_id != subtask.input_stream_id
+                or manifest.input_key != spec.input_key
+                or manifest.flow_version != request.flow_version
+                or manifest.deployment_id != request.deployment_id
+                or manifest.deployment_version != request.deployment_version
+                or manifest.task_policy != spec.task_policy.model_dump(mode="json")
+                or manifest.tags != tags
+                or manifest.limits != limits.model_dump(mode="json")
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "DAG manifest differs from its immutable operator configuration",
+                )
+            allocation = allocations.get(subtask.id)
+            if allocation is not None and (
+                allocation.worker_id != subtask.assigned_worker_id
+                or allocation.admission_operation_id != graph.admission_operation_id
+                or allocation.released != subtask.physical_slot_released
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "Stored DAG slot allocation differs from its assignment",
+                )
+            projected_subtasks.append(
+                s.StreamDAGSubtaskProjection(
+                    id=subtask.id,
+                    operator_run_id=operator.id,
+                    operator_uid=spec.operator_uid,
+                    subtask_index=index,
+                    input_stream_id=subtask.input_stream_id,
+                    output_stream_id=subtask.output_stream_id,
+                    manifest=NativeStreamStore.submission_response(manifest),
+                    assigned_worker_id=subtask.assigned_worker_id,
+                    physical_slot_reserved=allocation is not None,
+                    physical_slot_released=subtask.physical_slot_released
+                    and not (_admission_witness and graph.state == "ADMITTED"),
+                )
+            )
+    if graph.admission_operation_id is not None:
+        worker_ids = {item.assigned_worker_id for item in projected_subtasks}
+        pools = set(
+            (
+                await session.scalars(
+                    sa.select(db.Worker.work_pool_id).where(
+                        db.Worker.id.in_(worker_ids)
+                    )
+                )
+            ).all()
+        )
+        if None in worker_ids or len(pools) != 1:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "DAG admission worker pool binding is incomplete"
+            )
+        _, _, admission_digest = canonical_stream_payload(
+            {
+                "operation_id": str(graph.admission_operation_id),
+                "graph_digest": graph.graph_digest,
+                "work_pool_id": str(next(iter(pools))),
+            }
+        )
+        _, _, placement_digest = canonical_stream_payload(
+            {
+                "graph_revision_id": str(graph.id),
+                "graph_digest": graph.graph_digest,
+                "assignment_epoch": graph.assignment_epoch,
+                "assignments": [
+                    {
+                        "subtask_id": str(item.id),
+                        "worker_id": str(item.assigned_worker_id),
+                    }
+                    for item in projected_subtasks
+                ],
+            }
+        )
+        if (
+            graph.admission_request_digest != admission_digest
+            or graph.placement_digest != placement_digest
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "DAG durable admission receipt differs from placement",
+            )
+    projected_edges: list[s.StreamDAGEdgeProjection] = []
+    for spec in request.edges:
+        edge = edges.get(spec.edge_uid)
+        if (
+            edge is None
+            or edge.specification != spec.model_dump(mode="json")
+            or (
+                edge.producer_port_id
+                != ports[(operators[spec.producer_operator_uid].id, "OUTPUT")].id
+                or edge.consumer_port_id
+                != ports[(operators[spec.consumer_operator_uid].id, "INPUT")].id
+                or edge.producer_parallelism
+                != operators[spec.producer_operator_uid].parallelism
+                or edge.target_parallelism
+                != operators[spec.consumer_operator_uid].parallelism
+                or edge.exchange != spec.exchange
+                or edge.routing_version != spec.routing_version
+                or edge.key_codec != spec.key_codec
+                or edge.hash_algorithm != spec.hash_algorithm
+                or edge.key_group_count != spec.key_group_count
+            )
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Stored DAG edge differs from its declaration"
+            )
+        targets = [
+            s.StreamDAGEdgePartitionProjection(
+                id=row.id,
+                partition_index=row.partition_index,
+                stream_id=row.stream_id,
+                subscriber_id=row.subscriber_id,
+                target_subtask_id=row.target_subtask_id,
+            )
+            for row in edge_partitions
+            if row.edge_id == edge.id
+        ]
+        projected_edges.append(
+            s.StreamDAGEdgeProjection.model_validate(
+                {**spec.model_dump(), "id": edge.id, "partitions": targets}
+            )
+        )
+    return s.StreamDAGPlan.model_validate(
+        {
+            "id": graph.id,
+            "flow_run_id": graph.flow_run_id,
+            "operation_id": graph.operation_id,
+            "graph_digest": graph.graph_digest,
+            "state": graph.state,
+            "created_at": graph.created,
+            "placement_digest": graph.placement_digest,
+            "operators": projected_operators,
+            "edges": projected_edges,
+            "subtasks": projected_subtasks,
+            "leaf_operator_uids": sorted(
+                {spec.operator_uid for spec in request.operators}
+                - {edge.producer_operator_uid for edge in request.edges}
+            ),
+        }
+    )
+
+
+async def dag_admission_topology_witness(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph: orm_models.StreamGraphRevision,
+) -> s.StreamDAGPlan:
+    """Internal immutable admission witness, never current resource ownership.
+
+    Progressive physical release does not alter the original topology/placement.
+    The ordinary public plan keeps its strict current-slot projection. Every
+    execution mutation must independently lock and validate actual reservations.
+    """
+    start = (
+        await session.get(db.StreamDAGLifecycleOperation, graph.admission_operation_id)
+        if graph.admission_operation_id
+        else None
+    )
+    if (
+        start is None
+        or start.kind != "START"
+        or start.graph_revision_id != graph.id
+        or start.flow_run_id != graph.flow_run_id
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT",
+            "Immutable admission witness requires its persisted START",
+        )
+    return await dag_plan(session, db, graph, _admission_witness=True)
+
+
+async def _persist(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: s.StreamDAGSealRequest,
+    digest: str,
+    flow: orm_models.FlowRun,
+    authority: orm_models.StreamExecutionAuthority | None,
+) -> s.StreamDAGPlan:
+    existing = await session.scalar(
+        sa.select(db.StreamGraphRevision)
+        .where(db.StreamGraphRevision.flow_run_id == flow.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if existing is not None:
+        if (
+            existing.profile != DAG_PROFILE
+            or existing.operation_id != request.operation_id
+            or existing.request_digest != digest
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "FlowRun is bound to another immutable graph"
+            )
+        return await dag_plan(session, db, existing)
+    if (
+        await session.scalar(
+            sa.select(db.TaskRun.id).where(db.TaskRun.flow_run_id == flow.id).limit(1)
+        )
+        is not None
+    ):
+        raise NativeStreamError(
+            "UNSUPPORTED_PROFILE",
+            "Topology-only DAG cannot include existing ordinary or finite TaskRuns",
+        )
+    if (
+        await session.scalar(
+            sa.select(db.StreamPartition.id)
+            .where(db.StreamPartition.flow_run_id == flow.id)
+            .limit(1)
+        )
+        is not None
+    ):
+        raise NativeStreamError(
+            "UNSUPPORTED_PROFILE",
+            "Topology-only DAG cannot include existing stream partitions",
+        )
+    if flow.state_type in states.TERMINAL_STATES:
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT", "Final FlowRun cannot publish a new DAG"
+        )
+    for model in (db.StreamSubmission, db.StreamFiniteSubmission, db.StreamPartition):
+        if (
+            await session.scalar(
+                sa.select(model.id).where(model.flow_run_id == flow.id).limit(1)
+            )
+            is not None
+        ):
+            raise NativeStreamError(
+                "UNSUPPORTED_TOPOLOGY",
+                "DAG cannot mix with existing stream or finite submissions",
+            )
+    if authority is not None and (
+        authority.manifest_set_digest is not None or authority.cancel_requested
+    ):
+        raise NativeStreamError(
+            "MANIFEST_SEALED", "Flow authority cannot publish another DAG"
+        )
+    graph = db.StreamGraphRevision(
+        id=uuid7(),
+        flow_run_id=flow.id,
+        operation_id=request.operation_id,
+        profile=DAG_PROFILE,
+        assignment_epoch=1,
+        graph_digest=digest,
+        request_digest=digest,
+        declaration=request.model_dump(mode="json"),
+        state="SEALED",
+    )
+    session.add(graph)
+    await session.flush()
+    operators: dict[str, orm_models.StreamOperatorRun] = {}
+    ports: dict[tuple[str, str], orm_models.StreamGraphPort] = {}
+    for spec in request.operators:
+        operator = db.StreamOperatorRun(
+            id=uuid7(),
+            graph_revision_id=graph.id,
+            profile=DAG_PROFILE,
+            operator_uid=spec.operator_uid,
+            role=spec.role,
+            parallelism=spec.parallelism,
+            specification=spec.model_dump(mode="json"),
+        )
+        operators[spec.operator_uid] = operator
+        session.add(operator)
+    await session.flush()
+    for spec in request.operators:
+        for direction, port_spec in (
+            ("INPUT", spec.input_port),
+            ("OUTPUT", spec.output_port),
+        ):
+            if port_spec is not None:
+                port = db.StreamGraphPort(
+                    id=uuid7(),
+                    graph_revision_id=graph.id,
+                    operator_run_id=operators[spec.operator_uid].id,
+                    profile=DAG_PROFILE,
+                    port_uid=port_spec.uid,
+                    direction=direction,
+                    schema_id=port_spec.schema_id,
+                    schema_version=port_spec.schema_version,
+                    schema_digest=port_spec.schema_digest,
+                )
+                ports[(spec.operator_uid, direction)] = port
+                session.add(port)
+    await session.flush()
+    incoming = {edge.consumer_operator_uid: edge for edge in request.edges}
+    specs = {spec.operator_uid: spec for spec in request.operators}
+    edge_rows: dict[str, orm_models.StreamGraphEdge] = {}
+    inputs: dict[tuple[str, int], UUID] = {}
+    for edge_spec in request.edges:
+        producer, consumer = (
+            specs[edge_spec.producer_operator_uid],
+            specs[edge_spec.consumer_operator_uid],
+        )
+        edge = db.StreamGraphEdge(
+            id=uuid7(),
+            graph_revision_id=graph.id,
+            profile=DAG_PROFILE,
+            edge_uid=edge_spec.edge_uid,
+            subscriber_uid=edge_spec.subscriber_uid,
+            producer_port_id=ports[(producer.operator_uid, "OUTPUT")].id,
+            consumer_port_id=ports[(consumer.operator_uid, "INPUT")].id,
+            producer_parallelism=producer.parallelism,
+            target_parallelism=consumer.parallelism,
+            exchange=edge_spec.exchange,
+            routing_version=edge_spec.routing_version,
+            key_codec=edge_spec.key_codec,
+            hash_algorithm=edge_spec.hash_algorithm,
+            key_group_count=edge_spec.key_group_count,
+            specification=edge_spec.model_dump(mode="json"),
+        )
+        edge_rows[edge_spec.edge_uid] = edge
+        session.add(edge)
+        for index in range(consumer.parallelism):
+            stream_id = uuid7()
+            inputs[(consumer.operator_uid, index)] = stream_id
+            session.add(
+                db.StreamPartition(
+                    id=stream_id,
+                    flow_run_id=flow.id,
+                    protocol_version=1,
+                    limits=consumer.limits.model_dump(mode="json"),
+                )
+            )
+    await session.flush()
+    store = NativeStreamStore(db)
+    subtasks: dict[tuple[str, int], orm_models.StreamPhysicalSubtask] = {}
+    for spec in request.operators:
+        upstream_tasks = [
+            row.task_run_id
+            for (uid, _), row in subtasks.items()
+            if spec.role == "OPERATOR"
+            and uid == incoming[spec.operator_uid].producer_operator_uid
+        ]
+        for index in range(spec.parallelism):
+            input_stream_id = inputs.get((spec.operator_uid, index))
+            reserve = StreamSubmissionReserveRequest(
+                flow_run_id=flow.id,
+                submission_key=f"dag/{spec.operator_uid}/{index}",
+                role=spec.role,
+                protocol="source-v1" if spec.role == "SOURCE" else "yield-v2",
+                task_name=f"{spec.task_name}[{index}]",
+                task_key=spec.task_key,
+                task_version=spec.task_version,
+                flow_version=request.flow_version,
+                deployment_id=request.deployment_id,
+                deployment_version=request.deployment_version,
+                artifact_digest=spec.artifact_digest,
+                parameters=spec.parameters[index],
+                upstream_stream_id=input_stream_id,
+                input_key=spec.input_key,
+                task_policy=spec.task_policy,
+                tags=spec.tags,
+                limits=spec.limits,
+            )
+            parameters, canonical, request_digest, parameter_digest, limits, tags = (
+                store.submission_material(reserve)
+            )
+            task_id, output_id = uuid7(), uuid7()
+            dynamic_key = (
+                "dag-"
+                + hashlib.sha256(reserve.submission_key.encode()).hexdigest()[:32]
+            )
+            task_inputs: dict[
+                str,
+                list[
+                    core.TaskRunResult
+                    | core.FlowRunResult
+                    | core.Parameter
+                    | core.Constant
+                ],
+            ] = {}
+            if spec.input_key is not None:
+                task_inputs[spec.input_key] = [
+                    core.TaskRunResult(id=value) for value in sorted(upstream_tasks)
+                ]
+            task = core.TaskRun(
+                id=task_id,
+                name=reserve.task_name,
+                flow_run_id=flow.id,
+                task_key=spec.task_key,
+                dynamic_key=dynamic_key,
+                task_version=spec.task_version,
+                empirical_policy=spec.task_policy,
+                tags=tags,
+                task_inputs=task_inputs,
+                flow_run_run_count=flow.run_count,
+                state=states.Pending(),
+            )
+            created = await task_run_models.create_task_run(
+                session=session, task_run=task
+            )
+            if created.id != task_id:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "DAG TaskRun natural identity already exists"
+                )
+            session.add(
+                db.StreamPartition(
+                    id=output_id,
+                    flow_run_id=flow.id,
+                    protocol_version=1,
+                    producer_kind="SOURCE" if spec.role == "SOURCE" else "CONSUMER",
+                    producer_task_run_id=task_id,
+                    limits=limits.model_dump(mode="json"),
+                )
+            )
+            await session.flush()
+            manifest_digest = hashlib.sha256(
+                b"native-stream-manifest-v1\0"
+                + request_digest.encode("ascii")
+                + task_id.bytes
+                + output_id.bytes
+            ).hexdigest()
+            manifest = db.StreamSubmission(
+                id=uuid7(),
+                flow_run_id=flow.id,
+                graph_revision_id=graph.id,
+                submission_key=reserve.submission_key,
+                request_digest=request_digest,
+                manifest_digest=manifest_digest,
+                canonical_size=len(canonical),
+                parameters=parameters,
+                parameters_digest=parameter_digest,
+                role=spec.role,
+                protocol=reserve.protocol,
+                input_key=spec.input_key,
+                upstream_stream_id=input_stream_id,
+                task_run_id=task_id,
+                stream_id=output_id,
+                task_name=reserve.task_name,
+                task_key=spec.task_key,
+                task_version=spec.task_version,
+                flow_version=request.flow_version,
+                deployment_id=request.deployment_id,
+                deployment_version=request.deployment_version,
+                artifact_digest=spec.artifact_digest,
+                dynamic_key=dynamic_key,
+                limits=limits.model_dump(mode="json"),
+                task_policy=spec.task_policy.model_dump(mode="json"),
+                tags=tags,
+                labels={},
+            )
+            session.add(manifest)
+            await session.flush()
+            subtask = db.StreamPhysicalSubtask(
+                id=uuid7(),
+                graph_revision_id=graph.id,
+                profile=DAG_PROFILE,
+                operator_run_id=operators[spec.operator_uid].id,
+                subtask_index=index,
+                assignment_epoch=1,
+                task_run_id=task_id,
+                submission_id=manifest.id,
+                input_stream_id=input_stream_id,
+                output_stream_id=output_id,
+                physical_epoch=0,
+            )
+            subtasks[(spec.operator_uid, index)] = subtask
+            session.add(subtask)
+    await session.flush()
+    for edge_spec in request.edges:
+        consumer = specs[edge_spec.consumer_operator_uid]
+        for index in range(consumer.parallelism):
+            session.add(
+                db.StreamGraphEdgePartition(
+                    id=uuid7(),
+                    graph_revision_id=graph.id,
+                    flow_run_id=flow.id,
+                    profile=DAG_PROFILE,
+                    edge_id=edge_rows[edge_spec.edge_uid].id,
+                    partition_index=index,
+                    stream_id=inputs[(consumer.operator_uid, index)],
+                    subscriber_id=uuid7(),
+                    target_subtask_id=subtasks[(consumer.operator_uid, index)].id,
+                )
+            )
+    if authority is not None:
+        authority.manifest_set_digest = digest
+        authority.manifest_count = len(subtasks)
+        authority.manifest_sealed_at = cast(DateTime, now("UTC"))
+        authority.manifest_seal_operation_id = request.operation_id
+        authority.manifest_seal_request_digest = digest
+        authority.prepared_generation = authority.generation
+    await session.flush()
+    return await dag_plan(session, db, graph)
+
+
+async def seal_dag_metadata(
+    session: AsyncSession, db: PrefectDBInterface, request: s.StreamDAGSealRequest
+) -> s.StreamDAGPlan:
+    """Internal metadata service only, including structural SQLite verification."""
+    request, digest = _validated(request)
+    async with session.begin_nested():
+        flow, authority = await _flow(
+            session, db, request.flow_run_id, None, metadata_only=True, update=True
+        )
+        return await _persist(session, db, request, digest, flow, authority)
+
+
+async def seal_dag(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: s.StreamDAGSealRequest,
+    execution: StreamExecutionCredentials | None,
+) -> s.StreamDAGPlan:
+    request, digest = _validated(request)
+    async with session.begin_nested():
+        flow, authority = await _flow(
+            session,
+            db,
+            request.flow_run_id,
+            execution,
+            metadata_only=False,
+            update=True,
+        )
+        await _public_snapshot(session, db, flow, request)
+        require_no_remaining_dag_flow_retry(flow)
+        return await _persist(session, db, request, digest, flow, authority)
+
+
+async def read_dag_plan(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    execution: StreamExecutionCredentials | None = None,
+    *,
+    metadata_only: bool = False,
+    update: bool = False,
+) -> s.StreamDAGPlan:
+    if not metadata_only:
+        await require_physical_backend(session, db)
+    graph = await session.get(db.StreamGraphRevision, graph_id)
+    if graph is None:
+        raise NativeStreamError("NOT_FOUND", "Unknown DAG revision")
+    flow, _ = await _flow(
+        session,
+        db,
+        graph.flow_run_id,
+        execution,
+        metadata_only=metadata_only,
+        update=update,
+    )
+    graph = await session.scalar(
+        sa.select(db.StreamGraphRevision)
+        .where(db.StreamGraphRevision.id == graph_id)
+        .with_for_update(read=not update)
+        .execution_options(populate_existing=True)
+    )
+    if graph is None or graph.profile != DAG_PROFILE:
+        raise NativeStreamError("UNSUPPORTED_PROFILE", "Not a DAG graph revision")
+    if not metadata_only:
+        stored, _ = _validated(s.StreamDAGSealRequest.model_validate(graph.declaration))
+        await _public_snapshot(session, db, flow, stored)
+    if graph.state == "ADMITTED" and await session.scalar(
+        sa.select(
+            sa.exists().where(
+                db.StreamPhysicalSubtask.graph_revision_id == graph.id,
+                db.StreamPhysicalSubtask.physical_slot_released.is_(True),
+            )
+        )
+    ):
+        raise NativeStreamError(
+            "RECOVERY_NOT_READY",
+            "Progressive DAG release requires the dedicated execution projection",
+        )
+    return await dag_plan(session, db, graph)
+
+
+async def register_dag_capability_metadata(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    worker_id: UUID,
+    principal: physical.StreamWorkerPrincipal,
+) -> None:
+    """Internal-only registration; production workers keep fixed-P2 polling."""
+    await require_physical_backend(session, db)
+    await renew_worker_capability_metadata(
+        session, db, worker_id, principal, protocol=DAG_PROFILE
+    )
+
+
+async def admit_dag_metadata(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    request: s.StreamDAGAdmissionRequest,
+    *,
+    work_pool_id: UUID,
+) -> s.StreamDAGPlan:
+    """Internal all-or-none capacity service; this never authorizes execution."""
+    await require_physical_backend(session, db)
+    async with session.begin_nested():
+        locator = await session.get(db.StreamGraphRevision, graph_id)
+        if locator is None:
+            raise NativeStreamError("NOT_FOUND", "Unknown DAG revision")
+        flow, authority = await _flow(
+            session, db, locator.flow_run_id, None, metadata_only=True, update=True
+        )
+        graph = await session.scalar(
+            sa.select(db.StreamGraphRevision)
+            .where(db.StreamGraphRevision.id == graph_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if graph is None or graph.profile != DAG_PROFILE:
+            raise NativeStreamError(
+                "UNSUPPORTED_PROFILE", "Internal DAG admission requires a DAG graph"
+            )
+        if graph.graph_digest != request.graph_digest:
+            raise NativeStreamError("IDENTITY_CONFLICT", "DAG admission digest differs")
+        _, _, request_digest = canonical_stream_payload(
+            {**request.model_dump(mode="json"), "work_pool_id": str(work_pool_id)}
+        )
+        if graph.admission_operation_id is not None:
+            if (
+                graph.admission_operation_id != request.operation_id
+                or graph.admission_request_digest != request_digest
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "DAG has another region admission"
+                )
+            return await dag_plan(session, db, graph)
+        if graph.state != "SEALED" or (
+            authority is not None and authority.cancel_requested
+        ):
+            raise NativeStreamError(
+                "ADMISSION_NOT_ALLOWED", "DAG is not an unstarted sealed topology"
+            )
+        plan = await dag_plan(session, db, graph)
+        declaration, _ = _validated(
+            s.StreamDAGSealRequest.model_validate(graph.declaration)
+        )
+        snapshot = await session.scalar(
+            sa.select(db.NativeStreamDeploymentSnapshot).where(
+                db.NativeStreamDeploymentSnapshot.flow_run_id == flow.id
+            )
+        )
+        launch = None
+        if snapshot is not None:
+            if (
+                snapshot.profile != DAG_PROFILE
+                or snapshot.state != "ACTIVE"
+                or snapshot.work_pool_id != work_pool_id
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "DAG metadata pool differs from its deployment snapshot",
+                )
+            launch = await session.scalar(
+                sa.select(db.NativeStreamLaunchIdentity).where(
+                    db.NativeStreamLaunchIdentity.flow_run_id == flow.id,
+                    db.NativeStreamLaunchIdentity.generation
+                    == (authority.generation if authority is not None else 0),
+                    db.NativeStreamLaunchIdentity.state == "PROCESS_REGISTERED",
+                )
+            )
+            if launch is None:
+                raise NativeStreamError(
+                    "RECOVERY_NOT_READY",
+                    "Deployed DAG admission requires its current registered Flow coordinator",
+                )
+        cutoff = now("UTC") - timedelta(seconds=120)
+        needed = len(plan.subtasks)
+        # This is an optimistic locator view only. The exact subset is locked
+        # below and all occupancy/identity/capacity checks then run again.
+        legacy = sa.select(
+            db.StreamPhysicalSubtask.assigned_worker_id.label("worker_id")
+        ).where(
+            db.StreamPhysicalSubtask.profile == "partitioned-fixed-v1",
+            db.StreamPhysicalSubtask.assigned_worker_id.is_not(None),
+            db.StreamPhysicalSubtask.physical_slot_released.is_(False),
+        )
+        dag = sa.select(
+            db.StreamPhysicalSlotAllocation.worker_id.label("worker_id")
+        ).where(db.StreamPhysicalSlotAllocation.released.is_(False))
+        all_slots = sa.union_all(legacy, dag).subquery()
+        slot_counts = (
+            sa.select(all_slots.c.worker_id, sa.func.count().label("occupied"))
+            .group_by(all_slots.c.worker_id)
+            .subquery()
+        )
+        used = sa.func.coalesce(slot_counts.c.occupied, 0)
+        candidates_query = (
+            sa.select(
+                db.Worker.id,
+                db.StreamWorkerCapability.host_id,
+                db.StreamWorkerCapability.boot_id,
+                used.label("occupied"),
+            )
+            .join(
+                db.StreamWorkerCapability,
+                db.StreamWorkerCapability.worker_id == db.Worker.id,
+            )
+            .outerjoin(slot_counts, slot_counts.c.worker_id == db.Worker.id)
+            .where(
+                db.Worker.work_pool_id == work_pool_id,
+                db.Worker.status == WorkerStatus.ONLINE,
+                db.StreamWorkerCapability.protocol == DAG_PROFILE,
+                db.StreamWorkerCapability.protocol_version == 1,
+                db.StreamWorkerCapability.work_pool_id == work_pool_id,
+                db.StreamWorkerCapability.last_renewed_at >= cutoff,
+            )
+        )
+        if launch is not None:
+            candidates_query = candidates_query.where(
+                db.StreamWorkerCapability.host_id == launch.launcher_host_id,
+                db.StreamWorkerCapability.boot_id == launch.launcher_boot_id,
+                sa.or_(used < 2, db.Worker.id == launch.worker_id),
+            ).order_by(
+                sa.case((db.Worker.id == launch.worker_id, 0), else_=1), db.Worker.id
+            )
+        else:
+            candidates_query = candidates_query.where(used < 2).order_by(db.Worker.id)
+        eligible = candidates_query.order_by(None).subquery()
+        cohort_query = (
+            sa.select(eligible.c.host_id, eligible.c.boot_id)
+            .group_by(eligible.c.host_id, eligible.c.boot_id)
+            .having(
+                sa.func.sum(
+                    sa.case((eligible.c.occupied < 2, 2 - eligible.c.occupied), else_=0)
+                )
+                >= needed
+            )
+            .order_by(eligible.c.host_id, eligible.c.boot_id)
+            .limit(1)
+        )
+        if launch is not None:
+            cohort_query = cohort_query.having(
+                sa.func.sum(sa.case((eligible.c.id == launch.worker_id, 1), else_=0))
+                == 1
+            )
+        chosen_cohort = (await session.execute(cohort_query)).first()
+        if chosen_cohort is None:
+            raise NativeStreamError(
+                "REGION_CAPACITY",
+                "The complete DAG requires more eligible same-host physical slots",
+            )
+        candidates_query = candidates_query.where(
+            db.StreamWorkerCapability.host_id == chosen_cohort[0],
+            db.StreamWorkerCapability.boot_id == chosen_cohort[1],
+        ).limit(needed + (1 if launch is not None else 0))
+        locator_rows = (await session.execute(candidates_query)).all()
+        peek: dict[UUID, int] = {}
+        locator_groups: dict[tuple[UUID, UUID], list[UUID]] = {}
+        for worker_id, host_id, boot_id, occupied in locator_rows:
+            peek[worker_id] = int(occupied)
+            locator_groups.setdefault((host_id, boot_id), []).append(worker_id)
+        usable_groups = [
+            ids
+            for ids in locator_groups.values()
+            if sum(max(0, 2 - peek[worker_id]) for worker_id in ids) >= needed
+            and (launch is None or launch.worker_id in ids)
+        ]
+        if not usable_groups:
+            raise NativeStreamError(
+                "REGION_CAPACITY",
+                "The complete DAG requires more eligible same-host physical slots",
+            )
+        cohort = min(usable_groups, key=lambda ids: tuple(ids))
+        candidate_ids: list[UUID] = []
+        available = 0
+        if launch is not None:
+            candidate_ids.append(launch.worker_id)
+            available += max(0, 2 - peek[launch.worker_id])
+        for worker_id in cohort:
+            if available >= needed:
+                break
+            if worker_id not in candidate_ids:
+                candidate_ids.append(worker_id)
+                available += max(0, 2 - peek[worker_id])
+        workers = {
+            row.id: row
+            for row in (
+                await session.scalars(
+                    sa.select(db.Worker)
+                    .where(db.Worker.id.in_(candidate_ids))
+                    .order_by(db.Worker.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        }
+        capability_rows = list(
+            (
+                await session.scalars(
+                    sa.select(db.StreamWorkerCapability)
+                    .where(db.StreamWorkerCapability.worker_id.in_(candidate_ids))
+                    .order_by(
+                        db.StreamWorkerCapability.worker_id,
+                        db.StreamWorkerCapability.protocol,
+                        db.StreamWorkerCapability.protocol_version,
+                    )
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        )
+        capabilities = {
+            row.worker_id: row
+            for row in capability_rows
+            if row.protocol == DAG_PROFILE and row.protocol_version == 1
+        }
+        valid_workers: list[UUID] = []
+        for worker_id in sorted(workers):
+            worker, cap = workers[worker_id], capabilities.get(worker_id)
+            if (
+                cap is None
+                or worker.work_pool_id != work_pool_id
+                or worker.status != WorkerStatus.ONLINE
+                or cap.work_pool_id != work_pool_id
+                or cap.last_renewed_at < cutoff
+            ):
+                continue
+            identity = (
+                cap.work_pool_id,
+                cap.host_id,
+                cap.boot_id,
+                cap.launcher_process_id,
+                cap.launcher_start_ticks,
+            )
+            if any(
+                (
+                    other.work_pool_id,
+                    other.host_id,
+                    other.boot_id,
+                    other.launcher_process_id,
+                    other.launcher_start_ticks,
+                )
+                != identity
+                for other in capability_rows
+                if other.worker_id == worker_id
+            ):
+                raise NativeStreamError(
+                    "WORKER_IDENTITY_IN_USE",
+                    "Coexisting protocol advertisements have different supervisor identities",
+                )
+            valid_workers.append(worker_id)
+        occupancy = await physical_worker_occupancy(session, db, workers)
+        if any(count > 2 for count in occupancy.values()):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Worker physical occupancy already exceeds its hard bound",
+            )
+        groups: dict[tuple[UUID, UUID], list[UUID]] = {}
+        for worker_id in valid_workers:
+            cap = capabilities[worker_id]
+            if launch is not None and (cap.host_id, cap.boot_id) != (
+                launch.launcher_host_id,
+                launch.launcher_boot_id,
+            ):
+                continue
+            groups.setdefault((cap.host_id, cap.boot_id), []).append(worker_id)
+        needed = len(plan.subtasks)
+        choices = [
+            ids
+            for ids in groups.values()
+            if sum(2 - occupancy.get(worker_id, 0) for worker_id in ids) >= needed
+        ]
+        if not choices:
+            raise NativeStreamError(
+                "REGION_CAPACITY",
+                "The complete DAG requires more eligible same-host physical slots",
+            )
+        selected = min(choices, key=lambda ids: tuple(ids))
+        if launch is not None:
+            if launch.worker_id not in selected:
+                raise NativeStreamError(
+                    "REGION_CAPACITY",
+                    "Current Flow worker has no matching DAG protocol advertisement",
+                )
+            selected = [launch.worker_id] + [
+                worker_id for worker_id in selected if worker_id != launch.worker_id
+            ]
+            owner = capabilities[launch.worker_id]
+            if (owner.launcher_process_id, owner.launcher_start_ticks) != (
+                launch.launcher_process_id,
+                launch.launcher_start_ticks,
+            ):
+                raise NativeStreamError(
+                    "WORKER_IDENTITY_IN_USE",
+                    "DAG worker and Flow launcher identities differ",
+                )
+        rank = {worker_id: index for index, worker_id in enumerate(selected)}
+        planned = dict(occupancy)
+        assignment: dict[UUID, UUID] = {}
+        for item in plan.subtasks:
+            worker_id = min(
+                selected, key=lambda value: (planned.get(value, 0), rank[value])
+            )
+            if planned.get(worker_id, 0) >= 2:
+                raise NativeStreamError(
+                    "REGION_CAPACITY",
+                    "No partial DAG placement may exceed the physical slot bound",
+                )
+            assignment[item.id] = worker_id
+            planned[worker_id] = planned.get(worker_id, 0) + 1
+        subtasks = {
+            row.id: row
+            for row in (
+                await session.scalars(
+                    sa.select(db.StreamPhysicalSubtask)
+                    .where(db.StreamPhysicalSubtask.graph_revision_id == graph.id)
+                    .order_by(db.StreamPhysicalSubtask.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        }
+        tasks = {
+            row.id: row
+            for row in (
+                await session.scalars(
+                    sa.select(db.TaskRun)
+                    .where(
+                        db.TaskRun.id.in_(
+                            [item.manifest.task_run_id for item in plan.subtasks]
+                        )
+                    )
+                    .order_by(db.TaskRun.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        }
+        specs = {spec.operator_uid: spec for spec in declaration.operators}
+        for item in plan.subtasks:
+            task = tasks.get(item.manifest.task_run_id)
+            spec = specs[item.operator_uid]
+            if (
+                task is None
+                or task.flow_run_id != flow.id
+                or task.task_key != spec.task_key
+                or task.task_version != spec.task_version
+                or task.tags != spec.tags
+                or task.empirical_policy.model_dump(mode="json")
+                != spec.task_policy.model_dump(mode="json")
+                or task.run_count != 0
+                or task.state_type
+                not in (states.StateType.PENDING, states.StateType.SCHEDULED)
+                or task.flow_run_run_count != flow.run_count
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "DAG admission requires the exact frozen unstarted TaskRun configuration",
+                )
+        await _require_unstarted_partitions(
+            session, db, graph, plan, declaration, subtasks
+        )
+        tags = {tag for task in tasks.values() for tag in task.tags}
+        if (
+            tags
+            and await session.scalar(
+                sa.select(db.ConcurrencyLimit.id)
+                .where(db.ConcurrencyLimit.tag.in_(tags))
+                .limit(1)
+            )
+            is not None
+        ):
+            raise NativeStreamError(
+                "UNSUPPORTED_PROFILE", "DAG regions cannot bypass legacy tag limits"
+            )
+        limits = list(
+            (
+                await session.scalars(
+                    sa.select(db.ConcurrencyLimitV2)
+                    .where(
+                        db.ConcurrencyLimitV2.name.in_([f"tag:{tag}" for tag in tags])
+                    )
+                    .order_by(db.ConcurrencyLimitV2.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        )
+        active = {str(limit.name): limit for limit in limits if limit.active}
+        counts = Counter(
+            f"tag:{tag}"
+            for task in tasks.values()
+            for tag in set(task.tags)
+            if f"tag:{tag}" in active
+        )
+        for name, limit in active.items():
+            if limit.slot_decay_per_second != 0:
+                raise NativeStreamError(
+                    "UNSUPPORTED_PROFILE", "DAG regions require non-decaying tag limits"
+                )
+            if limit.limit <= 0 or limit.active_slots + counts[name] > limit.limit:
+                raise NativeStreamError(
+                    "REGION_CAPACITY", "DAG region exceeds an active task tag limit"
+                )
+        graph.admission_operation_id = request.operation_id
+        graph.admission_request_digest = request_digest
+        graph.state = "ADMITTED"
+        _, _, graph.placement_digest = canonical_stream_payload(
+            {
+                "graph_revision_id": str(graph.id),
+                "graph_digest": graph.graph_digest,
+                "assignment_epoch": 1,
+                "assignments": [
+                    {"subtask_id": str(item.id), "worker_id": str(assignment[item.id])}
+                    for item in plan.subtasks
+                ],
+            }
+        )
+        for name, count in counts.items():
+            active[name].active_slots += count
+        for item in plan.subtasks:
+            subtask = subtasks[item.id]
+            subtask.assigned_worker_id = assignment[item.id]
+            for tag in tasks[item.manifest.task_run_id].tags:
+                limit = active.get(f"tag:{tag}")
+                if limit is not None:
+                    session.add(
+                        db.StreamSubtaskAllocation(
+                            subtask_id=subtask.id,
+                            concurrency_limit_id=limit.id,
+                            released=False,
+                        )
+                    )
+        await session.flush()
+        for item in plan.subtasks:
+            session.add(
+                db.StreamPhysicalSlotAllocation(
+                    graph_revision_id=graph.id,
+                    subtask_id=item.id,
+                    worker_id=assignment[item.id],
+                    profile=DAG_PROFILE,
+                    admission_operation_id=request.operation_id,
+                    released=False,
+                )
+            )
+        await session.flush()
+        return await dag_plan(session, db, graph)
+
+
+async def _require_unstarted_partitions(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph: orm_models.StreamGraphRevision,
+    plan: s.StreamDAGPlan,
+    declaration: s.StreamDAGSealRequest,
+    subtasks: dict[UUID, orm_models.StreamPhysicalSubtask],
+    *,
+    allow_tag_allocations: bool = False,
+) -> list[orm_models.StreamPartition]:
+    """Validate zero execution evidence after the ordered task locks."""
+    if graph.startup_completed_at is not None or graph.abort_operation_id is not None:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "DAG has prior execution/control evidence"
+        )
+    if any(
+        row.current_grant_id is not None or row.physical_epoch != 0
+        for row in subtasks.values()
+    ):
+        raise NativeStreamError("IDENTITY_CONFLICT", "DAG has prior grant evidence")
+    expected: dict[UUID, tuple[str | None, UUID | None, dict[str, object]]] = {}
+    specs = {spec.operator_uid: spec for spec in declaration.operators}
+    for item in plan.subtasks:
+        spec = specs[item.operator_uid]
+        limits = spec.limits.model_dump(mode="json")
+        expected[item.output_stream_id] = (
+            "SOURCE" if spec.role == "SOURCE" else "CONSUMER",
+            item.manifest.task_run_id,
+            limits,
+        )
+        if item.input_stream_id is not None:
+            expected[item.input_stream_id] = (None, None, limits)
+    partitions = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPartition)
+                .where(db.StreamPartition.flow_run_id == graph.flow_run_id)
+                .order_by(db.StreamPartition.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    )
+    if {row.id for row in partitions} != set(expected):
+        raise NativeStreamError("IDENTITY_CONFLICT", "DAG partition set is incomplete")
+    for row in partitions:
+        kind, task_id, limits = expected[row.id]
+        if (
+            row.flow_run_id != graph.flow_run_id
+            or row.protocol_version != 1
+            or row.producer_kind != kind
+            or row.producer_task_run_id != task_id
+            or row.limits != limits
+            or row.state != "OPEN"
+            or row.error is not None
+            or row.tail_sequence is not None
+            or row.last_sequence != 0
+            or row.producer_position != 0
+            or row.owner_id is not None
+            or row.owner_epoch != 0
+            or row.attempt != 0
+            or row.record_count != 0
+            or row.byte_count != 0
+            or row.released
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "DAG partition has prior execution evidence"
+            )
+    if (
+        not allow_tag_allocations
+        and await session.scalar(
+            sa.select(db.StreamSubtaskAllocation.id)
+            .where(db.StreamSubtaskAllocation.subtask_id.in_(subtasks))
+            .limit(1)
+        )
+        is not None
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "DAG contains prior tag allocations"
+        )
+    for model, condition in (
+        (db.StreamRecord, db.StreamRecord.stream_id.in_(expected)),
+        (
+            db.StreamConsumer,
+            sa.or_(
+                db.StreamConsumer.input_stream_id.in_(expected),
+                db.StreamConsumer.output_stream_id.in_(expected),
+            ),
+        ),
+        (db.StreamSubtaskGrant, db.StreamSubtaskGrant.subtask_id.in_(subtasks)),
+    ):
+        if (
+            await session.scalar(sa.select(model.id).where(condition).limit(1))
+            is not None
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "DAG contains prior data-plane evidence"
+            )
+    return partitions
+
+
+async def abort_dag_metadata(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    request: physical.StreamGraphAbortRequest,
+) -> s.StreamDAGPlan:
+    """Internal zero-execution compensation; never public runtime authority."""
+    async with session.begin_nested():
+        locator = await session.get(db.StreamGraphRevision, graph_id)
+        if locator is None:
+            raise NativeStreamError("NOT_FOUND", "Unknown DAG revision")
+        await _flow(
+            session, db, locator.flow_run_id, None, metadata_only=True, update=True
+        )
+        graph = await session.scalar(
+            sa.select(db.StreamGraphRevision)
+            .where(db.StreamGraphRevision.id == graph_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if (
+            graph is None
+            or graph.profile != DAG_PROFILE
+            or graph.graph_digest != request.graph_digest
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "DAG abort graph identity differs"
+            )
+        _, _, digest = canonical_stream_payload(request.model_dump(mode="json"))
+        if graph.abort_operation_id is not None:
+            if (
+                graph.abort_operation_id != request.operation_id
+                or graph.abort_request_digest != digest
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "DAG abort operation differs"
+                )
+            if graph.state != "RELEASED":
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "DAG abort outcome is incomplete"
+                )
+            return await dag_plan(session, db, graph)
+        if graph.state not in {"SEALED", "ADMITTED"}:
+            raise NativeStreamError(
+                "ADMISSION_NOT_ALLOWED", "Only an unstarted DAG can be compensated"
+            )
+        plan = await dag_plan(session, db, graph)
+        declaration = s.StreamDAGSealRequest.model_validate(graph.declaration)
+        worker_ids = sorted(
+            {
+                item.assigned_worker_id
+                for item in plan.subtasks
+                if item.assigned_worker_id is not None
+            }
+        )
+        await session.execute(
+            sa.select(db.Worker.id)
+            .where(db.Worker.id.in_(worker_ids))
+            .order_by(db.Worker.id)
+            .with_for_update()
+        )
+        subtasks = {
+            row.id: row
+            for row in (
+                await session.scalars(
+                    sa.select(db.StreamPhysicalSubtask)
+                    .where(db.StreamPhysicalSubtask.graph_revision_id == graph.id)
+                    .order_by(db.StreamPhysicalSubtask.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        }
+        tasks = list(
+            (
+                await session.scalars(
+                    sa.select(db.TaskRun)
+                    .where(db.TaskRun.flow_run_id == graph.flow_run_id)
+                    .order_by(db.TaskRun.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        )
+        if {task.id for task in tasks} != {
+            item.manifest.task_run_id for item in plan.subtasks
+        }:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "DAG abort requires the exact sealed Flow TaskRun set",
+            )
+        if any(
+            task.run_count != 0
+            or task.state_type
+            not in (states.StateType.PENDING, states.StateType.SCHEDULED)
+            for task in tasks
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "DAG compensation refuses started TaskRuns"
+            )
+        partitions = await _require_unstarted_partitions(
+            session, db, graph, plan, declaration, subtasks, allow_tag_allocations=True
+        )
+        graph.state = "ABORTING"
+        graph.abort_operation_id = request.operation_id
+        graph.abort_request_digest = digest
+        graph.abort_error = request.error
+        await session.flush()
+        with metadata_task_control(session, graph, request.operation_id):
+            for task in tasks:
+                failed = states.Failed(
+                    message=request.error,
+                    state_details=states.StateDetails(retriable=False),
+                )
+                await guard_task_lifecycle(
+                    session, db, task.id, None, failed, force=False
+                )
+                result = await task_run_models.set_task_run_state(
+                    session=session,
+                    task_run_id=task.id,
+                    state=failed,
+                    force=False,
+                    task_policy=CoreTaskPolicy,
+                )
+                if (
+                    result.status != SetStateStatus.ACCEPT
+                    or result.state is None
+                    or not result.state.is_failed()
+                ):
+                    raise NativeStreamError(
+                        "TERMINAL_CONFLICT",
+                        "DAG metadata TaskRun compensation was refused",
+                    )
+        for stream in partitions:
+            finish_stream_partition(stream, request.error)
+        await release_allocations(session, db, list(subtasks))
+        released_at = cast(DateTime, now("UTC"))
+        slots = list(
+            (
+                await session.scalars(
+                    sa.select(db.StreamPhysicalSlotAllocation)
+                    .where(
+                        db.StreamPhysicalSlotAllocation.graph_revision_id == graph.id
+                    )
+                    .order_by(db.StreamPhysicalSlotAllocation.id)
+                    .with_for_update()
+                )
+            ).all()
+        )
+        for slot in slots:
+            slot.released = True
+            slot.release_operation_id = request.operation_id
+            slot.released_at = released_at
+            subtasks[slot.subtask_id].physical_slot_released = True
+        manifests = (
+            await session.scalars(
+                sa.select(db.StreamSubmission).where(
+                    db.StreamSubmission.graph_revision_id == graph.id
+                )
+            )
+        ).all()
+        for manifest in manifests:
+            manifest.state = "RELEASED"
+            manifest.released_at = released_at
+        graph.state = "RELEASED"
+        await session.flush()
+        return await dag_plan(session, db, graph)

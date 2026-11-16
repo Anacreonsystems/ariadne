@@ -1,0 +1,314 @@
+--- /dev/null
++++ b/src/prefect/server/database/_migrations/versions/postgresql/2026_11_05_000003_39c32d418d9a_add_stream_route_cleanup_indexes.py
+@@ -0,0 +1,40 @@
++"""Index child foreign keys used by atomic routed-history cleanup.
++
++Revision ID: 39c32d418d9a
++Revises: 14e7dbaf6034
++
++Only lookup indexes change; record pins, deferred checks and cleanup ordering
++retain their existing semantics.
++"""
++
++from alembic import op
++
++revision = "39c32d418d9a"
++down_revision = "14e7dbaf6034"
++branch_labels = None
++depends_on = None
++
++INDEXES = (
++    ("ix_stream_record__payload_record_id", "stream_record", "payload_record_id"),
++    ("ix_stream_record__route_receipt_id", "stream_record", "route_receipt_id"),
++    (
++        "ix_stream_route_receipt__input_payload_record_id",
++        "stream_route_receipt",
++        "input_payload_record_id",
++    ),
++    (
++        "ix_stream_route_receipt__input_reference_record_id",
++        "stream_route_receipt",
++        "input_reference_record_id",
++    ),
++)
++
++
++def upgrade():
++    for name, table, column in INDEXES:
++        op.create_index(name, table, [column])
++
++
++def downgrade():
++    for name, table, _ in reversed(INDEXES):
++        op.drop_index(name, table_name=table)
+--- /dev/null
++++ b/src/prefect/server/database/_migrations/versions/sqlite/2026_11_05_000003_4ad43e529eab_add_stream_route_cleanup_indexes.py
+@@ -0,0 +1,40 @@
++"""Index child foreign keys used by atomic routed-history cleanup.
++
++Revision ID: 4ad43e529eab
++Revises: 25f8ecb07145
++
++Only lookup indexes change; record pins, deferred checks and cleanup ordering
++retain their existing semantics.
++"""
++
++from alembic import op
++
++revision = "4ad43e529eab"
++down_revision = "25f8ecb07145"
++branch_labels = None
++depends_on = None
++
++INDEXES = (
++    ("ix_stream_record__payload_record_id", "stream_record", "payload_record_id"),
++    ("ix_stream_record__route_receipt_id", "stream_record", "route_receipt_id"),
++    (
++        "ix_stream_route_receipt__input_payload_record_id",
++        "stream_route_receipt",
++        "input_payload_record_id",
++    ),
++    (
++        "ix_stream_route_receipt__input_reference_record_id",
++        "stream_route_receipt",
++        "input_reference_record_id",
++    ),
++)
++
++
++def upgrade():
++    for name, table, column in INDEXES:
++        op.create_index(name, table, [column])
++
++
++def downgrade():
++    for name, table, _ in reversed(INDEXES):
++        op.drop_index(name, table_name=table)
+--- a/src/prefect/server/database/orm_models.py
++++ b/src/prefect/server/database/orm_models.py
+@@ -752,6 +752,9 @@
+     size_bytes: Mapped[int]
+ 
+     __table_args__: Any = (
++        # Parent-record cleanup probes these immediate RESTRICT foreign keys.
++        sa.Index("ix_stream_record__payload_record_id", "payload_record_id"),
++        sa.Index("ix_stream_record__route_receipt_id", "route_receipt_id"),
+         sa.UniqueConstraint(
+             "id",
+             "graph_revision_id",
+@@ -1058,6 +1061,15 @@
+     outcome_size: Mapped[int]
+ 
+     __table_args__: Any = (
++        # Bound both immediate payload checks and deferred reference checks.
++        sa.Index(
++            "ix_stream_route_receipt__input_payload_record_id",
++            "input_payload_record_id",
++        ),
++        sa.Index(
++            "ix_stream_route_receipt__input_reference_record_id",
++            "input_reference_record_id",
++        ),
+         sa.UniqueConstraint("producer_stream_id", "producer_position"),
+         sa.UniqueConstraint("payload_record_id"),
+         sa.UniqueConstraint(
+--- /dev/null
++++ b/tests/server/database/test_stream_route_cleanup_indexes.py
+@@ -0,0 +1,197 @@
++"""Lookup-only migrations preserve pins and both atomic DAG cleanup paths."""
++
++import pytest
++import sqlalchemy as sa
++from sqlalchemy.exc import IntegrityError
++from tests.server.api.test_stream_dag_executions import execution_api as execution_api
++from tests.server.api.test_stream_dag_executions import parent_body
++from tests.server.database.test_migrations import _isolated_postgres_schema_changes
++from tests.server.database.test_stream_route_migrations import (
++    data_snapshot,
++    ddl_chain,
++    ordered_cleanup,
++)
++from tests.server.models.test_stream_dag_executions import (
++    produce_and_finish_region,
++    ready_deployed_region,
++    retire_ready_child,
++    signed_child_event,
++    stop_current_children,
++)
++
++from prefect.server.database.alembic_commands import alembic_downgrade, alembic_upgrade
++from prefect.server.models import stream_dag_executions as lifecycle
++from prefect.server.schemas import stream_dag_executions as wire
++from prefect.server.services.task_run_recorder import dispatch_stream_subtask_event
++from prefect.utilities.asyncutils import run_sync_in_worker_thread
++
++pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
++PREVIOUS = {"postgresql": "14e7dbaf6034", "sqlite": "25f8ecb07145"}
++INDEX_HEAD = {"postgresql": "39c32d418d9a", "sqlite": "4ad43e529eab"}
++EXPECTED = {
++    "stream_record": {
++        "ix_stream_record__payload_record_id": ["payload_record_id"],
++        "ix_stream_record__route_receipt_id": ["route_receipt_id"],
++    },
++    "stream_route_receipt": {
++        "ix_stream_route_receipt__input_payload_record_id": ["input_payload_record_id"],
++        "ix_stream_route_receipt__input_reference_record_id": [
++            "input_reference_record_id"
++        ],
++    },
++}
++
++
++async def schema_shape(engine):
++    async with engine.connect() as connection:
++        return await connection.run_sync(
++            lambda conn: {
++                table: {
++                    "indexes": {
++                        row["name"]: row["column_names"]
++                        for row in sa.inspect(conn).get_indexes(table)
++                    },
++                    "foreign_keys": sa.inspect(conn).get_foreign_keys(table),
++                    "checks": sa.inspect(conn).get_check_constraints(table),
++                }
++                for table in EXPECTED
++            }
++        )
++
++
++async def test_lookup_index_migration_preserves_routed_rows_and_constraints(
++    db, database_engine, flow_run
++):
++    await ddl_chain(db, flow_run.id)
++    before = await data_snapshot(db)
++    original = await schema_shape(database_engine)
++    async with _isolated_postgres_schema_changes(db, database_engine):
++        try:
++            await run_sync_in_worker_thread(
++                alembic_downgrade, revision=PREVIOUS[db.dialect.name]
++            )
++            await database_engine.dispose()
++            old = await schema_shape(database_engine)
++            for table, indexes in EXPECTED.items():
++                assert not set(indexes) & old[table]["indexes"].keys()
++                assert old[table]["foreign_keys"] == original[table]["foreign_keys"]
++                assert old[table]["checks"] == original[table]["checks"]
++            assert await data_snapshot(db) == before
++            await run_sync_in_worker_thread(
++                alembic_upgrade, revision=INDEX_HEAD[db.dialect.name]
++            )
++            await database_engine.dispose()
++            upgraded = await schema_shape(database_engine)
++            for table, indexes in EXPECTED.items():
++                assert {
++                    name: upgraded[table]["indexes"][name] for name in indexes
++                } == indexes
++            assert upgraded == original
++            assert await data_snapshot(db) == before
++        finally:
++            await run_sync_in_worker_thread(alembic_upgrade, revision="head")
++            await database_engine.dispose()
++
++
++@pytest.mark.parametrize("rollback", [False, True])
++async def test_indexed_cleanup_preserves_immediate_pins_and_atomicity(
++    db, flow_run, rollback
++):
++    chain = await ddl_chain(db, flow_run.id)
++    before = await data_snapshot(db)
++    with pytest.raises(IntegrityError):
++        async with db.session_context(begin_transaction=True) as session:
++            await session.execute(
++                sa.delete(db.StreamRecord).where(
++                    db.StreamRecord.id == chain.payloads["A"]
++                )
++            )
++    assert await data_snapshot(db) == before
++
++    class RollbackCleanup(Exception):
++        pass
++
++    try:
++        async with db.session_context(begin_transaction=True) as session:
++            await session.execute(
++                sa.select(db.FlowRun.id)
++                .where(db.FlowRun.id == flow_run.id)
++                .with_for_update()
++            )
++            await ordered_cleanup(session, db)
++            if rollback:
++                raise RollbackCleanup
++    except RollbackCleanup:
++        assert rollback
++    if rollback:
++        assert await data_snapshot(db) == before
++    else:
++        snapshot = await data_snapshot(db)
++        assert all(
++            not snapshot[name]
++            for name in (
++                "stream_record",
++                "stream_route_receipt",
++                "stream_completion",
++                "stream_consumer",
++            )
++        )
++
++
++@pytest.mark.parametrize("control", [False, True])
++async def test_indexed_normal_and_control_finalizers_postgres(
++    db, session, execution_api, deployment, control
++):
++    plan, credentials, children = await ready_deployed_region(
++        db, session, execution_api, deployment
++    )
++    await produce_and_finish_region(db, children, documents=8)
++    if control:
++        async with db.session_context(begin_transaction=True) as transaction:
++            outcome = await lifecycle.fail_stream_dag(
++                transaction,
++                db,
++                plan.id,
++                wire.StreamDAGFailRequest.model_validate(
++                    parent_body(plan.id, "fail", plan.graph_digest)
++                ),
++                credentials,
++            )
++            assert outcome.execution.control is not None
++            control_id = outcome.execution.control.operation_id
++        await stop_current_children(db, children, control_id)
++    else:
++        async with db.session_context(begin_transaction=True) as transaction:
++            for child in children:
++                completed = await dispatch_stream_subtask_event(
++                    transaction,
++                    db,
++                    child.bootstrap.assignment.id,
++                    signed_child_event(child, "COMPLETED"),
++                    child.credentials,
++                )
++                assert completed.accepted
++        for child in children:
++            await retire_ready_child(db, child)
++    async with db.session_context(begin_transaction=True) as transaction:
++        terminal = await lifecycle.read_stream_dag_execution(
++            transaction, db, plan.id, credentials
++        )
++        assert terminal.cleanup_complete
++        assert terminal.terminal_state == ("FAILED" if control else "COMPLETED")
++        assert (
++            terminal.counts.physical_slots_remaining
++            == terminal.counts.tags_remaining
++            == 0
++        )
++        assert terminal.counts.stopped == 4
++        for model in (
++            db.StreamRecord,
++            db.StreamRouteReceipt,
++            db.StreamCompletion,
++            db.StreamConsumer,
++        ):
++            assert (
++                await transaction.scalar(sa.select(sa.func.count()).select_from(model))
++                == 0
++            )

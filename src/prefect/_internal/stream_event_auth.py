@@ -137,6 +137,156 @@ def canonical_physical_event_witness(
     ).encode("utf-8")
 
 
+def dag_worker_generation_digest(
+    *,
+    worker_id: UUID,
+    work_pool_id: UUID,
+    host_id: UUID,
+    boot_id: UUID,
+    launcher_process_id: int,
+    launcher_start_ticks: int,
+) -> str:
+    """Identify one exact worker process independently of Flow attempts or TTL."""
+    identities = {
+        "worker_id": worker_id,
+        "work_pool_id": work_pool_id,
+        "host_id": host_id,
+        "boot_id": boot_id,
+    }
+    if any(type(value) is not UUID for value in identities.values()):
+        raise ValueError("DAG worker generation requires exact UUID identities")
+    if any(
+        type(value) is not int or value < 1
+        for value in (launcher_process_id, launcher_start_ticks)
+    ):
+        raise ValueError(
+            "DAG worker generation requires exact positive process identity"
+        )
+    witness = {
+        "schema": "prefect-dag-worker-generation-v1",
+        **{key: str(value) for key, value in identities.items()},
+        "launcher_process_id": launcher_process_id,
+        "launcher_start_ticks": launcher_start_ticks,
+    }
+    return hashlib.sha256(
+        json.dumps(
+            witness,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def canonical_dag_bootstrap_ready_witness(
+    *,
+    operation_id: UUID,
+    flow_run_id: UUID,
+    flow_run_run_count: int,
+    flow_generation: int,
+    flow_holder_id: UUID,
+    graph_revision_id: UUID,
+    graph_digest: str,
+    routing_digest: str,
+    assignment_epoch: int,
+    subtask_id: UUID,
+    task_run_id: UUID,
+    physical_epoch: int,
+    grant_id: UUID,
+    holder_id: UUID,
+    scope_digest: str,
+    event_key_id: str,
+    child_process_id: int,
+    process_start_ticks: int,
+    bootstrap_digest: str,
+) -> bytes:
+    """Bind readiness to one immutable bootstrap and its registered process."""
+    identities = {
+        "operation_id": operation_id,
+        "flow_run_id": flow_run_id,
+        "flow_holder_id": flow_holder_id,
+        "graph_revision_id": graph_revision_id,
+        "subtask_id": subtask_id,
+        "task_run_id": task_run_id,
+        "grant_id": grant_id,
+        "holder_id": holder_id,
+    }
+    if any(type(value) is not UUID for value in identities.values()):
+        raise ValueError("DAG readiness requires exact UUID identities")
+    if type(flow_run_run_count) is not int or flow_run_run_count < 0:
+        raise ValueError("DAG readiness requires a nonnegative Flow run count")
+    for epoch in (flow_generation, physical_epoch):
+        if type(epoch) is not int or not 1 <= epoch <= 64:
+            raise ValueError("DAG readiness requires a bounded execution epoch")
+    if type(assignment_epoch) is not int or assignment_epoch < 1:
+        raise ValueError("DAG readiness requires a positive assignment epoch")
+    for value in (child_process_id, process_start_ticks):
+        if type(value) is not int or value < 1:
+            raise ValueError("DAG readiness requires exact positive process identity")
+    for value in (
+        graph_digest,
+        routing_digest,
+        scope_digest,
+        event_key_id,
+        bootstrap_digest,
+    ):
+        if type(value) is not str or not _HEX_DIGEST.fullmatch(value):
+            raise ValueError("DAG readiness requires canonical immutable digests")
+    witness = {
+        "schema": "prefect-dag-bootstrap-ready-v1",
+        **{key: str(value) for key, value in identities.items()},
+        "flow_run_run_count": flow_run_run_count,
+        "flow_generation": flow_generation,
+        "graph_digest": graph_digest,
+        "routing_digest": routing_digest,
+        "assignment_epoch": assignment_epoch,
+        "physical_epoch": physical_epoch,
+        "scope_digest": scope_digest,
+        "event_key_id": event_key_id,
+        "child_process_id": child_process_id,
+        "process_start_ticks": process_start_ticks,
+        "bootstrap_digest": bootstrap_digest,
+    }
+    return json.dumps(
+        witness,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def sign_dag_bootstrap_ready(private_key: bytes, witness: bytes) -> str:
+    """Sign readiness with its distinct canonical hexadecimal wire encoding."""
+    if type(private_key) is not bytes or len(private_key) != 32:
+        raise ValueError("A DAG readiness signing key must contain 32 bytes")
+    if type(witness) is not bytes:
+        raise ValueError("A DAG readiness witness requires canonical bytes")
+    return Ed25519PrivateKey.from_private_bytes(private_key).sign(witness).hex()
+
+
+def verify_dag_bootstrap_ready(
+    public_key: bytes, witness: bytes, signature: object
+) -> bool:
+    """Reject noncanonical readiness signatures without changing Task event wire."""
+    if (
+        type(public_key) is not bytes
+        or len(public_key) != 32
+        or type(witness) is not bytes
+        or type(signature) is not str
+        or re.fullmatch(r"[0-9a-f]{128}", signature) is None
+    ):
+        return False
+    try:
+        Ed25519PublicKey.from_public_bytes(public_key).verify(
+            bytes.fromhex(signature), witness
+        )
+    except (InvalidSignature, ValueError, TypeError):
+        return False
+    return True
+
+
 def event_key_id(public_key: bytes) -> str:
     """Return the public identity of one raw Ed25519 key."""
     if len(public_key) != 32:

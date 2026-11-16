@@ -1,5 +1,6 @@
 """Discovery and acceptance on migrated PostgreSQL and a real ProcessWorker."""
 
+import asyncio
 import json
 import os
 import subprocess
@@ -122,6 +123,115 @@ async def _deployment_slots(db: Any, deployment_id: UUID) -> int:
         return slots
 
 
+async def _terminal_resources(
+    db: Any, flow_run_id: UUID, deployment_id: UUID, expected_grants: int
+) -> dict[str, Any]:
+    """Observe automatic release without issuing a release or stopping workers."""
+    async with db.session_context() as session:
+        resources: dict[str, Any] = {}
+        for name, model in (
+            ("graph", db.StreamGraphRevision),
+            ("authority", db.StreamExecutionAuthority),
+            ("deployment_snapshot", db.NativeStreamDeploymentSnapshot),
+            ("launches", db.NativeStreamLaunchIdentity),
+        ):
+            resources[name] = [
+                dict(row)
+                for row in (
+                    await session.execute(
+                        sa.select(model.id, model.state).where(
+                            model.flow_run_id == flow_run_id
+                        )
+                    )
+                ).mappings()
+            ]
+        graph_ids = [row["id"] for row in resources["graph"]]
+        resources["subtasks"] = [
+            dict(row)
+            for row in (
+                await session.execute(
+                    sa.select(
+                        db.StreamPhysicalSubtask.id,
+                        db.StreamPhysicalSubtask.task_run_id,
+                        db.StreamPhysicalSubtask.assignment_epoch,
+                        db.StreamPhysicalSubtask.physical_epoch,
+                        db.StreamPhysicalSubtask.physical_slot_released,
+                    ).where(db.StreamPhysicalSubtask.graph_revision_id.in_(graph_ids))
+                )
+            ).mappings()
+        ]
+        subtask_ids = [row["id"] for row in resources["subtasks"]]
+        for name, model in (
+            ("grants", db.StreamSubtaskGrant),
+            ("tag_allocations", db.StreamSubtaskAllocation),
+        ):
+            column = model.state if name == "grants" else model.released
+            resources[name] = [
+                dict(row)
+                for row in (
+                    await session.execute(
+                        sa.select(model.id, model.subtask_id, column).where(
+                            model.subtask_id.in_(subtask_ids)
+                        )
+                    )
+                ).mappings()
+            ]
+        resources["partitions"] = [
+            dict(row)
+            for row in (
+                await session.execute(
+                    sa.select(
+                        db.StreamPartition.id,
+                        db.StreamPartition.state,
+                        db.StreamPartition.released,
+                        db.StreamPartition.record_count,
+                        db.StreamPartition.byte_count,
+                    ).where(db.StreamPartition.flow_run_id == flow_run_id)
+                )
+            ).mappings()
+        ]
+        resources["consumer_count"] = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(db.StreamConsumer)
+            .where(db.StreamConsumer.flow_run_id == flow_run_id)
+        )
+        resources["flow_slots"] = await session.scalar(
+            sa.select(db.ConcurrencyLimitV2.active_slots)
+            .join(
+                db.Deployment,
+                db.Deployment.concurrency_limit_id == db.ConcurrencyLimitV2.id,
+            )
+            .where(db.Deployment.id == deployment_id)
+        )
+        resources["tag_slots"] = await session.scalar(
+            sa.select(db.ConcurrencyLimitV2.active_slots).where(
+                db.ConcurrencyLimitV2.name == "tag:partitioned-fixed-capacity"
+            )
+        )
+    resources["released"] = (
+        all(
+            len(resources[name]) == 1 and resources[name][0]["state"] == "RELEASED"
+            for name in ("graph", "authority", "deployment_snapshot", "launches")
+        )
+        and len(resources["subtasks"]) == 4
+        and all(row["physical_slot_released"] for row in resources["subtasks"])
+        and len(resources["grants"]) == expected_grants
+        and all(row["state"] == "RELEASED" for row in resources["grants"])
+        and len(resources["tag_allocations"]) == 4
+        and all(row["released"] for row in resources["tag_allocations"])
+        and len(resources["partitions"]) == 4
+        and all(
+            row["state"] == "COMPLETED"
+            and row["released"]
+            and row["record_count"] == row["byte_count"] == 0
+            for row in resources["partitions"]
+        )
+        and resources["consumer_count"] == 0
+        and resources["flow_slots"] == resources["tag_slots"] == 0
+    )
+    return json.loads(json.dumps(resources, default=str))
+
+
 @pytest.mark.parametrize(
     "count,fault,asynchronous",
     [
@@ -129,7 +239,7 @@ async def _deployment_slots(db: Any, deployment_id: UUID) -> int:
             count,
             fault,
             asynchronous,
-            marks=pytest.mark.timeout(1200 if count == 5000 else 900),
+            marks=pytest.mark.timeout(3600 if count == 5000 else 900),
         )
         for count, fault, asynchronous in [
             (8, "none", False),
@@ -187,7 +297,7 @@ async def test_actual_process_worker_runs_four_partition_tasks(
                 "schema_version": 1,
                 "profile": "bounded-linear-v1",
             }
-            await client.create_work_pool(
+            work_pool = await client.create_work_pool(
                 WorkPoolCreate(name=pool, type="process", base_job_template=template)
             )
             deployment = RunnerDeployment.from_flow(
@@ -276,21 +386,33 @@ async def test_actual_process_worker_runs_four_partition_tasks(
                             sa.select(db.StreamWorkerCapability.worker_id).where(
                                 db.StreamWorkerCapability.worker_id.in_(
                                     [worker.id for worker in registered]
-                                )
+                                ),
+                                db.StreamWorkerCapability.protocol
+                                == "partitioned-fixed-v1",
+                                db.StreamWorkerCapability.protocol_version == 1,
+                                db.StreamWorkerCapability.work_pool_id == work_pool.id,
                             )
                         )
                     ).all()
-                if len(capabilities) == 2:
+                if set(capabilities) == {worker.id for worker in registered}:
                     ready_ns = time.monotonic_ns()
                     break
             assert time.monotonic() < deadline, diagnostics()
             time.sleep(0.1)
+        # Publish before the Flow can launch; use this same finite deadline
+        # for both the healthy-source rendezvous and parent observation.
+        deadline = time.monotonic() + (3540 if count == 5000 else 840)
+        if fault in {"operator-loss-200", "operator-before-yield-200"}:
+            staged_deadline = tmp_path / "replacement-observation-deadline.tmp"
+            with staged_deadline.open("x") as output:
+                output.write(repr(deadline))
+            staged_deadline.replace(tmp_path / "replacement-observation-deadline")
+            lifecycle_checks["replacement_observation_deadline"] = deadline
         with server.client() as client:
             run = client.create_flow_run_from_deployment(
                 deployment_id,
                 parameters={"directory": str(tmp_path), "count": count, "fault": fault},
             )
-        deadline = time.monotonic() + (1140 if count == 5000 else 840)
         observed = False
         while True:
             assert all(worker.poll() is None for worker in workers), diagnostics()
@@ -638,6 +760,28 @@ async def test_actual_process_worker_runs_four_partition_tasks(
                         )
                         == worker_pids[item.assigned_worker_id]
                     )
+        if fault in {
+            "none",
+            "operator-loss-200",
+            "operator-before-yield-200",
+            "import-probe",
+            "terminal-exit-stall",
+        }:
+            # A final Flow state precedes the coordinator's owned wait and
+            # automatic release. Keep both workers alive until that completes.
+            while True:
+                assert time.monotonic() < deadline, diagnostics()
+                resources = await _terminal_resources(
+                    db, run.id, deployment_id, len(pids)
+                )
+                (tmp_path / "terminal-resources.json").write_text(
+                    json.dumps(resources, default=str, indent=2) + "\n"
+                )
+                if resources["released"]:
+                    lifecycle_checks["automatic_terminal_release"] = resources
+                    break
+                assert all(worker.poll() is None for worker in workers), diagnostics()
+                await asyncio.sleep(0.1)
         passed = True
     finally:
         for worker in workers:

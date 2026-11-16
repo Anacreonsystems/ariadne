@@ -1,0 +1,15 @@
+import json,subprocess,sys,time,shutil
+from pathlib import Path
+BASE=Path('/tmp/native-ni012-restored-principal-2026-11-05/source-835b8c21c83e')
+for n in range(90):
+ result=subprocess.run([sys.executable,'/tmp/native-ni012-restored-principal-2026-11-05/status_835b8.py'],capture_output=True,text=True)
+ if result.returncode:
+  print(json.dumps({'watcher_error':'status helper failed','returncode':result.returncode}),flush=True);raise SystemExit(result.returncode)
+ report=json.loads(result.stdout);cases=[]
+ for c in report['result']['cases']:
+  source=next((x['output_sequence'] for x in c.get('subtasks',[]) if x['operator_uid']=='A'),None)
+  cursors={x['operator_uid']+str(x['subtask_index']):x['completed_through'] for x in c.get('cursors',[])}
+  cases.append({'trial':c['trial'],'A':source,'cursors':cursors,'exit':c['exit'],'slots':c.get('live_physical_slots'),'states':[x['state_type'] for x in c.get('flows',[])],'progress_age_seconds':c.get('progress_age_seconds'),'artifact_MiB':round(c['artifact_bytes']/1024**2,2)})
+ print(json.dumps({'utc':report['result']['utc'],'receipt':report['receipt'],'head':report['result']['head'],'cases':cases,'tmp_free_GiB':round(shutil.disk_usage('/tmp').free/1024**3,2),'memory_current_GiB':round(int(Path('/sys/fs/cgroup/memory.current').read_text())/1024**3,2)},sort_keys=True),flush=True)
+ if all(c['exit'] is not None for c in cases):break
+ time.sleep(60)

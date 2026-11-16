@@ -1,0 +1,621 @@
+"""Real child/pipe controls for the DAG worker, without a database.
+
+The small in-memory wire fixture drives transport cuts only. It makes no
+claim about server activation, execution or transactional data correctness.
+"""
+
+import asyncio
+import copy
+import hashlib
+import logging
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import patch
+from uuid import UUID, uuid4
+
+import httpx
+
+from prefect._internal.stream_route_plan import canonical_route_json
+from prefect.client.schemas import stream_dag_executions as d
+from prefect.client.schemas import stream_subtasks as s
+from prefect.client.schemas.objects import FlowRun
+from prefect.runner._starter_native import linux_process_identity
+from prefect.workers._stream_dag_launches import DAGLaunchJournal
+from prefect.workers._stream_dag_subtasks import (
+    DAGSubtaskProcess,
+    NativeDAGSubtaskSupervisor,
+)
+from prefect.workers.process import ProcessJobConfiguration
+
+STAMP = "2026-11-05T12:00:00Z"
+STUB = """import json,os,pathlib,sys,time
+record,preflight,ready,bootstrap,go=map(int,sys.argv[1:])
+root=pathlib.Path.cwd()
+def read(fd):
+ with os.fdopen(fd,'rb') as pipe:return pipe.read()
+if read(record)!=b'P':sys.exit(10)
+(root/'transport-import').write_text(str(os.getpid()))
+configuration=json.loads(read(preflight))
+assert not any(k in os.environ for k in ['PREFECT_API_KEY','PREFECT_API_AUTH_STRING','PREFECT_SERVER_API_AUTH_STRING'])
+os.write(ready,b'R')
+private=json.loads(read(bootstrap))
+assert private['child_process_id']==os.getpid()
+os.write(ready,b'B')
+if read(go)!=b'G':sys.exit(11)
+(root/'transport-go').write_text(str(os.getpid()))
+time.sleep(30)
+"""
+
+
+class Wire:
+    """A finite typed worker-wire fixture with time-sensitive lost replies."""
+
+    api_url = "http://127.0.0.1:1/api"
+
+    def __init__(self, directory: Path, worker_id: UUID) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.unknown: set[str] = set()
+        self.directory = directory
+        self.generation = ""
+        flow, graph, subtask, stream, task_run = [uuid4() for _ in range(5)]
+        self.item: dict[str, Any] = {
+            "flow_run_id": flow,
+            "graph_digest": "a" * 64,
+            "routing_digest": "b" * 64,
+            "placement_digest": "c" * 64,
+            "start_operation_id": uuid4(),
+            "assignment": {
+                "id": subtask,
+                "graph_revision_id": graph,
+                "operator_run_id": uuid4(),
+                "operator_uid": "source",
+                "subtask_index": 0,
+                "assignment_epoch": 1,
+                "input_stream_id": None,
+                "output_stream_id": stream,
+                "assigned_worker_id": worker_id,
+                "physical_slot_reserved": True,
+                "physical_slot_released": False,
+                "current_grant_id": None,
+                "physical_epoch": 0,
+                "manifest": {
+                    "flow_run_id": flow,
+                    "submission_key": "source/0",
+                    "manifest_digest": "d" * 64,
+                    "task_run_id": task_run,
+                    "stream_id": stream,
+                    "dynamic_key": "source/0",
+                    "role": "SOURCE",
+                    "protocol": "source-v1",
+                    "state": "ACTIVE",
+                    "created_at": STAMP,
+                },
+            },
+            "phase": "STARTING",
+            "current_grant": None,
+            "bootstrap_ready": False,
+            "working_directory": str(directory),
+            "task_configuration": {
+                "entrypoint": "fixture:source",
+                "task_key": "fixture-source",
+                "role": "SOURCE",
+                "task_version": "1",
+                "artifact_digest": "e" * 64,
+                "context_key": "ctx",
+                "timeout_seconds": None,
+                "task_policy": {"retries": 2},
+                "effective_tags": [],
+                "input_key": None,
+                "parameters": {},
+            },
+            "task_state": "PENDING",
+            "task_run_count": 0,
+            "task_retriable": None,
+            "output_state": "OPEN",
+            "output_attempt": 0,
+            "control": None,
+            "launch_attempts": [],
+        }
+
+    def record(self, name: str, value: dict[str, Any]) -> None:
+        self.calls.append((name, copy.deepcopy(value)))
+        if name in self.unknown:
+            self.unknown.remove(name)
+            raise httpx.ReadTimeout("Injected unknown transport acknowledgement")
+
+    def stopped(self) -> None:
+        self.item["phase"] = "STOPPING"
+        self.item["control"] = {
+            "operation_id": uuid4(),
+            "kind": "STARTUP_ABORT",
+            "state": "STOPPING",
+        }
+
+    async def poll_worker_stream_dag_subtasks(
+        self, **kwargs: Any
+    ) -> list[d.StreamDAGWorkerAssignment]:
+        return [d.StreamDAGWorkerAssignment.model_validate(self.item)]
+
+    async def prepare_worker_stream_dag_launch(
+        self, **kwargs: Any
+    ) -> d.StreamDAGLaunchOperationResult:
+        rows = self.item["launch_attempts"]
+        if not rows:
+            rows.append(
+                {
+                    "id": uuid4(),
+                    "graph_revision_id": self.item["assignment"]["graph_revision_id"],
+                    "subtask_id": kwargs["subtask_id"],
+                    "start_operation_id": kwargs["start_operation_id"],
+                    "worker_id": kwargs["worker_id"],
+                    "worker_generation_digest": self.generation,
+                    "attempt_index": 1,
+                    "expected_grant_id": None,
+                    "expected_physical_epoch": 0,
+                    "replacement_operation_id": None,
+                    "state": "PREPARED",
+                    "child_process_id": None,
+                    "process_start_ticks": None,
+                    "local_journal_digest": None,
+                    "grant_id": None,
+                }
+            )
+        result = self.operation(rows[-1], kwargs["operation_id"], "PREPARE")
+        self.record("prepare", kwargs)
+        return result
+
+    def operation(
+        self, attempt: dict[str, Any], operation: UUID, kind: str
+    ) -> d.StreamDAGLaunchOperationResult:
+        disposition = (
+            "STOP_REQUIRED"
+            if self.item["phase"] == "STOPPING"
+            else (
+                "SPAWN_ALLOWED"
+                if attempt["state"] == "PREPARED"
+                else "PREFLIGHT_ALLOWED"
+            )
+        )
+        return d.StreamDAGLaunchOperationResult.model_validate(
+            {
+                "receipt": {
+                    "operation_id": operation,
+                    "launch_attempt_id": attempt["id"],
+                    "kind": kind,
+                    "request_digest": "1" * 64,
+                    "outcome_digest": "2" * 64,
+                    "accepted_at": STAMP,
+                },
+                "current": attempt,
+                "disposition": disposition,
+            }
+        )
+
+    async def record_worker_stream_dag_launch(
+        self, **kwargs: Any
+    ) -> d.StreamDAGLaunchOperationResult:
+        attempt = self.item["launch_attempts"][-1]
+        attempt.update(
+            state="PID_RECORDED",
+            child_process_id=kwargs["child_process_id"],
+            process_start_ticks=kwargs["process_start_ticks"],
+            local_journal_digest=kwargs["local_journal_digest"],
+        )
+        result = self.operation(attempt, kwargs["operation_id"], "RECORD")
+        self.record("record", kwargs)
+        return result
+
+    async def claim_worker_stream_subtask(self, **kwargs: Any) -> s.StreamSubtaskGrant:
+        if self.item["current_grant"] is None:
+            grant = {
+                "id": uuid4(),
+                "subtask_id": kwargs["subtask_id"],
+                "graph_revision_id": self.item["assignment"]["graph_revision_id"],
+                "assignment_epoch": 1,
+                "physical_epoch": 1,
+                "holder_id": kwargs["holder_id"],
+                "launcher_binding_kind": "ASSIGNED_WORKER",
+                "worker_id": kwargs["worker_id"],
+                "work_pool_id": kwargs["work_pool_id"],
+                "host_id": kwargs["host_id"],
+                "boot_id": kwargs["boot_id"],
+                "launcher_process_id": kwargs["launcher_process_id"],
+                "launcher_start_ticks": kwargs["launcher_start_ticks"],
+                "event_key_id": hashlib.sha256(
+                    bytes.fromhex(kwargs["event_public_key"])
+                ).hexdigest(),
+                "scope_digest": "f" * 64,
+                "state": "CLAIMED",
+                "child_process_id": None,
+                "process_start_ticks": None,
+                "created_at": STAMP,
+                "last_renewed_at": STAMP,
+            }
+            self.item["current_grant"] = grant
+            self.item["assignment"].update(
+                current_grant_id=grant["id"], physical_epoch=1
+            )
+            self.item["launch_attempts"][-1]["grant_id"] = grant["id"]
+        self.record("claim", kwargs)
+        return s.StreamSubtaskGrant.model_validate(self.item["current_grant"])
+
+    async def register_worker_stream_subtask_process(
+        self, **kwargs: Any
+    ) -> s.StreamSubtaskGrant:
+        self.item["current_grant"].update(
+            state="REGISTERED",
+            child_process_id=kwargs["registration"]["child_process_id"],
+            process_start_ticks=kwargs["registration"]["process_start_ticks"],
+        )
+        self.record("register", kwargs)
+        return s.StreamSubtaskGrant.model_validate(self.item["current_grant"])
+
+    async def renew_worker_stream_subtask(self, **kwargs: Any) -> None:
+        self.record("renew", kwargs)
+
+    async def abort_worker_stream_dag_startup(self, **kwargs: Any) -> None:
+        self.stopped()
+        self.record("abort", kwargs)
+
+    async def close_worker_stream_dag_launch(
+        self, **kwargs: Any
+    ) -> d.StreamDAGLaunchCloseReceipt:
+        attempt = self.item["launch_attempts"][-1]
+        attempt["state"] = "CLOSED"
+        self.record("close", kwargs)
+        return d.StreamDAGLaunchCloseReceipt.model_validate(
+            {
+                "operation_id": kwargs["operation_id"],
+                "launch_attempt_id": attempt["id"],
+                "graph_revision_id": attempt["graph_revision_id"],
+                "subtask_id": attempt["subtask_id"],
+                "attempt_index": attempt["attempt_index"],
+                "proof_kind": kwargs["proof"]["kind"],
+                "closed_at": STAMP,
+                "request_digest": "1" * 64,
+                "outcome_digest": "2" * 64,
+            }
+        )
+
+    async def stop_worker_stream_dag_subtask(
+        self, **kwargs: Any
+    ) -> d.StreamDAGStopReceipt:
+        assert all(row["state"] == "CLOSED" for row in self.item["launch_attempts"])
+        self.record("stop", kwargs)
+        self.item["assignment"]["physical_slot_released"] = True
+        grant = self.item["current_grant"]
+        return d.StreamDAGStopReceipt.model_validate(
+            {
+                "operation_id": kwargs["operation_id"],
+                "control_operation_id": kwargs["control_operation_id"],
+                "graph_revision_id": self.item["assignment"]["graph_revision_id"],
+                "subtask_id": kwargs["subtask_id"],
+                "task_run_id": self.item["assignment"]["manifest"]["task_run_id"],
+                "grant_id": grant["id"] if grant else None,
+                "physical_epoch": 1 if grant else 0,
+                "state": "STOPPED",
+                "task_state": "CANCELLED",
+                "tag_allocation_released": True,
+                "physical_slot_released": True,
+                "all_attempts_closed_digest": "3" * 64,
+                "outcome_digest": "4" * 64,
+            }
+        )
+
+
+class TestDAGWorkerTransport(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="dag-worker-transport-")
+        self.directory = Path(self.temporary.name)
+        self.stub = self.directory / "transport.py"
+        self.stub.write_text(STUB)
+        self.worker_id = uuid4()
+        host, boot, ticks = linux_process_identity(os.getpid())
+        self.principal = {
+            "work_pool_id": uuid4(),
+            "host_id": host,
+            "boot_id": boot,
+            "launcher_process_id": os.getpid(),
+            "launcher_start_ticks": ticks,
+        }
+        self.wire = Wire(self.directory, self.worker_id)
+        self.worker = SimpleNamespace(
+            backend_id=self.worker_id,
+            client=self.wire,
+            _logger=logging.getLogger(__name__),
+        )
+        self.other = 0
+        self.supervisor = NativeDAGSubtaskSupervisor(
+            self.worker,
+            principal=self.principal,
+            other_live_children=lambda: self.other,
+            journal_directory=self.directory / "journals",
+        )
+        self.wire.generation = self.supervisor.generation
+        original = subprocess.Popen
+
+        def spawn(arguments: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
+            return cast(
+                subprocess.Popen[bytes],
+                original([sys.executable, str(self.stub), *arguments[3:]], **kwargs),
+            )
+
+        self.spawn = patch(
+            "prefect.workers._stream_dag_subtasks.subprocess.Popen", side_effect=spawn
+        )
+        self.spawn.start()
+
+    async def asyncTearDown(self) -> None:
+        await self.supervisor.close()
+        self.spawn.stop()
+        self.temporary.cleanup()
+
+    async def test_record_ack_precedes_import_and_unknown_reply_never_respawns(self):
+        self.wire.unknown.add("record")
+        await self.supervisor.poll()
+        self.assertFalse((self.directory / "transport-import").exists())
+        run = next(iter(self.supervisor.runs.values()))
+        assert run.launch is not None and run.launch.child is not None
+        pid = run.launch.child.process.pid
+        await self.supervisor.poll()
+        self.assertEqual(run.launch.child.process.pid, pid)
+        self.assertTrue((self.directory / "transport-import").exists())
+        records = [value for name, value in self.wire.calls if name == "record"]
+        self.assertEqual(records[0], records[1])
+        self.assertEqual(
+            len([name for name, _ in self.wire.calls if name == "prepare"]), 1
+        )
+        self.assertFalse((self.directory / "transport-go").exists())
+
+    async def test_unknown_prepare_then_control_closes_unstarted_without_birth(self):
+        self.wire.unknown.add("prepare")
+        await self.supervisor.poll()
+        self.wire.stopped()
+        await self.supervisor.poll()
+        self.assertFalse((self.directory / "transport-import").exists())
+        self.assertEqual(self.supervisor.live_children(), 0)
+        proof = next(
+            value["proof"] for name, value in self.wire.calls if name == "close"
+        )
+        self.assertEqual(proof["kind"], "CLOSED_UNSTARTED")
+        self.assertEqual(
+            len([name for name, _ in self.wire.calls if name == "stop"]), 1
+        )
+
+    async def test_control_before_record_ack_kills_exact_gated_process(self):
+        self.wire.unknown.add("record")
+        await self.supervisor.poll()
+        run = next(iter(self.supervisor.runs.values()))
+        assert run.launch is not None and run.launch.child is not None
+        child = run.launch.child
+        self.wire.stopped()
+        await self.supervisor.poll()
+        self.assertIsNotNone(child.process.returncode)
+        self.assertFalse((self.directory / "transport-import").exists())
+        self.assertFalse((self.directory / "transport-go").exists())
+        proof = next(
+            value["proof"] for name, value in self.wire.calls if name == "close"
+        )
+        self.assertEqual(proof["kind"], "DEATH")
+        self.assertEqual(proof["death_witness"]["child_process_id"], child.process.pid)
+        self.assertFalse(self.supervisor.runs)
+
+    async def test_registration_unknown_reply_keeps_exact_child_and_private_bootstrap(
+        self,
+    ):
+        self.wire.unknown.add("register")
+        await self.supervisor.poll()
+        run = next(iter(self.supervisor.runs.values()))
+        assert run.launch is not None and run.launch.child is not None
+        child = run.launch.child
+        self.assertGreaterEqual(child.bootstrap_fd, 0)
+        await self.supervisor.poll()
+        self.assertIs(run.launch.child, child)
+        self.assertEqual(child.bootstrap_fd, -1)
+        registrations = [value for name, value in self.wire.calls if name == "register"]
+        self.assertEqual(registrations[0], registrations[1])
+        self.assertFalse((self.directory / "transport-go").exists())
+
+    async def test_close_unknown_reply_replays_identical_death_proof_before_stop(self):
+        self.wire.unknown.add("record")
+        await self.supervisor.poll()
+        self.wire.stopped()
+        self.wire.unknown.add("close")
+        await self.supervisor.poll()
+        self.assertFalse(any(name == "stop" for name, _ in self.wire.calls))
+        # The lost request may not have committed; its next authoritative
+        # observation still requires the exact frozen CLOSE request.
+        self.wire.item["launch_attempts"][0]["state"] = "PID_RECORDED"
+        await self.supervisor.poll()
+        closes = [value for name, value in self.wire.calls if name == "close"]
+        self.assertEqual(closes[0], closes[1])
+        self.assertFalse(self.supervisor.runs)
+
+    async def test_shared_two_child_capacity_blocks_dag_birth(self):
+        self.other = 2
+        await self.supervisor.poll()
+        self.assertEqual(self.supervisor.live_children(), 0)
+        self.assertFalse((self.directory / "transport-import").exists())
+        self.assertFalse(any(name == "record" for name, _ in self.wire.calls))
+        self.other = 1
+        await self.supervisor.poll()
+        self.assertEqual(self.supervisor.live_children(), 1)
+
+    async def test_go_requires_global_active_and_own_ready_then_stop_reaps(self):
+        await self.supervisor.poll()
+        await asyncio.sleep(0.02)
+        await self.supervisor.poll()
+        self.assertFalse((self.directory / "transport-go").exists())
+        self.wire.item["phase"] = "ACTIVE"
+        await self.supervisor.poll()
+        self.assertFalse((self.directory / "transport-go").exists())
+        self.wire.item["bootstrap_ready"] = True
+        await self.supervisor.poll()
+        for _ in range(100):
+            if (self.directory / "transport-go").exists():
+                break
+            await asyncio.sleep(0.005)
+        self.assertTrue((self.directory / "transport-go").exists())
+        self.wire.stopped()
+        await self.supervisor.poll()
+        self.assertFalse(self.supervisor.runs)
+
+    async def test_missing_local_proof_on_manager_recovery_holds_capacity(self):
+        self.wire.unknown.add("prepare")
+        await self.supervisor.poll()
+        journal = next(iter(self.supervisor.runs.values())).journal
+        for path in journal.directory.iterdir():
+            path.unlink()
+        replacement = NativeDAGSubtaskSupervisor(
+            self.worker,
+            principal=self.principal,
+            other_live_children=lambda: 0,
+            journal_directory=self.directory / "journals",
+        )
+        self.wire.stopped()
+        await replacement.poll()
+        self.assertFalse(any(name in {"close", "stop"} for name, _ in self.wire.calls))
+        self.assertFalse(self.wire.item["assignment"]["physical_slot_released"])
+
+    async def test_reserved_birth_without_pid_on_recovery_never_respawns_or_stops(self):
+        self.wire.unknown.add("prepare")
+        await self.supervisor.poll()
+        run = next(iter(self.supervisor.runs.values()))
+        attempt = self.wire.item["launch_attempts"][0]
+        local = run.journal.records()[0]
+        run.journal.bind(local.operation_id, attempt["id"], 1)
+        run.journal.reserve_birth(local.operation_id)
+        replacement = NativeDAGSubtaskSupervisor(
+            self.worker,
+            principal=self.principal,
+            other_live_children=lambda: 0,
+            journal_directory=self.directory / "journals",
+        )
+        self.wire.stopped()
+        await replacement.poll()
+        self.assertEqual(replacement.live_children(), 0)
+        self.assertFalse(
+            any(name in {"record", "close", "stop"} for name, _ in self.wire.calls)
+        )
+        self.assertFalse(self.wire.item["assignment"]["physical_slot_released"])
+
+
+class TestDAGProcessCleanup(unittest.TestCase):
+    def test_command_provenance_property_preserves_prepared_configuration_wire(self):
+        run = FlowRun(flow_id=uuid4(), name="configuration-parity")
+        for command in (None, "python -m explicit_engine"):
+            with self.subTest(command=command):
+                configuration = ProcessJobConfiguration(command=command)
+                self.assertFalse(configuration.command_configured)
+                configuration.prepare_for_flow_run(run)
+                self.assertEqual(configuration.command_configured, command is not None)
+                self.assertNotIn("command_configured", configuration.model_dump())
+                if command is not None:
+                    self.assertEqual(configuration.command, command)
+
+    def test_production_record_gate_eof_never_imports_queued_application(self):
+        with tempfile.TemporaryDirectory(prefix="dag-record-gate-") as temporary:
+            root = Path(temporary)
+            entrypoint = root / "must_not_import.py"
+            entrypoint.write_text(
+                "from pathlib import Path\nPath('forbidden-import').write_text('called')\nraise SystemExit(12)\n"
+            )
+            journal = DAGLaunchJournal(
+                root / "journal",
+                worker_id=uuid4(),
+                worker_generation_digest="a" * 64,
+                graph_revision_id=uuid4(),
+                subtask_id=uuid4(),
+            )
+            journal.reconcile({})
+            local = journal.intent(uuid4())
+            journal.bind(local.operation_id, uuid4(), 1)
+            child = DAGSubtaskProcess.start(
+                journal=journal,
+                operation_id=local.operation_id,
+                api_url="http://127.0.0.1:1/api",
+                cwd=root,
+                stream_output=False,
+            )
+            try:
+                payload: dict[str, Any] = {
+                    "role": "SOURCE",
+                    "configuration": {
+                        "entrypoint": str(entrypoint) + ":source",
+                        "task_key": "source",
+                        "role": "SOURCE",
+                        "task_version": "1",
+                        "artifact_digest": "a" * 64,
+                        "context_key": "ctx",
+                        "timeout_seconds": None,
+                        "task_policy": {"retries": 2},
+                        "effective_tags": [],
+                        "input_key": None,
+                        "parameters": {},
+                    },
+                }
+                os.write(child.preflight_fd, canonical_route_json(payload))
+                os.close(child.preflight_fd)
+                child.preflight_fd = -1
+                os.close(child.record_fd)
+                child.record_fd = -1
+                self.assertNotEqual(child.process.wait(timeout=15), 0)
+                self.assertFalse((root / "forbidden-import").exists())
+            finally:
+                child.close()
+
+    def test_gate_loss_exits_without_import_and_wait_timeout_retains_all_resources(
+        self,
+    ):
+        with tempfile.TemporaryDirectory(prefix="dag-child-cleanup-") as temporary:
+            root = Path(temporary)
+            journal = DAGLaunchJournal(
+                root / "journal",
+                worker_id=uuid4(),
+                worker_generation_digest="a" * 64,
+                graph_revision_id=uuid4(),
+                subtask_id=uuid4(),
+            )
+            journal.reconcile({})
+            intent = journal.intent(uuid4())
+            journal.bind(intent.operation_id, uuid4(), 1)
+            # Production entrypoint, no preflight/import/grant/HTTP is authorized.
+            child = DAGSubtaskProcess.start(
+                journal=journal,
+                operation_id=intent.operation_id,
+                api_url="http://127.0.0.1:1/api",
+                cwd=root,
+                stream_output=False,
+            )
+            retained = (
+                child.record_fd,
+                child.preflight_fd,
+                child.ready_fd,
+                child.bootstrap_fd,
+                child.go_fd,
+            )
+            original_wait = child.process.wait
+            with patch.object(
+                child.process,
+                "wait",
+                side_effect=subprocess.TimeoutExpired("exact-child", 10),
+            ):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    child.close()
+            self.assertTrue(child.home.exists())
+            for descriptor in retained:
+                os.fstat(descriptor)
+            self.assertTrue(journal.read(intent.operation_id).birth_reserved)
+            child.close()
+            self.assertIsNotNone(child.process.returncode)
+            self.assertFalse(child.home.exists())
+            for descriptor in retained:
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
+            self.assertEqual(original_wait(timeout=1), child.process.returncode)

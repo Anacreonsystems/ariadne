@@ -5,8 +5,13 @@ files are retained historical records: they are superseded or marked
 `rejected`, never deleted. The active cycle is
 [native integration epoch 2](../epochs/epoch-02-native-streaming-completion.md):
 explicitly approved implementation under ADR-0042–0048. The original broad
-streaming ETL objective remains incomplete; the new profile has 100% planned
-scope and still earns zero native capability completion.
+streaming ETL objective remains incomplete. The new profile has 100% planned
+scope and has earned **15%** through the independently accepted
+[fixed-P2 execution slice](../evidence/native-epoch2-n2-1-principal-acceptance-2026-11-05.json).
+Branched execution remains in progress; state/join, continuous sources,
+retention, cross-host recovery and rescaling remain open. Current task and
+verification details are maintained in the [task registry](../todo.md) and
+[sprint board](../sprint_board.md).
 
 The preceding bounded native foundation is accepted at **100% of its selected
 scope** under ADR-0037–0041 and the

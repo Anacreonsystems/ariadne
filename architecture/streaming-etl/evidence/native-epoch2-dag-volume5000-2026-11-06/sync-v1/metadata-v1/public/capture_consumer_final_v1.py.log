@@ -1,0 +1,117 @@
+"""Separate Root GO only: one postterminal scoped Consumer SELECT, no live use."""
+import argparse
+import asyncio
+import datetime
+import hashlib
+import json
+import os
+import pathlib
+import re
+import time
+from urllib.parse import urlsplit, urlunsplit
+from uuid import UUID
+
+from observer_common import BASE, HEAD, SELECTOR, checked_scope, load, sha, write
+
+CONTEXT_SQL = "SELECT current_database() AS database,current_setting('server_version_num') AS server_version,current_setting('transaction_read_only') AS read_only,pg_backend_pid() AS backend_pid,clock_timestamp() AS observed_utc,txid_current_snapshot()::text AS mvcc_snapshot"
+
+
+async def run(scope_path):
+    assert scope_path.is_absolute() and scope_path.parent.resolve() == BASE
+    scope = load(scope_path)
+    assert scope['status'] == 'ROOT_AUTHORIZED_POSTTERMINAL_CONSUMER_SELECT_SYNC5000'
+    assert scope['authorized_by'] == '/root' and scope['head'] == HEAD
+    preparation_path = BASE / 'consumer-final-preparation-manifest-v1.json'
+    assert scope['supplement_preparation_sha256'] == sha(preparation_path)
+    for row in load(preparation_path)['artifacts']:
+        path = BASE / row['path']
+        assert sha(path) == row['sha256'] and path.stat().st_size == row['bytes']
+    base_ref = scope['base_final_scope']
+    base_scope_path = pathlib.Path(base_ref['path'])
+    assert base_scope_path.parent.resolve() == BASE and sha(base_scope_path) == base_ref['sha256']
+    # Reuse the frozen validation only. This never calls its capture/queries.
+    base_scope, trial, command = checked_scope(base_scope_path, 'final')
+    assert scope['trial'] == str(trial) and scope['database'] == command['database']
+    assert scope['command_sha256'] == sha(trial / 'command.json')
+    sample_ref = scope['base_final_sample']
+    sample_path = pathlib.Path(sample_ref['path'])
+    assert sample_path.parent.resolve() == BASE and re.fullmatch(r'final-sample-[0-9]+\.json', sample_path.name)
+    assert sha(sample_path) == sample_ref['sha256']
+    sample = load(sample_path)
+    assert sample['mode'] == 'final' and sample['status'] == 'ACTUAL_READONLY_MVCC_CAPTURE'
+    assert sample['connection_closed'] is True and sample['scope_sha256'] == base_ref['sha256']
+    assert sample['trial'] == str(trial) and sample['database'] == command['database']
+    assert sample['graph_id'] == base_scope['graph_id'] == scope['graph_id']
+    assert sample['flow_id'] == base_scope['flow_id'] == scope['flow_id']
+    assert sample['command_sha256'] == scope['command_sha256'] and sample['head'] == HEAD
+    assert not list(BASE.glob('consumer-final-sample-*.json')), 'SUPPLEMENT_ALREADY_ATTEMPTED'
+    query_path = BASE / 'postterminal-consumer-select-v1.sql'
+    assert sha(query_path) == scope['query_sha256']
+    query = query_path.read_text()
+    assert query.strip() == load(BASE / 'postterminal-expectations-and-consumer-select-v1.json')['separate_optional_supplementary_SELECT']['sql']
+    for text in [CONTEXT_SQL, query]:
+        assert text.startswith('SELECT ') and not re.search(r'\b(FOR\s+UPDATE|FOR\s+SHARE|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|LOCK|TRUNCATE|CALL|pg_terminate_backend|pg_cancel_backend)\b', text, re.I)
+    # Private values are consumed only after the distinct Root scope and the
+    # already-closed first capture have been proved. Never serialize config.
+    config = load(SELECTOR)
+    parsed = urlsplit(config['admin_dsn'])
+    assert parsed.hostname in {'localhost', '127.0.0.1', '::1'} and parsed.port == 55436
+    assert command['database'].startswith(config['database_prefix'] + '_s2_')
+    assert config['sqlalchemy_scheme'] == 'postgresql+asyncpg'
+    dsn = urlunsplit((parsed.scheme, parsed.netloc, '/' + command['database'], parsed.query, ''))
+    import asyncpg
+    os.umask(0o077)
+    now = time.monotonic_ns(); connection = None
+    result = {'schema': 'owned-sync5000-postterminal-independent-consumer-select-v1',
+              'status': 'CAPTURE_STARTED', 'head': HEAD, 'trial': str(trial), 'database': command['database'],
+              'flow_id': scope['flow_id'], 'graph_id': scope['graph_id'], 'scope_sha256': sha(scope_path),
+              'query_sha256': sha(query_path), 'supplement_preparation_sha256': sha(preparation_path),
+              'base_final_scope': base_ref, 'base_final_sample': sample_ref,
+              'started_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'started_monotonic_ns': now,
+              'readonly': True, 'explicit_row_locks': False,
+              'provenance_erratum_sha256': 'ec7323997fe16d10b1708f0a5e6c64fca0ec286231278b6e1dd55845e0d22038',
+              'limits': ['This is an independent Consumer SQL query; prior progress.jsonl cursors are author direct-PG multi-SELECT observations, not API reads',
+                         'This capture is a different MVCC snapshot from the closed18-family capture; never claim atomicity across them',
+                         'Verified terminal cleanup may have removed Consumer rows; absence does not prove a literal5000 cursor row',
+                         'No managed-state payload, capability, raw delivery token, environment or DSN selected/serialized',
+                         'No external KV lease backend, mutation, admin repair or test body is involved']}
+    async def transaction():
+        nonlocal connection
+        connection = await asyncpg.connect(dsn, timeout=3, command_timeout=2,
+            server_settings={'default_transaction_read_only': 'on', 'application_name': 'principal_owned_postterminal_consumer',
+                             'statement_timeout': '2000', 'lock_timeout': '100', 'idle_in_transaction_session_timeout': '3000'})
+        async with connection.transaction(isolation='repeatable_read', readonly=True):
+            context = dict(await connection.fetchrow(CONTEXT_SQL))
+            assert context['database'] == command['database'] and int(context['server_version']) // 10000 == 17 and context['read_only'] == 'on'
+            rows = [dict(row) for row in await connection.fetch(query, UUID(scope['flow_id']), UUID(scope['graph_id']))]
+            assert all(str(row['flow_run_id']) == scope['flow_id'] and str(row['graph_revision_id']) == scope['graph_id'] for row in rows)
+            result.update(status='ACTUAL_INDEPENDENT_CONSUMER_SELECT_CAPTURE', database_context=context,
+                          consumer_rows=rows, consumer_count=len(rows), cursor_source='THIS_EXPLICIT_INDEPENDENT_PG_SELECT')
+    try:
+        await asyncio.wait_for(transaction(), timeout=6)
+    except Exception as error:
+        result.update(status='READONLY_CONSUMER_CAPTURE_FAILED_OR_INCONCLUSIVE', error_type=type(error).__name__)
+    finally:
+        if connection is not None:
+            try:
+                await connection.close(timeout=3)
+            except Exception as error:
+                result.update(status='CONNECTION_CLOSE_INCONCLUSIVE', close_error_type=type(error).__name__)
+        result['connection_closed'] = connection is None or connection.is_closed()
+    result['ended_monotonic_ns'] = time.monotonic_ns()
+    path = BASE / ('consumer-final-sample-' + str(now) + '.json'); write(path, result)
+    print(json.dumps({'status': result['status'], 'path': str(path), 'sha256': sha(path),
+                      'consumer_count': result.get('consumer_count'), 'connection_closed': result['connection_closed']}), flush=True)
+    return 0 if result['status'] == 'ACTUAL_INDEPENDENT_CONSUMER_SELECT_CAPTURE' and result['connection_closed'] else 1
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(); parser.add_argument('--scope', type=pathlib.Path, required=True)
+    parser.add_argument('--execute-root-go', action='store_true', required=True)
+    args = parser.parse_args()
+    try:
+        code = asyncio.run(run(args.scope))
+    except Exception as error:
+        print(json.dumps({'status': 'PRECONNECTION_SCOPE_OR_CAPTURE_INCONCLUSIVE', 'error_type': type(error).__name__}), flush=True)
+        code = 1
+    raise SystemExit(code)

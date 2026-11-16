@@ -1,0 +1,140 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______ test_final_parent_release_retires_only_dag_coordinator_postgres ________
+
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7ffa902d1100>
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x7ffa8e576420>
+execution_api = <httpx.AsyncClient object at 0x7ffa8e5ab320>
+deployment = Deployment(id=fc54177b-0801-4556-b884-5bffb31c3acc)
+
+    async def test_final_parent_release_retires_only_dag_coordinator_postgres(
+        db: PrefectDBInterface,
+        session: AsyncSession,
+        execution_api: httpx.AsyncClient,
+        deployment: orm_models.Deployment,
+    ):
+        plan, credentials, children = await ready_deployed_region(
+            db, session, execution_api, deployment
+        )
+        await produce_and_finish_region(db, children)
+        async with db.session_context(begin_transaction=True) as transaction:
+            for child in children:
+                result = await dispatch_stream_subtask_event(
+                    transaction,
+                    db,
+                    child.bootstrap.assignment.id,
+                    signed_child_event(child, "COMPLETED"),
+                    child.credentials,
+                )
+                assert result.accepted
+        for child in children:
+            await retire_ready_child(db, child)
+        headers = {
+            "X-Prefect-Stream-Execution-Generation": str(credentials.generation),
+            "X-Prefect-Stream-Execution-Holder": str(credentials.holder_id),
+            "X-Prefect-Stream-Execution-Capability": credentials.capability,
+        }
+        response = await execution_api.post(
+            f"/flow_runs/{plan.flow_run_id}/set_state",
+            json={"state": {"type": "COMPLETED", "name": "Completed"}},
+            headers=headers,
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["status"] == "ACCEPT", response.text
+        response = await execution_api.post(
+            "/streams/v1/release",
+            json={"flow_run_id": str(plan.flow_run_id)},
+            headers=headers,
+        )
+>       assert response.status_code == 200, response.text
+E       AssertionError: {"detail":{"code":"EXECUTION_PROFILE_NOT_READY","message":"Topology-only DAG data access is not executable","retryable":false}}
+E       assert 409 == 200
+E        +  where 409 = <Response [409 Conflict]>.status_code
+
+tests/server/models/test_stream_dag_executions.py:793: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://[redacted-owned-test-dsn]'
+Connecting to postgres at 'postgres://[redacted-owned-test-dsn]'
+Creating test postgres database 'native_ni012_runtime_coord_9a177fdc_tests_master'
+Using test database connection URL 'postgresql+asyncpg://[redacted-owned-test-dsn]'
+Running hosted API server on port 47093
+---------------------------- Captured stderr setup -----------------------------
+20:06:10.666 | INFO    | uvicorn.error - Started server process [341791]
+20:06:10.670 | INFO    | uvicorn.error - Waiting for application startup.
+20:06:10.914 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+20:06:10.920 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+20:06:10.921 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+20:06:10.921 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+20:06:10.921 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+20:06:10.921 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+20:06:10.922 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+20:06:10.922 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+20:06:10.922 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+20:06:10.922 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+20:06:10.922 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+20:06:10.922 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+20:06:10.922 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+20:06:10.923 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+20:06:10.923 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+20:06:10.923 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+20:06:10.923 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+20:06:10.925 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+20:06:10.926 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+20:06:10.927 | INFO    | uvicorn.error - Application startup complete.
+20:06:10.928 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 47093) (Press CTRL+C to quit)
+20:06:10.942 | INFO    | uvicorn.access - 127.0.0.1:43508 - "GET /api/health HTTP/1.1" 200
+----------------------------- Captured stderr call -----------------------------
+Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.370 seconds
+20:06:12.114 | WARNING | asyncio - Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.370 seconds
+20:06:12.125 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-3c9daf9fe2af4516a412d7a761d4b816 because it does not have a base job template
+20:06:12.138 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.not-ready with id: 01a1ad51-a7aa-7943-abd3-6b6b2a532b1d for resource: prefect.work-pool.0dc8e05c-f1d8-4f02-bc82-c958d56764d2
+20:06:12.176 | DEBUG   | prefect.server.events.messaging - Publishing event: prefect.work-pool.ready with id: 01a1ad51-a7cc-79ee-8c21-dcb341ecd931 for resource: prefect.work-pool.0dc8e05c-f1d8-4f02-bc82-c958d56764d2
+20:06:12.218 | INFO    | prefect.server.api.validation - Cannot validate job variables for work pool physical-3c9daf9fe2af4516a412d7a761d4b816 because it does not have a base job template
+20:06:14.153 | DEBUG   | prefect.server.services.task_run_recorder - Partitioned 1 task runs into 1 upsert statement(s)
+20:06:14.165 | DEBUG   | prefect.server.services.task_run_recorder - Recorded 1 task run state change(s)
+20:06:14.222 | DEBUG   | prefect.server.services.task_run_recorder - Partitioned 1 task runs into 1 upsert statement(s)
+20:06:14.229 | DEBUG   | prefect.server.services.task_run_recorder - Recorded 1 task run state change(s)
+20:06:14.288 | DEBUG   | prefect.server.services.task_run_recorder - Partitioned 1 task runs into 1 upsert statement(s)
+20:06:14.294 | DEBUG   | prefect.server.services.task_run_recorder - Recorded 1 task run state change(s)
+20:06:14.347 | DEBUG   | prefect.server.services.task_run_recorder - Partitioned 1 task runs into 1 upsert statement(s)
+20:06:14.354 | DEBUG   | prefect.server.services.task_run_recorder - Recorded 1 task run state change(s)
+20:06:16.465 | DEBUG   | prefect.server.services.task_run_recorder - Partitioned 1 task runs into 1 upsert statement(s)
+20:06:16.473 | DEBUG   | prefect.server.services.task_run_recorder - Recorded 1 task run state change(s)
+20:06:16.546 | DEBUG   | prefect.server.services.task_run_recorder - Partitioned 1 task runs into 1 upsert statement(s)
+20:06:16.552 | DEBUG   | prefect.server.services.task_run_recorder - Recorded 1 task run state change(s)
+20:06:16.845 | DEBUG   | prefect.server.services.task_run_recorder - Partitioned 1 task runs into 1 upsert statement(s)
+20:06:16.857 | DEBUG   | prefect.server.services.task_run_recorder - Recorded 1 task run state change(s)
+20:06:16.928 | DEBUG   | prefect.server.services.task_run_recorder - Partitioned 1 task runs into 1 upsert statement(s)
+20:06:16.934 | DEBUG   | prefect.server.services.task_run_recorder - Recorded 1 task run state change(s)
+------------------------------ Captured log call -------------------------------
+WARNING  asyncio:base_events.py:1994 Executing <Task pending name='starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro' coro=<TaskHandle._run_coro() running at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_core/_tasks.py:275> wait_for=<Future pending cb=[Task.task_wakeup()] created at /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/asyncio/base_events.py:448> cb=[TaskGroup._spawn.<locals>.task_done() at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:836] created at /workspace/ariadne/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py:899> took 0.370 seconds
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-3c9daf9fe2af4516a412d7a761d4b816 because it does not have a base job template
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.not-ready with id: 01a1ad51-a7aa-7943-abd3-6b6b2a532b1d for resource: prefect.work-pool.0dc8e05c-f1d8-4f02-bc82-c958d56764d2
+DEBUG    prefect.server.events.messaging:messaging.py:64 Publishing event: prefect.work-pool.ready with id: 01a1ad51-a7cc-79ee-8c21-dcb341ecd931 for resource: prefect.work-pool.0dc8e05c-f1d8-4f02-bc82-c958d56764d2
+INFO     prefect.server.api.validation:validation.py:169 Cannot validate job variables for work pool physical-3c9daf9fe2af4516a412d7a761d4b816 because it does not have a base job template
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:1228 Partitioned 1 task runs into 1 upsert statement(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:948 Recorded 1 task run state change(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:1228 Partitioned 1 task runs into 1 upsert statement(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:948 Recorded 1 task run state change(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:1228 Partitioned 1 task runs into 1 upsert statement(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:948 Recorded 1 task run state change(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:1228 Partitioned 1 task runs into 1 upsert statement(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:948 Recorded 1 task run state change(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:1228 Partitioned 1 task runs into 1 upsert statement(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:948 Recorded 1 task run state change(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:1228 Partitioned 1 task runs into 1 upsert statement(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:948 Recorded 1 task run state change(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:1228 Partitioned 1 task runs into 1 upsert statement(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:948 Recorded 1 task run state change(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:1228 Partitioned 1 task runs into 1 upsert statement(s)
+DEBUG    prefect.server.services.task_run_recorder:task_run_recorder.py:948 Recorded 1 task run state change(s)
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+20:06:17.866 | INFO    | uvicorn.error - Shutting down
+20:06:17.967 | INFO    | uvicorn.error - Waiting for application shutdown.
+20:06:17.969 | INFO    | uvicorn.error - Application shutdown complete.
+20:06:17.970 | INFO    | uvicorn.error - Finished server process [341791]
+=========================== short test summary info ============================
+FAILED tests/server/models/test_stream_dag_executions.py::test_final_parent_release_retires_only_dag_coordinator_postgres
+1 failed in 13.53s

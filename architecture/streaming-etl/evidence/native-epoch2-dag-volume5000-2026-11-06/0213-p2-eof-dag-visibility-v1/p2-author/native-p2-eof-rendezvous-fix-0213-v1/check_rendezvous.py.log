@@ -1,0 +1,77 @@
+"""Real filesystem/thread rendezvous with controlled clock; no app/DB/processes."""
+import ast
+import hashlib
+import json
+import math
+from pathlib import Path
+import queue
+import tempfile
+import threading
+from types import SimpleNamespace
+
+B=Path(__file__).resolve().parent
+fixture=ast.parse((B/'fixture.candidate.py').read_text())
+helper=next(n for n in fixture.body if isinstance(n,ast.FunctionDef) and n.name=='_wait_for_replacement')
+test=ast.parse((B/'test.candidate.py').read_text())
+case=next(n for n in test.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='test_actual_process_worker_runs_four_partition_tasks')
+trial=next(n for n in case.body if isinstance(n,ast.Try))
+publication=next(n for n in trial.body if isinstance(n,ast.If) and any(isinstance(c,ast.Name) and c.id=='staged_deadline' for c in ast.walk(n)))
+flow_post=next(n for n in ast.walk(case) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='create_flow_run_from_deployment')
+assert publication.end_lineno<flow_post.lineno
+for old_name,new_name in [('fixture.before.py','fixture.candidate.py'),('test.before.py','test.candidate.py')]:
+ old=ast.parse((B/old_name).read_text());new=ast.parse((B/new_name).read_text())
+ assertions=lambda t:[ast.dump(n,include_attributes=False) for n in ast.walk(t) if isinstance(n,ast.Assert)]
+ assert assertions(old)==assertions(new)
+
+class Clock:
+ def __init__(self):self.now=1000.0;self.sleeps=queue.Queue();self.permits=queue.Queue()
+ def monotonic(self):return self.now
+ def sleep(self,seconds):
+  assert seconds==0.02;self.sleeps.put(self.now);self.permits.get(timeout=2)
+
+controls=[]
+with tempfile.TemporaryDirectory() as d:
+ target=Path(d);deadline=1000.0+840
+ publish_ns={'fault':'operator-loss-200','tmp_path':target,'deadline':deadline,'lifecycle_checks':{}}
+ exec(compile(ast.Module(body=[publication],type_ignores=[]),'actual-parent-publication','exec'),publish_ns)
+ path=target/'replacement-observation-deadline'
+ assert float(path.read_text())==deadline and not path.with_suffix('.tmp').exists()
+ assert publish_ns['lifecycle_checks']['replacement_observation_deadline']==deadline
+ clock=Clock();namespace={'Path':Path,'math':math,'time':clock}
+ exec(compile(ast.Module(body=[helper],type_ignores=[]),'actual-source-helper','exec'),namespace)
+ wait=namespace['_wait_for_replacement'];errors=[]
+ def worker():
+  try:wait(target)
+  except BaseException as exc:errors.append(type(exc).__name__)
+ owned=threading.Thread(target=worker);owned.start()
+ try:
+  assert clock.sleeps.get(timeout=2)==1000.0
+  clock.now=1120.0;clock.permits.put(None)
+  assert clock.sleeps.get(timeout=2)==1120.0
+  assert owned.is_alive() and not errors
+  # Read-once contract: a later mutation cannot silently reset the deadline.
+  path.write_text('nan')
+  (target/'replacement-started').write_text('201');clock.permits.put(None)
+ finally:
+  (target/'replacement-started').touch();clock.permits.put(None);owned.join(timeout=2)
+ assert not owned.is_alive() and not errors
+ controls+=['atomic_publication_before_POST','same_deadline_parent_and_source','marker_after_old90_before_shared_deadline','deadline_read_once','owned_thread_joined']
+ (target/'replacement-started').unlink()
+ for value,exception in [('1120',TimeoutError),('nan',ValueError),('inf',ValueError),('bad',ValueError),('0',ValueError),('-1',ValueError)]:
+  path.write_text(value)
+  try:wait(target)
+  except exception:pass
+  else:raise AssertionError('Expected explicit deadline refusal '+value)
+ path.unlink()
+ try:wait(target)
+ except FileNotFoundError:pass
+ else:raise AssertionError('Missing deadline must fail closed')
+ controls+=['deadline_expiry_refuses','missing_malformed_nonfinite_nonpositive_fail_closed','all_old_assertions_AST_unchanged']
+result={'status':'REAL_FILE_THREAD_CONTROLLED_CLOCK_RENDEZVOUS_PASS','controls':controls,
+ 'application_DB_native_or_profiler_execution':False,'owned_threads_remaining':owned.is_alive(),
+ 'shared_deadline_seconds':840,'simulated_elapsed_before_marker_seconds':120,
+ 'source_sha256':hashlib.sha256((B/'fixture.candidate.py').read_bytes()).hexdigest(),
+ 'test_sha256':hashlib.sha256((B/'test.candidate.py').read_bytes()).hexdigest(),
+ 'qualification':'Real temp files/atomic publication and one waited owned thread. Only monotonic clock/sleep are controlled; does not claim 120 wall seconds or native/API/PG acceptance.'}
+p=B/'rendezvous-control-receipt.json';p.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+print(json.dumps(result))

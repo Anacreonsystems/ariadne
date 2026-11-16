@@ -16,6 +16,7 @@ from prefect.server.models import task_runs as task_run_models
 from prefect.server.models._stream_errors import NativeStreamError
 from prefect.server.models.stream_executions import require_execution
 from prefect.server.models.stream_subtask_authority import (
+    DAGWorkerStreamAuthorization,
     WorkerStreamAuthorization,
     capability_digest,
     release_allocations,
@@ -214,7 +215,12 @@ async def _graph(
     await _backend(session, db)
     if isinstance(execution, WorkerStreamAuthorization):
         execution.validate(session, graph_revision_id=graph_id)
-        require_fixed_physical_execution(execution.graph)
+        if not isinstance(execution, DAGWorkerStreamAuthorization):
+            require_fixed_physical_execution(execution.graph)
+        elif execution.graph.current_control_operation_id is not None:
+            raise NativeStreamError(
+                "CONTROL_CONFLICT", "DAG controls fence replacement and retirement"
+            )
         if update and not execution.graph_update:
             raise NativeStreamError(
                 "PROTOCOL_ERROR",
@@ -1312,7 +1318,7 @@ async def _new_grant(
         capability = await session.scalar(
             sa.select(db.StreamWorkerCapability).where(
                 db.StreamWorkerCapability.worker_id == request.worker_id,
-                db.StreamWorkerCapability.protocol == "partitioned-fixed-v1",
+                db.StreamWorkerCapability.protocol == graph.profile,
                 db.StreamWorkerCapability.protocol_version == 1,
             )
         )
@@ -1415,6 +1421,9 @@ async def _new_grant(
     subtask.physical_epoch = physical_epoch
     await session.flush()
     return grant
+
+
+create_subtask_grant = _new_grant
 
 
 async def claim_subtask(
@@ -1824,9 +1833,10 @@ async def retire_verified_subtask(
             raise NativeStreamError(
                 "IDENTITY_CONFLICT", "Verified retirement request drift"
             )
-        return s.StreamSubtaskVerifiedRetirement.model_validate(
-            operation.retirement_outcome
-        )
+        stored = operation.retirement_outcome
+        if graph.profile == "partitioned-dag-v1":
+            stored = stored.get("receipt")
+        return s.StreamSubtaskVerifiedRetirement.model_validate(stored)
     if operation.state != "AUTHORIZED":
         raise NativeStreamError(
             "IDENTITY_CONFLICT", "Replacement operation already has another outcome"
@@ -2005,7 +2015,7 @@ async def retire_verified_subtask(
         "outcome_kind": outcome_kind,
         "allocation_released": True,
     }
-    if subtask.assigned_worker_id is not None:
+    if subtask.assigned_worker_id is not None and graph.profile != "partitioned-dag-v1":
         subtask.physical_slot_released = True
     _, _, outcome_digest = canonical_stream_payload(material)
     outcome = s.StreamSubtaskVerifiedRetirement.model_validate(

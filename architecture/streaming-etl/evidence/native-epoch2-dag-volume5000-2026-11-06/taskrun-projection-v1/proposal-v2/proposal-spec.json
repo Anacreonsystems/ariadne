@@ -1,0 +1,109 @@
+{
+  "authorization": "Thiscandidate doesnot authorize PROJECTEDIT orruntime; matchingPrincipalreview andRootGO next.",
+  "meaningful_falsifiers": [
+    {
+      "behavior": "Keep ORMTaskRun live, CoreUPDATE dynamic_key or typedempirical_policy with synchronize_session=False; assertcachedvalue remains old beforecall. read_dag_plan must refuse IDENTITY_CONFLICT fromfreshSQL. Tests behavior, notrowtype/implementationshape.",
+      "cases": 2,
+      "selector": "tests/server/models/test_stream_dag_task_projection.py::test_plan_refuses_fresh_metadata_despite_stale_task_identity"
+    },
+    {
+      "behavior": "Afteractualtopologyproof andcachedRunningTask, CoreUPDATE state_type=COMPLETED withoutidentitysynchronization. claim_source must refuse TASK_NOT_RUNNING via unchangedcurrentTaskRunUPDATEreread.",
+      "cases": 1,
+      "selector": "tests/server/models/test_stream_dag_task_projection.py::test_routed_task_lock_refreshes_state_after_topology_proof"
+    },
+    {
+      "behavior": "RealdeployedreadyregionactivateFalse; cachedpendingTask; CoreUPDATE terminalstate withoutidentitysynchronization; actualactivate result must report terminal_tasks1,total4,phaseACTIVE. Existingbaseline expectedPASS, unsafeprojectiononly7080 expectedFAIL count0, V2 expectedPASS; all currently unexecuted.",
+      "cases": 1,
+      "selector": "tests/server/models/test_stream_dag_task_projection.py::test_activation_projection_refreshes_stale_task_state"
+    }
+  ],
+  "measurement_facts": {
+    "control_receipt": {
+      "API_process_CPU_seconds": 189.345,
+      "path": "/tmp/native-sync500-measurement-candidate-18124-v2/control-90b809fb/diagnostic-receipt-v1.json",
+      "sha256": "1a4bfe81d8d99ada72b106ba59092d296e1bd4091133c4eb1881bb2549a0203b",
+      "suite_seconds": 218.526
+    },
+    "instrumented_metrics": {
+      "API_process_CPU_seconds": 222.174,
+      "balanced_dispatches": 181310,
+      "path": "/tmp/native-sync500-measurement-candidate-18124-v2/instrumented-e494873a/api-measurements.json",
+      "requests": 5868,
+      "sha256": "bee4d6847768ebec9b717954e37765c2bfe81c9b1b249c53e5eb62d4df24bb48",
+      "suite_seconds": 250.317
+    },
+    "qualification": "Getter8008calls consumed only2.073threadCPU seconds. dag_plan4104inclusivewall151.16 and summedSQLclientspans overlap; neither is pureCPU/criticalpath/DBtime. Count181310doesnotprove cause ofCItimeout. Oldprofile64 cumulative anomalies preclude attribution; none used here."
+  },
+  "problem": "dag_plan validates nine TaskRun scalar fields but selects fullORMTaskRun, which eagerly selects unused TaskRunState via defaultselectin. Scalarprojection avoids that eagerwork; V2 explicitconsumerrefresh preserves activation/poll state freshness formerly supplied by incidental dag_plan identitymap refresh.",
+  "scope": {
+    "excluded": [
+      "crossrequest cache",
+      "same-transaction topology witness reread elimination",
+      "metadata joins/batching",
+      "plan validation skipping",
+      "noload/raiseload/defer options",
+      "new authority architecture/decision",
+      "any deadline extension"
+    ],
+    "new_test": "tests/server/models/test_stream_dag_task_projection.py",
+    "product": [
+      "src/prefect/server/models/stream_dags.py::dag_plan task_rows assignment only",
+      "src/prefect/server/models/stream_dag_executions.py::project_execution existing TaskRun SELECT populate_existing only"
+    ],
+    "untouched": [
+      "all existing field/set/cardinality/digest comparisons",
+      "same WHERE TaskRun.id.in_(allsubtaskTaskids)",
+      "same SQLAlchemy mappedcolumn type processors for nine selected fields",
+      "Flow\u2192Authority\u2192Graph\u2192Worker\u2192Subtask\u2192Grant\u2192Slot\u2192Attempt lock prefix",
+      "current TaskRun FOR UPDATE plus populate_existing; admission/abort/cleanup fresh rereads",
+      "record/receipt/payload/owner/partition/delivery fences and replay semantics",
+      "all existing tests/body/fixtures/deadlines including f1fc and held9dce",
+      "source instrumentation9assets and factory",
+      "same-transaction plan getter behavior"
+    ]
+  },
+  "source_based_dispatch_forecast_not_observed": {
+    "DATA_normal_forecast": [
+      {
+        "before": 47,
+        "forecast": 46,
+        "requests": 1500,
+        "route": "consumercomplete"
+      },
+      {
+        "before": 39,
+        "forecast": 38,
+        "requests": 1500,
+        "route": "nonemptyconsumerread"
+      },
+      {
+        "before": 31,
+        "forecast": 30,
+        "requests": 7,
+        "route": "emptyconsumerread"
+      },
+      {
+        "before": 41,
+        "forecast": 40,
+        "requests": 500,
+        "route": "sourceappend"
+      }
+    ],
+    "DATA_predicted_saved": 3507,
+    "condition": "One removed TaskRunState selectin dispatch per dag_plan only when stateids nonnull and oldORM loader actuallyexecutes; optionalartifactloads/identitymap state can change delta. No fingerprint has been assigned a SQL meaning byguess.",
+    "fraction_of_measured_all_dispatches": 0.01934256246208152,
+    "latency_or_CI_fix_claim": false,
+    "workerpoll_activation_tradeoff": "Existing TaskRun SELECT in project_execution now populate_existing can execute eagerState loads when oldidentitymap previouslyskipped. Thus no blanket net-1 per dag_plan for these endpoints; possible 0..-1 net undernormal1Statequerypattern, or extra refresh dispatch on project_execution-only reads withoutpriorplan. Count actual endpoint histograms and execute events; keep correctness even ifcountbenefitabsent."
+  },
+  "source_only_preconditions": "Current1600source/pub636/measurement9assets rehashedzero drift, no projectimports/collection/runtime/DB/network/hooks orrepositoryedits. v1patch7080/requestchanges03fd preserved. All grill-me/spec-first variants excluded; conflict scan incomplete.",
+  "status": "FROZEN_SOURCE_ONLY_REVIEW_CANDIDATE_NOT_APPLIED_NOT_EXECUTED",
+  "verification_after_matching_review_and_separate_Root_GO": [
+    "Apply ONLY2productdeltas+newtest; rebind1600previoussource plus explicitadditionalnewtest=1601 and exact publicationdelta. No ignore/index/staging tricks. Newtest mustbe included in source/drift/import inventory and CI selection.",
+    "ActualPG17 freshowned retainedDB, provenprovisionONLYhook/subreaper/exitfirst/PIDclosure/importaudit; collectfourcases and run unchanged existing plan corruption7cases; whole routedstore modelPG suite and pertinent lifecycle/launch parent/control/fence cases. No mocks replace realSQL/HTTP or normal policies.",
+    "If authorized, demonstrate activationfalsifier againstunsafeprojectiononly usingisolatedsourceversion andexactreceipt, restore/rebind fullcandidate beforeGreen; do not silentlychangeheldsource insideanactivephase. Parent decides whether this extra baselinebody isnecessary.",
+    "Compare unchanged exactnative DAGsync500 [False-500] realSDK/TCP/PG17 before/after underoriginal750/840/900; separateRootGO/STOP control andinstrumented, existingbodyeffects/cursors/4tasks2workers/normalepoch1/slots/closure unchanged. FreshretainedDB eachphase, no livePGobserver/admin/drop/terminate.",
+    "Reuse sealedbeforecontrol/instrumented receipts asreference onlyafter source/publicationdifference declared. Rebind newexternalrunner to1601incluntrackedtest; do not mutate old9assets. Record actualroute count histograms/SQL balancedbefore-after-error/pending0 andPIDstartticks RUSAGECPU. An unexpecteddelta or staleidentity failure blocks claim; investigate rather thanloosenoracle.",
+    "Use actualCPU/suite/control-overhead comparison tokeep/reconsider thissmallchange. No materiallatencybenefit promised. Localquota4CPU affinity0..4/16GiB differs fromCIquota4 affinity0..3/8GiB. No resourceparity/globalchange claim.",
+    "AfterRootseparateGO runrequiredreal5000gate unchanged3960/4080/4200 andcurrentheavyCI; no extrapolationfrom500. ActualCI3960.31s observerTimeoutError proximatecauseknown, underlyingbottleneckstillUNKNOWN untilmeasured evidence."
+  ]
+}

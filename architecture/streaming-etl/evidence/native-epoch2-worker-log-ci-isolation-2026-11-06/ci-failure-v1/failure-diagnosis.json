@@ -1,0 +1,119 @@
+{
+  "scope": "Read-only diagnosis of exact d906 canonical group12 failure. No tests, runtime, source, DB, cancellation or rerun actions. Cause not yet established.",
+  "head_sha": "d906ceca414baeac825ce472e0b78cd1dcae3363",
+  "comparison_head_sha": "7d99d8472c617a966c868c3bd1696a3fe4410c1a",
+  "run_id": 42134420475,
+  "failed_job_id": 127620964363,
+  "failed_job_name": "Canonical Tests: group 12/18 - python:3.12, postgres:14",
+  "failed_step": {
+    "name": "Run tests",
+    "started_at": "2026-11-06T00:26:09Z",
+    "completed_at": "2026-11-06T00:30:20Z"
+  },
+  "failed_node": "tests/test_logging.py::TestWorkerLogging::test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud",
+  "assertion": {
+    "file": "tests/test_logging.py",
+    "line": 1130,
+    "expected_matching_mock_send_records": 1,
+    "observed_matching_mock_send_records": 0,
+    "matching_message": "test-worker-log",
+    "matching_logger": "worker._logger.name"
+  },
+  "pytest_summary": {
+    "failed": 1,
+    "passed": 1067,
+    "skipped": 43,
+    "xpassed": 1,
+    "seconds": 239.18,
+    "xdist_worker": "gw0"
+  },
+  "classification": "Worker logging-to-API routing assertion; missing expected matching mock send record. The report does not identify which guard/routing state dropped or diverted it.",
+  "not_established": [
+    "Flaky classification",
+    "Preexisting failure classification",
+    "Causal link to d906 launcher correction",
+    "Actual disabled/effective logger level, handler chain, Cloud classification, worker_id or _api_log_sink state at the failing emit"
+  ],
+  "artifact": {
+    "artifact_id": 13465798140,
+    "name": "canonical-test-durations-12",
+    "bindings_path": "/tmp/native-ni013-d906-ci-watch-recovery2-20261106/generic-full-40a/artifact-13465798140/bindings.json",
+    "entries": [
+      "test-durations-12.json"
+    ],
+    "target_duration_seconds": 0.28180129700001544,
+    "incomplete_sentinel_present": false,
+    "junit_present": false,
+    "junit_scope": "Exact canonical workflow command has no --junitxml flag; upload lists only group durations JSON. No JUnit was fabricated."
+  },
+  "source_comparison": {
+    "test_and_implementation_files_byte_identical": [
+      "tests/test_logging.py",
+      "src/prefect/logging/handlers.py",
+      "src/prefect/logging/loggers.py",
+      "src/prefect/workers/base.py"
+    ],
+    "canonical_runtime_command_changed": false,
+    "workflow_diff": "Only scripts/native_runtime_diagnostics.py added to pull_request/push path filters",
+    "changed_code_paths": [
+      "src/prefect/server/models/stream_dag_launches.py",
+      "tests/server/models/test_stream_dag_launches.py",
+      "scripts/native_runtime_diagnostics.py"
+    ]
+  },
+  "read_only_static_findings": [
+    {
+      "file": "tests/test_logging.py",
+      "line": 1063,
+      "fact": "worker_handler fixture yields a WorkerAPILogHandler without attaching it; failing test does not request logger fixture that explicitly attaches and sets DEBUG."
+    },
+    {
+      "file": "src/prefect/logging/handlers.py",
+      "line": 297,
+      "fact": "WorkerAPILogHandler.emit returns early if record.worker_id is missing or determine_server_type()!=CLOUD."
+    },
+    {
+      "file": "src/prefect/client/base.py",
+      "line": 819,
+      "fact": "determine_server_type directly compares current API URL prefix to current Cloud API URL; no cache decorator or memoized server type in this function."
+    },
+    {
+      "file": "src/prefect/logging/handlers.py",
+      "line": 168,
+      "fact": "APILogHandler.emit also respects logging.to_api.enabled and record.send_to_api before prepare."
+    },
+    {
+      "file": "src/prefect/logging/handlers.py",
+      "line": 52,
+      "fact": "_api_log_sink is process-global. emit_api_log synchronously calls custom sink when non-None, otherwise APILogWorker.instance().send synchronously."
+    },
+    {
+      "file": "tests/test_logging.py",
+      "line": 557,
+      "fact": "Explicit overridden-sink test resets sink to None in finally; this static path does not itself establish a leak."
+    }
+  ],
+  "controlled_repro_plan_only": {
+    "preconditions": [
+      "Root local single5k actor stopped and frozen assets released",
+      "Separate explicit authorization for tests/source edits; none run during this diagnosis"
+    ],
+    "first_repro": "Run the exact failed node isolated under d906 with canonical dependency/profile; record outcome and state, without sleeps or async flush changes.",
+    "worker_order_repro": "Run canonical group12 selected nodes with original duration baseline and xdist settings, adding temporary external observer instrumentation that records per-worker node order and state at the exact target debug call. Existing -q log and durations JSON do not expose predecessor order.",
+    "capture_at_exact_emit": [
+      "Logger disabled flag, explicit/effective levels and logging.manager.disable",
+      "Logger ancestor propagation, handler classes/levels/filters",
+      "record.worker_id presence and send_to_api",
+      "Current logging.to_api.enabled and boolean Cloud URL-prefix match/determine_server_type result",
+      "Whether process-global _api_log_sink is None and its setter/reset call history",
+      "Whether Logger.isEnabledFor(DEBUG), WorkerAPILogHandler.emit and emit_api_log were reached"
+    ],
+    "controlled_states": [
+      "Clean configured worker logger",
+      "Scoped worker logger DEBUG disabled/level/handler variants with full restoration",
+      "None versus scoped custom process-global sink with full restoration",
+      "Valid versus nonmatching Cloud URL prefix with settings restoration"
+    ],
+    "minimal_fix_status": "No production fix justified by current capture. Choose only after a reproducible guard-state mismatch. If logger fixture isolation is confirmed, target TestWorkerLogging fixture in tests/test_logging.py and add a minimal case covering clean and contaminated pre-state with exact one-record delivery and state restoration. If sink leakage is confirmed, target the specific leaking setter caller with try/finally plus a two-test ordering regression. Do not add sleeps/aflush merely to mask missing synchronous mock send."
+  }
+}

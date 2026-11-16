@@ -1,0 +1,65 @@
+import hashlib
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+ROOT = Path('/tmp/ariadne-native-5000-diagnosis-v1')
+OUT = Path(__file__).parent
+SOURCE = OUT / 'raw'
+COPY = OUT / 'copied'
+SCRIPT = ROOT / 'scripts/native_runtime_diagnostics.py'
+
+
+def hashes(root):
+    return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file() and not p.is_symlink()}
+
+
+def main():
+    SOURCE.mkdir(mode=0o700)
+    case = SOURCE / 'case'
+    case.mkdir()
+    coordinator = {'authority_state': 'RELEASED', 'snapshot_state': 'RELEASED', 'launch_states': ['RELEASED']}
+    health = {'strict_all_errors': True, 'errors': [{'text': 'postgresql://[REDACTED]@db.invalid/data'}], 'auth_string': 'fixture_redacted_secret', 'rejected': []}
+    (case / 'coordinator-retirement.json').write_text(json.dumps(coordinator) + '\n')
+    (case / 'worker-health.json').write_text(json.dumps(health) + '\n')
+    (case / 'private.env').write_text('PRIVATE_TEST_SENTINEL=[REDACTED]\n')
+    (case / 'unrelated.json').write_text('{}\n')
+    external = OUT / 'external'
+    external.mkdir()
+    (external / 'worker-health.json').write_text('{"outside": true}\n')
+    (SOURCE / 'worker-health.json').symlink_to(external / 'worker-health.json')
+    before = hashes(SOURCE)
+    cmd = [sys.executable, str(SCRIPT), '--source', str(SOURCE), '--destination', str(COPY)]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    (OUT / 'cli.log').write_text(result.stdout + result.stderr)
+    assert result.returncode == 0
+    manifest = json.loads((COPY / 'manifest.json').read_text())
+    assert manifest['copy_count'] == 2
+    records = {row['source_relative_path']: row for row in manifest['files']}
+    assert set(records) == {'case/coordinator-retirement.json', 'case/worker-health.json'}
+    assert json.loads((COPY / 'files/case/coordinator-retirement.json').read_text()) == coordinator
+    delivered_health = json.loads((COPY / 'files/case/worker-health.json').read_text())
+    assert delivered_health['auth_string'] == '[REDACTED]'
+    assert 'fixture_redacted_user' not in json.dumps(delivered_health)
+    assert 'fixture_redacted_password' not in json.dumps(delivered_health)
+    assert 'fixture_redacted_secret' not in json.dumps(delivered_health)
+    for name, row in records.items():
+        assert row['source_sha256'] == before[name]
+        assert row['copy_sha256'] == hashlib.sha256((COPY / row['copy_relative_path']).read_bytes()).hexdigest()
+    bad = subprocess.run([sys.executable, str(SCRIPT), '--source', str(SOURCE), '--destination', str(SOURCE / 'invalid')], capture_output=True, text=True)
+    (OUT / 'rejected-inside-source.log').write_text(bad.stdout + bad.stderr)
+    assert bad.returncode != 0 and 'outside the raw runtime directory' in bad.stderr
+    assert hashes(SOURCE) == before
+    workflow = yaml.load((ROOT / '.github/workflows/python-tests.yaml').read_text(), Loader=yaml.BaseLoader)
+    for event in ('pull_request', 'push'):
+        assert 'scripts/native_runtime_diagnostics.py' in workflow['on'][event]['paths']
+    receipt = {'status': 'PASS', 'command': cmd, 'script_sha256': hashlib.sha256(SCRIPT.read_bytes()).hexdigest(), 'workflow_sha256': hashlib.sha256((ROOT / '.github/workflows/python-tests.yaml').read_bytes()).hexdigest(), 'selected_report_copies': 2, 'private_and_unrelated_files_excluded': True, 'outside_symlink_excluded': True, 'nested_secret_and_url_redaction': True, 'source_and_copy_hashes_verified': True, 'destination_inside_source_refused': True, 'raw_source_drift': [], 'both_workflow_events_trigger_on_collector': True, 'new_native_runtime_bodies': 0, 'scope': 'Actual CLI/filesystem retention checks only; historical missing reports are not backfilled and no execution acceptance is claimed.'}
+    (OUT / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    print(json.dumps(receipt))
+
+
+if __name__ == '__main__':
+    main()

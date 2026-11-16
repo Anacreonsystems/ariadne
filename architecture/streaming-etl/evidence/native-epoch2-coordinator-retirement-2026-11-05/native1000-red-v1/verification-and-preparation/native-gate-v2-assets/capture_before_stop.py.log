@@ -1,0 +1,23 @@
+import asyncio,datetime,hashlib,json,sys,time
+from pathlib import Path
+from urllib.parse import urlsplit,urlunsplit
+import asyncpg
+BASE=Path(sys.argv[1]);config=json.loads(Path('/tmp/native-ni012-runtime-test-env.json').read_text());u=urlsplit(config['admin_dsn'])
+ACTIVITY="""SELECT pid,backend_start,backend_type,state,wait_event_type,wait_event,backend_xid::text,backend_xmin::text,xact_start,query_start,pg_blocking_pids(pid) AS blocking_pids, query ILIKE '%FOR UPDATE%' AS for_update, query ILIKE '%FOR SHARE%' AS for_share, query ILIKE '%worker%' AS mentions_worker, query ILIKE '%flow_run%' AS mentions_flow_run, query ILIKE '%stream_execution_authority%' AS mentions_authority, query ILIKE '%task_run%' AS mentions_task_run, query ILIKE '%stream_partition%' AS mentions_partition FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() ORDER BY pid"""
+LOCKS="""SELECT pid,locktype,mode,granted,relation::regclass::text AS relation_name,page,tuple,transactionid::text,virtualxid,virtualtransaction,fastpath,waitstart FROM pg_locks WHERE pid=ANY($1::int[]) ORDER BY pid,locktype,relation,transactionid,mode"""
+async def capture(t):
+ name=json.loads((t/'database.json').read_text())['name']+'_tests_master';dsn=urlunsplit((u.scheme,u.netloc,'/'+name,u.query,''));rows=[];c=await asyncpg.connect(dsn,timeout=3,command_timeout=3)
+ try:
+  for _ in range(5):
+   async with c.transaction(readonly=True):
+    activity=[dict(x) for x in await c.fetch(ACTIVITY)];pids=[x['pid'] for x in activity]
+    locks=[dict(x) for x in await c.fetch(LOCKS,pids)]
+   rows.append({'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'monotonic_ns':time.monotonic_ns(),'activity':activity,'locks':locks});await asyncio.sleep(.2)
+ finally:await c.close(timeout=2)
+ return {'trial':t.name,'database':name,'samples':rows}
+async def main():
+ results=await asyncio.gather(*(capture(t) for t in sorted(BASE.glob('run-*'))),return_exceptions=True);safe=[]
+ for x in results:safe.append({'error_class':type(x).__name__} if isinstance(x,BaseException) else x)
+ receipt={'status':'LIVE_DIAGNOSTIC_BEFORE_CONTROLLED_RED_STOP','samples':safe,'application_writes':0,'sql_query_text_retained':False,'qualification':'Per-query catalog observations and flags, not one globally atomic lock cut; only both exact owned test databases.'};p=BASE/('live-locks-before-stop-'+str(time.monotonic_ns())+'.json');p.write_text(json.dumps(receipt,indent=2,sort_keys=True,default=str)+'\n');p.chmod(0o600)
+ print(json.dumps({'receipt':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'summary':[{'trial':x.get('trial'),'error_class':x.get('error_class'),'samples':len(x.get('samples',[])),'observed_blocking_chains':[{'waiter':r['pid'],'blockers':r['blocking_pids'],'wait_event':r['wait_event']} for s in x.get('samples',[]) for r in s['activity'] if r['blocking_pids']]} for x in safe]}))
+asyncio.run(main())

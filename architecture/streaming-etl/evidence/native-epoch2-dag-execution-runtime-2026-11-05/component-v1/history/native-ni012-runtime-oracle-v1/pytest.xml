@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.224" timestamp="2026-11-05T11:20:29.642807+00:00" hostname="f8abb611283c"><testcase classname="tests.test_stream_dag_authoring.TestStreamDagAuthoring" name="test_complete_fork_freezes_four_physical_tasks_without_execution" time="0.003"><failure message="AssertionError: True is not false">self = &lt;tests.test_stream_dag_authoring.TestStreamDagAuthoring testMethod=test_complete_fork_freezes_four_physical_tasks_without_execution&gt;
+
+    def test_complete_fork_freezes_four_physical_tasks_without_execution(self):
+        boundary = RecordingMetadataBoundary()
+        fork(boundary)
+        definition = boundary.definition()
+        self.assertEqual(
+            [
+                (item["operator_uid"], item["parallelism"])
+                for item in definition["operators"]
+            ],
+            [("A", 1), ("B", 1), ("C", 2)],
+        )
+        self.assertIs(boundary.seal(), boundary.reply)
+        self.assertIs(boundary.seal(), boundary.reply)
+        self.assertEqual(len(boundary.snapshots), 1)
+&gt;       self.assertFalse(hasattr(boundary.reply, "start"))
+E       AssertionError: True is not false
+
+tests/test_stream_dag_authoring.py:243: AssertionError</failure></testcase></testsuite></testsuites>

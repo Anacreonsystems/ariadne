@@ -17,6 +17,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from pydantic import ValidationError
 
+from prefect._internal.stream_dag_execution import current_dag_registry
 from prefect._internal.stream_execution import get_stream_execution
 from prefect._internal.stream_partitioned import (
     bind_partition_parameters,
@@ -391,6 +392,10 @@ class StreamGraphAuthoring:
             raise StreamProtocolError(
                 "A seal retry belongs to another Flow declaration"
             )
+        registry = current_dag_registry()
+        registry.register_pending(
+            frozen_request.operation_id, self._seal_request, lambda: self.seal()
+        )
         client = get_client(sync_client=True)
         if str(client.api_url).rstrip("/") != execution.api_url:
             raise StreamProtocolError("DAG seal client differs from its Flow authority")
@@ -439,9 +444,11 @@ class StreamGraphAuthoring:
             raise StreamProtocolError(
                 "Sealed metadata differs from the DAG declaration"
             )
-        return SealedStreamGraph(
+        sealed = SealedStreamGraph(
             graph_revision_id=plan.id, graph_digest=plan.graph_digest
         )
+        registry.register(frozen_request.operation_id, sealed)
+        return sealed
 
     @staticmethod
     def _wire_definition(

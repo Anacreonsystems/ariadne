@@ -1,0 +1,457 @@
+"""ONE Root-authorized seven-test PG17 acceptance with owned child reaping."""
+
+from __future__ import annotations
+
+import asyncio
+import ast
+import ctypes
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import sys
+import time
+from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
+import xml.etree.ElementTree as ET
+
+import asyncpg
+
+
+ROOT = Path("/workspace/ariadne")
+BASE = Path(__file__).resolve().parent
+SELECTOR = Path("/tmp/native-ni012-runtime-test-env.json")
+EXPECTED_HEAD = "d906ceca414baeac825ce472e0b78cd1dcae3363"
+EXPECTED_TEST_SHA = "b8fb7f17a015147cf4032e74065308027af3a6393cab55cc9653cff1ca02d246"
+EXPECTED_CLI_SHA = "1aca0467539ddeb57dbf7b1fb1dad01ad5400f7e0e8b6ec9a424f049dba5261a"
+PREDECESSOR = "tests/cli/test_config.py::test_view_prefers_canonical_dot_env_value_over_alias"
+WORKER_CLASS = "tests/test_logging.py::TestWorkerLogging"
+TARGET = WORKER_CLASS + "::test_worker_logger_sends_log_to_api_worker_when_connected_to_cloud"
+_active_process = None
+_active_identity = None
+_active_identities: dict[int, str] = {}
+_controller_start_ticks = None
+_timeout_sigint_attempted = False
+
+
+def sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def write(path: Path, value: object) -> None:
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def source_snapshot() -> dict[str, str]:
+    paths = subprocess.check_output(
+        ["git", "ls-files", "src/prefect", "tests", "pyproject.toml", "uv.lock", ".github/workflows", "scripts"],
+        cwd=ROOT,
+        text=True,
+    ).splitlines()
+    paths = set(paths) | {
+        str(path.relative_to(ROOT)) for path in (ROOT / "src/prefect").rglob("*.py")
+    }
+    return {name: sha(ROOT / name) for name in sorted(paths) if (ROOT / name).is_file()}
+
+
+def proc_state(pid: int):
+    try:
+        fields = Path("/proc", str(pid), "stat").read_text().rsplit(")", 1)[1].split()
+    except FileNotFoundError:
+        return None
+    return {"state": fields[0], "parent": int(fields[1]), "pgid": int(fields[2]), "start_ticks": fields[19]}
+
+
+def collect_group(pgid: int, identities: dict[int, str]) -> None:
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit():
+            state = proc_state(int(entry.name))
+            if state is not None and state["pgid"] == pgid:
+                identities[int(entry.name)] = state["start_ticks"]
+
+
+def enable_owned_subreaper() -> dict[str, object]:
+    global _controller_start_ticks
+    libc = ctypes.CDLL(None, use_errno=True)
+    enabled = ctypes.c_int(0)
+    if libc.prctl(36, 1, 0, 0, 0) != 0:
+        raise RuntimeError("Own PR_SET_CHILD_SUBREAPER failed; no DB/Popen allowed")
+    if libc.prctl(37, ctypes.byref(enabled), 0, 0, 0) != 0 or enabled.value != 1:
+        raise RuntimeError("Own PR_GET_CHILD_SUBREAPER verification failed")
+    own = proc_state(os.getpid())
+    parent = proc_state(os.getppid())
+    assert own is not None and parent is not None
+    _controller_start_ticks = own["start_ticks"]
+    return {
+        "runner_pid": os.getpid(), "runner_start_ticks": own["start_ticks"],
+        "parent_pid": os.getppid(), "parent_start_ticks": parent["start_ticks"],
+        "pr_set_child_subreaper": 1, "pr_get_child_subreaper": enabled.value,
+        "scope": "this runner's future descendants only",
+        "pid1_or_prior_orphan_modified": False,
+        "runner_source_sha256": sha(Path(__file__)),
+    }
+
+
+def owned_group_members(pgid: int, identities: dict[int, str]) -> list[int]:
+    collect_group(pgid, identities)
+    members = []
+    for pid, ticks in identities.items():
+        state = proc_state(pid)
+        if (
+            state is not None and state["start_ticks"] == ticks
+            and state["pgid"] == pgid
+            and int(ticks) >= int(_controller_start_ticks)
+        ):
+            members.append(pid)
+    return members
+
+
+def exact_owned_pytest_python(pgid: int, identities: dict[int, str]):
+    candidates = []
+    for pid in owned_group_members(pgid, identities):
+        try:
+            argv = Path("/proc", str(pid), "cmdline").read_bytes().split(b"\0")
+        except FileNotFoundError:
+            continue
+        # Read only owned child argv in-process. Never print or serialize values.
+        if len(argv) >= 3 and Path(os.fsdecode(argv[0])).name.startswith("python") and argv[1:3] == [b"-m", b"pytest"]:
+            state = proc_state(pid)
+            if state is not None and state["start_ticks"] == identities[pid]:
+                candidates.append({"pid": pid, "start_ticks": identities[pid]})
+    if len(candidates) != 1:
+        return None
+    return candidates[0]
+
+
+def bounded_stop(process, pgid: int, identities: dict[int, str]) -> list[dict[str, object]]:
+    global _timeout_sigint_attempted
+    events = []
+    target = exact_owned_pytest_python(pgid, identities)
+    if target is not None:
+        state = proc_state(target["pid"])
+        if state is not None and state["start_ticks"] == target["start_ticks"]:
+            os.kill(target["pid"], signal.SIGINT)
+            _timeout_sigint_attempted = True
+            events.append({"signal": "SIGINT", "scope": "exact pytest Python identity", **target})
+            deadline = time.monotonic() + 20
+            while process.poll() is None and time.monotonic() < deadline:
+                collect_group(pgid, identities)
+                time.sleep(0.1)
+    else:
+        events.append({"signal": None, "reason": "exact owned pytest Python identity unavailable"})
+    if process.poll() is None and owned_group_members(pgid, identities):
+        os.killpg(pgid, signal.SIGTERM)
+        events.append({"signal": "SIGTERM", "scope": "validated own process group", "pgid": pgid})
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            if owned_group_members(pgid, identities):
+                os.killpg(pgid, signal.SIGKILL)
+                events.append({"signal": "SIGKILL", "scope": "validated own process group", "pgid": pgid})
+    return events
+
+
+def reap_owned_adopted(pgid: int, identities: dict[int, str], timeout: float = 5) -> dict[str, object]:
+    reaped, unknown = [], []
+    deadline = time.monotonic() + timeout
+    children_file = Path("/proc", str(os.getpid()), "task", str(os.getpid()), "children")
+    remaining = []
+    while True:
+        children = [int(value) for value in children_file.read_text().split()]
+        if not children:
+            remaining = []
+            break
+        remaining = children
+        for pid in children:
+            state = proc_state(pid)
+            if state is None:
+                continue
+            if state["parent"] != os.getpid() or int(state["start_ticks"]) < int(_controller_start_ticks) or state["pgid"] != pgid:
+                unknown.append({"pid": pid, "start_ticks": state["start_ticks"], "reason": "not a validated new owned group child"})
+                continue
+            if pid in identities and identities[pid] != state["start_ticks"]:
+                unknown.append({"pid": pid, "reason": "PID start identity changed"})
+                continue
+            identities[pid] = state["start_ticks"]
+            try:
+                waited_pid, status = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                continue
+            if waited_pid:
+                reaped.append({"pid": pid, "start_ticks": state["start_ticks"], "waitpid_options": "WNOHANG", "wait_status": status, "exit_code": os.waitstatus_to_exitcode(status)})
+        if unknown or time.monotonic() >= deadline:
+            remaining = [int(value) for value in children_file.read_text().split()]
+            break
+        time.sleep(0.05)
+    return {"adopted_reaped": reaped, "unvalidated_children": unknown, "remaining_owned_children": remaining, "prior_pid1_orphan_touched": False}
+
+
+async def create_owned(config, name: str) -> dict[str, object]:
+    connection = await asyncpg.connect(config["admin_dsn"], timeout=3, command_timeout=5)
+    try:
+        version = int(await connection.fetchval("SHOW server_version_num"))
+        assert version // 10000 == 17
+        assert re.fullmatch("[a-z][a-z0-9_]{1,47}", name)
+        assert await connection.fetchval("SELECT 1 FROM pg_database WHERE datname=$1", name) is None
+        role = config["database_role"].replace('"', '""')
+        await connection.execute('CREATE DATABASE "' + name + '" OWNER "' + role + '"')
+        return {"database": name, "server_major": 17, "created_fresh": True, "existing_database_reused": False}
+    finally:
+        await connection.close()
+
+
+async def owned_sessions(config, name: str) -> dict[str, object]:
+    connection = await asyncpg.connect(config["admin_dsn"], timeout=3, command_timeout=5)
+    try:
+        sessions = [dict(row) for row in await connection.fetch(
+            "SELECT pid,state FROM pg_stat_activity WHERE datname=$1", name
+        )]
+        remaining = bool(await connection.fetchval("SELECT 1 FROM pg_database WHERE datname=$1", name))
+        return {"database": name, "sessions": sessions, "retained": remaining, "drop_requested": False, "force_used": False}
+    finally:
+        await connection.close()
+
+
+def sanitize(value: str, config, sqlalchemy_url: str) -> str:
+    for private in (config["admin_dsn"], sqlalchemy_url):
+        value = value.replace(private, "[redacted-owned-test-dsn]")
+    return re.sub(
+        r"(?i)(postgres(?:ql)?(?:\+asyncpg)?://)[^\s\'\"<>]+",
+        r"\1[redacted-owned-test-dsn]",
+        value,
+    )
+
+
+def main() -> None:
+    global _active_process, _active_identity, _active_identities
+    os.umask(0o077)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    assert head == EXPECTED_HEAD
+    assert sha(ROOT / "tests/test_logging.py") == EXPECTED_TEST_SHA
+    assert sha(ROOT / "tests/cli/test_config.py") == EXPECTED_CLI_SHA
+    before = source_snapshot()
+    assert "src/prefect/_build_info.py" in before
+    assert "src/prefect/_internal/analytics/_config.py" in before
+    conftest_source = (ROOT / "tests/conftest.py").read_text()
+    provisioners = [
+        node for node in ast.parse(conftest_source).body
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "generate_test_database_connection_url"
+    ]
+    assert len(provisioners) == 1
+    provisioner = provisioners[0]
+    assert len(provisioner.decorator_list) == 1
+    assert ast.unparse(provisioner.decorator_list[0]) == "pytest.fixture(scope='session', autouse=True)"
+    assert [argument.arg for argument in provisioner.args.args] == ["worker_id"]
+    trial = BASE / ("trial-" + uuid4().hex[:8])
+    trial.mkdir(mode=0o700)
+    for name in ("startup", "audit", "temp"):
+        (trial / name).mkdir(mode=0o700)
+    write(trial / "source-before.json", before)
+    lines = conftest_source.splitlines(keepends=True)
+    original_fixture = "".join(lines[provisioner.decorator_list[0].lineno - 1:provisioner.end_lineno])
+    write(trial / "original-provisioning-binding.json", {
+        "path": "tests/conftest.py",
+        "file_sha256": before["tests/conftest.py"],
+        "fixture_source_sha256": hashlib.sha256(original_fixture.encode()).hexdigest(),
+        "scope": "session", "argname": provisioner.name,
+        "worker_id_expected": "master", "original_body_must_not_execute": True,
+    })
+    assets = {name: sha(BASE / name) for name in ("runner.py", "logging_state_plugin.py", "startup-template.py.txt")}
+    write(trial / "external-assets.json", assets)
+    subreaper_proof = enable_owned_subreaper()
+    write(trial / "subreaper-proof.json", subreaper_proof)
+    site = (BASE / "startup-template.py.txt").read_text().replace("SOURCE_ROOT", repr(str(ROOT / "src/prefect") + "/")).replace("TEST_ROOT", repr(str(ROOT / "tests") + "/")).replace("AUDIT_DIRECTORY", repr(str(trial / "audit")))
+    (trial / "startup/sitecustomize.py").write_text(site)
+
+    # Private selector values are read in-process only and never serialized.
+    config = json.loads(SELECTOR.read_text())
+    parsed = urlsplit(config["admin_dsn"])
+    assert parsed.hostname in {"localhost", "127.0.0.1", "::1"} and parsed.port == 55436
+    database = config["database_prefix"] + "_ws_" + uuid4().hex[:8]
+    creation = asyncio.run(create_owned(config, database))
+    write(trial / "database-creation.json", creation)
+    sqlalchemy_url = urlunsplit((config["sqlalchemy_scheme"], parsed.netloc, "/" + database, parsed.query, ""))
+    environment = os.environ.copy()
+    for key in list(environment):
+        if key.startswith("PREFECT_"):
+            environment.pop(key)
+    environment.update(
+        {
+            "PREFECT_SERVER_DATABASE_CONNECTION_URL": sqlalchemy_url,
+            "PREFECT_PLUGINS_ENABLED": "false",
+            "DO_NOT_TRACK": "1",
+            "PATH": str(ROOT / ".venv/bin") + os.pathsep + environment.get("PATH", ""),
+            "UV_NO_SYNC": "1",
+            "UV_PROJECT_ENVIRONMENT": str(ROOT / ".venv"),
+            "PYTHONPYCACHEPREFIX": str(trial / "pycache"),
+            "PYTHONPATH": os.pathsep.join((str(trial / "startup"), str(BASE), str(ROOT / "src"), str(ROOT))),
+            "TMPDIR": str(trial / "temp"),
+            "WORKER_LOGGING_DIAG_TRIAL": str(trial),
+            "WORKER_LOGGING_DIAG_DBNAME": database,
+        }
+    )
+    command = [
+        "uv", "run", "--no-sync", "--offline", "python", "-m", "pytest",
+        PREDECESSOR, WORKER_CLASS, "-n0", "-q", "-o", "addopts=", "--timeout=120",
+        "-p", "logging_state_plugin", "-p", "no:cacheprovider",
+        "--junitxml=" + str(trial / "pytest.private.xml"),
+        "--basetemp=" + str(trial / "pytest"),
+    ]
+    write(trial / "command.json", {
+        "command": command, "cwd": str(ROOT), "head": head,
+        "database": database, "private_selector_path": str(SELECTOR),
+        "budget_seconds": {"per_test": 120, "graceful_process_guard": 140, "whole_actor": 180},
+        "candidate_patch": "three scoped DEBUG contexts plus negative record assertions only",
+        "other_existing_test_bodies_unchanged": True, "provisioning_only_override": True,
+        "drop_or_terminate_backend_allowed": False,
+        "proxy_ca_preserved": True,
+    })
+    identities: dict[int, str] = {}
+    _active_identities = identities
+    timed_out = False
+    stop_events = []
+    with (trial / "pytest.private.log").open("xb") as output:
+        process = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+        state = proc_state(process.pid)
+        assert state is not None
+        pgid = os.getpgid(process.pid)
+        identities[process.pid] = state["start_ticks"]
+        _active_process = process
+        _active_identity = {"pid": process.pid, "start_ticks": state["start_ticks"], "pgid": pgid}
+        write(trial / "process.json", {"pytest_pid": process.pid, "pytest_start_ticks": state["start_ticks"], "pgid": pgid, "subreaper_verified_before_popen": True, "runner_pid": os.getpid(), "runner_start_ticks": _controller_start_ticks})
+        print(json.dumps({"status": "SELECTED_SEVEN_TEST_ACCEPTANCE_RUNNING", "trial": str(trial), "pytest_pid": process.pid, "pytest_start_ticks": state["start_ticks"], "pgid": pgid, "runner_pid": os.getpid(), "subreaper_verified": True}), flush=True)
+        started = time.monotonic()
+        while process.poll() is None:
+            collect_group(pgid, identities)
+            if time.monotonic() - started > 140:
+                timed_out = True
+                stop_events = bounded_stop(process, pgid, identities)
+                break
+            time.sleep(0.5)
+        code = process.wait(timeout=3)
+        direct_wait = {"pid": process.pid, "start_ticks": identities[process.pid], "popen_wait_completed": True, "returncode": code}
+        reaping = reap_owned_adopted(pgid, identities)
+        write(trial / "reaping-proof.json", {"direct_child_wait_first": direct_wait, **reaping, "timeout_stop_events": stop_events})
+        _active_process = None
+    (trial / "exit").write_text(str(code) + "\n")
+    after = source_snapshot()
+    write(trial / "source-after.json", after)
+    drift = sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name))
+    if subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip() != head:
+        drift.append("GIT_HEAD")
+    if assets != {name: sha(BASE / name) for name in assets}:
+        drift.append("EXTERNAL_ASSETS")
+    mismatches = []
+    audit_rows = 0
+    for path in (trial / "audit").glob("*.jsonl"):
+        for line in path.read_text().splitlines():
+            row = json.loads(line)
+            audit_rows += 1
+            identities[row["pid"]] = str(row["start_ticks"])
+            try:
+                relative = str(Path(row["path"]).relative_to(ROOT))
+            except ValueError:
+                mismatches.append({"reason": "foreign Prefect import", "path": row["path"]})
+                continue
+            if relative not in before or before[relative] != row["source_sha256"]:
+                mismatches.append({"reason": "import source bytes differ", "path": relative})
+    if not audit_rows:
+        mismatches.append({"reason": "no source import observations"})
+    live, zombies = [], []
+    for pid, ticks in identities.items():
+        state = proc_state(pid)
+        if state is not None and state["start_ticks"] == ticks:
+            (zombies if state["state"] == "Z" else live).append(pid)
+    sessions = asyncio.run(owned_sessions(config, database))
+    write(trial / "database-closure.json", sessions)
+    for private, public in (("pytest.private.log", "pytest.log"), ("pytest.private.xml", "pytest.xml")):
+        path = trial / private
+        if path.exists():
+            os.chmod(path, 0o600)
+            (trial / public).write_text(sanitize(path.read_text(errors="replace"), config, sqlalchemy_url))
+    junit = {"tests": None, "failures": [], "errors": []}
+    if (trial / "pytest.xml").exists():
+        tree = ET.parse(trial / "pytest.xml")
+        cases = list(tree.iter("testcase"))
+        junit["tests"] = len(cases)
+        for case in cases:
+            name = case.attrib.get("classname", "") + "::" + case.attrib.get("name", "")
+            if case.find("failure") is not None:
+                junit["failures"].append(name)
+            if case.find("error") is not None:
+                junit["errors"].append(name)
+    closed = not live and not zombies and not sessions["sessions"] and not reaping["remaining_owned_children"] and not reaping["unvalidated_children"]
+    proof_path = trial / "provisioning-proof.json"
+    provisioning_proof = json.loads(proof_path.read_text()) if proof_path.exists() else None
+    provisioning_valid = bool(
+        provisioning_proof
+        and provisioning_proof["hook_invocations"] == 1
+        and provisioning_proof["original_provisioning_body_calls"] == 0
+        and provisioning_proof["guard_callback_stable_at_sessionfinish"] is True
+        and provisioning_proof["original_fixture_sha256"] == hashlib.sha256(original_fixture.encode()).hexdigest()
+        and provisioning_proof["override_asset_sha256"] == assets["logging_state_plugin.py"]
+    )
+    collection = json.loads((trial / "collection.json").read_text()) if (trial / "collection.json").exists() else None
+    candidate_pass = bool(
+        code == 0 and not timed_out and not drift and not mismatches
+        and closed and provisioning_valid and collection
+        and junit["tests"] == collection["count"] == 7
+        and not junit["failures"] and not junit["errors"]
+    )
+    receipt = {
+        "status": "SELECTED_SEVEN_TEST_ACCEPTANCE_PASS" if candidate_pass else "SELECTED_ACCEPTANCE_OR_HARNESS_RED",
+        "head": head, "pytest_exit": code, "timed_out": timed_out,
+        "junit": junit, "source_drift": drift, "import_mismatches": mismatches,
+        "source_files": len(before), "audit_rows": audit_rows,
+        "observed_pid_start_pairs": identities,
+        "remaining_same_identity_live": live, "remaining_same_identity_zombies": zombies,
+        "database": sessions, "runtime_STOPPED": closed,
+        "provisioning_proof": provisioning_proof,
+        "provisioning_proof_valid": provisioning_valid,
+        "candidate_applied": True, "retry": False,
+        "collection_count": collection["count"] if collection else None,
+        "source_snapshot_includes_generated_python": True,
+        "subreaper_proof": subreaper_proof,
+        "reaping_proof": {"direct_child_wait_first": direct_wait, **reaping},
+        "timeout_stop_events": stop_events,
+        "known_prior_orphan": {"pid": 384983, "start_ticks": "14778279", "status": "prior dead unreaped operational artifact; excluded from this new actor; not touched"},
+        "whole_module_151_previous_attempt": "abandoned INCONCLUSIVE; not passed",
+        "historical_ci_gw0_order_proven": False,
+    }
+    write(trial / "receipt.json", receipt)
+    print(json.dumps({"status": receipt["status"], "trial": str(trial), "pytest_exit": code, "junit": junit, "source_drift": drift, "import_mismatches": mismatches, "runtime_STOPPED": closed, "live": live, "zombies": zombies, "remaining_sessions": len(sessions["sessions"]), "fresh_database_retained": sessions["retained"]}), flush=True)
+    raise SystemExit(0 if candidate_pass else (code or 90))
+
+
+if __name__ == "__main__":
+    def outer_deadline(signum, frame):
+        global _timeout_sigint_attempted
+        if _active_process is not None and _active_process.poll() is None:
+            if not _timeout_sigint_attempted:
+                target = exact_owned_pytest_python(_active_identity["pgid"], _active_identities)
+                if target is not None:
+                    os.kill(target["pid"], signal.SIGINT)
+                    _timeout_sigint_attempted = True
+            if owned_group_members(_active_identity["pgid"], _active_identities):
+                os.killpg(_active_identity["pgid"], signal.SIGKILL)
+                try:
+                    _active_process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    pass
+                reap_owned_adopted(_active_identity["pgid"], _active_identities, timeout=0.2)
+        raise TimeoutError("Diagnostic whole-actor budget exceeded 180 seconds")
+
+    signal.signal(signal.SIGALRM, outer_deadline)
+    signal.alarm(180)
+    lock = os.open(BASE / "one-runtime.lock", os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        main()
+    finally:
+        signal.alarm(0)
+        os.close(lock)

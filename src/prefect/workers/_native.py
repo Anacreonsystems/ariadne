@@ -12,6 +12,7 @@ from uuid import NAMESPACE_URL, uuid5
 import anyio
 
 from prefect._internal.stream_execution import stream_execution_context
+from prefect.client.orchestration._streams.client import StreamRequestError
 from prefect.flows import load_flow_from_flow_run
 from prefect.runner._flow_run_executor import FlowRunExecutorContext
 from prefect.runner._hook_runner import HookRunner
@@ -196,11 +197,26 @@ async def recover_native_process_runs(worker: Any) -> list[Any]:
         raise StreamProtocolError("Native recovery requires a registered worker")
     # Host identity is checked again immediately before any signal is sent.
     host, _, _ = linux_process_identity(os.getpid())
-    candidates = await worker.client.read_native_stream_recovery_candidates(
-        worker_id=worker.backend_id,
-        work_pool_id=worker.work_pool.id,
-        host_id=host,
-    )
+    try:
+        candidates = await worker.client.read_native_stream_recovery_candidates(
+            worker_id=worker.backend_id,
+            work_pool_id=worker.work_pool.id,
+            host_id=host,
+        )
+    except StreamRequestError as error:
+        status_code: int | None = getattr(error, "status_code", None)
+        if (
+            error.code != "HTTP_ERROR"
+            or status_code is None
+            or not 500 <= status_code < 600
+        ):
+            raise
+        worker._logger.warning(
+            "Native recovery discovery is temporarily unavailable (HTTP %s); "
+            "retrying on the next poll",
+            status_code,
+        )
+        return []
     submitted: list[Any] = []
     for candidate in candidates:
         if candidate.flow_run_id in worker._native_active_run_ids:

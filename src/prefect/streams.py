@@ -19,6 +19,7 @@ from typing import (
     Any,
     Generic,
     Literal,
+    NoReturn,
     Protocol,
     TypeVar,
     cast,
@@ -30,10 +31,12 @@ from pydantic import JsonValue
 
 from prefect._internal.stream_routing import KeyEncodingError, encode_tagged_key_v1
 from prefect.exceptions import PrefectException
+from prefect.utilities.asyncutils import sync_compatible
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from prefect.client.schemas.stream_dag_executions import StreamDAGExecution
     from prefect.futures import PrefectFuture
     from prefect.tasks import Task
 
@@ -56,10 +59,9 @@ class NativeStreamFlowConfig:
     Use with `@flow(version="v1", retries=2, streaming=NativeStreamFlowConfig())`.
     The bounded and fixed-P2 profiles execute on PostgreSQL 17 and Linux
     ProcessWorkers. The bounded profile supports a finite preparation task,
-    linear streaming and a finite summary. The DAG profile currently supports
-    a metadata preview with declaration and explicit sealing. A usable DAG
-    execution lifecycle is not yet available; terminal Flow transitions are
-    refused with `DAG_NOT_STARTED`.
+    linear streaming and a finite summary. A DAG is explicitly declared,
+    sealed, started and awaited through StreamGraph. Its current Flow attempt
+    must have no remaining automatic retry capacity at seal and start.
     A DAG requires `partition_count=None` because StreamGraph operators declare
     their own parallelism. Task code owns idempotence of external effects and
     publishes references to large objects. Process recovery preserves accepted
@@ -386,11 +388,11 @@ class StreamInput:
 
 @dataclass(frozen=True, kw_only=True)
 class SealedStreamGraph:
-    """Immutable metadata identity of a graph sealed as one declaration.
+    """One immutable graph declaration, explicitly started or abandoned.
 
-    This preview metadata handle provides no start, wait or implicit finite-task
-    dependency. Sealing alone does not let its DAG Flow complete: terminal Flow
-    transitions are refused with `DAG_NOT_STARTED`.
+    The trusted Flow execution scope owns its server operations. This handle
+    contains neither an API client nor credentials and is not a finite Task
+    dependency. Starting waits for every child bootstrap and graph activation.
     """
 
     graph_revision_id: UUID
@@ -408,6 +410,66 @@ class SealedStreamGraph:
     @property
     def profile(self) -> Literal["partitioned-dag-v1"]:
         return "partitioned-dag-v1"
+
+    @sync_compatible
+    async def start(self, *, timeout: float | None = None) -> RunningStreamGraph:
+        """Start this sealed graph and return its activated execution handle."""
+        # The lifecycle backend imports these public handle types.
+        from prefect._internal.stream_dag_execution import start_stream_graph
+
+        return await start_stream_graph(self, timeout=timeout)
+
+    @sync_compatible
+    async def abort_preview(self) -> StreamDAGExecution:
+        """Release an unadmitted preview without cancelling its enclosing Flow."""
+        from prefect._internal.stream_dag_execution import abort_stream_graph_preview
+
+        return await abort_stream_graph_preview(self)
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunningStreamGraph:
+    """Activated DAG identity with explicit observation and cancellation.
+
+    Results are bounded metadata. Reading a finite collection or using the
+    handle as an ordinary Task dependency is unsupported in this profile.
+    """
+
+    graph_revision_id: UUID
+    graph_digest: str
+    routing_digest: str
+
+    def __post_init__(self) -> None:
+        if type(self.graph_revision_id) is not UUID:
+            raise StreamProtocolError("A running graph requires its UUID identity")
+        if any(
+            type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None
+            for value in (self.graph_digest, self.routing_digest)
+        ):
+            raise StreamProtocolError("A running graph requires canonical digests")
+
+    @property
+    def profile(self) -> Literal["partitioned-dag-v1"]:
+        return "partitioned-dag-v1"
+
+    @sync_compatible
+    async def wait(self, timeout: float | None = None) -> StreamDAGExecution:
+        """Observe verified terminal cleanup; a timeout does not cancel work."""
+        from prefect._internal.stream_dag_execution import wait_stream_graph
+
+        return await wait_stream_graph(self, timeout=timeout)
+
+    @sync_compatible
+    async def cancel(
+        self, *, reason: str = "Cancellation requested for stream graph"
+    ) -> NoReturn:
+        """Cancel, await exact cleanup, then propagate the Flow cancellation."""
+        from prefect._internal.stream_dag_execution import cancel_stream_graph
+
+        await cancel_stream_graph(self, reason=reason)
+        raise StreamProtocolError(
+            "Graph cancellation returned without a cancellation signal"
+        )
 
 
 class _StreamGraphAuthoring(Protocol):
@@ -436,11 +498,10 @@ class _StreamGraphAuthoring(Protocol):
 class StreamGraph:
     """Explicitly declare and seal a finite graph of ordinary stream Tasks.
 
-    This is a metadata preview, with no usable DAG execution lifecycle yet.
     Construction, declaration and context exit perform no HTTP request. Call
-    `seal()` explicitly after the complete graph has been declared; terminal DAG
-    Flow transitions are refused with `DAG_NOT_STARTED`. The existing fixed-P2
-    `Task.submit_partitioned_stream` API keeps its separate contract.
+    `seal()` explicitly after the complete graph has been declared, then start
+    and await the returned graph through its public handles. The existing
+    fixed-P2 `Task.submit_partitioned_stream` API keeps its separate contract.
     """
 
     def __init__(self) -> None:

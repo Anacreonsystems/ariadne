@@ -1,0 +1,154 @@
+import ast,difflib,hashlib,json
+from pathlib import Path
+r=Path('/tmp/ariadne-native-5000-diagnosis-v1');b=Path(__file__).resolve().parent
+old=(r/'src/prefect/server/models/stream_routes.py').read_text()
+start=old.index('    async def resolve_reference(');end=old.index('    async def read_consumer(',start)
+segment=old[start:end]
+a='''        record = await self.session.scalar(
+            sa.select(self.db.StreamRecord)
+            .where(
+                self.db.StreamRecord.stream_id == input_stream_id,
+                self.db.StreamRecord.sequence == sequence,
+            )
+            .execution_options(populate_existing=True)
+        )
+        if record is None:
+            raise NativeStreamError(
+                "ROUTE_HORIZON_EXPIRED", "The input reference is no longer retained"
+            )
+        return await self._resolve_record(record)
+'''
+z='''        reference = aliased(self.db.StreamRecord, name="reference")
+        payload = aliased(self.db.StreamRecord, name="payload")
+        edge_partition = self.db.StreamGraphEdgePartition
+        edge = self.db.StreamGraphEdge
+        port = self.db.StreamGraphPort
+        producer = self.db.StreamPhysicalSubtask
+        statement = (
+            sa.select(
+                reference,
+                payload,
+                self.db.StreamRouteReceipt,
+                edge_partition.id.label("edge_partition_id"),
+                edge_partition.graph_revision_id.label("graph_revision_id"),
+                edge_partition.target_subtask_id.label("target_subtask_id"),
+                edge_partition.stream_id.label("stream_id"),
+                edge_partition.edge_id.label("edge_id"),
+                edge.id.label("matched_edge_id"),
+                port.id.label("producer_port_id"),
+                producer.id.label("producer_subtask_id"),
+            )
+            .select_from(reference)
+            .outerjoin(edge_partition, edge_partition.id == reference.edge_partition_id)
+            .outerjoin(
+                self.db.StreamRouteReceipt,
+                self.db.StreamRouteReceipt.id == reference.route_receipt_id,
+            )
+            .outerjoin(payload, payload.id == reference.payload_record_id)
+            .outerjoin(edge, edge.id == edge_partition.edge_id)
+            .outerjoin(port, port.id == edge.producer_port_id)
+            .outerjoin(
+                producer,
+                sa.and_(
+                    producer.output_stream_id == payload.stream_id,
+                    producer.operator_run_id == port.operator_run_id,
+                    producer.graph_revision_id == self.authorization.graph.id,
+                ),
+            )
+            .where(
+                reference.stream_id == input_stream_id,
+                reference.sequence == sequence,
+            )
+            .execution_options(populate_existing=True)
+        )
+        row = (await self.session.execute(statement)).one_or_none()
+        if row is None:
+            raise NativeStreamError(
+                "ROUTE_HORIZON_EXPIRED", "The input reference is no longer retained"
+            )
+        record, payload_record, receipt = row[:3]
+        facts = _ReferenceTopologyFacts(
+            edge_partition_id=row.edge_partition_id,
+            graph_revision_id=row.graph_revision_id,
+            target_subtask_id=row.target_subtask_id,
+            stream_id=row.stream_id,
+            edge_id=row.edge_id,
+            matched_edge_id=row.matched_edge_id,
+            producer_port_id=row.producer_port_id,
+            producer_subtask_id=row.producer_subtask_id,
+        )
+        return await self._resolve_record(record, payload_record, receipt, facts)
+'''
+assert segment.count(a)==1;segment=segment.replace(a,z)
+a='''        self, record: orm_models.StreamRecord
+    ) -> ResolvedDAGValue:
+        graph_id = self.authorization.graph.id
+        edge_partition = await self.session.scalar(
+            sa.select(self.db.StreamGraphEdgePartition).where(
+                self.db.StreamGraphEdgePartition.id == record.edge_partition_id
+            )
+        )
+'''
+z='''        self,
+        record: orm_models.StreamRecord,
+        payload: orm_models.StreamRecord | None,
+        receipt: orm_models.StreamRouteReceipt | None,
+        facts: _ReferenceTopologyFacts,
+    ) -> ResolvedDAGValue:
+        graph_id = self.authorization.graph.id
+''';assert segment.count(a)==1;segment=segment.replace(a,z)
+for a,z in [('or edge_partition is None','or facts.edge_partition_id is None'),('edge_partition.graph_revision_id != graph_id','facts.graph_revision_id != graph_id'),('edge_partition.target_subtask_id != self.authorization.subtask.id','facts.target_subtask_id != self.authorization.subtask.id'),('edge_partition.stream_id != record.stream_id','facts.stream_id != record.stream_id'),('item.edge_id == edge_partition.edge_id','item.edge_id == facts.edge_id'),('edge_partition_id=edge_partition.id','edge_partition_id=facts.edge_partition_id')]:
+ assert segment.count(a)==1,(a,segment.count(a));segment=segment.replace(a,z)
+for a in ['''        receipt = await self.session.get(
+            self.db.StreamRouteReceipt, record.route_receipt_id, populate_existing=True
+        )
+''','''        payload = await self.session.get(
+            self.db.StreamRecord, record.payload_record_id, populate_existing=True
+        )
+''']:
+ assert segment.count(a)==1;segment=segment.replace(a,'')
+a='''        edge = await self.session.get(self.db.StreamGraphEdge, edge_partition.edge_id)
+        assert edge is not None
+        producer_port = await self.session.get(
+            self.db.StreamGraphPort, edge.producer_port_id
+        )
+        assert producer_port is not None
+        actual_producer = await self.session.scalar(
+            sa.select(self.db.StreamPhysicalSubtask).where(
+                self.db.StreamPhysicalSubtask.output_stream_id == payload.stream_id,
+                self.db.StreamPhysicalSubtask.operator_run_id
+                == producer_port.operator_run_id,
+                self.db.StreamPhysicalSubtask.graph_revision_id == graph_id,
+            )
+        )
+'''
+assert segment.count(a)==1;segment=segment.replace(a,'''        assert facts.matched_edge_id is not None
+        assert facts.producer_port_id is not None
+''')
+assert segment.count('or actual_producer is None')==1;segment=segment.replace('or actual_producer is None','or facts.producer_subtask_id is None')
+new=old[:start]+segment+old[end:]
+new=new.replace('from sqlalchemy.ext.asyncio import AsyncSession','from sqlalchemy.ext.asyncio import AsyncSession\nfrom sqlalchemy.orm import aliased',1)
+facts='''
+
+@dataclass(frozen=True)
+class _ReferenceTopologyFacts:
+    edge_partition_id: UUID | None
+    graph_revision_id: UUID | None
+    target_subtask_id: UUID | None
+    stream_id: UUID | None
+    edge_id: UUID | None
+    matched_edge_id: UUID | None
+    producer_port_id: UUID | None
+    producer_subtask_id: UUID | None
+'''
+new=new.replace('\n\nclass NativeDAGRouteStore:',facts+'\n\nclass NativeDAGRouteStore:',1)
+ast.parse(new)
+(b/'stream_routes.py.candidate').write_text(new)
+(b/'product.patch').write_text(''.join(difflib.unified_diff(old.splitlines(keepends=True),new.splitlines(keepends=True),fromfile='a/src/prefect/server/models/stream_routes.py',tofile='b/src/prefect/server/models/stream_routes.py')))
+o,n=ast.parse(old),ast.parse(new)
+oc=next(x for x in o.body if isinstance(x,ast.ClassDef) and x.name=='NativeDAGRouteStore');nc=next(x for x in n.body if isinstance(x,ast.ClassDef) and x.name=='NativeDAGRouteStore')
+for fn in ('resolve_reference','_resolve_record'):
+ oldfn=next(x for x in oc.body if isinstance(x,ast.AsyncFunctionDef) and x.name==fn);newfn=next(x for x in nc.body if isinstance(x,ast.AsyncFunctionDef) and x.name==fn);nc.body[nc.body.index(newfn)]=oldfn
+n.body=[x for x in n.body if not(isinstance(x,ast.ClassDef) and x.name=='_ReferenceTopologyFacts') and not(isinstance(x,ast.ImportFrom) and x.module=='sqlalchemy.orm')]
+assert ast.dump(o,include_attributes=False)==ast.dump(n,include_attributes=False)
+print('candidateSHA',hashlib.sha256(new.encode()).hexdigest());print('patchSHA',hashlib.sha256((b/'product.patch').read_bytes()).hexdigest())

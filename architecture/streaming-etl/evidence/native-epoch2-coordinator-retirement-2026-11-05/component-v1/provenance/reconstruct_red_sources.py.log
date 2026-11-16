@@ -1,0 +1,98 @@
+import ast,hashlib,json,subprocess
+from pathlib import Path
+BASE=Path('/tmp/native-ni014-coordinator-retirement-v1');ROOT=Path('/tmp/ariadne-native-5000-diagnosis-v1')
+head='b4a5f1ed7abc9cdd35ebb4451c2c1ef628e4c145'
+model_rel='tests/server/models/test_stream_dag_executions.py'
+source=subprocess.check_output(['git','show',head+':'+model_rel],cwd=ROOT).decode()
+block='''async def test_final_parent_release_retires_only_dag_coordinator_postgres(
+    db: PrefectDBInterface,
+    session: AsyncSession,
+    execution_api: httpx.AsyncClient,
+    deployment: orm_models.Deployment,
+):
+    plan, credentials, children = await ready_deployed_region(
+        db, session, execution_api, deployment
+    )
+    await produce_and_finish_region(db, children)
+    async with db.session_context(begin_transaction=True) as transaction:
+        for child in children:
+            result = await dispatch_stream_subtask_event(
+                transaction,
+                db,
+                child.bootstrap.assignment.id,
+                signed_child_event(child, "COMPLETED"),
+                child.credentials,
+            )
+            assert result.accepted
+    for child in children:
+        await retire_ready_child(db, child)
+    headers = {
+        "X-Prefect-Stream-Execution-Generation": str(credentials.generation),
+        "X-Prefect-Stream-Execution-Holder": str(credentials.holder_id),
+        "X-Prefect-Stream-Execution-Capability": credentials.capability,
+    }
+    response = await execution_api.post(
+        f"/flow_runs/{plan.flow_run_id}/set_state",
+        json={"state": {"type": "COMPLETED", "name": "Completed"}},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "ACCEPT", response.text
+    response = await execution_api.post(
+        "/streams/v1/release",
+        json={"flow_run_id": str(plan.flow_run_id)},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {"released": 0}
+    async with db.session_context() as transaction:
+        authority = await transaction.get(db.StreamExecutionAuthority, plan.flow_run_id)
+        snapshot = await transaction.scalar(
+            sa.select(db.NativeStreamDeploymentSnapshot).where(
+                db.NativeStreamDeploymentSnapshot.flow_run_id == plan.flow_run_id
+            )
+        )
+        launch = await transaction.scalar(
+            sa.select(db.NativeStreamLaunchIdentity).where(
+                db.NativeStreamLaunchIdentity.flow_run_id == plan.flow_run_id
+            )
+        )
+        assert authority is not None and authority.state == "RELEASED"
+        assert snapshot is not None and snapshot.state == "RELEASED"
+        assert launch is not None and launch.state == "RELEASED"
+
+
+'''
+source=source.replace('async def test_start_reserves_complete_region',block+'async def test_start_reserves_complete_region',1)
+expected=json.loads((BASE/'red-http/source-before.json').read_text())[model_rel]
+assert hashlib.sha256(source.encode()).hexdigest()==expected
+out=BASE/'reconstructed-red';out.mkdir(exist_ok=True)
+(out/'test_stream_dag_executions.py.log').write_text(source)
+native_rel='tests/test_native_stream_dag_execution_http.py'
+baseline=subprocess.check_output(['git','show',head+':'+native_rel],cwd=ROOT).decode()
+current=(ROOT/native_rel).read_text();node=next(n for n in ast.parse(current).body if isinstance(n,ast.AsyncFunctionDef) and n.name=='_coordinator_progress')
+coordinator='\n'.join(current.splitlines()[node.lineno-1:node.end_lineno])+'\n\n\n'
+baseline=baseline.replace('async def _dag_progress(',coordinator+'async def _dag_progress(',1)
+start=current.index('        # Flow finality precedes')
+end=current.index('        await asyncio.sleep(0.2)\n        worker_health =',start)
+wait=current[start:end]
+health='''        infrastructure_errors = [
+            line
+            for path in logs
+            for line in path.read_text().splitlines()
+            if "ERROR" in line
+            and (
+                "prefect.flow_runs.runner" in line
+                or "prefect.runner" in line
+                or "prefect.workers" in line
+            )
+        ]
+        assert infrastructure_errors == [], infrastructure_errors
+'''
+baseline=baseline.replace('        assert current.state.type.value == expected, str(current.state)\n','        assert current.state.type.value == expected, str(current.state)\n'+wait+health,1)
+expected=json.loads((BASE/'red-native/source-before.json').read_text())[native_rel]
+actual=hashlib.sha256(baseline.encode()).hexdigest()
+assert actual==expected,(actual,expected)
+(out/'test_native_stream_dag_execution_http.py.log').write_text(baseline)
+(out/'reconstruction-receipt.json').write_text(json.dumps({'qualification':'DETERMINISTIC_SOURCE_RECONSTRUCTION_VERIFIED_AGAINST_ACTUAL_PRE_RUN_LEASE_HASHES','baseline_git_object':head,'files':{model_rel:hashlib.sha256(source.encode()).hexdigest(),native_rel:actual},'not_a_runtime_source_capture':True},indent=2)+'\n')
+print('Both RED test sources reconstructed with exact actual lease hashes')

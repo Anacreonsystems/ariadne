@@ -1,0 +1,175 @@
+"""Build an exact public allowlist from closed P2/PG evidence; stdlib only."""
+import hashlib
+import json
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+
+OUT = Path(__file__).resolve().parent
+BASE = Path('/tmp/native-p2-minimal-bridge-preparation-18124-v3-final-v1')
+META = Path('/tmp/native-p2-bridge-postterminal-metadata-18124-v2')
+WATCH = Path('/tmp/native-principal-p2-artifact-watch-18124-v1')
+HOOKS = Path('/tmp/native-p2-candidate-publication-hooks-18124-wip4550-v1')
+PHASES = {'sync_incomplete200':'sync_incomplete200-b0bf57d3',
+          'async_accepted200':'async_accepted200-85e24125', 'pg_selected':'pg_selected-0641d4a3'}
+
+
+def load(path):
+    return json.loads(path.read_text())
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def write(path, data):
+    with path.open('x') as stream:
+        json.dump(data, stream, indent=2, sort_keys=True)
+        stream.write('\n')
+
+
+paths = []
+
+
+def add(path, archive):
+    assert path.is_file() and not path.is_symlink(), str(path)
+    assert '.private.' not in path.name and ('selector' not in path.name or path.name == 'selectors-v1.json') and path.suffix != '.pyc'
+    paths.append({'path':str(path),'archive_relative_path':archive,'sha256':sha(path),'bytes':path.stat().st_size})
+
+
+actor_names = ['bridge_runner_v1.py','bridge_support_v1.py','bridge_audit_v1.py',
+               'bridge_observer_v1.py','bridge_provision_only_v1.py','selectors-v1.json',
+               'startup-template.py.txt','preparation-manifest-v3.json']
+# The manifest filename is explicit discovery within this frozen preparation,
+# never a recursive scan of trial or private directories.
+if not (BASE/'preparation-manifest-v3.json').exists():
+    candidates = [p.name for p in BASE.glob('preparation-manifest*.json')]
+    assert len(candidates) == 1
+    actor_names[-1] = candidates[0]
+for name in actor_names:
+    add(BASE/name,'actor/'+name)
+for name in ['ROOT_AUTHORIZED_SYNC_INCOMPLETE200_HOLD.json','ROOT_AUTHORIZED_ASYNC_ACCEPTED200_HOLD.json',
+             'ROOT_AUTHORIZED_PG_SELECTED_HOLD.json']:
+    add(BASE/name,'actor/'+name)
+
+top = ['bridge-receipt-v1.json','pytest.public.xml','pytest.log','body-wider-health-audit.json',
+       'database-closure.json','process-closure.json','drift.json','source-after.json','source-before.json',
+       'reaping-proof.json','import-audit.json','pytest-exit.json','pytest-exit','provisioning-proof.json',
+       'collection.json','disk-observations.jsonl','process.json','command.json','database-creation.json',
+       'subreaper-proof.json','original-provisioning-binding.json','disk-before.json',
+       'auxiliary-source-bindings.json','external-assets.json']
+native_extra = ['principal-extra-actors-reap-proof-v1.json','principal-closed-file-review-v1.json',
+                'principal-file-observer-STOP.json','principal-file-observer-identity.json','bridge-live-observations.jsonl']
+fixture_names = ['case-observation.json','terminal-resources.json']
+summaries = {}
+for phase, dirname in PHASES.items():
+    trial = BASE/dirname
+    native = load(trial/'bridge-receipt-v1.json')
+    assert native['runtime_STOPPED'] and native['pytest_exit'] == 0 and not native['harness_errors']
+    assert not native['source_drift'] and not native['import_audit']['mismatches']
+    assert native['tested_version']['working_tree_patch_sha256'] == '4550f35d5db3b4ddc74160f55354d33165551d1cd82d33695ee687402621b0b7'
+    for name in top:
+        add(trial/name,phase+'/native/'+name)
+    for path in sorted((trial/'audit').glob('*.jsonl')):
+        add(path,phase+'/native/audit/'+path.name)
+    add(trial/'startup/sitecustomize.py',phase+'/native/startup/sitecustomize.py')
+    if phase == 'pg_selected':
+        add(trial/'principal-PG19-closed-review-v1.json',phase+'/principal-PG19-closed-review-v1.json')
+        review = load(trial/'principal-PG19-closed-review-v1.json')
+        assert review['actual_unique_cases'] == 19 and review['no_fail_error_skip']
+        summaries[phase] = {'native_receipt_sha256':sha(trial/'bridge-receipt-v1.json'),
+            'personal_review_sha256':sha(trial/'principal-PG19-closed-review-v1.json'),
+            'JUnit':native['body_wider_health']['pytest_suite'],'imports':native['import_audit']['rows'],
+            'qualification':'Personal actual real-PG selected ASGI/model controls, not a native pipeline'}
+    else:
+        for name in native_extra:
+            add(trial/name,phase+'/native/'+name)
+        fixture = trial/'pytest/test_actual_process_worker_run0'
+        for name in fixture_names:
+            add(fixture/name,phase+'/fixture/'+name)
+        metadata = META/phase/'postterminal-capture.json'
+        data = load(metadata)
+        assert data['status'] == 'LITERAL_P2_REPLACEMENT_AND_RELEASE_FACTS_OBSERVED'
+        assert data['connection_closed'] and all(data['literal_checks'].values())
+        add(metadata,phase+'/independent-SQL/postterminal-capture.json')
+        summaries[phase] = {'native_receipt_sha256':sha(trial/'bridge-receipt-v1.json'),
+            'personal_review_sha256':sha(trial/'principal-closed-file-review-v1.json'),
+            'independent_SQL_sha256':sha(metadata), 'independent_SQL_all12_checks':True,
+            'JUnit':native['body_wider_health']['pytest_suite'], 'imports':native['import_audit']['rows'],
+            'effects':500,'body_calls':501 if phase=='sync_incomplete200' else 500,
+            'replacement_first_sequence':200 if phase=='sync_incomplete200' else 201}
+    for name in ['pytest.log','pytest.public.xml']:
+        matches = re.findall(r'(?i)postgres(?:ql)?(?:\+asyncpg)?://[^\s\x27\"<>]+',(trial/name).read_text())
+        assert all('redacted' in value.lower() for value in matches)
+
+for name in ['watch_sync_incomplete_WIPv3_v1.py','sync-incomplete-WIPv3-reader-binding-v1.json',
+             'watch_async_accepted_WIPv3_v1.py','async-accepted-WIPv3-reader-binding-v1.json']:
+    add(WATCH/name,'principal-file-readers/'+name)
+for path in sorted(META.iterdir()):
+    if path.is_file() and path.name in {'capture_postterminal.py','queries.json','preparation-manifest-v2.json',
+        'ROOT_AUTHORIZED_SYNC_INCOMPLETE200_FINAL_SCOPE.json','ROOT_AUTHORIZED_ASYNC_ACCEPTED200_FINAL_SCOPE.json',
+        'root-source-review-v1.json','scope-plan.md'}:
+        add(path,'metadata-helper/'+path.name)
+
+captures = load(OUT/'source-captures-before-hooks-v1.json')
+assert len(captures['captures']) == 17
+for ref in captures['captures']:
+    path = Path(ref['path']); assert sha(path)==ref['sha256']
+    add(path,'source-captures/'+ref['source_relative_path'])
+add(OUT/'source-captures-before-hooks-v1.json','source-captures-before-hooks-v1.json')
+add(OUT/'exact-tested-WIP4550.patch','exact-tested-WIP4550.patch')
+add(Path(__file__),'seal_handoff_v2.py')
+add(OUT/'seal_handoff_v1.py','separate-packaging-preparation/seal_handoff_v1.py')
+add(OUT/'packaging-v1-attempt-erratum.json','separate-packaging-preparation/packaging-v1-attempt-erratum.json')
+
+# Separate lineage: these are retained failures/planning, never positive cases.
+baseline = Path('/tmp/native-p2-minimal-bridge-preparation-18124-v2/sync_incomplete200-004265c0')
+for name in ['bridge-receipt-v1.json','principal-closed-file-review-v1.json',
+             'principal-extra-actors-reap-proof-v1.json','principal-sealed-baseline-incomplete-cleanup-v1.json']:
+    add(baseline/name,'separate-baseline-incomplete-cleanup/'+name)
+add(Path('/tmp/native-p2-bridge-postterminal-metadata-18124-v1/sync_incomplete200/postterminal-capture.json'),
+    'separate-baseline-incomplete-cleanup/postterminal-capture-tool1.json')
+for name in ['review.md','review-receipt.json','classification.json']:
+    path = Path('/tmp/native-p2-postterminal-profile-review-18124-v1')/name
+    if path.exists():
+        add(path,'separate-baseline-classification/'+name)
+add(Path('/tmp/native-p2-full-cleanup-candidate-principal-review-v1/review.json'),
+    'separate-unexecuted-UUID-preflight-request-changes/review.json')
+add(Path('/tmp/native-p2-full-cleanup-candidate-principal-review-v2/review.json'),
+    'candidate-v2-readonly-source-approval/review.json')
+bridge = Path('/tmp/native-p2-test-only-evidence-bridge-18124-v1')
+for name in ['review.md','review-receipt.json']:
+    if (bridge/name).exists():
+        add(bridge/name,'version-accounting-source-bridge/'+name)
+hooks = load(HOOKS/'hooks-receipt-v1.json')
+assert hooks['status']=='HOOKS_PASS_SOURCE_UNCHANGED' and not hooks['source_drift']
+add(HOOKS/'hooks-receipt-v1.json','closed-publication-hooks/hooks-receipt-v1.json')
+for ref in hooks['results']:
+    path=Path(ref['log']); assert sha(path)==ref['log_sha256'] and ref['actual_exit']==0
+    add(path,'closed-publication-hooks/'+path.name)
+assert len({row['archive_relative_path'] for row in paths}) == len(paths)
+allowlist = OUT/'public-allowlist-v1.json'
+write(allowlist, {'schema':'closed-personal-P2-pair-and-PG19-public-allowlist-v1','regular_files':paths,
+    'no_recursive_copy':True,'exclusions':['Private selector/config/environment/DSNs/capabilities/tokens',
+    'pytest.private.log and pytest.private.xml','Raw API/worker logs','Runtime temp/home/pycache/UV lock bytes',
+    'Business-document payload files and raw body/source records','All unlisted files'],
+    'sanitizer':'Existing completed bridge_support_v1.sanitize produced public pytest.log/XML; no private settings read again. All public logs checked for nonredacted PostgreSQL URLs.'})
+handoff = {'schema':'personal-P2-pair-and-PG19-closed-public-handoff-v1',
+    'recorded_at':datetime.now(timezone.utc).isoformat(),'status':'PASS_PERSONAL_RECOVERY_PAIR_FULL_AUTOMATIC_RELEASE_AND_PG19',
+    'tested_version':load(BASE/PHASES['sync_incomplete200']/'bridge-receipt-v1.json')['tested_version'],
+    'personal_actual_execution':True,'all_local_runtime_STOP':True,'new_DBqueries_tests_projectimports_by_handoff':0,
+    'phases':summaries,'source_total':1600,'unchanged_source_paths':1599,'explicit_test_only_WIP_paths':1,
+    'source_captures':17,'public_regular_files':len(paths),
+    'public_allowlist':{'path':str(allowlist),'sha256':sha(allowlist)},
+    'source_captures_receipt':{'path':str(OUT/'source-captures-before-hooks-v1.json'), 'sha256':sha(OUT/'source-captures-before-hooks-v1.json')},
+    'limits':['Actual SDK executions are the two named WIP P2 fault500 cases. PG19 is actual real-PG ASGI/model validation, not a native TCP pipeline.',
+    'Separate postterminal19family RR snapshots prove all12 physical/replacement/fullrelease checks. Test authored terminal resources are separate observations.',
+    'Prior f8c5/15f9 baseline remains bodyPASS but fullcleanup3FALSE/tool1, retained in a distinct lineage prefix. No masking or reinterpretation.',
+    'Unexecuted v1 UUIDserialization review remains pre-runtime request-changes, never a failed actual candidate workload.',
+    'Old clean18124 DAG SDK and CI executions remain their exact versions; changed imported P2 module has fixtureAST bridge only, not all-import-byte equality or actual WIP DAG execution.',
+    'Current old-source CI19/fourheavy/final NI014/ADR43 acceptance and readiness remain separate. Normalheavy/stall cleanup guards not newly executed by this pair.',
+    'External KV backend/HTTP retry counter/throughput/SLO/cross-host death authority and5000forecast not claimed.',
+    'Fresh owned databases retained with driver zero-session checks; separate readonly connections closed, no post-final session-count query inferred.',
+    'No repo/primary/ADR changes. All grill-me/spec-first variants excluded; conflict scan incomplete.']}
+path=OUT/'handoff-v1.json';write(path,handoff)
+print(json.dumps({'handoff':str(path),'sha256':sha(path),'allowlist_sha256':sha(allowlist),'public_files':len(paths)}))

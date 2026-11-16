@@ -1,0 +1,64 @@
+import asyncio,hashlib,json,os,subprocess,sys,time
+from pathlib import Path
+from urllib.parse import urlsplit,urlunsplit
+from uuid import uuid4
+import xml.etree.ElementTree as ET
+import support as s
+B=Path(__file__).resolve().parent;R=s.ROOT
+backend,mode=sys.argv[1:];assert backend in {'pg17','sqlite'} and mode in {'red','green'}
+assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=R,text=True).strip()=='95fb3e73de66bccfc141fbb9fda22b64cf42e131'
+trial=B/(backend+'-'+mode+'-'+uuid4().hex[:8]);trial.mkdir(mode=0o700)
+for n in ('audit','startup','temp'):(trial/n).mkdir()
+def write(n,v):s.write(trial/n,v)
+paths=list(json.loads(Path('/tmp/native-task-projection-PG17-selection-b0328-v1/source1603-published.json').read_text()))+['.github/workflows/static-analysis.yaml']
+def snapshot():return {n:{'sha256':s.sha(R/n),'bytes':(R/n).stat().st_size} for n in sorted(paths)}
+before=snapshot();write('source-before.json',before);assets={n:s.sha(B/n) for n in ('runner.py','support.py','provision.py','startup-template.py.txt')};write('assets.json',assets)
+subreaper=s.enable_owned_subreaper()
+try:os.waitpid(-1,os.WNOHANG)
+except ChildProcessError:subreaper['waitpid_preflight_ECHILD']=True
+else:raise RuntimeError('Own subreaper must have ECHILD before creation/Popen')
+write('subreaper.json',subreaper)
+site=(B/'startup-template.py.txt').read_text().replace('SOURCE_ROOT',repr(str(R/'src/prefect')+'/')).replace('TEST_ROOT',repr(str(R/'tests')+'/')).replace('AUDIT_DIRECTORY',repr(str(trial/'audit')));(trial/'startup/sitecustomize.py').write_text(site)
+config=None;database='purge_'+uuid4().hex[:8]
+if backend=='pg17':
+ config=json.loads(s.SELECTOR.read_text());p=urlsplit(config['admin_dsn']);assert p.hostname in {'localhost','127.0.0.1','::1'} and p.port==55436
+ database=config['database_prefix']+'_cp_'+uuid4().hex[:8];creation=asyncio.run(s.create_owned(config,database));uri=urlunsplit((config['sqlalchemy_scheme'],p.netloc,'/'+database,p.query,''))
+else:
+ (trial/'retained.sqlite').touch(exist_ok=False);uri='sqlite+aiosqlite:///'+str(trial/'retained.sqlite');creation={'database':database,'backend':'sqlite','created_fresh':True,'existing_database_reused':False}
+write('database-creation.json',creation)
+seed='tests/server/database/test_stream_route_migrations.py::test_retained_routed_fixture_can_precede_module_cleanup'
+failed='tests/server/models/test_filters.py::TestCountFlowRunModels::test_python_client_filter[kwargs28-12]'
+nodes=[seed,failed]
+if mode=='green':nodes += ['tests/server/database/test_stream_route_migrations.py::test_database_fixture_purge_handles_retained_routed_history[False]','tests/server/database/test_stream_route_migrations.py::test_database_fixture_purge_handles_retained_routed_history[True]']
+env=os.environ.copy();env.pop('PREFECT_API_DATABASE_CONNECTION_URL',None);env.update({'PREFECT_SERVER_DATABASE_CONNECTION_URL':uri,'PURGE_TRIAL':str(trial),'PURGE_DBNAME':database,'PURGE_NODES':json.dumps(nodes),'PYTHONPATH':os.pathsep.join((str(trial/'startup'),str(B),str(R/'src'),str(R))),'PATH':'/workspace/ariadne/.venv/bin'+os.pathsep+env.get('PATH',''),'UV_PROJECT_ENVIRONMENT':'/workspace/ariadne/.venv','UV_NO_SYNC':'1','PYTHONPYCACHEPREFIX':str(trial/'pycache'),'TMPDIR':str(trial/'temp')})
+cmd=['uv','run','--no-sync','--offline','python','-m','pytest',*nodes,'-n0','-q','-o','addopts=','-p','provision','--junitxml='+str(trial/'pytest.private.xml'),'--basetemp='+str(trial/'pytest')]
+write('command.json',{'argv':cmd,'cwd':str(R),'backend':backend,'mode':mode,'head':'95fb3e73de66bccfc141fbb9fda22b64cf42e131','source_bound_files':len(before),'retained_DB':True,'source_variant':'old3callerfiles+newseedtest' if mode=='red' else 'reviewed04019041fourfilecandidate','additional_timeouts':False,'no_drop_terminate':True})
+ids={};started=time.monotonic()
+with (trial/'pytest.private.log').open('wb') as log:
+ p=subprocess.Popen(cmd,cwd=R,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True);pgid=p.pid;st=s.proc_state(p.pid);ids[p.pid]=st['start_ticks'];write('process.json',{'pid':p.pid,'start_ticks':st['start_ticks'],'runner_pid':os.getpid(),'runner_start_ticks':subreaper['runner_start_ticks']});print(json.dumps({'RUNNING':str(trial),'pytest_pid':p.pid,'start_ticks':st['start_ticks'],'backend':backend,'mode':mode}),flush=True)
+ while True:
+  try:code=p.wait(timeout=5)
+  except subprocess.TimeoutExpired:s.collect_group(pgid,ids);continue
+  (trial/'pytest-exit').write_text(str(code)+'\n');break
+write('exit-first.json',{'actual_pytest_exit':code,'persisted_before_metadata':True,'elapsed_seconds':time.monotonic()-started})
+errors=[]
+def capture(name,callback,default=None):
+ try:return callback()
+ except BaseException as ex:errors.append({'stage':name,'error':type(ex).__name__});return default
+rows=0;mismatches=[]
+for f in (trial/'audit').glob('*.jsonl'):
+ for line in f.read_text().splitlines():
+  a=json.loads(line);rows+=1;ids[a['pid']]=a['start_ticks']
+  try:rel=str(Path(a['path']).relative_to(R))
+  except ValueError:mismatches.append(a['path']);continue
+  if rel not in before or before[rel]['sha256']!=a['source_sha256']:mismatches.append(rel)
+reaping=capture('reaping',lambda:s.reap_owned_adopted(pgid,ids));after=snapshot();write('source-after.json',after);drift=[n for n in before if before[n]!=after[n]]
+remaining={pid:current for pid,ticks in ids.items() if (current:=s.proc_state(pid)) is not None and current['start_ticks']==str(ticks)}
+closure=capture('DBsessions',lambda:asyncio.run(s.owned_sessions(config,database))) if backend=='pg17' else {'database':database,'file':str(trial/'retained.sqlite'),'retained':(trial/'retained.sqlite').exists(),'sessions':'N/A SQLite; all owned PIDs must be gone','drop_requested':False}
+proof=capture('provision-proof',lambda:json.loads((trial/'provisioning-proof.json').read_text()))
+cases=capture('XML',lambda:ET.parse(trial/'pytest.private.xml').findall('.//testcase'),[]);summary={'pass':sum(not any(c.find(t) is not None for t in ('error','failure','skipped')) for c in cases),'error':sum(c.find('error') is not None for c in cases),'failure':sum(c.find('failure') is not None for c in cases),'skip':sum(c.find('skipped') is not None for c in cases),'node_count':len(cases)}
+for private,public in (('pytest.private.log','pytest.log'),('pytest.private.xml','pytest.xml')):capture('sanitize',lambda private=private,public=public:(trial/public).write_text(s.sanitize((trial/private).read_text(errors='replace'),config or {'admin_dsn':'[unused-SQLite-admin-DSN]'},uri)))
+closed=not remaining and reaping and reaping['waitpid_echild_success'] and (backend=='sqlite' or closure and closure['sessions']==[])
+text=(trial/'pytest.private.log').read_text(errors='replace');red_fk=('fk_stream_record__route_receipt_payload' in text) if backend=='pg17' else ('FOREIGN KEY constraint failed' in text)
+result={'status':'EXPECTED_RED_CONFIRMED' if mode=='red' and code==1 and red_fk and summary['pass']==1 and summary['error']>=1 else 'GREEN_PASS' if mode=='green' and code==0 and summary=={'pass':4,'error':0,'failure':0,'skip':0,'node_count':4} else 'FAIL_OR_INCONCLUSIVE','runtime_STOPPED':bool(closed),'backend':backend,'mode':mode,'pytest_exit':code,'actual_exit_first':True,'summary':summary,'expected_restrictive_FK_observed':red_fk,'source_drift':drift,'imports':{'rows':rows,'mismatches':mismatches},'reaping':reaping,'remaining_same_identity_PIDs':remaining,'database':closure,'provisioning_proof':proof,'harness_errors':errors,'assets_unchanged':assets=={n:s.sha(B/n) for n in assets}}
+write('receipt.json',result);print(json.dumps({'CLOSED':str(trial),'status':result['status'],'runtime_STOPPED':closed,'pytest_exit':code,'summary':summary,'source_drift':drift,'harness_errors':errors}),flush=True)

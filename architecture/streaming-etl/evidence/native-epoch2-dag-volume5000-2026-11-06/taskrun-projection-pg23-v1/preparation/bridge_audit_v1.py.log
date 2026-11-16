@@ -1,0 +1,24 @@
+"""Read-only exactPG23 JUnit reconciliation; noDB connection."""
+import json
+from pathlib import Path
+import re
+import xml.etree.ElementTree as ET
+
+
+def inspect(trial:Path,phase:str,expected_count:int)->dict:
+    failures=[]
+    def check(value,message):
+        if not value:failures.append(message)
+    def load(path):
+        try:return json.loads(path.read_text())
+        except (OSError,ValueError):failures.append(str(path.relative_to(trial))+":missing_or_invalid");return {}
+    def rows(path):
+        try:return [json.loads(line) for line in path.read_text().splitlines()]
+        except (OSError,ValueError):failures.append(str(path.relative_to(trial))+":missing_or_invalid");return []
+    try:suites=ET.parse(trial/'pytest.private.xml').findall('.//testsuite')
+    except (OSError,ET.ParseError):suites=[];failures.append('pytest XML missing/invalid')
+    check(len(suites)==1,'exactly one pytest suite')
+    suite=suites[0].attrib if suites else {}
+    check(suite.get('tests')==str(expected_count) and all(suite.get(k)=='0' for k in ('failures','errors','skipped')),'exact23realPGcases PASS withoutskip')
+    if phase=='pg_selected':
+        return {'status':'BODY_AND_WIDER_HEALTH_PASS' if not failures else 'PG_SELECTOR_RED','pytest_suite':suite,'failed_checks':failures,'wider_health':{},'qualification':'Selected fournew and19unchanged real PG17 tests; exact expanded collection/count proven by provisioning plugin. Existing clear_db/normal fixture cleanup remain unmodified and may erase last metadata; no postterminal-row preservation claim. No native SDK/OS or independent SQL capture inferred from this group.'}

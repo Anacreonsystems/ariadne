@@ -1,0 +1,133 @@
+"""Execute one independently owned component phase only after final source hold."""
+from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
+import asyncio, hashlib, json, os, re, subprocess, sys
+import asyncpg
+
+ROOT = Path('/tmp/ariadne-native-5000-diagnosis-v1')
+CONFIG = Path('/tmp/native-ni012-runtime-test-env.json')
+PHASES = {
+    'pg': ['tests/server/models/test_stream_dag_executions.py', '-k', 'not sqlite'],
+    'native': ['tests/test_native_stream_dag_execution_http.py::test_public_dag_lifecycle_two_real_workers_postgres'],
+    'preseal': ['tests/test_native_stream_dag_execution_http.py::test_public_dag_preseal_failure_two_real_workers_postgres'],
+}
+
+def source_snapshot():
+    tracked = subprocess.check_output(['git', 'ls-files', 'src/prefect', 'tests', 'pyproject.toml', 'uv.lock', '.github/workflows/python-tests.yaml', 'scripts/native_runtime_diagnostics.py'], cwd=ROOT, text=True).splitlines()
+    paths = sorted({p for p in tracked if p.endswith('.py') or p in {'pyproject.toml','uv.lock','.github/workflows/python-tests.yaml'}} | {str(p.relative_to(ROOT)) for p in (ROOT/'src/prefect').rglob('*.py')} | {'pyrightconfig-native-dag.json','ui-v2/src/api/prefect.ts'})
+    return {name: {'sha256': hashlib.sha256((ROOT/name).read_bytes()).hexdigest(), 'bytes': (ROOT/name).stat().st_size} for name in paths}
+
+def proc_ticks(pid):
+    return Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()[19]
+
+async def create_database(config,name):
+    c=await asyncpg.connect(config['admin_dsn'], timeout=3)
+    try:
+        assert int(await c.fetchval('SHOW server_version_num'))//10000==17
+        assert re.fullmatch('[a-z][a-z0-9_]{1,47}',name)
+        role=config['database_role'].replace('"','""')
+        await c.execute('CREATE DATABASE "'+name+'" OWNER "'+role+'"')
+    finally:
+        await c.close()
+
+async def closure(config,name,drop):
+    c=await asyncpg.connect(config['admin_dsn'], timeout=3)
+    try:
+        names=[name,name+'_tests_master']
+        sessions=[dict(x) for x in await c.fetch('SELECT datname,pid,state FROM pg_stat_activity WHERE datname=ANY($1::text[])',names)]
+        if sessions: raise RuntimeError('Owned component database still has live sessions')
+        dropped=[]
+        if drop:
+            for item in names:
+                assert re.fullmatch('[a-z][a-z0-9_]{1,62}',item)
+                await c.execute('DROP DATABASE IF EXISTS "'+item+'"');dropped.append(item)
+        remaining=[x['datname'] for x in await c.fetch('SELECT datname FROM pg_database WHERE datname=ANY($1::text[])',names)]
+        return {'owned_databases':names,'sessions':sessions,'dropped':dropped,'remaining':remaining,'force_used':False,'old_soak_or_forensic_databases_touched':False,'qualification':'Successful component databases drop only after test teardown; failed execution databases retained for diagnosis. This operational cleanup is not a platform release proof.'}
+    finally:
+        await c.close()
+
+def main():
+    if len(sys.argv)!=3 or sys.argv[2] not in PHASES:
+        raise SystemExit('usage: principal_coordinator_repeat_v3.py /ABS/FINAL_HOLD.json pg|native|preseal')
+    hold_path=Path(sys.argv[1]);assert hold_path.is_absolute();hold=json.loads(hold_path.read_text());phase=sys.argv[2]
+    assert hold['driver_sha256']==hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'Independent driver differs from final hold'
+    if hold.get('status')!='ROOT_AUTHORIZED_FINAL_SOURCE_HOLD': raise RuntimeError('Explicit final source hold required')
+    assert hold['source_root']==str(ROOT)
+    head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+    assert head==hold['head']
+    before=source_snapshot();assert before==hold['files'],'Source lease differs before independent execution'
+    parent=hold_path.parent;trial=parent/(phase+'-'+uuid4().hex[:8]);trial.mkdir(mode=0o700)
+    (trial/'source-before.json').write_text(json.dumps(before,indent=2,sort_keys=True)+'\n')
+    audit=trial/'audit';audit.mkdir(mode=0o700);startup=trial/'startup';startup.mkdir(mode=0o700)
+    site=r'''import hashlib,json,marshal,os,sys,time
+_seen=set();_identities={};_root=SOURCE_ROOT;_out=AUDIT_DIRECTORY
+
+def audit(event,args):
+ if event!='exec' or not args:return
+ code=args[0];path=getattr(code,'co_filename','')
+ if not isinstance(path,str) or not path.endswith('.py') or path in _seen:return
+ if not (path.startswith(_root) or '/src/prefect/' in path or '/site-packages/prefect/' in path):return
+ _seen.add(path)
+ try:
+  pid=os.getpid()
+  if pid not in _identities:
+   with open('/proc/'+str(pid)+'/stat') as state:_identities[pid]=state.read().rsplit(')',1)[1].split()[19]
+  with open(path,'rb') as source:source_digest=hashlib.sha256(source.read()).hexdigest()
+  row={'pid':pid,'start_ticks':_identities[pid],'parent':os.getppid(),'monotonic_ns':time.monotonic_ns(),'path':path,'source_sha256':source_digest,'code_sha256':hashlib.sha256(marshal.dumps(code)).hexdigest()}
+  fd=os.open(_out+'/'+str(os.getpid())+'.jsonl',os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
+  try:os.write(fd,(json.dumps(row,sort_keys=True)+chr(10)).encode())
+  finally:os.close(fd)
+ except OSError:pass
+sys.addaudithook(audit)
+'''.replace('SOURCE_ROOT',repr(str(ROOT/'src/prefect')+'/')).replace('AUDIT_DIRECTORY',repr(str(audit)))
+    (startup/'sitecustomize.py').write_text(site)
+    config=json.loads(CONFIG.read_text());name=config['database_prefix']+'_pc_'+uuid4().hex[:8]
+    asyncio.run(create_database(config,name))
+    parsed=urlsplit(config['admin_dsn']);env=os.environ.copy();env.pop('PREFECT_API_DATABASE_CONNECTION_URL',None)
+    env['PREFECT_SERVER_DATABASE_CONNECTION_URL']=urlunsplit((config['sqlalchemy_scheme'],parsed.netloc,'/'+name,parsed.query,''))
+    env['UV_NO_SYNC']='1';env['UV_PROJECT_ENVIRONMENT']='/workspace/ariadne/.venv';env['PYTHONPATH']=os.pathsep.join([str(startup),str(ROOT/'src'),str(ROOT)])
+    env['PREFECT_LOGGING_LEVEL']='INFO';env['PREFECT_LOGGING_INTERNAL_LEVEL']='WARNING'
+    scratch=trial/'temp';scratch.mkdir(mode=0o700);env['TMPDIR']=str(scratch)
+    command=['/workspace/ariadne/.venv/bin/python','-m','pytest',*PHASES[phase],'-q','-o','addopts=','--junitxml='+str(trial/'pytest.xml'),'--basetemp='+str(trial/'pytest')]
+    receipt={'phase':phase,'command':command,'cwd':str(ROOT),'head':head,'database':name,'config_selector':str(CONFIG),'hold_sha256':hashlib.sha256(hold_path.read_bytes()).hexdigest(),'driver_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'audit_hook_sha256':hashlib.sha256(site.encode()).hexdigest(),'qualification':'Independent component repeat on exact frozen WIP source; no5000 acceptance or new epoch credit.'}
+    (trial/'command.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+    raw=trial/'pytest.private.log';fd=os.open(raw,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+    with os.fdopen(fd,'wb') as log:
+        proc=subprocess.Popen(command,cwd=ROOT,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+        session={'pytest_pid':proc.pid,'pytest_start_ticks':proc_ticks(proc.pid),'pgid':os.getpgid(proc.pid)}
+        (trial/'process.json').write_text(json.dumps(session,indent=2)+'\n')
+        print(json.dumps({'status':'ACTUAL_PYTEST_RUNNING','phase':phase,'trial':str(trial),'database':name,**session}),flush=True)
+        result=proc.wait()
+    (trial/'exit').write_text(str(result)+'\n')
+    after=source_snapshot();(trial/'source-after.json').write_text(json.dumps(after,indent=2,sort_keys=True)+'\n')
+    drift=[n for n in before.keys()|after.keys() if before.get(n)!=after.get(n)]
+    if subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()!=head:drift.append('GIT_HEAD')
+    (trial/'drift.json').write_text(json.dumps(drift,indent=2)+'\n')
+    public=re.sub(r'(?i)(postgres(?:ql)?(?:\+asyncpg)?://)[^\s\'"<>]+',r'\1[redacted-owned-test-dsn]',raw.read_text(errors='replace'))
+    (trial/'pytest.log').write_text(public);(trial/'private-log-sha256').write_text(hashlib.sha256(raw.read_bytes()).hexdigest()+'\n')
+    imports=[];audited_processes={proc.pid:session['pytest_start_ticks']};audit_rows=0
+    for path in audit.glob('*.jsonl'):
+        for line in path.read_text().splitlines():
+            row=json.loads(line);audit_rows+=1;audited_processes[row['pid']]=str(row['start_ticks'])
+            try:rel=str(Path(row['path']).relative_to(ROOT))
+            except ValueError:
+                imports.append({'pid':row['pid'],'path':row['path'],'reason':'Prefect imported outside held source root'});continue
+            if rel not in before or before[rel]['sha256']!=row['source_sha256']:imports.append({'pid':row['pid'],'path':rel})
+    if result==0 and audit_rows==0:imports.append({'reason':'NoPrefect import audit records captured'})
+    remaining_live=[];remaining_zombies=[]
+    for pid,ticks in audited_processes.items():
+        try:
+            fields=Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()
+        except FileNotFoundError:continue
+        if fields[19]!=ticks:continue
+        (remaining_zombies if fields[0]=='Z' else remaining_live).append(pid)
+    process_closure={'observed_pid_start_pairs':audited_processes,'remaining_same_identity_live':remaining_live,'remaining_same_identity_zombies':remaining_zombies,'audit_rows':audit_rows}
+    (trial/'process-closure.json').write_text(json.dumps(process_closure,indent=2,sort_keys=True)+'\n')
+    if remaining_live or remaining_zombies:imports.append({'reason':'Owned process closure incomplete','live':remaining_live,'zombies':remaining_zombies})
+    (trial/'import-mismatches.json').write_text(json.dumps(imports,indent=2)+'\n')
+    closed=asyncio.run(closure(config,name,result==0 and not drift and not imports));(trial/'cleanup.json').write_text(json.dumps(closed,indent=2)+'\n')
+    print(json.dumps({'status':'STOPPED','phase':phase,'trial':str(trial),'pytest_exit':result,'source_files':len(before),'drift':drift,'import_mismatches':imports,'remaining_db_sessions':closed['sessions'],'dropped_databases':len(closed['dropped'])}),flush=True)
+    raise SystemExit(90 if drift or imports else result)
+
+if __name__=='__main__':main()

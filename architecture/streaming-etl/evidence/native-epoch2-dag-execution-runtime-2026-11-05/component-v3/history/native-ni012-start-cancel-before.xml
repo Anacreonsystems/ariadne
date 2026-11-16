@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="0.171" timestamp="2026-11-05T11:54:07.912676+00:00" hostname="f8abb611283c"><testcase classname="tests.test_stream_dag_execution" name="test_nested_caller_cancellation_waits_for_phase_safe_cleanup[False]" time="0.003"><failure message="AssertionError: assert ('STARTING' == 'TERMINAL'&#10;  &#10;  - TERMINAL&#10;  + STARTING)">cancel_journal = False
+
+    @pytest.mark.parametrize("cancel_journal", [False, True])
+    async def test_nested_caller_cancellation_waits_for_phase_safe_cleanup(
+        cancel_journal: bool,
+    ):
+        import anyio
+    
+        class CallerCancelledRegistry(RecordingRegistry):
+            async def _dispatch(self, method: str, **body: Any):
+                if method == "start_stream_dag":
+                    await super()._dispatch(method, **body)
+                    if cancel_journal:
+                        self.phase = "STOPPING"
+                        self.control = "CANCEL"
+                    caller_scope.cancel()
+                    await anyio.sleep(0)
+                    raise AssertionError(
+                        "Caller cancellation did not interrupt admission ACK"
+                    )
+                # A real scheduling checkpoint reproduces level cancellation during
+                # cleanup, rather than using immediately-returning transport stubs.
+                await anyio.sleep(0)
+                return await super()._dispatch(method, **body)
+    
+        registry = CallerCancelledRegistry()
+        if cancel_journal:
+            with pytest.raises(CancelledRun):
+                with anyio.CancelScope() as caller_scope:
+                    await registry.start(registry.sealed, timeout=0.2)
+        else:
+            with anyio.CancelScope() as caller_scope:
+                await registry.start(registry.sealed, timeout=0.2)
+        current = registry.projection()
+&gt;       assert current.phase == "TERMINAL" and current.cleanup_complete
+E       AssertionError: assert ('STARTING' == 'TERMINAL'
+E         
+E         - TERMINAL
+E         + STARTING)
+
+tests/test_stream_dag_execution.py:632: AssertionError</failure></testcase><testcase classname="tests.test_stream_dag_execution" name="test_nested_caller_cancellation_waits_for_phase_safe_cleanup[True]" time="0.001"><failure message="Failed: DID NOT RAISE CancelledRun">cancel_journal = True
+
+    @pytest.mark.parametrize("cancel_journal", [False, True])
+    async def test_nested_caller_cancellation_waits_for_phase_safe_cleanup(
+        cancel_journal: bool,
+    ):
+        import anyio
+    
+        class CallerCancelledRegistry(RecordingRegistry):
+            async def _dispatch(self, method: str, **body: Any):
+                if method == "start_stream_dag":
+                    await super()._dispatch(method, **body)
+                    if cancel_journal:
+                        self.phase = "STOPPING"
+                        self.control = "CANCEL"
+                    caller_scope.cancel()
+                    await anyio.sleep(0)
+                    raise AssertionError(
+                        "Caller cancellation did not interrupt admission ACK"
+                    )
+                # A real scheduling checkpoint reproduces level cancellation during
+                # cleanup, rather than using immediately-returning transport stubs.
+                await anyio.sleep(0)
+                return await super()._dispatch(method, **body)
+    
+        registry = CallerCancelledRegistry()
+        if cancel_journal:
+&gt;           with pytest.raises(CancelledRun):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE CancelledRun
+
+tests/test_stream_dag_execution.py:625: Failed</failure></testcase></testsuite></testsuites>

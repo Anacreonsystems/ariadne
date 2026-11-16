@@ -1,0 +1,28 @@
+from pathlib import Path
+import json,os,signal,subprocess,time
+root=Path('/tmp/native-ni2-012-worker-v1/types-control-02/batch-2');cmd=['uv','run','--no-sync','--project','/workspace/ariadne','pyright','--project','pyrightconfig-scoped.json','--outputjson'];start=time.monotonic();limit=512*1024**2;peak=0;reason=None
+with (root/'pyright.stdout.json').open('wb') as out,(root/'pyright.stderr.log').open('wb') as err:
+ p=subprocess.Popen(cmd,cwd=root/'snapshot',stdout=out,stderr=err,start_new_session=True)
+ stat=Path(f'/proc/{p.pid}/stat').read_text();ticks=int(stat[stat.rfind(')')+2:].split()[19]);pidfd=os.pidfd_open(p.pid)
+ while p.poll() is None:
+  processes={}
+  for f in Path('/proc').iterdir():
+   if not f.name.isdigit():continue
+   try:
+    s=(f/'stat').read_text();v=s[s.rfind(')')+2:].split();processes[int(f.name)]=(int(v[1]),int(v[21])*os.sysconf('SC_PAGE_SIZE'))
+   except (FileNotFoundError,ProcessLookupError):continue
+  owned={p.pid};changed=True
+  while changed:
+   new={pid for pid,(parent,_) in processes.items() if parent in owned};changed=not new.issubset(owned);owned|=new
+  rss=sum(processes.get(pid,(0,0))[1] for pid in owned);peak=max(peak,rss)
+  if rss>limit:reason='OWNED_RSS_512MIB'
+  elif time.monotonic()-start>120:reason='WALL_120S'
+  if reason:
+   signal.pidfd_send_signal(pidfd,signal.SIGKILL);os.killpg(p.pid,signal.SIGKILL);break
+  time.sleep(.1)
+ code=p.wait();os.close(pidfd)
+result={'argv':cmd,'cwd':'snapshot','include_paths_are_relative':True,'ignore':[],'time_limit_seconds':120,'owned_rss_limit_bytes':limit,'peak_owned_rss_bytes':peak,'elapsed_seconds':time.monotonic()-start,'returncode':code,'guard_stop':reason,'launcher_pid':p.pid,'launcher_start_ticks':ticks}
+(root/'pyright.command-result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result))
+if code==0:
+ data=json.loads((root/'pyright.stdout.json').read_text());assert data['summary']['filesAnalyzed']==3,data['summary'];print(json.dumps(data['summary']))
+raise SystemExit(code)

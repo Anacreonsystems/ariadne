@@ -1815,6 +1815,380 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/streams/v2/dags/{graph_id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Stream Dag */
+        post: operations["start_stream_dag_streams_v2_dags__graph_id__start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/{graph_id}/execution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Stream Dag Execution */
+        get: operations["read_stream_dag_execution_streams_v2_dags__graph_id__execution_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/{graph_id}/abort-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Abort Stream Dag Preview */
+        post: operations["abort_stream_dag_preview_streams_v2_dags__graph_id__abort_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/{graph_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Stream Dag */
+        post: operations["cancel_stream_dag_streams_v2_dags__graph_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/{graph_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate Stream Dag */
+        post: operations["activate_stream_dag_streams_v2_dags__graph_id__activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/{graph_id}/fail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fail Stream Dag */
+        post: operations["fail_stream_dag_streams_v2_dags__graph_id__fail_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/subtasks/{subtask_id}/bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Stream Dag Subtask Bootstrap */
+        get: operations["read_stream_dag_subtask_bootstrap_streams_v2_dags_subtasks__subtask_id__bootstrap_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/subtasks/{subtask_id}/bootstrap-ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark Stream Dag Subtask Bootstrap Ready */
+        post: operations["mark_stream_dag_subtask_bootstrap_ready_streams_v2_dags_subtasks__subtask_id__bootstrap_ready_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/subtasks/{subtask_id}/activation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Stream Dag Subtask Activation */
+        get: operations["read_stream_dag_subtask_activation_streams_v2_dags_subtasks__subtask_id__activation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/sources/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open Stream Dag Source */
+        post: operations["open_stream_dag_source_streams_v2_dags_sources_open_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/consumers/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open Stream Dag Consumer */
+        post: operations["open_stream_dag_consumer_streams_v2_dags_consumers_open_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/consumers/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read Stream Dag Consumer */
+        post: operations["read_stream_dag_consumer_streams_v2_dags_consumers_read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/subtasks/{subtask_id}/input/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Stream Dag Input Status */
+        get: operations["read_stream_dag_input_status_streams_v2_dags_subtasks__subtask_id__input_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/subtasks/{subtask_id}/output/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Stream Dag Output Status */
+        get: operations["read_stream_dag_output_status_streams_v2_dags_subtasks__subtask_id__output_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/sources/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finish Stream Dag Source */
+        post: operations["finish_stream_dag_source_streams_v2_dags_sources_finish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/consumers/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finish Stream Dag Consumer */
+        post: operations["finish_stream_dag_consumer_streams_v2_dags_consumers_finish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/workers/{worker_id}/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Poll Worker Stream Dag Subtasks */
+        post: operations["poll_worker_stream_dag_subtasks_streams_v2_dags_workers__worker_id__poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/workers/{worker_id}/graphs/{graph_id}/startup-abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Abort Worker Stream Dag Startup */
+        post: operations["abort_worker_stream_dag_startup_streams_v2_dags_workers__worker_id__graphs__graph_id__startup_abort_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare Worker Stream Dag Launch */
+        post: operations["prepare_worker_stream_dag_launch_streams_v2_dags_workers__worker_id__subtasks__subtask_id__launches_prepare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/{launch_attempt_id}/record": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Worker Stream Dag Launch */
+        post: operations["record_worker_stream_dag_launch_streams_v2_dags_workers__worker_id__subtasks__subtask_id__launches__launch_attempt_id__record_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/launches/{launch_attempt_id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Close Worker Stream Dag Launch */
+        post: operations["close_worker_stream_dag_launch_streams_v2_dags_workers__worker_id__subtasks__subtask_id__launches__launch_attempt_id__close_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/streams/v2/dags/workers/{worker_id}/subtasks/{subtask_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop Worker Stream Dag Subtask */
+        post: operations["stop_worker_stream_dag_subtask_streams_v2_dags_workers__worker_id__subtasks__subtask_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/streams/v2/dags/sources/append": {
         parameters: {
             query?: never;
@@ -13267,6 +13641,119 @@ export interface components {
             protocol_version: 1;
             limits?: components["schemas"]["StreamLimits"] | null;
         };
+        /** StreamDAGAbortPreviewRequest */
+        StreamDAGAbortPreviewRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /** Routing Digest */
+            routing_digest: string;
+        };
+        /** StreamDAGActivateRequest */
+        StreamDAGActivateRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /** Routing Digest */
+            routing_digest: string;
+        };
+        /** StreamDAGActivationObservation */
+        StreamDAGActivationObservation: {
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /**
+             * Subtask Id
+             * Format: uuid
+             */
+            subtask_id: string;
+            /**
+             * Grant Id
+             * Format: uuid
+             */
+            grant_id: string;
+            /** Physical Epoch */
+            physical_epoch: number;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "WAITING" | "ACTIVE" | "STOPPING" | "TERMINAL";
+            /** Activation Operation Id */
+            activation_operation_id: string | null;
+        };
+        /** StreamDAGBootstrapReadyRequest */
+        StreamDAGBootstrapReadyRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Bootstrap Digest */
+            bootstrap_digest: string;
+            /** Signature */
+            signature: string;
+        };
+        /** StreamDAGBootstrapReadyResult */
+        StreamDAGBootstrapReadyResult: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /**
+             * Subtask Id
+             * Format: uuid
+             */
+            subtask_id: string;
+            /**
+             * Grant Id
+             * Format: uuid
+             */
+            grant_id: string;
+            /** Physical Epoch */
+            physical_epoch: number;
+            /** Bootstrap Digest */
+            bootstrap_digest: string;
+            /**
+             * Ready At
+             * Format: date-time
+             */
+            ready_at: string;
+            /** Request Digest */
+            request_digest: string;
+            /** Outcome Digest */
+            outcome_digest: string;
+        };
+        /** StreamDAGCancelRequest */
+        StreamDAGCancelRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /** Routing Digest */
+            routing_digest: string;
+            /** Reason */
+            reason: string;
+        };
         /** StreamDAGConsumerCompleteRequest */
         StreamDAGConsumerCompleteRequest: {
             context: components["schemas"]["StreamDAGRouteContext"];
@@ -13284,6 +13771,43 @@ export interface components {
             };
             /** Output Key */
             output_key?: (components["schemas"]["StreamNullOutputKey"] | components["schemas"]["StreamBooleanOutputKey"] | components["schemas"]["StreamIntegerOutputKey"] | components["schemas"]["StreamStringOutputKey"] | components["schemas"]["StreamBytesOutputKey"]) | null;
+        };
+        /** StreamDAGConsumerFinishRequest */
+        StreamDAGConsumerFinishRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            context: components["schemas"]["StreamDAGRouteContext"];
+            binding: components["schemas"]["ConsumerBinding"];
+        };
+        /** StreamDAGConsumerOpenRequest */
+        StreamDAGConsumerOpenRequest: {
+            context: components["schemas"]["StreamDAGRouteContext"];
+        };
+        /** StreamDAGConsumerReadRequest */
+        StreamDAGConsumerReadRequest: {
+            context: components["schemas"]["StreamDAGRouteContext"];
+            binding: components["schemas"]["ConsumerBinding"];
+        };
+        /** StreamDAGControlProjection */
+        StreamDAGControlProjection: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "PREVIEW_ABORT" | "STARTUP_ABORT" | "FAIL" | "CANCEL";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "REQUESTED" | "STOPPING" | "COMPLETED";
         };
         /** StreamDAGEdgePartitionProjection */
         StreamDAGEdgePartitionProjection: {
@@ -13349,6 +13873,397 @@ export interface components {
             /** Partitions */
             partitions: components["schemas"]["StreamDAGEdgePartitionProjection"][];
         };
+        /** StreamDAGExecution */
+        StreamDAGExecution: {
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /** Routing Digest */
+            routing_digest: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "PREVIEW" | "STARTING" | "ACTIVE" | "STOPPING" | "TERMINAL";
+            /** Terminal State */
+            terminal_state: ("COMPLETED" | "FAILED" | "CANCELLED") | null;
+            /** Cleanup Complete */
+            cleanup_complete: boolean;
+            counts: components["schemas"]["StreamDAGExecutionCounts"];
+            control: components["schemas"]["StreamDAGControlProjection"] | null;
+            /** Activation Operation Id */
+            activation_operation_id: string | null;
+            /** Readiness Set Digest */
+            readiness_set_digest: string | null;
+            /** Terminal Operation Id */
+            terminal_operation_id: string | null;
+            /** Terminal Outcome Digest */
+            terminal_outcome_digest: string | null;
+        };
+        /**
+         * StreamDAGExecutionAssignment
+         * @description Private execution binding; the published topology projection is unchanged.
+         */
+        StreamDAGExecutionAssignment: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Operator Run Id
+             * Format: uuid
+             */
+            operator_run_id: string;
+            /** Operator Uid */
+            operator_uid: string;
+            /** Subtask Index */
+            subtask_index: number;
+            /**
+             * Assignment Epoch
+             * @default 1
+             * @constant
+             */
+            assignment_epoch: 1;
+            /** Input Stream Id */
+            input_stream_id: string | null;
+            /**
+             * Output Stream Id
+             * Format: uuid
+             */
+            output_stream_id: string;
+            manifest: components["schemas"]["StreamSubmissionManifest"];
+            /** Assigned Worker Id */
+            assigned_worker_id?: string | null;
+            /**
+             * Physical Slot Reserved
+             * @default false
+             */
+            physical_slot_reserved: boolean;
+            /**
+             * Physical Slot Released
+             * @default false
+             */
+            physical_slot_released: boolean;
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /** Current Grant Id */
+            current_grant_id: string | null;
+            /** Physical Epoch */
+            physical_epoch: number;
+        };
+        /** StreamDAGExecutionCounts */
+        StreamDAGExecutionCounts: {
+            /** Total */
+            total: number;
+            /** Registered */
+            registered: number;
+            /** Bootstrap Ready */
+            bootstrap_ready: number;
+            /** Terminal Tasks */
+            terminal_tasks: number;
+            /** Stopped */
+            stopped: number;
+            /** Physical Slots Remaining */
+            physical_slots_remaining: number;
+            /** Tags Remaining */
+            tags_remaining: number;
+        };
+        /** StreamDAGFailRequest */
+        StreamDAGFailRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /** Routing Digest */
+            routing_digest: string;
+            /**
+             * Failure Kind
+             * @enum {string}
+             */
+            failure_kind: "FLOW_SCOPE_EXCEPTION" | "START_EXCEPTION" | "START_TIMEOUT" | "COORDINATOR_ERROR";
+        };
+        /** StreamDAGInputProjection */
+        StreamDAGInputProjection: {
+            /**
+             * Subscriber Id
+             * Format: uuid
+             */
+            subscriber_id: string;
+            /**
+             * Edge Id
+             * Format: uuid
+             */
+            edge_id: string;
+            /**
+             * Edge Partition Id
+             * Format: uuid
+             */
+            edge_partition_id: string;
+            /** Input Port Uid */
+            input_port_uid: string;
+            /**
+             * Input Stream Id
+             * Format: uuid
+             */
+            input_stream_id: string;
+            /**
+             * Schema Id
+             * @constant
+             */
+            schema_id: "json-value-v1";
+            /** Schema Digest */
+            schema_digest: string;
+        };
+        /** StreamDAGLaunchAttempt */
+        StreamDAGLaunchAttempt: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /**
+             * Subtask Id
+             * Format: uuid
+             */
+            subtask_id: string;
+            /**
+             * Start Operation Id
+             * Format: uuid
+             */
+            start_operation_id: string;
+            /**
+             * Worker Id
+             * Format: uuid
+             */
+            worker_id: string;
+            /** Worker Generation Digest */
+            worker_generation_digest: string;
+            /** Attempt Index */
+            attempt_index: number;
+            /** Expected Grant Id */
+            expected_grant_id: string | null;
+            /** Expected Physical Epoch */
+            expected_physical_epoch: number;
+            /** Replacement Operation Id */
+            replacement_operation_id: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "PREPARED" | "PID_RECORDED" | "CLOSED";
+            /** Child Process Id */
+            child_process_id: number | null;
+            /** Process Start Ticks */
+            process_start_ticks: number | null;
+            /** Local Journal Digest */
+            local_journal_digest: string | null;
+            /** Grant Id */
+            grant_id: string | null;
+        };
+        /** StreamDAGLaunchCloseReceipt */
+        StreamDAGLaunchCloseReceipt: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Launch Attempt Id
+             * Format: uuid
+             */
+            launch_attempt_id: string;
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /**
+             * Subtask Id
+             * Format: uuid
+             */
+            subtask_id: string;
+            /** Attempt Index */
+            attempt_index: number;
+            /**
+             * Proof Kind
+             * @enum {string}
+             */
+            proof_kind: "DEATH" | "CLOSED_UNSTARTED";
+            /**
+             * Closed At
+             * Format: date-time
+             */
+            closed_at: string;
+            /** Request Digest */
+            request_digest: string;
+            /** Outcome Digest */
+            outcome_digest: string;
+        };
+        /** StreamDAGLaunchCloseRequest */
+        StreamDAGLaunchCloseRequest: {
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Proof */
+            proof: components["schemas"]["StreamDAGLaunchDeathProof"] | components["schemas"]["StreamDAGLaunchUnstartedProof"];
+        };
+        /** StreamDAGLaunchDeathProof */
+        StreamDAGLaunchDeathProof: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "DEATH";
+            death_witness: components["schemas"]["NativeStreamProcessDeathWitness"];
+        };
+        /** StreamDAGLaunchOperationReceipt */
+        StreamDAGLaunchOperationReceipt: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Launch Attempt Id
+             * Format: uuid
+             */
+            launch_attempt_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "PREPARE" | "RECORD";
+            /** Request Digest */
+            request_digest: string;
+            /** Outcome Digest */
+            outcome_digest: string;
+            /**
+             * Accepted At
+             * Format: date-time
+             */
+            accepted_at: string;
+        };
+        /** StreamDAGLaunchOperationResult */
+        StreamDAGLaunchOperationResult: {
+            receipt: components["schemas"]["StreamDAGLaunchOperationReceipt"];
+            current: components["schemas"]["StreamDAGLaunchAttempt"];
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "SPAWN_ALLOWED" | "PREFLIGHT_ALLOWED" | "STOP_REQUIRED";
+        };
+        /** StreamDAGLaunchPrepareRequest */
+        StreamDAGLaunchPrepareRequest: {
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Start Operation Id
+             * Format: uuid
+             */
+            start_operation_id: string;
+            /** Replacement Operation Id */
+            replacement_operation_id: string | null;
+        };
+        /** StreamDAGLaunchRecordRequest */
+        StreamDAGLaunchRecordRequest: {
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Child Process Id */
+            child_process_id: number;
+            /** Process Start Ticks */
+            process_start_ticks: number;
+            /** Local Journal Digest */
+            local_journal_digest: string;
+        };
+        /** StreamDAGLaunchUnstartedProof */
+        StreamDAGLaunchUnstartedProof: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "CLOSED_UNSTARTED";
+            /** Local Journal Digest */
+            local_journal_digest: string;
+            /**
+             * Recovery Complete
+             * @constant
+             */
+            recovery_complete: true;
+            /**
+             * Spawn Fence Closed
+             * @constant
+             */
+            spawn_fence_closed: true;
+        };
+        /** StreamDAGOperationReceipt */
+        StreamDAGOperationReceipt: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "START" | "ACTIVATE" | "ABORT_PREVIEW" | "CANCEL" | "FAIL";
+            /** Request Digest */
+            request_digest: string;
+            /** Outcome Digest */
+            outcome_digest: string;
+            /**
+             * Accepted At
+             * Format: date-time
+             */
+            accepted_at: string;
+            /** Effective Control Kind */
+            effective_control_kind: ("PREVIEW_ABORT" | "STARTUP_ABORT" | "FAIL" | "CANCEL") | null;
+            /** Control Operation Id */
+            control_operation_id: string | null;
+        };
+        /** StreamDAGOperationResult */
+        StreamDAGOperationResult: {
+            receipt: components["schemas"]["StreamDAGOperationReceipt"];
+            execution: components["schemas"]["StreamDAGExecution"];
+        };
         /** StreamDAGOperatorProjection */
         StreamDAGOperatorProjection: {
             /**
@@ -13405,6 +14320,16 @@ export interface components {
             /** Tags */
             tags?: string[];
             limits?: components["schemas"]["StreamLimits"];
+        };
+        /** StreamDAGOutputProjection */
+        StreamDAGOutputProjection: {
+            /** Port Uid */
+            port_uid: string;
+            /**
+             * Stream Id
+             * Format: uuid
+             */
+            stream_id: string;
         };
         /** StreamDAGPlan */
         StreamDAGPlan: {
@@ -13495,6 +14420,44 @@ export interface components {
              * @enum {string}
              */
             direction: "INPUT" | "OUTPUT";
+        };
+        /** StreamDAGProducerFinishReceipt */
+        StreamDAGProducerFinishReceipt: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /**
+             * Producer Subtask Id
+             * Format: uuid
+             */
+            producer_subtask_id: string;
+            /**
+             * Producer Stream Id
+             * Format: uuid
+             */
+            producer_stream_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "SOURCE_EOF" | "CONSUMER_EOF";
+            /** Tail Sequence */
+            tail_sequence: number;
+            /** Accepted Source Position */
+            accepted_source_position: number | null;
+            /** Accepted Input Sequence */
+            accepted_input_sequence: number | null;
+            /** Semantic Digest */
+            semantic_digest: string;
+            /** Outcome Digest */
+            outcome_digest: string;
         };
         /** StreamDAGRouteContext */
         StreamDAGRouteContext: {
@@ -13658,6 +14621,148 @@ export interface components {
             /** Output Key */
             output_key?: (components["schemas"]["StreamNullOutputKey"] | components["schemas"]["StreamBooleanOutputKey"] | components["schemas"]["StreamIntegerOutputKey"] | components["schemas"]["StreamStringOutputKey"] | components["schemas"]["StreamBytesOutputKey"]) | null;
         };
+        /** StreamDAGSourceFinishRequest */
+        StreamDAGSourceFinishRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            context: components["schemas"]["StreamDAGRouteContext"];
+            binding: components["schemas"]["SourceBinding"];
+            /** Expected Position */
+            expected_position: number;
+        };
+        /** StreamDAGSourceOpenRequest */
+        StreamDAGSourceOpenRequest: {
+            context: components["schemas"]["StreamDAGRouteContext"];
+        };
+        /** StreamDAGStartRequest */
+        StreamDAGStartRequest: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /** Routing Digest */
+            routing_digest: string;
+        };
+        /** StreamDAGStopReceipt */
+        StreamDAGStopReceipt: {
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Control Operation Id
+             * Format: uuid
+             */
+            control_operation_id: string;
+            /**
+             * Graph Revision Id
+             * Format: uuid
+             */
+            graph_revision_id: string;
+            /**
+             * Subtask Id
+             * Format: uuid
+             */
+            subtask_id: string;
+            /**
+             * Task Run Id
+             * Format: uuid
+             */
+            task_run_id: string;
+            /** Grant Id */
+            grant_id: string | null;
+            /** Physical Epoch */
+            physical_epoch: number;
+            /**
+             * State
+             * @default STOPPED
+             * @constant
+             */
+            state: "STOPPED";
+            /**
+             * Task State
+             * @enum {string}
+             */
+            task_state: "COMPLETED" | "FAILED" | "CRASHED" | "CANCELLED";
+            /** Tag Allocation Released */
+            tag_allocation_released: boolean;
+            /**
+             * Physical Slot Released
+             * @default true
+             * @constant
+             */
+            physical_slot_released: true;
+            /** All Attempts Closed Digest */
+            all_attempts_closed_digest: string;
+            /** Outcome Digest */
+            outcome_digest: string;
+        };
+        /** StreamDAGSubtaskBootstrap */
+        StreamDAGSubtaskBootstrap: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Flow Run Run Count */
+            flow_run_run_count: number;
+            /** Flow Generation */
+            flow_generation: number;
+            /**
+             * Flow Holder Id
+             * Format: uuid
+             */
+            flow_holder_id: string;
+            assignment: components["schemas"]["StreamDAGExecutionAssignment"];
+            grant: components["schemas"]["StreamSubtaskGrant"];
+            context: components["schemas"]["StreamDAGRouteContext"];
+            /** Operator Parallelism */
+            operator_parallelism: number;
+            input: components["schemas"]["StreamDAGInputProjection"] | null;
+            output: components["schemas"]["StreamDAGOutputProjection"];
+            /** Entrypoint */
+            entrypoint: string;
+            /** Task Key */
+            task_key: string;
+            /** Task Version */
+            task_version: string;
+            /** Artifact Digest */
+            artifact_digest: string;
+            /** Context Key */
+            context_key: string;
+            task_policy: components["schemas"]["TaskRunPolicy"];
+            /** Timeout Seconds */
+            timeout_seconds?: number | null;
+            /** Effective Tags */
+            effective_tags: string[];
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Input Key */
+            input_key: string | null;
+            task_run: components["schemas"]["TaskRun"];
+            /** Reserved Tag Names */
+            reserved_tag_names: string[];
+            /** Event Public Key */
+            event_public_key: string;
+            /**
+             * Launch Attempt Id
+             * Format: uuid
+             */
+            launch_attempt_id: string;
+            /** Worker Generation Digest */
+            worker_generation_digest: string;
+            /** Bootstrap Digest */
+            bootstrap_digest: string;
+        };
         /** StreamDAGSubtaskProjection */
         StreamDAGSubtaskProjection: {
             /**
@@ -13700,6 +14805,111 @@ export interface components {
              * @default false
              */
             physical_slot_released: boolean;
+        };
+        /** StreamDAGWorkerAssignment */
+        StreamDAGWorkerAssignment: {
+            /**
+             * Flow Run Id
+             * Format: uuid
+             */
+            flow_run_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /** Routing Digest */
+            routing_digest: string;
+            /** Placement Digest */
+            placement_digest: string;
+            /**
+             * Start Operation Id
+             * Format: uuid
+             */
+            start_operation_id: string;
+            assignment: components["schemas"]["StreamDAGExecutionAssignment"];
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "STARTING" | "ACTIVE" | "STOPPING" | "TERMINAL";
+            current_grant: components["schemas"]["StreamSubtaskGrant"] | null;
+            /** Bootstrap Ready */
+            bootstrap_ready: boolean;
+            /** Working Directory */
+            working_directory: string;
+            task_configuration: components["schemas"]["StreamWorkerTaskConfiguration"];
+            task_state: components["schemas"]["StateType"];
+            /** Task Run Count */
+            task_run_count: number;
+            /** Task Retriable */
+            task_retriable: boolean | null;
+            /**
+             * Output State
+             * @enum {string}
+             */
+            output_state: "OPEN" | "COMPLETED" | "FAILED";
+            /** Output Attempt */
+            output_attempt: number;
+            control: components["schemas"]["StreamDAGControlProjection"] | null;
+            /** Launch Attempts */
+            launch_attempts: components["schemas"]["StreamDAGLaunchAttempt"][];
+        };
+        /** StreamDAGWorkerPollRequest */
+        StreamDAGWorkerPollRequest: {
+            /**
+             * Protocol
+             * @default partitioned-dag-v1
+             * @constant
+             */
+            protocol: "partitioned-dag-v1";
+            /**
+             * Protocol Version
+             * @default 1
+             * @constant
+             */
+            protocol_version: 1;
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+            /** Active Subtask Ids */
+            active_subtask_ids?: string[];
+            /**
+             * Limit
+             * @default 64
+             */
+            limit: number;
+        };
+        /** StreamDAGWorkerStartupAbortRequest */
+        StreamDAGWorkerStartupAbortRequest: {
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+            /**
+             * Start Operation Id
+             * Format: uuid
+             */
+            start_operation_id: string;
+            /** Graph Digest */
+            graph_digest: string;
+            /** Routing Digest */
+            routing_digest: string;
+        };
+        /** StreamDAGWorkerStartupAbortResult */
+        StreamDAGWorkerStartupAbortResult: {
+            /**
+             * Control Operation Id
+             * Format: uuid
+             */
+            control_operation_id: string;
+            execution: components["schemas"]["StreamDAGExecution"];
+        };
+        /** StreamDAGWorkerStopRequest */
+        StreamDAGWorkerStopRequest: {
+            principal: components["schemas"]["StreamWorkerPrincipal"];
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Control Operation Id
+             * Format: uuid
+             */
+            control_operation_id: string;
         };
         /** StreamDelivery */
         StreamDelivery: {
@@ -21167,6 +22377,815 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StreamDAGPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_stream_dag_streams_v2_dags__graph_id__start_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGOperationResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_stream_dag_execution_streams_v2_dags__graph_id__execution_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGExecution"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    abort_stream_dag_preview_streams_v2_dags__graph_id__abort_preview_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGAbortPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGOperationResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_stream_dag_streams_v2_dags__graph_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGCancelRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGOperationResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_stream_dag_streams_v2_dags__graph_id__activate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGActivateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGOperationResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fail_stream_dag_streams_v2_dags__graph_id__fail_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+                "X-Prefect-Stream-Execution-Generation"?: number | null;
+                "X-Prefect-Stream-Execution-Holder"?: string | null;
+                "X-Prefect-Stream-Execution-Capability"?: string | null;
+            };
+            path: {
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGFailRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGOperationResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_stream_dag_subtask_bootstrap_streams_v2_dags_subtasks__subtask_id__bootstrap_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGSubtaskBootstrap"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mark_stream_dag_subtask_bootstrap_ready_streams_v2_dags_subtasks__subtask_id__bootstrap_ready_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGBootstrapReadyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGBootstrapReadyResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_stream_dag_subtask_activation_streams_v2_dags_subtasks__subtask_id__activation_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGActivationObservation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_stream_dag_source_streams_v2_dags_sources_open_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGSourceOpenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceAdmission"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_stream_dag_consumer_streams_v2_dags_consumers_open_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGConsumerOpenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsumerBinding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_stream_dag_consumer_streams_v2_dags_consumers_read_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGConsumerReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDelivery"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_stream_dag_input_status_streams_v2_dags_subtasks__subtask_id__input_status_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_stream_dag_output_status_streams_v2_dags_subtasks__subtask_id__output_status_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finish_stream_dag_source_streams_v2_dags_sources_finish_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGSourceFinishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGProducerFinishReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finish_stream_dag_consumer_streams_v2_dags_consumers_finish_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGConsumerFinishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGProducerFinishReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    poll_worker_stream_dag_subtasks_streams_v2_dags_workers__worker_id__poll_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGWorkerPollRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGWorkerAssignment"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    abort_worker_stream_dag_startup_streams_v2_dags_workers__worker_id__graphs__graph_id__startup_abort_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGWorkerStartupAbortRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGWorkerStartupAbortResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prepare_worker_stream_dag_launch_streams_v2_dags_workers__worker_id__subtasks__subtask_id__launches_prepare_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGLaunchPrepareRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGLaunchOperationResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_worker_stream_dag_launch_streams_v2_dags_workers__worker_id__subtasks__subtask_id__launches__launch_attempt_id__record_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+                subtask_id: string;
+                launch_attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGLaunchRecordRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGLaunchOperationResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    close_worker_stream_dag_launch_streams_v2_dags_workers__worker_id__subtasks__subtask_id__launches__launch_attempt_id__close_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+                subtask_id: string;
+                launch_attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGLaunchCloseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGLaunchCloseReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_worker_stream_dag_subtask_streams_v2_dags_workers__worker_id__subtasks__subtask_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-prefect-api-version"?: string;
+            };
+            path: {
+                worker_id: string;
+                subtask_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamDAGWorkerStopRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDAGStopReceipt"];
                 };
             };
             /** @description Validation Error */

@@ -1,0 +1,2033 @@
+"""Fixed-P2 control metadata, ordinary TaskRuns and existing stream storage."""
+
+import hashlib
+import hmac
+from collections import Counter
+from datetime import timedelta
+from typing import Literal, cast
+from uuid import UUID, uuid5
+
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from prefect._internal.uuid7 import uuid7
+from prefect.server.database import PrefectDBInterface, orm_models
+from prefect.server.models import task_runs as task_run_models
+from prefect.server.models._stream_errors import NativeStreamError
+from prefect.server.models.stream_executions import require_execution
+from prefect.server.models.stream_subtask_authority import (
+    DAGWorkerStreamAuthorization,
+    WorkerStreamAuthorization,
+    capability_digest,
+    release_allocations,
+    release_terminal_allocation,
+    require_fixed_physical_execution,
+    require_subtask,
+)
+from prefect.server.models.stream_subtask_authority import (
+    require_physical_backend as _backend,
+)
+from prefect.server.models.stream_worker_capacity import physical_worker_occupancy
+from prefect.server.models.streams import (
+    NativeStreamStore,
+    canonical_stream_payload,
+    finish_stream_partition,
+)
+from prefect.server.orchestration.core_policy import CoreTaskPolicy
+from prefect.server.schemas import states
+from prefect.server.schemas import stream_subtasks as s
+from prefect.server.schemas.core import TaskRun
+from prefect.server.schemas.responses import SetStateStatus
+from prefect.server.schemas.states import TERMINAL_STATES
+from prefect.server.schemas.statuses import WorkerStatus
+from prefect.server.schemas.streams import (
+    StreamExecutionCredentials,
+    StreamSubmissionReserveRequest,
+)
+from prefect.types._datetime import DateTime, now
+
+STARTUP_ABORT_REASON = "Physical startup did not cross the activation barrier"
+WORKER_CAPABILITY_FRESHNESS_SECONDS = 120
+
+
+def startup_abort_operation_id(graph_id: UUID) -> UUID:
+    return uuid5(graph_id, "prefect-stream-startup-abort-v1")
+
+
+async def placement_workers(
+    session: AsyncSession, db: PrefectDBInterface, flow_run_id: UUID, *, update: bool
+) -> tuple[UUID, UUID]:
+    snapshot = await session.scalar(
+        sa.select(db.NativeStreamDeploymentSnapshot).where(
+            db.NativeStreamDeploymentSnapshot.flow_run_id == flow_run_id
+        )
+    )
+    authority = await session.scalar(
+        sa.select(db.StreamExecutionAuthority).where(
+            db.StreamExecutionAuthority.flow_run_id == flow_run_id
+        )
+    )
+    launch = await session.scalar(
+        sa.select(db.NativeStreamLaunchIdentity).where(
+            db.NativeStreamLaunchIdentity.flow_run_id == flow_run_id,
+            db.NativeStreamLaunchIdentity.generation
+            == (authority.generation if authority else 0),
+            db.NativeStreamLaunchIdentity.state == "PROCESS_REGISTERED",
+        )
+    )
+    if (
+        snapshot is None
+        or snapshot.profile != "partitioned-fixed-v1"
+        or authority is None
+        or launch is None
+    ):
+        raise NativeStreamError(
+            "UNSUPPORTED_PROFILE",
+            "Physical placement requires its current native deployment and registered Flow coordinator",
+        )
+    cutoff = now("UTC") - timedelta(seconds=WORKER_CAPABILITY_FRESHNESS_SECONDS)
+    candidates = list(
+        (
+            await session.scalars(
+                sa.select(db.Worker.id)
+                .join(
+                    db.StreamWorkerCapability,
+                    db.StreamWorkerCapability.worker_id == db.Worker.id,
+                )
+                .where(
+                    db.Worker.work_pool_id == snapshot.work_pool_id,
+                    db.Worker.status == WorkerStatus.ONLINE,
+                    db.StreamWorkerCapability.work_pool_id == snapshot.work_pool_id,
+                    db.StreamWorkerCapability.protocol == "partitioned-fixed-v1",
+                    db.StreamWorkerCapability.protocol_version == 1,
+                    db.StreamWorkerCapability.last_renewed_at >= cutoff,
+                    db.StreamWorkerCapability.host_id == launch.launcher_host_id,
+                    db.StreamWorkerCapability.boot_id == launch.launcher_boot_id,
+                )
+                .order_by(db.Worker.id)
+            )
+        ).all()
+    )
+    alternatives = [
+        worker_id for worker_id in candidates if worker_id != launch.worker_id
+    ]
+    if launch.worker_id not in candidates or not alternatives:
+        raise NativeStreamError(
+            "NATIVE_WORKERS_UNAVAILABLE",
+            "Two ONLINE workers advertising the fixed partition protocol on this host are required",
+        )
+    selected = (launch.worker_id, alternatives[0])
+    workers = {
+        worker.id: worker
+        for worker in (
+            await session.scalars(
+                sa.select(db.Worker)
+                .where(db.Worker.id.in_(selected))
+                .order_by(db.Worker.id)
+                .with_for_update(read=not update)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    }
+    capabilities = {
+        cap.worker_id: cap
+        for cap in (
+            await session.scalars(
+                sa.select(db.StreamWorkerCapability)
+                .where(
+                    db.StreamWorkerCapability.worker_id.in_(selected),
+                    db.StreamWorkerCapability.protocol == "partitioned-fixed-v1",
+                    db.StreamWorkerCapability.protocol_version == 1,
+                )
+                .order_by(db.StreamWorkerCapability.worker_id)
+                .with_for_update(read=not update)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    }
+    for worker_id in selected:
+        worker = workers.get(worker_id)
+        cap = capabilities.get(worker_id)
+        if (
+            worker is None
+            or cap is None
+            or worker.status != WorkerStatus.ONLINE
+            or worker.work_pool_id != snapshot.work_pool_id
+            or cap.work_pool_id != snapshot.work_pool_id
+            or cap.protocol != "partitioned-fixed-v1"
+            or cap.protocol_version != 1
+            or cap.last_renewed_at < cutoff
+            or (cap.host_id, cap.boot_id)
+            != (launch.launcher_host_id, launch.launcher_boot_id)
+        ):
+            raise NativeStreamError(
+                "NATIVE_WORKERS_UNAVAILABLE",
+                "Selected physical worker capability is no longer current",
+            )
+    owner = capabilities[selected[0]]
+    if (owner.launcher_process_id, owner.launcher_start_ticks) != (
+        launch.launcher_process_id,
+        launch.launcher_start_ticks,
+    ):
+        raise NativeStreamError(
+            "WORKER_IDENTITY_IN_USE",
+            "Flow launch and worker capability identify different supervisors",
+        )
+    if update:
+        occupied = await physical_worker_occupancy(session, db, selected)
+        if any(occupied.get(worker_id, 0) + 2 > 2 for worker_id in selected):
+            raise NativeStreamError(
+                "REGION_CAPACITY",
+                "A selected worker has insufficient physical process slots",
+            )
+    return selected
+
+
+async def control_authority(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    flow_run_id: UUID,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+    *,
+    allowed_states: tuple[str, ...] = ("ACTIVE",),
+) -> orm_models.StreamExecutionAuthority | None:
+    if not isinstance(execution, WorkerStreamAuthorization):
+        return await require_execution(
+            session, db, flow_run_id, execution, allowed_states=allowed_states
+        )
+    execution.validate(session, flow_run_id=flow_run_id)
+    if execution.authority.state not in allowed_states:
+        raise NativeStreamError(
+            "SUBTASK_FENCED", "Trusted worker authorization is no longer current"
+        )
+    return execution.authority
+
+
+async def _graph(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+    *,
+    update: bool = False,
+    terminal_replay: bool = False,
+) -> orm_models.StreamGraphRevision:
+    await _backend(session, db)
+    if isinstance(execution, WorkerStreamAuthorization):
+        execution.validate(session, graph_revision_id=graph_id)
+        if not isinstance(execution, DAGWorkerStreamAuthorization):
+            require_fixed_physical_execution(execution.graph)
+        elif execution.graph.current_control_operation_id is not None:
+            raise NativeStreamError(
+                "CONTROL_CONFLICT", "DAG controls fence replacement and retirement"
+            )
+        if update and not execution.graph_update:
+            raise NativeStreamError(
+                "PROTOCOL_ERROR",
+                "Worker graph mutation requires its prelocked exclusive graph proof",
+            )
+        authority = await control_authority(
+            session,
+            db,
+            execution.flow_run_id,
+            execution,
+            allowed_states=("ACTIVE", "TERMINAL", "RELEASED")
+            if terminal_replay
+            else ("ACTIVE",),
+        )
+        if authority is None or authority.cancel_requested and not terminal_replay:
+            raise NativeStreamError(
+                "CANCEL_REQUESTED", "Flow authority no longer admits physical work"
+            )
+        if execution.graph.state == "RELEASED" and not terminal_replay:
+            raise NativeStreamError("RECOVERY_HORIZON_EXPIRED", "Graph was released")
+        return execution.graph
+    graph = await session.get(db.StreamGraphRevision, graph_id)
+    if graph is None:
+        raise NativeStreamError("NOT_FOUND", "Unknown graph revision")
+    require_fixed_physical_execution(graph)
+    if (
+        isinstance(execution, WorkerStreamAuthorization)
+        and graph.id != execution.graph_revision_id
+    ):
+        raise NativeStreamError(
+            "SUBTASK_SCOPE_DENIED", "Worker authorization belongs to another graph"
+        )
+    await session.execute(
+        sa.select(db.FlowRun.id)
+        .where(db.FlowRun.id == graph.flow_run_id)
+        .with_for_update(read=not update)
+    )
+    authority = await control_authority(
+        session,
+        db,
+        graph.flow_run_id,
+        execution,
+        allowed_states=("ACTIVE", "TERMINAL", "RELEASED")
+        if terminal_replay
+        else ("ACTIVE",),
+    )
+    if authority is None or authority.cancel_requested and not terminal_replay:
+        raise NativeStreamError(
+            "CANCEL_REQUESTED", "Flow authority no longer admits physical work"
+        )
+    graph = await session.scalar(
+        sa.select(db.StreamGraphRevision)
+        .where(db.StreamGraphRevision.id == graph_id)
+        .with_for_update(read=not update)
+        .execution_options(populate_existing=True)
+    )
+    assert graph is not None
+    if graph.state == "RELEASED" and not terminal_replay:
+        raise NativeStreamError("RECOVERY_HORIZON_EXPIRED", "Graph was released")
+    return graph
+
+
+async def _subtask(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+    *,
+    update: bool = False,
+    terminal_replay: bool = False,
+) -> tuple[orm_models.StreamGraphRevision, orm_models.StreamPhysicalSubtask]:
+    await _backend(session, db)
+    if isinstance(execution, WorkerStreamAuthorization):
+        execution.validate(session, subtask_id=subtask_id)
+        if update and not execution.subtask_update:
+            raise NativeStreamError(
+                "PROTOCOL_ERROR",
+                "Worker subtask mutation requires its prelocked exclusive subtask proof",
+            )
+        graph = await _graph(
+            session,
+            db,
+            execution.graph_revision_id,
+            execution,
+            terminal_replay=terminal_replay,
+        )
+        if graph.state != "ADMITTED" and not terminal_replay:
+            raise NativeStreamError(
+                "SUBTASK_FENCED", "Physical graph is no longer admitted"
+            )
+        return graph, execution.subtask
+    subtask = await session.get(db.StreamPhysicalSubtask, subtask_id)
+    if subtask is None:
+        raise NativeStreamError("NOT_FOUND", "Unknown physical subtask")
+    if subtask.assigned_worker_id is not None:
+        raise NativeStreamError(
+            "WORKER_CONTROL_REQUIRED",
+            "Assigned physical subtasks require their worker control route",
+        )
+    if (
+        isinstance(execution, WorkerStreamAuthorization)
+        and subtask.id != execution.subtask_id
+    ):
+        raise NativeStreamError(
+            "SUBTASK_SCOPE_DENIED", "Worker authorization belongs to another subtask"
+        )
+    graph = await _graph(
+        session,
+        db,
+        subtask.graph_revision_id,
+        execution,
+        terminal_replay=terminal_replay,
+    )
+    subtask = await session.scalar(
+        sa.select(db.StreamPhysicalSubtask)
+        .where(db.StreamPhysicalSubtask.id == subtask_id)
+        .with_for_update(read=not update)
+        .execution_options(populate_existing=True)
+    )
+    assert subtask is not None
+    return graph, subtask
+
+
+async def _projection(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask: orm_models.StreamPhysicalSubtask,
+) -> s.StreamSubtaskProjection:
+    operator = await session.get(db.StreamOperatorRun, subtask.operator_run_id)
+    manifest = await session.get(db.StreamSubmission, subtask.submission_id)
+    assert operator is not None and manifest is not None
+    return s.StreamSubtaskProjection(
+        id=subtask.id,
+        graph_revision_id=subtask.graph_revision_id,
+        operator_run_id=subtask.operator_run_id,
+        operator_uid=operator.operator_uid,
+        subtask_index=subtask.subtask_index,
+        assignment_epoch=cast(Literal[1], subtask.assignment_epoch),
+        input_stream_id=subtask.input_stream_id,
+        manifest=NativeStreamStore.submission_response(manifest),
+        current_grant_id=subtask.current_grant_id,
+        physical_epoch=subtask.physical_epoch,
+        assigned_worker_id=subtask.assigned_worker_id,
+        physical_slot_released=subtask.physical_slot_released,
+    )
+
+
+async def graph_plan(
+    session: AsyncSession, db: PrefectDBInterface, graph: orm_models.StreamGraphRevision
+) -> s.StreamGraphPlan:
+    require_fixed_physical_execution(graph)
+    subtasks = (
+        await session.scalars(
+            sa.select(db.StreamPhysicalSubtask)
+            .join(
+                db.StreamOperatorRun,
+                db.StreamPhysicalSubtask.operator_run_id == db.StreamOperatorRun.id,
+            )
+            .where(db.StreamPhysicalSubtask.graph_revision_id == graph.id)
+            .order_by(
+                sa.case((db.StreamOperatorRun.role == "SOURCE", 0), else_=1),
+                db.StreamPhysicalSubtask.subtask_index,
+            )
+        )
+    ).all()
+    return s.StreamGraphPlan(
+        id=graph.id,
+        flow_run_id=graph.flow_run_id,
+        profile=cast(Literal["partitioned-fixed-v1"], graph.profile),
+        assignment_epoch=cast(Literal[1], graph.assignment_epoch),
+        graph_digest=graph.graph_digest,
+        state=cast(Literal["SEALED", "ADMITTED", "ABORTING", "RELEASED"], graph.state),
+        created_at=graph.created,
+        startup_completed_at=graph.startup_completed_at,
+        placement_digest=graph.placement_digest,
+        subtasks=[await _projection(session, db, subtask) for subtask in subtasks],
+    )
+
+
+async def read_graph(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+) -> s.StreamGraphPlan:
+    return await graph_plan(session, db, await _graph(session, db, graph_id, execution))
+
+
+async def seal_graph(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: s.StreamGraphSealRequest,
+    execution: StreamExecutionCredentials | None,
+    *,
+    _allow_local_discovery: bool = False,
+) -> s.StreamGraphPlan:
+    await _backend(session, db)
+    await session.execute(
+        sa.select(db.FlowRun.id)
+        .where(db.FlowRun.id == request.flow_run_id)
+        .with_for_update()
+    )
+    authority = await require_execution(
+        session,
+        db,
+        request.flow_run_id,
+        execution,
+        allowed_states=("CLAIMED", "ACTIVE"),
+    )
+    if authority is None:
+        raise NativeStreamError(
+            "SUBTASK_AUTH_REQUIRED", "A current Flow execution is required"
+        )
+    flow = await session.get(db.FlowRun, request.flow_run_id, populate_existing=True)
+    if flow is None or flow.run_count != authority.flow_run_run_count:
+        raise NativeStreamError(
+            "RECOVERY_NOT_READY",
+            "Flow attempt and execution authority are inconsistent",
+        )
+    snapshot = await session.scalar(
+        sa.select(db.NativeStreamDeploymentSnapshot).where(
+            db.NativeStreamDeploymentSnapshot.flow_run_id == request.flow_run_id
+        )
+    )
+    if flow.deployment_id is not None and (
+        snapshot is None or snapshot.profile != request.profile
+    ):
+        raise NativeStreamError(
+            "UNSUPPORTED_PROFILE",
+            "Deployed physical graph requires its matching native deployment snapshot",
+        )
+    if flow.deployment_id is None:
+        if not _allow_local_discovery:
+            raise NativeStreamError(
+                "UNSUPPORTED_PROFILE",
+                "Public fixed-partition execution requires a deployment and two native workers",
+            )
+    else:
+        if (
+            snapshot is None
+            or request.deployment_id != snapshot.deployment_id
+            or request.deployment_version != snapshot.deployment_version
+            or request.flow_version != snapshot.flow_version
+            or request.working_directory is None
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Physical deployment, version, profile and working directory must match its immutable snapshot",
+            )
+        await placement_workers(session, db, request.flow_run_id, update=False)
+    material = request.model_dump(mode="json")
+    _, _, digest = canonical_stream_payload(material, 256 * 1024)
+    existing = await session.scalar(
+        sa.select(db.StreamGraphRevision).where(
+            db.StreamGraphRevision.flow_run_id == request.flow_run_id
+        )
+    )
+    if existing is not None:
+        if (
+            existing.operation_id != request.operation_id
+            or existing.request_digest != digest
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Flow is already bound to another immutable graph"
+            )
+        return await graph_plan(session, db, existing)
+    if (
+        authority.manifest_set_digest is not None
+        or await session.scalar(
+            sa.select(db.StreamSubmission.id)
+            .where(db.StreamSubmission.flow_run_id == request.flow_run_id)
+            .limit(1)
+        )
+        is not None
+        or await session.scalar(
+            sa.select(db.StreamFiniteSubmission.id)
+            .where(db.StreamFiniteSubmission.flow_run_id == request.flow_run_id)
+            .limit(1)
+        )
+        is not None
+    ):
+        raise NativeStreamError(
+            "UNSUPPORTED_TOPOLOGY",
+            "Fixed partition graph cannot be mixed with v1 manifests",
+        )
+    graph = db.StreamGraphRevision(
+        id=uuid7(),
+        flow_run_id=request.flow_run_id,
+        operation_id=request.operation_id,
+        profile=request.profile,
+        assignment_epoch=request.assignment_epoch,
+        graph_digest=digest,
+        request_digest=digest,
+        declaration=material,
+        state="SEALED",
+    )
+    session.add(graph)
+    await session.flush()
+    store = NativeStreamStore(db, execution, session=session, graph_seal_id=graph.id)
+    source_outputs: list[UUID] = []
+    for spec in request.operators:
+        operator = db.StreamOperatorRun(
+            id=uuid7(),
+            graph_revision_id=graph.id,
+            operator_uid=spec.operator_uid,
+            role=spec.role,
+            parallelism=spec.parallelism,
+            specification=spec.model_dump(mode="json"),
+        )
+        session.add(operator)
+        await session.flush()
+        for index in range(2):
+            upstream = None if spec.role == "SOURCE" else source_outputs[index]
+            manifest = await store.reserve_submission(
+                StreamSubmissionReserveRequest(
+                    flow_run_id=request.flow_run_id,
+                    submission_key=f"physical/{spec.operator_uid}/{index}",
+                    role=spec.role,
+                    protocol="source-v1" if spec.role == "SOURCE" else "yield-v2",
+                    task_name=f"{spec.task_name}[{index}]",
+                    task_key=spec.task_key,
+                    task_version=spec.task_version,
+                    flow_version=request.flow_version,
+                    deployment_id=request.deployment_id,
+                    deployment_version=request.deployment_version,
+                    artifact_digest=spec.artifact_digest,
+                    parameters=spec.parameters[index],
+                    upstream_stream_id=upstream,
+                    input_key=spec.input_key,
+                    limits=spec.limits,
+                    task_policy=spec.task_policy,
+                    tags=spec.tags,
+                )
+            )
+            row = await session.scalar(
+                sa.select(db.StreamSubmission).where(
+                    db.StreamSubmission.task_run_id == manifest.task_run_id
+                )
+            )
+            assert row is not None
+            task = await session.get(db.TaskRun, manifest.task_run_id)
+            assert task is not None
+            task.flow_run_run_count = authority.flow_run_run_count
+            session.add(
+                db.StreamPhysicalSubtask(
+                    id=uuid7(),
+                    graph_revision_id=graph.id,
+                    operator_run_id=operator.id,
+                    subtask_index=index,
+                    assignment_epoch=1,
+                    task_run_id=manifest.task_run_id,
+                    submission_id=row.id,
+                    input_stream_id=upstream,
+                    output_stream_id=manifest.stream_id,
+                    physical_epoch=0,
+                )
+            )
+            if spec.role == "SOURCE":
+                source_outputs.append(manifest.stream_id)
+    authority.manifest_set_digest = digest
+    authority.manifest_count = 4
+    authority.manifest_sealed_at = cast(DateTime, now("UTC"))
+    authority.manifest_seal_operation_id = request.operation_id
+    authority.manifest_seal_request_digest = digest
+    authority.prepared_generation = authority.generation
+    await session.flush()
+    return await graph_plan(session, db, graph)
+
+
+async def admit_region(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    request: s.StreamRegionAdmissionRequest,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+    *,
+    _allow_local_discovery: bool = False,
+) -> s.StreamGraphPlan:
+    await _backend(session, db)
+    graph = await _graph(session, db, graph_id, execution, update=True)
+    _, _, request_digest = canonical_stream_payload(request.model_dump(mode="json"))
+    if graph.graph_digest != request.graph_digest:
+        raise NativeStreamError("IDENTITY_CONFLICT", "Graph digest mismatch")
+    if graph.admission_operation_id is not None:
+        if (
+            graph.admission_operation_id != request.operation_id
+            or graph.admission_request_digest != request_digest
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Region admission has another operation"
+            )
+        return await graph_plan(session, db, graph)
+    flow = await session.get(db.FlowRun, graph.flow_run_id)
+    selected = None
+    if flow is None or flow.deployment_id is None:
+        if not _allow_local_discovery:
+            raise NativeStreamError(
+                "UNSUPPORTED_PROFILE",
+                "Public fixed-partition admission requires deployed two-worker placement",
+            )
+    else:
+        selected = await placement_workers(session, db, graph.flow_run_id, update=True)
+    subtasks = (
+        await session.scalars(
+            sa.select(db.StreamPhysicalSubtask)
+            .where(db.StreamPhysicalSubtask.graph_revision_id == graph.id)
+            .order_by(db.StreamPhysicalSubtask.id)
+        )
+    ).all()
+    tasks = {
+        task.id: task
+        for task in (
+            await session.scalars(
+                sa.select(db.TaskRun).where(
+                    db.TaskRun.id.in_([s.task_run_id for s in subtasks])
+                )
+            )
+        ).all()
+    }
+    tags = {tag for task in tasks.values() for tag in task.tags}
+    if (
+        tags
+        and await session.scalar(
+            sa.select(db.ConcurrencyLimit.id)
+            .where(db.ConcurrencyLimit.tag.in_(tags))
+            .limit(1)
+        )
+        is not None
+    ):
+        raise NativeStreamError(
+            "UNSUPPORTED_PROFILE",
+            "Legacy tag concurrency limits require explicit migration",
+        )
+    limits = (
+        await session.scalars(
+            sa.select(db.ConcurrencyLimitV2)
+            .where(db.ConcurrencyLimitV2.name.in_([f"tag:{tag}" for tag in tags]))
+            .order_by(db.ConcurrencyLimitV2.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).all()
+    active = {str(limit.name): limit for limit in limits if limit.active}
+    counts = Counter(
+        f"tag:{tag}"
+        for task in tasks.values()
+        for tag in set(task.tags)
+        if f"tag:{tag}" in active
+    )
+    for name, limit in active.items():
+        if limit.slot_decay_per_second != 0:
+            raise NativeStreamError(
+                "UNSUPPORTED_PROFILE", "Physical region cannot use decaying tag limits"
+            )
+        if limit.limit <= 0 or limit.active_slots + counts[name] > limit.limit:
+            raise NativeStreamError(
+                "REGION_CAPACITY",
+                "Runnable physical region exceeds available concurrency",
+            )
+    for name, count in counts.items():
+        active[name].active_slots += count
+    for subtask in subtasks:
+        for tag in set(tasks[subtask.task_run_id].tags):
+            limit = active.get(f"tag:{tag}")
+            if limit is not None:
+                session.add(
+                    db.StreamSubtaskAllocation(
+                        subtask_id=subtask.id,
+                        concurrency_limit_id=limit.id,
+                        released=False,
+                    )
+                )
+    if selected is not None:
+        for subtask in subtasks:
+            subtask.assigned_worker_id = selected[subtask.subtask_index]
+        _, _, graph.placement_digest = canonical_stream_payload(
+            {
+                "graph_revision_id": str(graph.id),
+                "graph_digest": graph.graph_digest,
+                "assignment_epoch": graph.assignment_epoch,
+                "workers": [str(worker_id) for worker_id in selected],
+            }
+        )
+    graph.state = "ADMITTED"
+    graph.admission_operation_id = request.operation_id
+    graph.admission_request_digest = request_digest
+    await session.flush()
+    return await graph_plan(session, db, graph)
+
+
+async def activate_graph(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    request: s.StreamGraphActivateRequest,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+) -> s.StreamGraphPlan:
+    graph = await _graph(session, db, graph_id, execution, update=True)
+    _, _, digest = canonical_stream_payload(request.model_dump(mode="json"))
+    if graph.graph_digest != request.graph_digest:
+        raise NativeStreamError("IDENTITY_CONFLICT", "Activation graph digest mismatch")
+    if graph.activation_operation_id is not None:
+        if (
+            graph.activation_operation_id != request.operation_id
+            or graph.activation_request_digest != digest
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Graph activation operation drift"
+            )
+        return await graph_plan(session, db, graph)
+    plan = await graph_plan(session, db, graph)
+    if (
+        graph.state != "ADMITTED"
+        or [item.current_grant_id for item in plan.subtasks] != request.grant_ids
+    ):
+        raise NativeStreamError(
+            "METADATA_NOT_READY",
+            "Activation requires the complete current physical region",
+        )
+    assigned_ids = sorted(
+        {
+            item.assigned_worker_id
+            for item in plan.subtasks
+            if item.assigned_worker_id is not None
+        },
+        key=str,
+    )
+    capability_by_worker = {}
+    if assigned_ids:
+        if len(assigned_ids) != 2 or any(
+            item.assigned_worker_id is None for item in plan.subtasks
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Activation requires the complete immutable two-worker placement",
+            )
+        workers = {
+            row.id: row
+            for row in (
+                await session.scalars(
+                    sa.select(db.Worker)
+                    .where(db.Worker.id.in_(assigned_ids))
+                    .order_by(db.Worker.id)
+                    .with_for_update(read=True)
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        }
+        capability_by_worker = {
+            row.worker_id: row
+            for row in (
+                await session.scalars(
+                    sa.select(db.StreamWorkerCapability)
+                    .where(
+                        db.StreamWorkerCapability.worker_id.in_(assigned_ids),
+                        db.StreamWorkerCapability.protocol == "partitioned-fixed-v1",
+                        db.StreamWorkerCapability.protocol_version == 1,
+                    )
+                    .order_by(db.StreamWorkerCapability.worker_id)
+                    .with_for_update(read=True)
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        }
+        cutoff = now("UTC") - timedelta(seconds=WORKER_CAPABILITY_FRESHNESS_SECONDS)
+        if any(
+            worker_id not in workers
+            or worker_id not in capability_by_worker
+            or workers[worker_id].status != WorkerStatus.ONLINE
+            or capability_by_worker[worker_id].last_renewed_at < cutoff
+            or capability_by_worker[worker_id].protocol != "partitioned-fixed-v1"
+            or capability_by_worker[worker_id].protocol_version != 1
+            for worker_id in assigned_ids
+        ):
+            raise NativeStreamError(
+                "NATIVE_WORKERS_UNAVAILABLE",
+                "Activation requires both current ONLINE native worker capabilities",
+            )
+        await session.execute(
+            sa.select(db.StreamPhysicalSubtask.id)
+            .where(db.StreamPhysicalSubtask.graph_revision_id == graph.id)
+            .order_by(db.StreamPhysicalSubtask.id)
+            .with_for_update(read=True)
+        )
+    grants = (
+        await session.scalars(
+            sa.select(db.StreamSubtaskGrant)
+            .where(db.StreamSubtaskGrant.id.in_(request.grant_ids))
+            .order_by(db.StreamSubtaskGrant.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).all()
+    if len(grants) != 4 or any(grant.state != "REGISTERED" for grant in grants):
+        raise NativeStreamError(
+            "METADATA_NOT_READY",
+            "Every physical process must be registered before activation",
+        )
+    by_grant = {grant.id: grant for grant in grants}
+    authority = await session.scalar(
+        sa.select(db.StreamExecutionAuthority).where(
+            db.StreamExecutionAuthority.flow_run_id == graph.flow_run_id
+        )
+    )
+    for item in plan.subtasks:
+        grant = (
+            by_grant.get(item.current_grant_id)
+            if item.current_grant_id is not None
+            else None
+        )
+        if (
+            grant is None
+            or grant.physical_epoch != item.physical_epoch
+            or authority is None
+            or grant.flow_generation != authority.generation
+            or grant.flow_holder_id != authority.holder_id
+        ):
+            raise NativeStreamError(
+                "SUBTASK_FENCED",
+                "Activation grant belongs to a stale physical or Flow attempt",
+            )
+        if item.assigned_worker_id is not None:
+            cap = capability_by_worker[item.assigned_worker_id]
+            if (
+                grant.launcher_binding_kind != "ASSIGNED_WORKER"
+                or grant.worker_id != item.assigned_worker_id
+                or (
+                    grant.work_pool_id,
+                    grant.host_id,
+                    grant.boot_id,
+                    grant.launcher_process_id,
+                    grant.launcher_start_ticks,
+                )
+                != (
+                    cap.work_pool_id,
+                    cap.host_id,
+                    cap.boot_id,
+                    cap.launcher_process_id,
+                    cap.launcher_start_ticks,
+                )
+            ):
+                raise NativeStreamError(
+                    "SUBTASK_FENCED",
+                    "Activation grant does not match its exact assigned worker capability",
+                )
+    graph.activation_operation_id = request.operation_id
+    graph.activation_request_digest = digest
+    graph.startup_completed_at = cast(DateTime, now("UTC"))
+    await session.flush()
+    return await graph_plan(session, db, graph)
+
+
+async def _lock_abort_workers(
+    session: AsyncSession, db: PrefectDBInterface, graph: orm_models.StreamGraphRevision
+) -> None:
+    ids = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSubtask.assigned_worker_id)
+                .where(
+                    db.StreamPhysicalSubtask.graph_revision_id == graph.id,
+                    db.StreamPhysicalSubtask.assigned_worker_id.is_not(None),
+                )
+                .distinct()
+            )
+        ).all()
+    )
+    if ids:
+        await session.execute(
+            sa.select(db.Worker)
+            .where(db.Worker.id.in_(ids))
+            .order_by(db.Worker.id)
+            .with_for_update(read=True)
+        )
+
+
+async def _finalize_startup_abort(
+    session: AsyncSession, db: PrefectDBInterface, graph: orm_models.StreamGraphRevision
+) -> bool:
+    subtasks = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSubtask)
+                .where(db.StreamPhysicalSubtask.graph_revision_id == graph.id)
+                .order_by(db.StreamPhysicalSubtask.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    )
+    grants = {
+        grant.id: grant
+        for grant in (
+            await session.scalars(
+                sa.select(db.StreamSubtaskGrant)
+                .where(
+                    db.StreamSubtaskGrant.id.in_(
+                        [
+                            row.current_grant_id
+                            for row in subtasks
+                            if row.current_grant_id is not None
+                        ]
+                    )
+                )
+                .order_by(db.StreamSubtaskGrant.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    }
+    if any(
+        row.current_grant_id is not None and row.startup_stop_operation_id is None
+        for row in subtasks
+    ):
+        return False
+    tasks = list(
+        (
+            await session.scalars(
+                sa.select(db.TaskRun)
+                .where(db.TaskRun.id.in_([row.task_run_id for row in subtasks]))
+                .order_by(db.TaskRun.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    )
+    streams = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPartition)
+                .where(
+                    db.StreamPartition.id.in_(
+                        [row.output_stream_id for row in subtasks]
+                    )
+                )
+                .order_by(db.StreamPartition.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    )
+    if (
+        len(tasks) != 4
+        or any(
+            task.run_count != 0
+            or task.state_type
+            not in (states.StateType.PENDING, states.StateType.SCHEDULED)
+            for task in tasks
+        )
+        or any(
+            stream.state != "OPEN"
+            or stream.last_sequence != 0
+            or stream.record_count != 0
+            for stream in streams
+        )
+    ):
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT",
+            "Startup compensation requires an unstarted zero-DATA physical region",
+        )
+    for task in tasks:
+        result = await task_run_models.set_task_run_state(
+            session=session,
+            task_run_id=task.id,
+            state=states.Failed(
+                message=graph.abort_error, state_details={"retriable": False}
+            ),
+            force=False,
+            task_policy=CoreTaskPolicy,
+        )
+        if (
+            result.status != SetStateStatus.ACCEPT
+            or result.state is None
+            or not result.state.is_failed()
+        ):
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "TaskRun policy refused startup compensation"
+            )
+    for stream in streams:
+        finish_stream_partition(stream, graph.abort_error)
+        stream.released = True
+    for grant in grants.values():
+        grant.state = "RELEASED"
+    await release_allocations(session, db, [row.id for row in subtasks])
+    for row in subtasks:
+        if row.assigned_worker_id is not None:
+            row.physical_slot_released = True
+    await session.execute(
+        sa.update(db.StreamSubmission)
+        .where(db.StreamSubmission.graph_revision_id == graph.id)
+        .values(state="RELEASED", released_at=now("UTC"))
+    )
+    graph.state = "RELEASED"
+    await session.flush()
+    return True
+
+
+async def abort_graph(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    request: s.StreamGraphAbortRequest,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+) -> s.StreamGraphPlan:
+    await _backend(session, db)
+    if isinstance(execution, WorkerStreamAuthorization):
+        execution.validate(session, graph_revision_id=graph_id)
+        if not execution.graph_update:
+            raise NativeStreamError(
+                "PROTOCOL_ERROR",
+                "Startup abort requires the prelocked exclusive graph gate",
+            )
+        graph = execution.graph
+        await control_authority(
+            session,
+            db,
+            graph.flow_run_id,
+            execution,
+            allowed_states=("CLAIMED", "ACTIVE", "TERMINAL", "RELEASED"),
+        )
+    else:
+        graph = await session.get(db.StreamGraphRevision, graph_id)
+        if graph is None:
+            raise NativeStreamError("NOT_FOUND", "Unknown graph revision")
+        await session.execute(
+            sa.select(db.FlowRun.id)
+            .where(db.FlowRun.id == graph.flow_run_id)
+            .with_for_update()
+        )
+        await control_authority(
+            session,
+            db,
+            graph.flow_run_id,
+            execution,
+            allowed_states=("CLAIMED", "ACTIVE", "TERMINAL", "RELEASED"),
+        )
+        graph = await session.scalar(
+            sa.select(db.StreamGraphRevision)
+            .where(db.StreamGraphRevision.id == graph_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        assert graph is not None
+        await _lock_abort_workers(session, db, graph)
+    require_fixed_physical_execution(graph)
+    if graph.declaration.get("deployment_id") is not None and (
+        request.operation_id != startup_abort_operation_id(graph.id)
+        or request.error != STARTUP_ABORT_REASON
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT",
+            "Production startup abort requires its canonical operation and reason",
+        )
+    _, _, digest = canonical_stream_payload(request.model_dump(mode="json"))
+    if request.graph_digest != graph.graph_digest:
+        raise NativeStreamError("IDENTITY_CONFLICT", "Abort graph digest mismatch")
+    if graph.abort_operation_id is not None:
+        if (
+            graph.abort_operation_id != request.operation_id
+            or graph.abort_request_digest != digest
+        ):
+            raise NativeStreamError("IDENTITY_CONFLICT", "Graph abort operation drift")
+        return await graph_plan(session, db, graph)
+    if graph.startup_completed_at is not None:
+        raise NativeStreamError(
+            "ACTIVATION_ALREADY_COMMITTED",
+            "Activated graph requires normal verified process recovery",
+        )
+    if graph.state not in ("SEALED", "ADMITTED"):
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT", "Physical graph cannot begin startup abort"
+        )
+    graph.abort_operation_id = request.operation_id
+    graph.abort_request_digest = digest
+    graph.abort_error = request.error
+    graph.state = "ABORTING"
+    await session.flush()
+    await _finalize_startup_abort(session, db, graph)
+    return await graph_plan(session, db, graph)
+
+
+async def acknowledge_startup_stop(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    request: s.StreamGraphStartupStopRequest,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+) -> s.StreamGraphStartupStopResult:
+    await _backend(session, db)
+    if isinstance(execution, WorkerStreamAuthorization):
+        execution.validate(session, subtask_id=subtask_id)
+        if not execution.graph_update or not execution.subtask_update:
+            raise NativeStreamError(
+                "PROTOCOL_ERROR",
+                "Startup stop requires exclusive graph and subtask gates",
+            )
+        graph, subtask = execution.graph, execution.subtask
+        await control_authority(
+            session,
+            db,
+            graph.flow_run_id,
+            execution,
+            allowed_states=("ACTIVE", "TERMINAL", "RELEASED"),
+        )
+    else:
+        locator = await session.get(db.StreamPhysicalSubtask, subtask_id)
+        if locator is None:
+            raise NativeStreamError("NOT_FOUND", "Unknown physical subtask")
+        graph = await _graph(
+            session,
+            db,
+            locator.graph_revision_id,
+            execution,
+            update=True,
+            terminal_replay=True,
+        )
+        await _lock_abort_workers(session, db, graph)
+        subtask = await session.scalar(
+            sa.select(db.StreamPhysicalSubtask)
+            .where(db.StreamPhysicalSubtask.id == subtask_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        assert subtask is not None
+        if subtask.assigned_worker_id is not None:
+            raise NativeStreamError(
+                "WORKER_CONTROL_REQUIRED",
+                "Assigned startup stop requires the actual worker route",
+            )
+    if (
+        graph.abort_operation_id != request.abort_operation_id
+        or graph.state not in ("ABORTING", "RELEASED")
+        or graph.startup_completed_at is not None
+    ):
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT", "Startup stop requires the current abort operation"
+        )
+    _, _, digest = canonical_stream_payload(request.model_dump(mode="json"))
+    if subtask.startup_stop_operation_id is not None:
+        if (
+            subtask.startup_stop_operation_id != request.operation_id
+            or subtask.startup_stop_request_digest != digest
+        ):
+            raise NativeStreamError("IDENTITY_CONFLICT", "Startup stop receipt drift")
+        return s.StreamGraphStartupStopResult(
+            operation_id=request.operation_id,
+            graph_revision_id=graph.id,
+            subtask_id=subtask.id,
+            grant_id=request.grant_id,
+            physical_epoch=request.expected_physical_epoch,
+            graph_state=graph.state,
+        )
+    grant = await session.scalar(
+        sa.select(db.StreamSubtaskGrant)
+        .where(db.StreamSubtaskGrant.id == request.grant_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if (
+        grant is None
+        or grant.id != subtask.current_grant_id
+        or grant.subtask_id != subtask.id
+        or grant.physical_epoch != request.expected_physical_epoch
+        or subtask.physical_epoch != request.expected_physical_epoch
+    ):
+        raise NativeStreamError(
+            "SUBTASK_FENCED", "Startup stop does not identify the current grant"
+        )
+    if request.unstarted:
+        if grant.state != "CLAIMED" or grant.child_process_id is not None:
+            raise NativeStreamError(
+                "INVALID_DEATH_WITNESS",
+                "Registered child requires an exact death witness",
+            )
+    else:
+        witness = request.death_witness
+        if (
+            witness is None
+            or grant.state != "REGISTERED"
+            or (
+                witness.host_id,
+                witness.boot_id,
+                witness.child_process_id,
+                witness.process_start_ticks,
+            )
+            != (
+                grant.host_id,
+                grant.boot_id,
+                grant.child_process_id,
+                grant.process_start_ticks,
+            )
+            or witness.kind == "BOOT_CHANGED"
+            or witness.observed_at < grant.created
+            or witness.observed_at > now("UTC")
+        ):
+            raise NativeStreamError(
+                "INVALID_DEATH_WITNESS",
+                "Startup stop requires the exact registered local child death",
+            )
+    subtask.startup_stop_operation_id = request.operation_id
+    subtask.startup_stop_request_digest = digest
+    subtask.startup_stop_unstarted = request.unstarted
+    subtask.startup_stop_witness = (
+        request.death_witness.model_dump(mode="json") if request.death_witness else None
+    )
+    grant.state = "RETIRED"
+    await session.flush()
+    await _finalize_startup_abort(session, db, graph)
+    return s.StreamGraphStartupStopResult(
+        operation_id=request.operation_id,
+        graph_revision_id=graph.id,
+        subtask_id=subtask.id,
+        grant_id=grant.id,
+        physical_epoch=grant.physical_epoch,
+        graph_state=graph.state,
+    )
+
+
+def grant_projection(
+    grant: orm_models.StreamSubtaskGrant, subtask: orm_models.StreamPhysicalSubtask
+) -> s.StreamSubtaskGrant:
+    return s.StreamSubtaskGrant(
+        id=grant.id,
+        subtask_id=subtask.id,
+        graph_revision_id=subtask.graph_revision_id,
+        assignment_epoch=cast(Literal[1], subtask.assignment_epoch),
+        physical_epoch=grant.physical_epoch,
+        holder_id=grant.holder_id,
+        launcher_binding_kind=cast(
+            Literal["DEPLOYMENT", "FLOW_AUTHORITY_LOCAL", "ASSIGNED_WORKER"],
+            grant.launcher_binding_kind,
+        ),
+        worker_id=grant.worker_id,
+        work_pool_id=grant.work_pool_id,
+        launcher_process_id=grant.launcher_process_id,
+        launcher_start_ticks=grant.launcher_start_ticks,
+        event_key_id=grant.event_key_id,
+        scope_digest=grant.scope_digest,
+        state=cast(
+            Literal["CLAIMED", "REGISTERED", "RETIRED", "RELEASED"], grant.state
+        ),
+        host_id=grant.host_id,
+        boot_id=grant.boot_id,
+        child_process_id=grant.child_process_id,
+        process_start_ticks=grant.process_start_ticks,
+        created_at=grant.created,
+        last_renewed_at=grant.last_renewed_at,
+    )
+
+
+async def _new_grant(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph: orm_models.StreamGraphRevision,
+    subtask: orm_models.StreamPhysicalSubtask,
+    request: s.StreamSubtaskClaimRequest,
+    physical_epoch: int,
+) -> orm_models.StreamSubtaskGrant:
+    authority = await session.scalar(
+        sa.select(db.StreamExecutionAuthority).where(
+            db.StreamExecutionAuthority.flow_run_id == graph.flow_run_id
+        )
+    )
+    assert authority is not None
+    if request.launcher_binding_kind == "DEPLOYMENT":
+        launch = await session.scalar(
+            sa.select(db.NativeStreamLaunchIdentity)
+            .where(
+                db.NativeStreamLaunchIdentity.flow_run_id == graph.flow_run_id,
+                db.NativeStreamLaunchIdentity.generation == authority.generation,
+                db.NativeStreamLaunchIdentity.state == "PROCESS_REGISTERED",
+            )
+            .with_for_update(read=True)
+        )
+        if launch is None or (
+            launch.worker_id,
+            launch.work_pool_id,
+            launch.host_id,
+            launch.boot_id,
+            launch.child_process_id,
+            launch.process_start_ticks,
+        ) != (
+            request.worker_id,
+            request.work_pool_id,
+            request.host_id,
+            request.boot_id,
+            request.launcher_process_id,
+            request.launcher_start_ticks,
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Physical launcher is not the enrolled native launcher",
+            )
+    elif request.launcher_binding_kind == "ASSIGNED_WORKER":
+        capability = await session.scalar(
+            sa.select(db.StreamWorkerCapability).where(
+                db.StreamWorkerCapability.worker_id == request.worker_id,
+                db.StreamWorkerCapability.protocol == graph.profile,
+                db.StreamWorkerCapability.protocol_version == 1,
+            )
+        )
+        snapshot = await session.scalar(
+            sa.select(db.NativeStreamDeploymentSnapshot).where(
+                db.NativeStreamDeploymentSnapshot.flow_run_id == graph.flow_run_id
+            )
+        )
+        if (
+            subtask.assigned_worker_id is None
+            or request.worker_id != subtask.assigned_worker_id
+            or capability is None
+            or snapshot is None
+            or request.work_pool_id != snapshot.work_pool_id
+            or (
+                request.work_pool_id,
+                request.host_id,
+                request.boot_id,
+                request.launcher_process_id,
+                request.launcher_start_ticks,
+            )
+            != (
+                capability.work_pool_id,
+                capability.host_id,
+                capability.boot_id,
+                capability.launcher_process_id,
+                capability.launcher_start_ticks,
+            )
+        ):
+            raise NativeStreamError(
+                "SUBTASK_SCOPE_DENIED",
+                "Grant does not match its persisted assigned worker capability",
+            )
+    else:
+        flow = await session.get(db.FlowRun, graph.flow_run_id)
+        if (
+            flow is None
+            or flow.deployment_id is not None
+            or request.worker_id is not None
+            or request.work_pool_id is not None
+        ):
+            raise NativeStreamError(
+                "UNSUPPORTED_PROFILE",
+                "Local authority binding excludes deployments and worker identities",
+            )
+    _, _, request_digest = canonical_stream_payload(request.model_dump(mode="json"))
+    grant_id = uuid7()
+    _, _, scope_digest = canonical_stream_payload(
+        {
+            "version": "prefect-subtask-v1",
+            "flow_run_id": str(graph.flow_run_id),
+            "graph_revision_id": str(graph.id),
+            "graph_digest": graph.graph_digest,
+            "assignment_epoch": graph.assignment_epoch,
+            "operator_run_id": str(subtask.operator_run_id),
+            "subtask_id": str(subtask.id),
+            "task_run_id": str(subtask.task_run_id),
+            "input_stream_id": str(subtask.input_stream_id)
+            if subtask.input_stream_id
+            else None,
+            "output_stream_id": str(subtask.output_stream_id),
+            "grant_id": str(grant_id),
+            "physical_epoch": physical_epoch,
+            "holder_id": str(request.holder_id),
+            "flow_generation": authority.generation,
+            "flow_holder_id": str(authority.holder_id),
+            "assigned_worker_id": str(subtask.assigned_worker_id)
+            if subtask.assigned_worker_id
+            else None,
+            "placement_digest": graph.placement_digest,
+        }
+    )
+    grant = db.StreamSubtaskGrant(
+        id=grant_id,
+        subtask_id=subtask.id,
+        operation_id=request.operation_id,
+        request_digest=request_digest,
+        physical_epoch=physical_epoch,
+        holder_id=request.holder_id,
+        capability_digest=capability_digest(request.capability),
+        event_public_key=request.event_public_key,
+        event_key_id=hashlib.sha256(
+            bytes.fromhex(request.event_public_key)
+        ).hexdigest(),
+        scope_digest=scope_digest,
+        launcher_binding_kind=request.launcher_binding_kind,
+        flow_generation=authority.generation,
+        flow_holder_id=authority.holder_id,
+        worker_id=request.worker_id,
+        work_pool_id=request.work_pool_id,
+        host_id=request.host_id,
+        boot_id=request.boot_id,
+        launcher_process_id=request.launcher_process_id,
+        launcher_start_ticks=request.launcher_start_ticks,
+        state="CLAIMED",
+        last_renewed_at=now("UTC"),
+    )
+    session.add(grant)
+    subtask.current_grant_id = grant.id
+    subtask.physical_epoch = physical_epoch
+    await session.flush()
+    return grant
+
+
+create_subtask_grant = _new_grant
+
+
+async def claim_subtask(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    request: s.StreamSubtaskClaimRequest,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+) -> s.StreamSubtaskGrant:
+    await _backend(session, db)
+    graph, subtask = await _subtask(session, db, subtask_id, execution, update=True)
+    _, _, digest = canonical_stream_payload(request.model_dump(mode="json"))
+    existing = await session.scalar(
+        sa.select(db.StreamSubtaskGrant).where(
+            db.StreamSubtaskGrant.subtask_id == subtask.id,
+            db.StreamSubtaskGrant.operation_id == request.operation_id,
+        )
+    )
+    if existing is not None:
+        if existing.request_digest != digest:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Claim operation identity drift"
+            )
+        return grant_projection(existing, subtask)
+    if graph.state != "ADMITTED":
+        raise NativeStreamError(
+            "REGION_NOT_ADMITTED",
+            "All runnable physical slots must be reserved before launch",
+        )
+    if (
+        request.graph_digest != graph.graph_digest
+        or request.assignment_epoch != subtask.assignment_epoch
+        or subtask.physical_epoch != 0
+    ):
+        raise NativeStreamError(
+            "SUBTASK_FENCED", "Claim graph, assignment or epoch is stale"
+        )
+    return grant_projection(
+        await _new_grant(session, db, graph, subtask, request, 1), subtask
+    )
+
+
+async def register_subtask(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    request: s.StreamSubtaskRegistrationRequest,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+) -> s.StreamSubtaskGrant:
+    _, subtask = await _subtask(session, db, subtask_id, execution, update=True)
+    grant = await session.get(db.StreamSubtaskGrant, request.grant_id)
+    if (
+        grant is None
+        or grant.id != subtask.current_grant_id
+        or grant.state not in ("CLAIMED", "REGISTERED")
+    ):
+        raise NativeStreamError(
+            "SUBTASK_FENCED", "Process registration requires the current claim"
+        )
+    if grant.registration_operation_id is not None and (
+        grant.registration_operation_id,
+        grant.child_process_id,
+        grant.process_start_ticks,
+    ) != (request.operation_id, request.child_process_id, request.process_start_ticks):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Physical process registration is immutable"
+        )
+    grant.registration_operation_id = request.operation_id
+    grant.child_process_id = request.child_process_id
+    grant.process_start_ticks = request.process_start_ticks
+    grant.state = "REGISTERED"
+    grant.last_renewed_at = cast(DateTime, now("UTC"))
+    await session.flush()
+    return grant_projection(grant, subtask)
+
+
+async def renew_subtask(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    request: s.StreamSubtaskRenewRequest,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+) -> s.StreamSubtaskGrant:
+    _, subtask = await _subtask(session, db, subtask_id, execution, update=True)
+    grant = await session.get(db.StreamSubtaskGrant, request.grant_id)
+    if (
+        grant is None
+        or grant.id != subtask.current_grant_id
+        or grant.state not in ("CLAIMED", "REGISTERED")
+    ):
+        raise NativeStreamError(
+            "SUBTASK_FENCED", "Renewal requires the current physical attempt"
+        )
+    grant.last_renewed_at = cast(DateTime, now("UTC"))
+    await session.flush()
+    return grant_projection(grant, subtask)
+
+
+async def bootstrap_subtask(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    credentials: s.StreamSubtaskCredentials,
+) -> s.StreamSubtaskBootstrap:
+    subtask, grant = await require_subtask(
+        session, db, credentials, subtask_id=subtask_id
+    )
+    graph = await session.get(db.StreamGraphRevision, subtask.graph_revision_id)
+    operator = await session.get(db.StreamOperatorRun, subtask.operator_run_id)
+    task = await session.get(db.TaskRun, subtask.task_run_id)
+    assert graph is not None and operator is not None and task is not None
+    authority = await session.scalar(
+        sa.select(db.StreamExecutionAuthority).where(
+            db.StreamExecutionAuthority.flow_run_id == graph.flow_run_id
+        )
+    )
+    assert authority is not None
+    spec = s.StreamOperatorSpec.model_validate(operator.specification)
+    return s.StreamSubtaskBootstrap(
+        grant=grant_projection(grant, subtask),
+        assignment=await _projection(session, db, subtask),
+        flow_run_id=graph.flow_run_id,
+        flow_run_run_count=authority.flow_run_run_count,
+        entrypoint=spec.entrypoint,
+        context_key=spec.context_key,
+        task_version=spec.task_version,
+        artifact_digest=spec.artifact_digest,
+        timeout_seconds=spec.timeout_seconds,
+        task_policy=spec.task_policy,
+        effective_tags=spec.tags,
+        parameters=spec.parameters[subtask.subtask_index],
+        input_key=spec.input_key,
+        task_run=TaskRun.model_validate(task, from_attributes=True),
+        reserved_tag_names=[f"tag:{tag}" for tag in sorted(set(task.tags))],
+    )
+
+
+async def release_subtask(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    credentials: s.StreamSubtaskCredentials,
+) -> None:
+    subtask, _ = await require_subtask(session, db, credentials, subtask_id=subtask_id)
+    if not await release_terminal_allocation(session, db, subtask):
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT",
+            "Capacity release requires durable terminal output and completed or exhausted TaskRun",
+        )
+
+
+async def authorize_replacement(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    request: s.StreamSubtaskReplacementAuthorizeRequest,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+) -> s.StreamSubtaskReplacementAuthorization:
+    graph, subtask = await _subtask(
+        session, db, subtask_id, execution, update=True, terminal_replay=True
+    )
+    if graph.startup_completed_at is None:
+        raise NativeStreamError(
+            "STARTUP_ABORT_REQUIRED", "A pre-GO process failure requires startup abort"
+        )
+    grant = await session.get(db.StreamSubtaskGrant, request.expected_grant_id)
+    if (
+        grant is None
+        or grant.subtask_id != subtask.id
+        or grant.child_process_id is None
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Replacement requires a registered exact child"
+        )
+    _, _, digest = canonical_stream_payload(request.model_dump(mode="json"))
+    operation = await session.scalar(
+        sa.select(db.StreamSubtaskReplacement).where(
+            db.StreamSubtaskReplacement.subtask_id == subtask.id,
+            db.StreamSubtaskReplacement.operation_id == request.operation_id,
+        )
+    )
+    if operation is None:
+        if (
+            await session.scalar(
+                sa.select(db.StreamSubtaskReplacement.id).where(
+                    db.StreamSubtaskReplacement.expected_grant_id == grant.id
+                )
+            )
+            is not None
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Physical attempt already has a replacement operation",
+            )
+        if (
+            subtask.current_grant_id != grant.id
+            or subtask.physical_epoch != request.expected_physical_epoch
+            or request.expected_physical_epoch != grant.physical_epoch
+            or request.host_id != grant.host_id
+        ):
+            raise NativeStreamError(
+                "SUBTASK_FENCED", "Replacement identity or host is stale"
+            )
+        operation = db.StreamSubtaskReplacement(
+            subtask_id=subtask.id,
+            operation_id=request.operation_id,
+            expected_grant_id=grant.id,
+            expected_physical_epoch=grant.physical_epoch,
+            challenge_digest=capability_digest(request.challenge_capability),
+            request_digest=digest,
+            verification_not_before=now("UTC"),
+            state="AUTHORIZED",
+        )
+        session.add(operation)
+        await session.flush()
+    elif operation.request_digest != digest:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Replacement authorization operation drift"
+        )
+    assert grant.process_start_ticks is not None
+    return s.StreamSubtaskReplacementAuthorization(
+        operation_id=operation.operation_id,
+        subtask_id=subtask.id,
+        expected_grant_id=grant.id,
+        expected_physical_epoch=grant.physical_epoch,
+        verification_not_before=operation.verification_not_before,
+        host_id=grant.host_id,
+        boot_id=grant.boot_id,
+        child_process_id=grant.child_process_id,
+        process_start_ticks=grant.process_start_ticks,
+        state=cast(Literal["AUTHORIZED", "CONFIRMED", "RETIRED"], operation.state),
+    )
+
+
+async def confirm_replacement(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    request: s.StreamSubtaskReplacementConfirmRequest,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+) -> s.StreamSubtaskGrant:
+    graph, subtask = await _subtask(session, db, subtask_id, execution, update=True)
+    operation = await session.scalar(
+        sa.select(db.StreamSubtaskReplacement)
+        .where(
+            db.StreamSubtaskReplacement.subtask_id == subtask.id,
+            db.StreamSubtaskReplacement.operation_id == request.operation_id,
+        )
+        .with_for_update()
+    )
+    if operation is None or not hmac.compare_digest(
+        operation.challenge_digest, capability_digest(request.challenge_capability)
+    ):
+        raise NativeStreamError(
+            "SUBTASK_AUTH_INVALID", "Replacement challenge is invalid"
+        )
+    _, _, digest = canonical_stream_payload(request.model_dump(mode="json"))
+    if operation.state == "CONFIRMED":
+        if operation.confirm_digest != digest:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Replacement confirmation drift"
+            )
+        grant = await session.get(db.StreamSubtaskGrant, operation.new_grant_id)
+        assert grant is not None
+        return grant_projection(grant, subtask)
+    old = await session.get(db.StreamSubtaskGrant, operation.expected_grant_id)
+    assert old is not None
+    witness = request.death_witness
+    if (
+        subtask.current_grant_id != old.id
+        or subtask.physical_epoch != old.physical_epoch
+    ):
+        raise NativeStreamError("SUBTASK_FENCED", "Another replacement already won")
+    if (
+        (
+            witness.host_id,
+            witness.boot_id,
+            witness.child_process_id,
+            witness.process_start_ticks,
+        )
+        != (old.host_id, old.boot_id, old.child_process_id, old.process_start_ticks)
+        or witness.observed_at < operation.verification_not_before
+        or witness.observed_at > now("UTC")
+        or request.host_id != old.host_id
+        or request.boot_id != old.boot_id
+        or witness.kind == "BOOT_CHANGED"
+    ):
+        raise NativeStreamError(
+            "INVALID_DEATH_WITNESS",
+            "Only the exact local registered child death permits replacement",
+        )
+    if (request.new_child_process_id, request.new_process_start_ticks) == (
+        old.child_process_id,
+        old.process_start_ticks,
+    ) or request.new_child_process_id == old.launcher_process_id:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT",
+            "Replacement child must have a new exact process identity",
+        )
+    task = await session.scalar(
+        sa.select(db.TaskRun)
+        .where(db.TaskRun.id == subtask.task_run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if (
+        task is None
+        or task.state_type in TERMINAL_STATES
+        or task.run_count >= (task.empirical_policy.retries or 0) + 1
+        or old.physical_epoch >= 64
+    ):
+        raise NativeStreamError(
+            "RETRY_EXHAUSTED", "Physical TaskRun retry policy is exhausted or terminal"
+        )
+    output = await session.scalar(
+        sa.select(db.StreamPartition)
+        .where(db.StreamPartition.id == subtask.output_stream_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if output is None or output.state != "OPEN":
+        raise NativeStreamError(
+            "TERMINAL_RECONCILIATION_REQUIRED",
+            "Durable terminal output requires verified retirement rather than another process",
+        )
+    if task.state_type == states.StateType.RUNNING:
+        failed = await task_run_models.set_task_run_state(
+            session=session,
+            task_run_id=task.id,
+            state=states.Failed(message="Confirmed physical subtask process loss"),
+            force=False,
+            task_policy=CoreTaskPolicy,
+        )
+        if (
+            failed.status != SetStateStatus.REJECT
+            or failed.state is None
+            or failed.state.name != "AwaitingRetry"
+        ):
+            raise NativeStreamError(
+                "RETRY_EXHAUSTED", "TaskRun policy did not prepare a bounded retry"
+            )
+        await session.refresh(task)
+    elif task.state_type not in (states.StateType.PENDING, states.StateType.SCHEDULED):
+        raise NativeStreamError(
+            "RECOVERY_NOT_READY", "Physical TaskRun has no recoverable attempt"
+        )
+    new = s.StreamSubtaskClaimRequest(
+        operation_id=request.operation_id,
+        graph_digest=graph.graph_digest,
+        holder_id=request.new_holder_id,
+        capability=request.new_capability,
+        event_public_key=request.new_event_public_key,
+        launcher_binding_kind=cast(
+            Literal["DEPLOYMENT", "FLOW_AUTHORITY_LOCAL", "ASSIGNED_WORKER"],
+            old.launcher_binding_kind,
+        ),
+        worker_id=old.worker_id,
+        work_pool_id=old.work_pool_id,
+        host_id=request.host_id,
+        boot_id=request.boot_id,
+        launcher_process_id=old.launcher_process_id,
+        launcher_start_ticks=old.launcher_start_ticks,
+    )
+    old.state = "RETIRED"
+    grant = await _new_grant(session, db, graph, subtask, new, old.physical_epoch + 1)
+    grant.child_process_id = request.new_child_process_id
+    grant.process_start_ticks = request.new_process_start_ticks
+    grant.registration_operation_id = request.operation_id
+    grant.state = "REGISTERED"
+    operation.confirm_digest = digest
+    operation.new_grant_id = grant.id
+    operation.death_witness = witness.model_dump(mode="json")
+    operation.state = "CONFIRMED"
+    await session.flush()
+    return grant_projection(grant, subtask)
+
+
+async def retire_verified_subtask(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    request: s.StreamSubtaskVerifiedRetireRequest,
+    execution: StreamExecutionCredentials | WorkerStreamAuthorization | None,
+) -> s.StreamSubtaskVerifiedRetirement:
+    """Finalize an exhausted physical process under its exact local death proof."""
+    graph, subtask = await _subtask(
+        session, db, subtask_id, execution, update=True, terminal_replay=True
+    )
+    operation = await session.scalar(
+        sa.select(db.StreamSubtaskReplacement)
+        .where(
+            db.StreamSubtaskReplacement.subtask_id == subtask.id,
+            db.StreamSubtaskReplacement.operation_id == request.operation_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if operation is None or not hmac.compare_digest(
+        operation.challenge_digest, capability_digest(request.challenge_capability)
+    ):
+        raise NativeStreamError(
+            "SUBTASK_AUTH_INVALID", "Retirement challenge is invalid"
+        )
+    _, _, digest = canonical_stream_payload(request.model_dump(mode="json"))
+    if operation.state == "RETIRED":
+        if operation.confirm_digest != digest or operation.retirement_outcome is None:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Verified retirement request drift"
+            )
+        stored = operation.retirement_outcome
+        if graph.profile == "partitioned-dag-v1":
+            stored = stored.get("receipt")
+        return s.StreamSubtaskVerifiedRetirement.model_validate(stored)
+    if operation.state != "AUTHORIZED":
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Replacement operation already has another outcome"
+        )
+    authority = await session.scalar(
+        sa.select(db.StreamExecutionAuthority).where(
+            db.StreamExecutionAuthority.flow_run_id == graph.flow_run_id
+        )
+    )
+    old = await session.scalar(
+        sa.select(db.StreamSubtaskGrant)
+        .where(db.StreamSubtaskGrant.id == operation.expected_grant_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if (
+        authority is None
+        or authority.state != "ACTIVE"
+        or authority.cancel_requested
+        or graph.state != "ADMITTED"
+        or old is None
+        or subtask.current_grant_id != old.id
+        or subtask.physical_epoch != old.physical_epoch
+        or old.state != "REGISTERED"
+    ):
+        raise NativeStreamError(
+            "SUBTASK_FENCED",
+            "Retirement requires the current active exact physical process",
+        )
+    witness = request.death_witness
+    if (
+        (
+            witness.host_id,
+            witness.boot_id,
+            witness.child_process_id,
+            witness.process_start_ticks,
+        )
+        != (old.host_id, old.boot_id, old.child_process_id, old.process_start_ticks)
+        or witness.observed_at < operation.verification_not_before
+        or witness.observed_at > now("UTC")
+        or witness.kind == "BOOT_CHANGED"
+    ):
+        raise NativeStreamError(
+            "INVALID_DEATH_WITNESS",
+            "Retirement requires the exact registered local process death",
+        )
+    task = await session.scalar(
+        sa.select(db.TaskRun)
+        .where(db.TaskRun.id == subtask.task_run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    output = await session.scalar(
+        sa.select(db.StreamPartition)
+        .where(db.StreamPartition.id == subtask.output_stream_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if (
+        task is None
+        or output is None
+        or output.producer_task_run_id != subtask.task_run_id
+        or task.state_type == states.StateType.CANCELLED
+        or output.released
+    ):
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT",
+            "A cancelled or released invocation cannot be reconciled by retirement",
+        )
+    non_retriable = (
+        task.state_type in (states.StateType.FAILED, states.StateType.CRASHED)
+        and task.state is not None
+        and task.state.state_details.retriable is False
+    )
+    exhausted = task.run_count >= (task.empirical_policy.retries or 0) + 1
+    if output.state == "COMPLETED":
+        if output.attempt != task.run_count or task.run_count < 1:
+            raise NativeStreamError(
+                "STALE_OWNER", "Durable EOF does not belong to this exact task attempt"
+            )
+        target_state = "COMPLETED"
+        outcome_kind = "COMPLETED_RECONCILED"
+        if task.state_type != states.StateType.COMPLETED:
+            result = await task_run_models.set_task_run_state(
+                session=session,
+                task_run_id=task.id,
+                state=states.Completed(
+                    message="Reconciled durable physical output EOF", data=None
+                ),
+                force=False,
+                task_policy=CoreTaskPolicy,
+            )
+            if (
+                result.status != SetStateStatus.ACCEPT
+                or result.state is None
+                or not result.state.is_completed()
+            ):
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT",
+                    "TaskRun policy refused durable EOF reconciliation",
+                )
+    else:
+        if task.state_type == states.StateType.COMPLETED:
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "Completed TaskRun has no matching durable EOF"
+            )
+        if output.attempt not in (0, task.run_count):
+            raise NativeStreamError(
+                "STALE_OWNER", "A different output attempt cannot be retired"
+            )
+        if (
+            output.state == "OPEN"
+            and not exhausted
+            and old.physical_epoch < 64
+            and not non_retriable
+            and request.reason != "REPLACEMENT_PREFLIGHT_FAILED"
+        ):
+            raise NativeStreamError(
+                "RETRY_NOT_EXHAUSTED",
+                "Physical invocation still has its bounded retry budget",
+            )
+        if request.reason == "REPLACEMENT_PREFLIGHT_FAILED":
+            outcome_kind = "REPLACEMENT_PREFLIGHT_FAILED"
+        elif output.state == "FAILED":
+            outcome_kind = "FAILED_RECONCILED"
+        elif old.physical_epoch == 64 and not exhausted:
+            outcome_kind = "ATTEMPT_LIMIT"
+        elif non_retriable and not exhausted:
+            outcome_kind = "NONRETRIABLE_FAILURE"
+        else:
+            outcome_kind = "RETRY_EXHAUSTED"
+        message = (
+            ("Physical process attempt limit exhausted: " + request.error)
+            if outcome_kind == "ATTEMPT_LIMIT"
+            else request.error
+        )
+        message = message.encode("utf-8")[:4096].decode("utf-8", errors="ignore")
+        if task.state_type != states.StateType.FAILED:
+            result = await task_run_models.set_task_run_state(
+                session=session,
+                task_run_id=task.id,
+                state=states.Failed(
+                    message=message, state_details={"retriable": False}
+                ),
+                force=False,
+                task_policy=CoreTaskPolicy,
+            )
+            if (
+                result.status != SetStateStatus.ACCEPT
+                or result.state is None
+                or not result.state.is_failed()
+            ):
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT",
+                    "TaskRun policy refused verified failure reconciliation",
+                )
+        if output.state == "OPEN":
+            finish_stream_partition(output, message)
+        target_state = "FAILED"
+    await session.flush()
+    await session.refresh(task)
+    if not await release_terminal_allocation(session, db, subtask):
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT",
+            "Verified terminal output did not release its allocation",
+        )
+    old.state = "RETIRED"
+    material = {
+        "operation_id": str(request.operation_id),
+        "subtask_id": str(subtask.id),
+        "task_run_id": str(task.id),
+        "grant_id": str(old.id),
+        "physical_epoch": old.physical_epoch,
+        "state": "RETIRED",
+        "task_state": target_state,
+        "outcome_kind": outcome_kind,
+        "allocation_released": True,
+    }
+    if subtask.assigned_worker_id is not None and graph.profile != "partitioned-dag-v1":
+        subtask.physical_slot_released = True
+    _, _, outcome_digest = canonical_stream_payload(material)
+    outcome = s.StreamSubtaskVerifiedRetirement.model_validate(
+        material | {"outcome_digest": outcome_digest}
+    )
+    operation.state = "RETIRED"
+    operation.confirm_digest = digest
+    operation.death_witness = witness.model_dump(mode="json")
+    operation.retirement_outcome = outcome.model_dump(mode="json")
+    await session.flush()
+    return outcome
+
+
+# Shared own-subtask projection for assigned-worker discovery.
+subtask_projection = _projection

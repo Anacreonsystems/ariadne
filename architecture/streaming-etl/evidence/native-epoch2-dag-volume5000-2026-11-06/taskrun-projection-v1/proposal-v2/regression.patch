@@ -1,0 +1,117 @@
+--- /dev/null
++++ b/tests/server/models/test_stream_dag_task_projection.py
+@@ -0,0 +1,114 @@
++"""Fresh TaskRun metadata and lifecycle projections on real PostgreSQL 17."""
++
++from uuid import uuid4
++
++import httpx
++import pytest
++import sqlalchemy as sa
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from prefect.server.database import PrefectDBInterface, orm_models
++from prefect.server.models import stream_dag_executions, stream_dags
++from prefect.server.models._stream_errors import NativeStreamError
++from prefect.server.schemas import states
++from prefect.server.schemas import stream_dag_executions as execution_schemas
++from prefect.server.schemas.core import TaskRunPolicy
++from tests.server.api.test_stream_dag_executions import (
++    execution_api as execution_api,
++)
++from tests.server.api.test_stream_dag_executions import parent_body
++from tests.server.models.test_stream_dag_executions import ready_deployed_region
++from tests.server.models.test_stream_dags import dag_request
++from tests.server.models.test_stream_routes import postgres_17 as postgres_17
++from tests.server.models.test_stream_routes import route_store, routing_region
++
++pytestmark = [pytest.mark.clear_db, pytest.mark.service("database")]
++
++
++@pytest.mark.parametrize("field", ["dynamic_key", "empirical_policy"])
++async def test_plan_refuses_fresh_metadata_despite_stale_task_identity(
++    db: PrefectDBInterface, flow_run: orm_models.FlowRun, field: str
++):
++    async with db.session_context(begin_transaction=True) as session:
++        plan = await stream_dags.seal_dag_metadata(
++            session, db, dag_request(flow_run.id)
++        )
++        task_id = plan.subtasks[0].manifest.task_run_id
++        cached = await session.get(db.TaskRun, task_id)
++        assert cached is not None
++        original = getattr(cached, field)
++        replacement = (
++            "changed-outside-identity-map"
++            if field == "dynamic_key"
++            else TaskRunPolicy(retries=97)
++        )
++        assert original != replacement
++        await session.execute(
++            sa.update(db.TaskRun)
++            .where(db.TaskRun.id == task_id)
++            .values({field: replacement})
++            .execution_options(synchronize_session=False)
++        )
++        assert getattr(cached, field) == original
++        with pytest.raises(NativeStreamError) as refused:
++            await stream_dags.read_dag_plan(
++                session, db, plan.id, metadata_only=True
++            )
++        assert refused.value.code == "IDENTITY_CONFLICT"
++
++
++async def test_routed_task_lock_refreshes_state_after_topology_proof(
++    db: PrefectDBInterface, flow_run: orm_models.FlowRun
++):
++    region = await routing_region(db, flow_run)
++    async with route_store(db, region, "A") as (session, store, _):
++        cached = await session.get(db.TaskRun, store.authorization.task_run_id)
++        assert cached is not None
++        assert cached.state_type == states.StateType.RUNNING
++        await session.execute(
++            sa.update(db.TaskRun)
++            .where(db.TaskRun.id == cached.id)
++            .values(state_type=states.StateType.COMPLETED)
++            .execution_options(synchronize_session=False)
++        )
++        assert cached.state_type == states.StateType.RUNNING
++        with pytest.raises(NativeStreamError) as refused:
++            await store.claim_source(uuid4())
++        assert refused.value.code == "TASK_NOT_RUNNING"
++
++
++async def test_activation_projection_refreshes_stale_task_state(
++    db: PrefectDBInterface,
++    session: AsyncSession,
++    execution_api: httpx.AsyncClient,
++    deployment: orm_models.Deployment,
++):
++    plan, credentials, _ = await ready_deployed_region(
++        db, session, execution_api, deployment, activate=False
++    )
++    async with db.session_context(begin_transaction=True) as transaction:
++        cached = await transaction.get(
++            db.TaskRun, plan.subtasks[0].manifest.task_run_id
++        )
++        assert cached is not None
++        original = cached.state_type
++        assert original != states.StateType.COMPLETED
++        await transaction.execute(
++            sa.update(db.TaskRun)
++            .where(db.TaskRun.id == cached.id)
++            .values(state_type=states.StateType.COMPLETED)
++            .execution_options(synchronize_session=False)
++        )
++        assert cached.state_type == original
++        result = await stream_dag_executions.activate_stream_dag(
++            transaction,
++            db,
++            plan.id,
++            execution_schemas.StreamDAGActivateRequest.model_validate(
++                parent_body(plan.id, "activate", plan.graph_digest)
++            ),
++            credentials,
++        )
++        assert result.execution.phase == "ACTIVE"
++        assert result.execution.counts.total == 4
++        assert result.execution.counts.terminal_tasks == 1

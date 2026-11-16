@@ -1,0 +1,72 @@
+"""Root-authorized one-shot MVCC metadata observer for one exact owned trial."""
+import asyncio,datetime,hashlib,json,os,pathlib,re,sys,time
+from urllib.parse import urlsplit,urlunsplit
+from uuid import UUID
+import asyncpg
+BASE=pathlib.Path('/tmp/native-async5000-metadata-observer-d906-v1')
+TRIAL=pathlib.Path('/tmp/native-n2-2-volume5000-preparation-recovery2-v1/async5000-7644c487')
+FIXTURE=TRIAL/'pytest/test_public_dag_bounded_volume0'
+FLOW=UUID('8830e565-b6b0-4404-87f5-d5000173b2a7')
+GRAPH=UUID('01a1ae34-11dc-7443-9587-267d6c42d591')
+HEAD='d906ceca414baeac825ce472e0b78cd1dcae3363'
+SQL={
+'scope':'''SELECT g.id AS graph_id,g.flow_run_id,g.profile,g.assignment_epoch,g.state,g.admission_operation_id,g.activation_operation_id,g.startup_completed_at,g.terminal_operation_id,f.deployment_id,f.run_count AS flow_run_count,f.state_type AS flow_state FROM stream_graph_revision g JOIN flow_run f ON f.id=g.flow_run_id WHERE g.id=$1 AND f.id=$2''',
+'flow_lease':'''SELECT f.id,f.deployment_id,f.state_id,s.type AS state_type,s.state_details->>'deployment_concurrency_lease_id' AS deployment_concurrency_lease_id,d.concurrency_limit_id,c.active_slots AS deployment_active_slots,c."limit" AS deployment_limit FROM flow_run f LEFT JOIN flow_run_state s ON s.id=f.state_id LEFT JOIN deployment d ON d.id=f.deployment_id LEFT JOIN concurrency_limit_v2 c ON c.id=d.concurrency_limit_id WHERE f.id=$1''',
+'lease_history':'''SELECT id,type,timestamp,state_details->>'deployment_concurrency_lease_id' AS lease_id FROM flow_run_state WHERE flow_run_id=$1 AND state_details->>'deployment_concurrency_lease_id' IS NOT NULL ORDER BY timestamp,id LIMIT 32''',
+'operators':'''SELECT id,graph_revision_id,profile,operator_uid,role,parallelism,created FROM stream_operator_run WHERE graph_revision_id=$1 ORDER BY id''',
+'ports':'''SELECT id,graph_revision_id,operator_run_id,port_uid,direction,schema_id,schema_version,schema_digest FROM stream_graph_port WHERE graph_revision_id=$1 ORDER BY id''',
+'edges':'''SELECT id,graph_revision_id,edge_uid,subscriber_uid,producer_port_id,consumer_port_id,producer_parallelism,target_parallelism,exchange,routing_version FROM stream_graph_edge WHERE graph_revision_id=$1 ORDER BY id''',
+'edge_partitions':'''SELECT id,graph_revision_id,flow_run_id,edge_id,partition_index,stream_id,subscriber_id,target_subtask_id FROM stream_graph_edge_partition WHERE graph_revision_id=$1 AND flow_run_id=$2 ORDER BY id''',
+'subtasks':'''SELECT s.id,s.graph_revision_id,s.operator_run_id,s.subtask_index,s.assignment_epoch,s.task_run_id,s.submission_id,s.input_stream_id,s.output_stream_id,s.current_grant_id,s.physical_epoch,s.assigned_worker_id,s.physical_slot_released,s.created FROM stream_physical_subtask s JOIN stream_graph_revision g ON g.id=s.graph_revision_id WHERE g.flow_run_id=$1 AND g.id=$2 ORDER BY s.id''',
+'tasks':'''SELECT id,flow_run_id,task_key,dynamic_key,run_count,state_type,created FROM task_run WHERE flow_run_id=$1 ORDER BY id''',
+'partitions':'''SELECT id,flow_run_id,producer_task_run_id,state,last_sequence,tail_sequence,producer_position,released,created FROM stream_partition WHERE flow_run_id=$1 ORDER BY id''',
+'physical_slots':'''SELECT p.id,p.graph_revision_id,p.subtask_id,p.worker_id,p.admission_operation_id,p.released,p.release_operation_id,p.released_at,p.created FROM stream_physical_slot_allocation p JOIN stream_graph_revision g ON g.id=p.graph_revision_id WHERE g.flow_run_id=$1 AND g.id=$2 ORDER BY p.id''',
+'tag_allocations':'''SELECT a.id,a.subtask_id,a.concurrency_limit_id,a.released,a.created FROM stream_subtask_allocation a JOIN stream_physical_subtask s ON s.id=a.subtask_id JOIN stream_graph_revision g ON g.id=s.graph_revision_id WHERE g.flow_run_id=$1 AND g.id=$2 ORDER BY a.id''',
+'assigned_workers':'''SELECT w.id,w.work_pool_id,w.status FROM worker w WHERE w.id IN (SELECT s.assigned_worker_id FROM stream_physical_subtask s JOIN stream_graph_revision g ON g.id=s.graph_revision_id WHERE g.flow_run_id=$1 AND g.id=$2) ORDER BY w.id''',
+'limits':'''SELECT c.id,c.name,c."limit",c.active_slots,c.active,c.slot_decay_per_second FROM concurrency_limit_v2 c WHERE c.id IN (SELECT a.concurrency_limit_id FROM stream_subtask_allocation a JOIN stream_physical_subtask s ON s.id=a.subtask_id JOIN stream_graph_revision g ON g.id=s.graph_revision_id WHERE g.flow_run_id=$1 AND g.id=$2 UNION SELECT d.concurrency_limit_id FROM deployment d JOIN flow_run f ON f.deployment_id=d.id WHERE f.id=$1) ORDER BY c.id''',
+'grants':'''SELECT a.id,a.subtask_id,a.worker_id,a.physical_epoch,a.state,a.child_process_id,a.process_start_ticks,a.created FROM stream_subtask_grant a JOIN stream_physical_subtask s ON s.id=a.subtask_id JOIN stream_graph_revision g ON g.id=s.graph_revision_id WHERE g.flow_run_id=$1 AND g.id=$2 ORDER BY a.id''',
+'launches':'''SELECT id,graph_revision_id,subtask_id,task_run_id,worker_id,attempt_index,planned_physical_epoch,state,child_process_id,process_start_ticks,created FROM stream_dag_launch_attempt WHERE graph_revision_id=$1 ORDER BY id''',
+'authority':'''SELECT id,flow_run_id,generation,flow_run_run_count,state FROM stream_execution_authority WHERE flow_run_id=$1 ORDER BY id''',
+'coordinator_launches':'''SELECT id,flow_run_id,worker_id,work_pool_id,generation,state,child_process_id,process_start_ticks FROM native_stream_launch_identity WHERE flow_run_id=$1 ORDER BY id'''
+}
+PARAMS={'scope':(GRAPH,FLOW),'flow_lease':(FLOW,),'lease_history':(FLOW,),'operators':(GRAPH,),'ports':(GRAPH,),'edges':(GRAPH,),'edge_partitions':(GRAPH,FLOW),'launches':(GRAPH,),'authority':(FLOW,),'coordinator_launches':(FLOW,),'tasks':(FLOW,),'partitions':(FLOW,)}
+def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def write(p,x):
+ with p.open('x') as f:f.write(json.dumps(x,indent=2,sort_keys=True,default=str)+'\n')
+ p.chmod(0o600)
+async def main():
+ os.umask(0o077)
+ now=time.monotonic_ns();previous=sorted(BASE.glob('sample-*.json'))
+ if previous:
+  latest=max(json.loads(p.read_text())['started_monotonic_ns'] for p in previous)
+  if now-latest<60_000_000_000:raise RuntimeError('RATE_LIMIT_BEFORE_CONNECTION')
+ command=json.loads((TRIAL/'command.json').read_text());assert command['head']==HEAD and command['phase']=='async5000' and command['database']=='native_ni012_runtime_v5_e033736e'
+ target=command['database']+'_tests_master';assert re.fullmatch(r'native_ni012_runtime_v5_[0-9a-f]{8}_tests_master',target)
+ raw=(FIXTURE/'progress.jsonl').read_text().splitlines();progress=json.loads(raw[-1]);assert progress['snapshot']['graph_revision_id']==str(GRAPH)
+ expected_tasks={v['task_run_id'] for v in progress['snapshot']['subtasks']};assert len(expected_tasks)==4
+ logged=set()
+ for name in ['worker-left.log','worker-right.log']:
+  logged.update(re.findall(r'/runs/flow-run/([0-9a-f-]{36})',(FIXTURE/name).read_text(errors='replace')))
+ assert logged=={str(FLOW)}
+ source=pathlib.Path('/workspace/ariadne/src/prefect/server/database/orm_models.py');sqlfile=BASE/'queries.json';assert json.loads(sqlfile.read_text())==SQL
+ for text in SQL.values():assert text.startswith('SELECT ') and not re.search(r'\b(FOR UPDATE|FOR SHARE|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|LOCK|TRUNCATE|CALL)\b',text,re.I)
+ meta={'status':'PREPARED_SCOPE_VERIFIED','root_authorization':'Root explicit immediate one-shot+at-most1/min read-only MVCC observer in current owned trial only','started_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'started_monotonic_ns':now,'trial':str(TRIAL),'target_database':target,'flow_id':str(FLOW),'graph_id':str(GRAPH),'head':HEAD,'command_sha256':sha(TRIAL/'command.json'),'sql_sha256':sha(sqlfile),'script_sha256':sha(pathlib.Path(__file__)),'orm_source_sha256':sha(source),'progress_record':progress,'flow_identity_source':'Unique owned worker View-at Flow UUID; graph and exact4TaskRun IDs from progress; SQL requires both IDs. Progress itself omits Flow UUID.','readonly':True,'explicit_row_locks':False,'limitations':['One MVCC snapshot, not complete transition history','Actual concurrency lease backend is outside PostgreSQL; persisted Flow lease pointer and deployment counter only','Late baseline/500 waypoint labels must use actual observed cursors; no retroactive500 baseline','SELECT holds ordinary relation AccessShare internally; no explicit row/table-lock clauses','No unscoped rows, capability columns, payloads or environment/DSNs queried']}
+ cfg=json.loads(pathlib.Path(command['config_selector']).read_text());u=urlsplit(cfg['admin_dsn']);dsn=urlunsplit((u.scheme,u.netloc,'/'+target,u.query,''));connection=None
+ try:
+  connection=await asyncpg.connect(dsn,timeout=3,command_timeout=2,server_settings={'default_transaction_read_only':'on','application_name':'principal_owned_metadata_observer','statement_timeout':'2000','lock_timeout':'100','idle_in_transaction_session_timeout':'3000'})
+  async with connection.transaction(isolation='repeatable_read',readonly=True):
+   context=dict(await connection.fetchrow("SELECT current_database() AS database,current_setting('server_version_num') AS server_version,current_setting('transaction_read_only') AS read_only,pg_backend_pid() AS backend_pid,clock_timestamp() AS observed_utc,txid_current_snapshot()::text AS mvcc_snapshot"));assert context['database']==target and int(context['server_version'])//10000==17 and context['read_only']=='on';meta['database_context']=context
+   scope=[dict(v) for v in await connection.fetch(SQL['scope'],GRAPH,FLOW)];assert len(scope)==1 and scope[0]['flow_run_id']==FLOW
+   data={'scope':scope}
+   for name,query in SQL.items():
+    if name=='scope':continue
+    data[name]=[dict(v) for v in await connection.fetch(query,*PARAMS.get(name,(FLOW,GRAPH)))]
+   assert {str(v['id']) for v in data['tasks']}==expected_tasks
+   meta['metadata']=data;meta['counts']={k:len(v) for k,v in data.items()};meta['status']='ACTUAL_READONLY_MVCC_CAPTURE'
+ except Exception as error:meta['status']='READONLY_OBSERVER_FAILED_OR_INCONCLUSIVE';meta['error_type']=type(error).__name__
+ finally:
+  if connection is not None:await connection.close()
+ meta['ended_monotonic_ns']=time.monotonic_ns();p=BASE/('sample-'+str(now)+'.json');write(p,meta)
+ print(json.dumps({'status':meta['status'],'path':str(p),'sha256':sha(p),'counts':meta.get('counts'),'error_type':meta.get('error_type'),'connection_closed':True,'database':target}))
+ if meta['status']!='ACTUAL_READONLY_MVCC_CAPTURE':raise SystemExit(1)
+if __name__=='__main__':asyncio.run(main())

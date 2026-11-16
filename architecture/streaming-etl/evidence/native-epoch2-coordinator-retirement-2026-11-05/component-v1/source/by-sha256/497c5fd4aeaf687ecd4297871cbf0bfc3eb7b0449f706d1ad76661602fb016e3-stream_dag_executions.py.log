@@ -1,0 +1,3267 @@
+"""Transactional DAG lifecycle authority, separate from fixed-P2 execution.
+
+The graph lock serializes start, activation and control. Physical reservations
+remain held until the assigned worker closes the complete persisted launch set.
+"""
+
+import hmac
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any, Literal, TypeAlias, TypeVar, cast
+from uuid import UUID, uuid5
+
+import sqlalchemy as sa
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from prefect._internal.stream_event_auth import (
+    canonical_dag_bootstrap_ready_witness,
+    dag_worker_generation_digest,
+    verify_dag_bootstrap_ready,
+)
+from prefect._internal.stream_route_plan import graph_routing_digest
+from prefect._internal.uuid7 import uuid7
+from prefect.server.database import PrefectDBInterface, orm_models
+from prefect.server.models import flow_runs as flow_run_models
+from prefect.server.models import stream_dags, stream_routes
+from prefect.server.models import task_runs as task_run_models
+from prefect.server.models._stream_errors import NativeStreamError
+from prefect.server.models.stream_executions import (
+    apply_flow_lifecycle_result,
+    guard_flow_lifecycle,
+    guard_task_lifecycle,
+    require_execution,
+    require_no_remaining_dag_flow_retry,
+)
+from prefect.server.models.stream_subtask_authority import (
+    capability_digest,
+    dag_lifecycle_control,
+    release_allocations,
+    require_physical_backend,
+)
+from prefect.server.models.stream_subtasks import grant_projection
+from prefect.server.models.streams import (
+    canonical_stream_payload,
+    finish_stream_partition,
+)
+from prefect.server.orchestration.core_policy import CoreFlowPolicy, CoreTaskPolicy
+from prefect.server.schemas import core, states
+from prefect.server.schemas import stream_dag_executions as s
+from prefect.server.schemas import stream_dags as topology
+from prefect.server.schemas import stream_routes as routed
+from prefect.server.schemas import stream_subtasks as physical
+from prefect.server.schemas import streams as storage
+from prefect.server.schemas.native_deployments import (
+    NativeStreamControlResult,
+    NativeStreamDeclaration,
+)
+from prefect.server.schemas.responses import SetStateStatus
+from prefect.server.schemas.states import TERMINAL_STATES, StateType
+from prefect.server.schemas.statuses import WorkerStatus
+from prefect.server.schemas.streams import StreamExecutionCredentials
+from prefect.types import DateTime
+from prefect.types._datetime import now
+
+DAG_PROFILE: Literal["partitioned-dag-v1"] = "partitioned-dag-v1"
+OperationRequest: TypeAlias = (
+    s.StreamDAGStartRequest
+    | s.StreamDAGActivateRequest
+    | s.StreamDAGAbortPreviewRequest
+    | s.StreamDAGCancelRequest
+    | s.StreamDAGFailRequest
+)
+ReceiptT = TypeVar("ReceiptT", bound=BaseModel)
+
+
+def dag_digest(value: object) -> str:
+    """Digest strict server-built JSON using the existing stream encoding."""
+    return canonical_stream_payload(value)[2]
+
+
+def make_dag_receipt(model: type[ReceiptT], material: dict[str, Any]) -> ReceiptT:
+    """Hash canonical wire values, including normalized timestamp spelling."""
+    candidate = model.model_validate({**material, "outcome_digest": "0" * 64})
+    return candidate.model_copy(
+        update={
+            "outcome_digest": dag_digest(
+                candidate.model_dump(mode="json", exclude={"outcome_digest"})
+            )
+        }
+    )
+
+
+@dataclass(frozen=True)
+class DAGGraphScope:
+    """Session-bound ordered Flow/authority/graph lock prefix."""
+
+    session: AsyncSession
+    transaction: object
+    flow: orm_models.FlowRun
+    authority: orm_models.StreamExecutionAuthority
+    graph: orm_models.StreamGraphRevision
+    update: bool
+
+    def validate(self, session: AsyncSession, *, update: bool = False) -> None:
+        if (
+            self.session is not session
+            or self.transaction is not session.get_transaction()
+            or self.graph.profile != DAG_PROFILE
+            or self.graph.flow_run_id != self.flow.id
+            or self.authority.flow_run_id != self.flow.id
+            or self.authority.flow_run_run_count != self.flow.run_count
+            or (update and not self.update)
+        ):
+            raise NativeStreamError("IDENTITY_CONFLICT", "DAG lock scope differs")
+
+
+def complete_closed_launch_digest(
+    scope: DAGGraphScope,
+    subtask: orm_models.StreamPhysicalSubtask,
+    attempts: list[orm_models.StreamDAGLaunchAttempt],
+) -> str:
+    """Bind the complete immutable birth/closure set to this physical target."""
+    if not attempts or [row.attempt_index for row in attempts] != list(
+        range(1, len(attempts) + 1)
+    ):
+        raise NativeStreamError(
+            "PHYSICAL_STOP_REQUIRED", "Complete process birth history is missing"
+        )
+    material: list[dict[str, Any]] = []
+    for row in attempts:
+        if (
+            row.state != "CLOSED"
+            or row.close_receipt is None
+            or row.graph_revision_id != scope.graph.id
+            or row.subtask_id != subtask.id
+            or row.task_run_id != subtask.task_run_id
+            or row.worker_id != subtask.assigned_worker_id
+            or row.start_operation_id != scope.graph.admission_operation_id
+            or (row.flow_generation, row.flow_holder_id, row.flow_run_run_count)
+            != (
+                scope.authority.generation,
+                scope.authority.holder_id,
+                scope.flow.run_count,
+            )
+        ):
+            raise NativeStreamError(
+                "PHYSICAL_STOP_REQUIRED",
+                "A current exact process birth remains open or outside its target",
+            )
+        receipt = s.StreamDAGLaunchCloseReceipt.model_validate(row.close_receipt)
+        if (
+            receipt.operation_id != row.close_operation_id
+            or receipt.launch_attempt_id != row.id
+            or receipt.graph_revision_id != row.graph_revision_id
+            or receipt.subtask_id != row.subtask_id
+            or receipt.attempt_index != row.attempt_index
+            or receipt.request_digest != row.close_request_digest
+            or receipt.outcome_digest
+            != dag_digest(receipt.model_dump(mode="json", exclude={"outcome_digest"}))
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Persisted process closure differs"
+            )
+        material.append(
+            {
+                "launch_attempt_id": str(row.id),
+                "attempt_index": row.attempt_index,
+                "close_outcome_digest": receipt.outcome_digest,
+            }
+        )
+    if not any(row.grant_id == subtask.current_grant_id for row in attempts):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Current grant has no closed recorded birth"
+        )
+    return dag_digest(
+        {
+            "graph_revision_id": str(scope.graph.id),
+            "subtask_id": str(subtask.id),
+            "task_run_id": str(subtask.task_run_id),
+            "grant_id": str(subtask.current_grant_id),
+            "physical_epoch": subtask.physical_epoch,
+            "attempts": material,
+        }
+    )
+
+
+async def lock_dag_graph(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    execution: StreamExecutionCredentials | None,
+    *,
+    update: bool,
+    worker: bool = False,
+) -> DAGGraphScope:
+    """Acquire one lock prefix; worker=True is internal trusted-worker authority.
+
+    A worker caller must subsequently validate its exact assigned principal under
+    the Worker lock before using the scope. This flag is never a wire field.
+    """
+    await require_physical_backend(session, db)
+    flow_id = await session.scalar(
+        sa.select(db.StreamGraphRevision.flow_run_id).where(
+            db.StreamGraphRevision.id == graph_id
+        )
+    )
+    if flow_id is None:
+        raise NativeStreamError("NOT_FOUND", "Unknown DAG revision")
+    flow = await session.scalar(
+        sa.select(db.FlowRun)
+        .where(db.FlowRun.id == flow_id)
+        .with_for_update(read=not update)
+        .execution_options(populate_existing=True)
+    )
+    if flow is None:
+        raise NativeStreamError("NOT_FOUND", "Unknown DAG FlowRun")
+    # Refresh before require_execution: an existing identity-map row cannot
+    # substitute for the authority protected by this transaction's lock.
+    authority = await session.scalar(
+        sa.select(db.StreamExecutionAuthority)
+        .where(db.StreamExecutionAuthority.flow_run_id == flow_id)
+        .with_for_update(read=not update)
+        .execution_options(populate_existing=True)
+    )
+    if not worker:
+        authority = await require_execution(
+            session,
+            db,
+            flow_id,
+            execution,
+            allowed_states=("CLAIMED", "ACTIVE", "TERMINAL", "RELEASED"),
+            update=update,
+        )
+    if authority is None:
+        raise NativeStreamError(
+            "EXECUTION_BINDING_REQUIRED", "DAG execution requires Flow authority"
+        )
+    graph = await session.scalar(
+        sa.select(db.StreamGraphRevision)
+        .where(db.StreamGraphRevision.id == graph_id)
+        .with_for_update(read=not update)
+        .execution_options(populate_existing=True)
+    )
+    if graph is None or graph.profile != DAG_PROFILE:
+        raise NativeStreamError("UNSUPPORTED_PROFILE", "A DAG revision is required")
+    scope = DAGGraphScope(
+        session, session.get_transaction(), flow, authority, graph, update
+    )
+    scope.validate(session)
+    # Public lifecycle belongs to the same deployed immutable Flow attempt.
+    snapshot = await session.scalar(
+        sa.select(db.NativeStreamDeploymentSnapshot).where(
+            db.NativeStreamDeploymentSnapshot.flow_run_id == flow.id
+        )
+    )
+    declaration = topology.StreamDAGSealRequest.model_validate(graph.declaration)
+    if (
+        snapshot is None
+        or snapshot.profile != DAG_PROFILE
+        or snapshot.state not in {"ACTIVE", "RELEASED"}
+        or flow.deployment_id != snapshot.deployment_id
+        or declaration.deployment_id != snapshot.deployment_id
+        or declaration.deployment_version != snapshot.deployment_version
+        or declaration.flow_version != snapshot.flow_version
+        or declaration.working_directory is None
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "DAG execution differs from its deployed snapshot"
+        )
+    return scope
+
+
+def validate_operation(
+    scope: DAGGraphScope, request: OperationRequest, action: str
+) -> str:
+    graph = scope.graph
+    if (
+        request.operation_id != uuid5(graph.id, f"prefect-stream-dag-{action}-v1")
+        or request.graph_digest != graph.graph_digest
+        or request.routing_digest != graph_routing_digest(graph.graph_digest)
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "DAG action identity or topology digest differs"
+        )
+    return dag_digest(request.model_dump(mode="json"))
+
+
+async def known_operation(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    scope: DAGGraphScope,
+    operation_id: UUID,
+    kind: str,
+    request_digest: str,
+) -> s.StreamDAGOperationReceipt | None:
+    row = await session.get(db.StreamDAGLifecycleOperation, operation_id)
+    if row is None:
+        return None
+    if (
+        row.graph_revision_id != scope.graph.id
+        or row.kind != kind
+        or row.request_digest != request_digest
+        or row.flow_run_run_count != scope.flow.run_count
+        or row.flow_generation != scope.authority.generation
+        or row.flow_holder_id != scope.authority.holder_id
+    ):
+        raise NativeStreamError("IDENTITY_CONFLICT", "DAG operation replay differs")
+    receipt = s.StreamDAGOperationReceipt.model_validate(row.accepted_receipt)
+    material = receipt.model_dump(mode="json", exclude={"outcome_digest"})
+    if (
+        receipt.operation_id != operation_id
+        or receipt.graph_revision_id != scope.graph.id
+        or receipt.request_digest != request_digest
+        or receipt.outcome_digest != row.outcome_digest
+        or receipt.outcome_digest != dag_digest(material)
+    ):
+        raise NativeStreamError("IDENTITY_CONFLICT", "Stored action receipt differs")
+    return receipt
+
+
+def require_mutable_execution(scope: DAGGraphScope) -> None:
+    if scope.graph.terminal_operation_id is not None or scope.graph.state == "RELEASED":
+        raise NativeStreamError("TERMINAL_CONFLICT", "DAG lifetime is already terminal")
+    if scope.authority.state not in {"CLAIMED", "ACTIVE"}:
+        raise NativeStreamError(
+            "RECOVERY_NOT_READY", "DAG Flow authority is not active"
+        )
+
+
+async def save_operation(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    scope: DAGGraphScope,
+    operation_id: UUID,
+    kind: Literal["START", "ACTIVATE", "ABORT_PREVIEW", "CANCEL", "FAIL"],
+    request_digest: str,
+    control: orm_models.StreamDAGLifecycleOperation | None = None,
+) -> s.StreamDAGOperationReceipt:
+    accepted_at = now("UTC")
+    material: dict[str, Any] = {
+        "operation_id": str(operation_id),
+        "graph_revision_id": str(scope.graph.id),
+        "kind": kind,
+        "request_digest": request_digest,
+        "accepted_at": accepted_at.isoformat(),
+        "effective_control_kind": control.effective_control_kind if control else None,
+        "control_operation_id": str(control.id) if control else None,
+    }
+    receipt = make_dag_receipt(s.StreamDAGOperationReceipt, material)
+    session.add(
+        db.StreamDAGLifecycleOperation(
+            id=operation_id,
+            operation_id=operation_id,
+            graph_revision_id=scope.graph.id,
+            flow_run_id=scope.flow.id,
+            kind=kind,
+            flow_generation=scope.authority.generation,
+            flow_holder_id=scope.authority.holder_id,
+            flow_run_run_count=scope.flow.run_count,
+            request_digest=request_digest,
+            accepted_receipt=receipt.model_dump(mode="json"),
+            outcome_digest=receipt.outcome_digest,
+            state="ACCEPTED",
+            effective_control_kind=control.effective_control_kind if control else None,
+            control_operation_id=control.id if control else None,
+        )
+    )
+    await session.flush()
+    return receipt
+
+
+async def project_execution(
+    session: AsyncSession, db: PrefectDBInterface, scope: DAGGraphScope
+) -> s.StreamDAGExecution:
+    scope.validate(session)
+    graph = scope.graph
+    subtasks = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSubtask).where(
+                    db.StreamPhysicalSubtask.graph_revision_id == graph.id
+                )
+            )
+        ).all()
+    )
+    declaration = topology.StreamDAGSealRequest.model_validate(graph.declaration)
+    if len(subtasks) != sum(row.parallelism for row in declaration.operators):
+        raise NativeStreamError("IDENTITY_CONFLICT", "DAG physical set is incomplete")
+    task_ids = {row.task_run_id for row in subtasks}
+    tasks = list(
+        (
+            await session.scalars(
+                sa.select(db.TaskRun).where(db.TaskRun.flow_run_id == scope.flow.id)
+            )
+        ).all()
+    )
+    if {row.id for row in tasks} != task_ids:
+        raise NativeStreamError("IDENTITY_CONFLICT", "DAG Flow TaskRun set differs")
+    grants = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamSubtaskGrant).where(
+                    db.StreamSubtaskGrant.id.in_(
+                        [
+                            row.current_grant_id
+                            for row in subtasks
+                            if row.current_grant_id
+                        ]
+                    )
+                )
+            )
+        ).all()
+    )
+    slots = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSlotAllocation).where(
+                    db.StreamPhysicalSlotAllocation.graph_revision_id == graph.id
+                )
+            )
+        ).all()
+    )
+    tags = await session.scalar(
+        sa.select(sa.func.count())
+        .select_from(db.StreamSubtaskAllocation)
+        .where(
+            db.StreamSubtaskAllocation.subtask_id.in_([row.id for row in subtasks]),
+            db.StreamSubtaskAllocation.released.is_(False),
+        )
+    )
+    control = (
+        await session.get(
+            db.StreamDAGLifecycleOperation, graph.current_control_operation_id
+        )
+        if graph.current_control_operation_id is not None
+        else None
+    )
+    terminal = (
+        await session.get(db.StreamDAGLifecycleOperation, graph.terminal_operation_id)
+        if graph.terminal_operation_id is not None
+        else None
+    )
+    if graph.current_control_operation_id is not None and (
+        control is None
+        or control.kind != "CONTROL"
+        or control.graph_revision_id != graph.id
+    ):
+        raise NativeStreamError("IDENTITY_CONFLICT", "DAG control journal differs")
+    if graph.terminal_operation_id is not None and (
+        terminal is None
+        or terminal.kind != "FINALIZE"
+        or terminal.graph_revision_id != graph.id
+        or terminal.state != "COMPLETED"
+        or terminal.terminal_outcome is None
+        or dag_digest(terminal.terminal_outcome) != terminal.outcome_digest
+    ):
+        raise NativeStreamError("IDENTITY_CONFLICT", "DAG terminal journal differs")
+    activation = (
+        await session.get(db.StreamDAGLifecycleOperation, graph.activation_operation_id)
+        if graph.activation_operation_id is not None
+        else None
+    )
+    if graph.activation_operation_id is not None and (
+        activation is None
+        or activation.kind != "ACTIVATE"
+        or activation.graph_revision_id != graph.id
+        or activation.target_set_digest is None
+    ):
+        raise NativeStreamError("IDENTITY_CONFLICT", "DAG activation journal differs")
+    phase: s.DAGPhase = (
+        "TERMINAL"
+        if terminal is not None
+        else "STOPPING"
+        if control is not None
+        else "ACTIVE"
+        if graph.startup_completed_at is not None
+        else "STARTING"
+        if graph.admission_operation_id is not None
+        else "PREVIEW"
+    )
+    return s.StreamDAGExecution(
+        graph_revision_id=graph.id,
+        flow_run_id=scope.flow.id,
+        graph_digest=graph.graph_digest,
+        routing_digest=graph_routing_digest(graph.graph_digest),
+        phase=phase,
+        terminal_state=cast(
+            s.TerminalState | None, terminal.terminal_state if terminal else None
+        ),
+        cleanup_complete=terminal is not None,
+        counts=s.StreamDAGExecutionCounts(
+            total=len(subtasks),
+            registered=sum(row.state == "REGISTERED" for row in grants),
+            bootstrap_ready=sum(
+                row.state == "REGISTERED" and row.bootstrap_ready_at is not None
+                for row in grants
+            ),
+            terminal_tasks=sum(
+                row.state_type
+                in {
+                    StateType.COMPLETED,
+                    StateType.FAILED,
+                    StateType.CRASHED,
+                    StateType.CANCELLED,
+                }
+                for row in tasks
+            ),
+            stopped=sum(row.released for row in slots),
+            physical_slots_remaining=sum(not row.released for row in slots),
+            tags_remaining=int(tags or 0),
+        ),
+        control=(
+            s.StreamDAGControlProjection(
+                operation_id=control.id,
+                kind=cast(s.ControlKind, control.effective_control_kind),
+                state="COMPLETED" if control.state == "COMPLETED" else "STOPPING",
+            )
+            if control
+            else None
+        ),
+        activation_operation_id=graph.activation_operation_id,
+        readiness_set_digest=activation.target_set_digest if activation else None,
+        terminal_operation_id=graph.terminal_operation_id,
+        terminal_outcome_digest=terminal.outcome_digest if terminal else None,
+    )
+
+
+async def read_stream_dag_execution(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    execution: StreamExecutionCredentials | None,
+) -> s.StreamDAGExecution:
+    scope = await lock_dag_graph(session, db, graph_id, execution, update=False)
+    return await project_execution(session, db, scope)
+
+
+async def _require_retired_dag(
+    session: AsyncSession, db: PrefectDBInterface, scope: DAGGraphScope
+) -> None:
+    """Validate retained terminal evidence without rewriting physical journals."""
+    graph, authority = scope.graph, scope.authority
+    projection = await project_execution(session, db, scope)
+    if (
+        authority.prepared_generation != authority.generation
+        or authority.manifest_set_digest != graph.graph_digest
+        or authority.manifest_count != projection.counts.total
+        or authority.manifest_sealed_at is None
+        or authority.manifest_seal_operation_id != graph.operation_id
+        or authority.manifest_seal_request_digest != graph.request_digest
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "DAG immutable manifest binding differs"
+        )
+    terminal = await session.get(
+        db.StreamDAGLifecycleOperation, graph.terminal_operation_id
+    )
+    if (
+        graph.state != "RELEASED"
+        or terminal is None
+        or terminal.id != uuid5(graph.id, "prefect-stream-dag-finalize-v1")
+        or terminal.operation_id != terminal.id
+        or terminal.completed_at is None
+        or terminal.flow_run_id != scope.flow.id
+        or (
+            terminal.flow_generation,
+            terminal.flow_holder_id,
+            terminal.flow_run_run_count,
+        )
+        != (authority.generation, authority.holder_id, scope.flow.run_count)
+        or terminal.terminal_state not in {"COMPLETED", "FAILED", "CANCELLED"}
+        or not isinstance(terminal.terminal_outcome, dict)
+        or terminal.accepted_receipt != terminal.terminal_outcome
+        or terminal.request_digest != terminal.outcome_digest
+        or terminal.terminal_outcome.get("terminal_state") != terminal.terminal_state
+        or projection.counts.physical_slots_remaining
+        or projection.counts.tags_remaining
+        or projection.counts.terminal_tasks != projection.counts.total
+    ):
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT", "DAG terminal proof is not complete"
+        )
+    subtasks = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSubtask)
+                .where(db.StreamPhysicalSubtask.graph_revision_id == graph.id)
+                .order_by(db.StreamPhysicalSubtask.id)
+            )
+        ).all()
+    )
+    attempts = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamDAGLaunchAttempt)
+                .where(db.StreamDAGLaunchAttempt.graph_revision_id == graph.id)
+                .order_by(db.StreamDAGLaunchAttempt.attempt_index)
+            )
+        ).all()
+    )
+    slots = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSlotAllocation).where(
+                    db.StreamPhysicalSlotAllocation.graph_revision_id == graph.id
+                )
+            )
+        ).all()
+    )
+    control = (
+        await session.get(
+            db.StreamDAGLifecycleOperation, graph.current_control_operation_id
+        )
+        if graph.current_control_operation_id
+        else None
+    )
+    if (
+        terminal.terminal_outcome.get("graph_revision_id") != str(graph.id)
+        or terminal.control_operation_id != graph.current_control_operation_id
+        or terminal.effective_control_kind
+        != (control.effective_control_kind if control else None)
+        or (control is None and terminal.terminal_state != "COMPLETED")
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Terminal graph control binding differs"
+        )
+    if control is not None and (
+        control.state != "COMPLETED"
+        or control.flow_run_id != scope.flow.id
+        or (control.flow_generation, control.flow_holder_id, control.flow_run_run_count)
+        != (authority.generation, authority.holder_id, scope.flow.run_count)
+        or terminal.control_operation_id != control.id
+        or control.terminal_outcome is not None
+        or not isinstance(cast(object, control.accepted_receipt), dict)
+        or control.accepted_receipt.get("graph_revision_id") != str(graph.id)
+        or control.accepted_receipt.get("kind") != control.effective_control_kind
+        or dag_digest(control.accepted_receipt) != control.outcome_digest
+    ):
+        raise NativeStreamError("IDENTITY_CONFLICT", "DAG terminal control differs")
+    if graph.admission_operation_id is None:
+        if (
+            control is None
+            or control.effective_control_kind != "PREVIEW_ABORT"
+            or graph.abort_operation_id != control.id
+            or terminal.terminal_state != "FAILED"
+            or attempts
+            or slots
+            or any(
+                row.current_grant_id or row.assigned_worker_id or row.physical_epoch
+                for row in subtasks
+            )
+        ):
+            raise NativeStreamError(
+                "PHYSICAL_STOP_REQUIRED", "Preview lacks its exact zero-birth abort"
+            )
+        subtask_ids = [row.id for row in subtasks]
+        forbidden = await session.scalar(
+            sa.select(
+                sa.or_(
+                    sa.exists().where(
+                        db.StreamSubtaskGrant.subtask_id.in_(subtask_ids)
+                    ),
+                    sa.exists().where(
+                        db.StreamSubtaskAllocation.subtask_id.in_(subtask_ids)
+                    ),
+                    sa.exists().where(
+                        db.StreamDAGControlTarget.graph_revision_id == graph.id
+                    ),
+                    sa.exists().where(
+                        db.TaskRun.flow_run_id == scope.flow.id,
+                        sa.or_(
+                            db.TaskRun.run_count != 0,
+                            db.TaskRun.state_type != StateType.FAILED,
+                        ),
+                    ),
+                )
+            )
+        )
+        if forbidden:
+            raise NativeStreamError(
+                "PHYSICAL_STOP_REQUIRED", "Unused preview contains execution history"
+            )
+    else:
+        await stream_dags.dag_admission_topology_witness(session, db, graph)
+        by_slot = {row.subtask_id: row for row in slots}
+        if set(by_slot) != {row.id for row in subtasks}:
+            raise NativeStreamError(
+                "PHYSICAL_STOP_REQUIRED", "DAG reservation set differs"
+            )
+        targets = (
+            list(
+                (
+                    await session.scalars(
+                        sa.select(db.StreamDAGControlTarget)
+                        .where(
+                            db.StreamDAGControlTarget.control_operation_id == control.id
+                        )
+                        .order_by(db.StreamDAGControlTarget.subtask_id)
+                    )
+                ).all()
+            )
+            if control
+            else []
+        )
+        by_target = {row.subtask_id: row for row in targets}
+        if control and set(by_target) != set(by_slot):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "DAG terminal target set differs"
+            )
+        closed_targets: list[dict[str, Any]] = []
+        for subtask in subtasks:
+            slot = by_slot[subtask.id]
+            births = [row for row in attempts if row.subtask_id == subtask.id]
+            grant = (
+                await session.get(db.StreamSubtaskGrant, subtask.current_grant_id)
+                if subtask.current_grant_id
+                else None
+            )
+            if (
+                not slot.released
+                or not subtask.physical_slot_released
+                or (
+                    subtask.current_grant_id is not None
+                    and (
+                        grant is None
+                        or grant.state != "RETIRED"
+                        or grant.subtask_id != subtask.id
+                        or grant.physical_epoch != subtask.physical_epoch
+                    )
+                )
+            ):
+                raise NativeStreamError(
+                    "PHYSICAL_STOP_REQUIRED", "Current physical allocation remains open"
+                )
+            target = by_target.get(subtask.id)
+            if target and slot.release_operation_id == target.stop_operation_id:
+                # STOP owns its existing list-shaped closure digest; the empty
+                # list is a valid proof that this assigned target never birthed.
+                if births:
+                    complete_closed_launch_digest(scope, subtask, births)
+                elif (
+                    subtask.current_grant_id is not None or subtask.physical_epoch != 0
+                ):
+                    raise NativeStreamError(
+                        "PHYSICAL_STOP_REQUIRED",
+                        "Granted target lost its launch history",
+                    )
+                closed_digest = dag_digest(
+                    [
+                        {
+                            "launch_attempt_id": str(row.id),
+                            "attempt_index": row.attempt_index,
+                            "close_request_digest": row.close_request_digest,
+                            "close_receipt": row.close_receipt,
+                        }
+                        for row in births
+                    ]
+                )
+            else:
+                closed_digest = complete_closed_launch_digest(scope, subtask, births)
+                retired = await session.scalar(
+                    sa.select(db.StreamSubtaskReplacement).where(
+                        db.StreamSubtaskReplacement.subtask_id == subtask.id,
+                        db.StreamSubtaskReplacement.operation_id
+                        == slot.release_operation_id,
+                        db.StreamSubtaskReplacement.state == "RETIRED",
+                    )
+                )
+                if (
+                    retired is None
+                    or retired.expected_grant_id != subtask.current_grant_id
+                    or retired.expected_physical_epoch != subtask.physical_epoch
+                    or retired.retirement_outcome is None
+                    or retired.retirement_outcome.get("all_attempts_closed_digest")
+                    != closed_digest
+                ):
+                    raise NativeStreamError(
+                        "IDENTITY_CONFLICT", "Normal retirement proof differs"
+                    )
+            if target:
+                receipt = s.StreamDAGStopReceipt.model_validate(target.stop_receipt)
+                if (
+                    target.state != "STOPPED"
+                    or target.graph_revision_id != graph.id
+                    or target.task_run_id != subtask.task_run_id
+                    or target.worker_id != subtask.assigned_worker_id
+                    or target.all_attempts_closed_digest != closed_digest
+                    or (
+                        target.flow_generation,
+                        target.flow_holder_id,
+                        target.flow_run_run_count,
+                    )
+                    != (authority.generation, authority.holder_id, scope.flow.run_count)
+                    or target.grant_id != subtask.current_grant_id
+                    or target.physical_epoch != subtask.physical_epoch
+                    or receipt.operation_id != target.stop_operation_id
+                    or receipt.graph_revision_id != graph.id
+                    or receipt.control_operation_id
+                    != graph.current_control_operation_id
+                    or receipt.subtask_id != subtask.id
+                    or receipt.task_run_id != subtask.task_run_id
+                    or receipt.grant_id != subtask.current_grant_id
+                    or receipt.physical_epoch != subtask.physical_epoch
+                    or receipt.all_attempts_closed_digest != closed_digest
+                    or not receipt.tag_allocation_released
+                    or not receipt.physical_slot_released
+                    or receipt.outcome_digest
+                    != dag_digest(
+                        receipt.model_dump(mode="json", exclude={"outcome_digest"})
+                    )
+                ):
+                    raise NativeStreamError(
+                        "IDENTITY_CONFLICT", "Stopped target proof differs"
+                    )
+            closed_targets.append(
+                {
+                    "subtask_id": str(subtask.id),
+                    "all_attempts_closed_digest": closed_digest,
+                }
+            )
+        if terminal.terminal_outcome.get("all_targets_stopped_digest") != dag_digest(
+            closed_targets
+        ):
+            raise NativeStreamError("IDENTITY_CONFLICT", "Terminal closure set differs")
+    partitions = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPartition).where(
+                    db.StreamPartition.flow_run_id == scope.flow.id
+                )
+            )
+        ).all()
+    )
+    expected_streams = {row.output_stream_id for row in subtasks} | {
+        row.input_stream_id for row in subtasks if row.input_stream_id is not None
+    }
+    if {row.id for row in partitions} != expected_streams:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Terminal DAG partition set differs"
+        )
+    preview = graph.admission_operation_id is None
+    if any(
+        row.record_count
+        or row.byte_count
+        or (not preview and not row.released)
+        or (
+            preview
+            and (
+                row.state != "FAILED"
+                or row.last_sequence != 0
+                or row.producer_position != 0
+                or row.owner_id is not None
+                or row.owner_epoch != 0
+                or row.attempt != 0
+            )
+        )
+        for row in partitions
+    ):
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT", "DAG payload release is incomplete"
+        )
+    for model, predicate in (
+        (
+            db.StreamRecord,
+            db.StreamRecord.stream_id.in_([row.id for row in partitions]),
+        ),
+        (
+            db.StreamConsumer,
+            sa.or_(
+                db.StreamConsumer.graph_revision_id == graph.id,
+                db.StreamConsumer.input_stream_id.in_(expected_streams),
+                db.StreamConsumer.output_stream_id.in_(expected_streams),
+            ),
+        ),
+        (db.StreamRouteReceipt, db.StreamRouteReceipt.graph_revision_id == graph.id),
+    ):
+        if (
+            await session.scalar(sa.select(model.id).where(predicate).limit(1))
+            is not None
+        ):
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "DAG retained data is not reclaimed"
+            )
+
+
+async def retire_stream_dag_coordinator(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    flow_run_id: UUID,
+    execution: StreamExecutionCredentials | None,
+    *,
+    verified_server: bool,
+) -> int:
+    """Retire only parent metadata after its Python tail and DAG have finished.
+
+    This is the typed release path, not a data API or a graph finalizer. The
+    complete physical journals remain immutable, including on exact replay.
+    """
+    await require_physical_backend(session, db)
+    flow = await session.scalar(
+        sa.select(db.FlowRun)
+        .where(db.FlowRun.id == flow_run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    authority = await session.scalar(
+        sa.select(db.StreamExecutionAuthority)
+        .where(db.StreamExecutionAuthority.flow_run_id == flow_run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if flow is None:
+        raise NativeStreamError("NOT_FOUND", "Unknown DAG FlowRun")
+    if not verified_server:
+        authority = await require_execution(
+            session,
+            db,
+            flow_run_id,
+            execution,
+            allowed_states=("TERMINAL", "RELEASED"),
+            update=True,
+        )
+    if authority is None or authority.flow_run_run_count != flow.run_count:
+        raise NativeStreamError(
+            "EXECUTION_BINDING_REQUIRED", "Current DAG authority is required"
+        )
+    if flow.state_type not in TERMINAL_STATES or authority.state not in {
+        "TERMINAL",
+        "RELEASED",
+    }:
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT", "Parent Python Flow has not finished"
+        )
+    graph = await session.scalar(
+        sa.select(db.StreamGraphRevision)
+        .where(db.StreamGraphRevision.flow_run_id == flow_run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    snapshot = await session.scalar(
+        sa.select(db.NativeStreamDeploymentSnapshot)
+        .where(db.NativeStreamDeploymentSnapshot.flow_run_id == flow_run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if snapshot is None:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "DAG deployment snapshot is missing"
+        )
+    try:
+        declaration = NativeStreamDeclaration.model_validate(snapshot.declaration)
+    except ValueError as exc:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Immutable DAG declaration is invalid"
+        ) from exc
+    if (
+        snapshot.profile != DAG_PROFILE
+        or declaration.profile != DAG_PROFILE
+        or snapshot.state not in {"ACTIVE", "RELEASED"}
+        or snapshot.declaration_digest
+        != dag_digest(declaration.model_dump(mode="json"))
+        or snapshot.deployment_id != flow.deployment_id
+        or snapshot.deployment_version != flow.deployment_version
+        or snapshot.flow_version != flow.flow_version
+        or declaration.flow_version != snapshot.flow_version
+        or declaration.flow_code_digest != snapshot.flow_code_digest
+        or declaration.resource_profile != snapshot.resource_profile
+        or declaration.protocol_version != snapshot.protocol_version
+    ):
+        raise NativeStreamError("IDENTITY_CONFLICT", "Immutable DAG deployment differs")
+    if verified_server:
+        controls = list(
+            (
+                await session.scalars(
+                    sa.select(db.NativeStreamControlOperation).where(
+                        db.NativeStreamControlOperation.flow_run_id == flow_run_id,
+                        db.NativeStreamControlOperation.generation
+                        == authority.generation,
+                        db.NativeStreamControlOperation.kind.in_(
+                            ("SPAWN_FAILED", "VERIFIED_RETIRED", "CANCEL_FINALIZED")
+                        ),
+                    )
+                )
+            ).all()
+        )
+        for control in controls:
+            try:
+                receipt = NativeStreamControlResult.model_validate(control.outcome)
+            except ValueError as exc:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "Verified control receipt is invalid"
+                ) from exc
+            if (
+                receipt.flow_run_id == flow_run_id
+                and receipt.generation == authority.generation
+                and receipt.operation_id == control.operation_id
+                and receipt.kind == control.kind
+                and dag_digest(control.outcome) == control.outcome_digest
+                and (control.kind != "CANCEL_FINALIZED" or authority.cancel_requested)
+            ):
+                break
+        else:
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT",
+                "Current verified coordinator retirement is missing",
+            )
+    launches = list(
+        (
+            await session.scalars(
+                sa.select(db.NativeStreamLaunchIdentity)
+                .where(
+                    db.NativeStreamLaunchIdentity.flow_run_id == flow_run_id,
+                    db.NativeStreamLaunchIdentity.generation == authority.generation,
+                )
+                .with_for_update()
+            )
+        ).all()
+    )
+    if len(launches) != 1 or any(
+        row.snapshot_id != snapshot.id
+        or row.holder_id != authority.holder_id
+        or row.holder_capability_digest != authority.holder_capability_digest
+        or row.holder_event_public_key != authority.holder_event_public_key
+        or row.supervisor_id != authority.supervisor_id
+        or row.supervisor_capability_digest != authority.supervisor_capability_digest
+        or row.work_pool_id != snapshot.work_pool_id
+        for row in launches
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Current coordinator launch differs"
+        )
+    if graph is None:
+        # Failed before sealing is distinct from a damaged existing DAG. A
+        # seal witness or any child/data row makes this branch ineligible.
+        if (
+            any(
+                value is not None
+                for value in (
+                    authority.manifest_set_digest,
+                    authority.manifest_sealed_at,
+                    authority.manifest_seal_operation_id,
+                    authority.manifest_seal_request_digest,
+                )
+            )
+            or authority.manifest_count
+        ):
+            raise NativeStreamError("IDENTITY_CONFLICT", "Sealed DAG graph is missing")
+        for model in (
+            db.StreamSubmission,
+            db.StreamFiniteSubmission,
+            db.StreamPartition,
+            db.StreamDAGLifecycleOperation,
+        ):
+            if (
+                await session.scalar(
+                    sa.select(model.id).where(model.flow_run_id == flow_run_id).limit(1)
+                )
+                is not None
+            ):
+                raise NativeStreamError(
+                    "TERMINAL_CONFLICT", "Pre-seal coordinator contains execution data"
+                )
+    else:
+        if graph.profile != DAG_PROFILE:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "DAG snapshot has another graph profile"
+            )
+        try:
+            sealed = topology.StreamDAGSealRequest.model_validate(graph.declaration)
+        except ValueError as exc:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "DAG declaration is invalid"
+            ) from exc
+        if (
+            sealed.deployment_id != snapshot.deployment_id
+            or sealed.deployment_version != snapshot.deployment_version
+            or sealed.flow_version != snapshot.flow_version
+            or sealed.flow_run_id != flow.id
+            or sealed.working_directory is None
+            or canonical_stream_payload(
+                graph.declaration, topology.MAX_DAG_MANIFEST_BYTES
+            )[2]
+            != graph.graph_digest
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Sealed DAG deployment binding differs"
+            )
+        scope = DAGGraphScope(
+            session, session.get_transaction(), flow, authority, graph, True
+        )
+        try:
+            await _require_retired_dag(session, db, scope)
+        except ValueError as exc:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "DAG terminal proof is invalid"
+            ) from exc
+    authority.state = "RELEASED"
+    snapshot.state = "RELEASED"
+    for launch in launches:
+        launch.state = "RELEASED"
+    await session.flush()
+    return 0
+
+
+async def start_stream_dag(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    request: s.StreamDAGStartRequest,
+    execution: StreamExecutionCredentials | None,
+) -> s.StreamDAGOperationResult:
+    scope = await lock_dag_graph(session, db, graph_id, execution, update=True)
+    digest = validate_operation(scope, request, "start")
+    receipt = await known_operation(
+        session, db, scope, request.operation_id, "START", digest
+    )
+    if receipt is not None:
+        return s.StreamDAGOperationResult(
+            receipt=receipt, execution=await project_execution(session, db, scope)
+        )
+    require_mutable_execution(scope)
+    require_no_remaining_dag_flow_retry(scope.flow)
+    if scope.graph.state != "SEALED" or scope.flow.state_type != StateType.RUNNING:
+        raise NativeStreamError(
+            "ADMISSION_NOT_ALLOWED",
+            "START requires its Running Flow and sealed preview",
+        )
+    snapshot = await session.scalar(
+        sa.select(db.NativeStreamDeploymentSnapshot).where(
+            db.NativeStreamDeploymentSnapshot.flow_run_id == scope.flow.id
+        )
+    )
+    if snapshot is None or snapshot.state != "ACTIVE":
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "START requires its active deployment snapshot"
+        )
+    # The receipt and complete region reservation commit together or neither does.
+    async with session.begin_nested():
+        receipt = await save_operation(
+            session, db, scope, request.operation_id, "START", digest
+        )
+        await stream_dags.admit_dag_metadata(
+            session,
+            db,
+            graph_id,
+            topology.StreamDAGAdmissionRequest(
+                operation_id=request.operation_id, graph_digest=request.graph_digest
+            ),
+            work_pool_id=snapshot.work_pool_id,
+        )
+    return s.StreamDAGOperationResult(
+        receipt=receipt, execution=await project_execution(session, db, scope)
+    )
+
+
+async def begin_dag_control(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    scope: DAGGraphScope,
+    kind: s.ControlKind,
+    cause: dict[str, Any],
+) -> orm_models.StreamDAGLifecycleOperation:
+    """Freeze every admitted target, including candidates without a grant."""
+    scope.validate(session, update=True)
+    graph = scope.graph
+    if graph.current_control_operation_id is not None:
+        row = await session.get(
+            db.StreamDAGLifecycleOperation, graph.current_control_operation_id
+        )
+        if row is None or row.kind != "CONTROL" or row.graph_revision_id != graph.id:
+            raise NativeStreamError("IDENTITY_CONFLICT", "Current DAG control differs")
+        compatible = row.effective_control_kind == kind or (
+            kind in {"FAIL", "STARTUP_ABORT"}
+            and row.effective_control_kind in {"FAIL", "STARTUP_ABORT"}
+        )
+        if not compatible:
+            raise NativeStreamError(
+                "CONTROL_CONFLICT", "An opposite DAG control is already authoritative"
+            )
+        return row
+    require_mutable_execution(scope)
+    subtasks = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSubtask)
+                .where(db.StreamPhysicalSubtask.graph_revision_id == graph.id)
+                .order_by(db.StreamPhysicalSubtask.id)
+            )
+        ).all()
+    )
+    worker_ids = sorted(
+        {
+            row.assigned_worker_id
+            for row in subtasks
+            if row.assigned_worker_id is not None
+        }
+    )
+    await session.execute(
+        sa.select(db.Worker.id)
+        .where(db.Worker.id.in_(worker_ids))
+        .order_by(db.Worker.id)
+        .with_for_update(read=True)
+    )
+    capabilities = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamWorkerCapability)
+                .where(
+                    db.StreamWorkerCapability.worker_id.in_(worker_ids),
+                    db.StreamWorkerCapability.protocol == DAG_PROFILE,
+                    db.StreamWorkerCapability.protocol_version == 1,
+                )
+                .order_by(db.StreamWorkerCapability.worker_id)
+                .with_for_update(read=True)
+            )
+        ).all()
+    )
+    by_worker = {row.worker_id: row for row in capabilities}
+    control_id = uuid5(
+        graph.id,
+        "prefect-stream-dag-startup-abort-v1"
+        if kind == "STARTUP_ABORT"
+        else f"prefect-stream-dag-control-{kind.lower().replace('_', '-')}-v1",
+    )
+    target_material: list[dict[str, Any]] = []
+    targets: list[orm_models.StreamDAGControlTarget] = []
+    for subtask in subtasks:
+        if subtask.assigned_worker_id is None:
+            if graph.admission_operation_id is not None:
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT", "Admitted target is unassigned"
+                )
+            continue
+        capability: (
+            orm_models.StreamWorkerCapability | orm_models.StreamDAGLaunchAttempt | None
+        ) = by_worker.get(subtask.assigned_worker_id)
+        retired_receipt: physical.StreamSubtaskVerifiedRetirement | None = None
+        closed_digest: str | None = None
+        if subtask.physical_slot_released:
+            slot = await session.scalar(
+                sa.select(db.StreamPhysicalSlotAllocation)
+                .where(db.StreamPhysicalSlotAllocation.subtask_id == subtask.id)
+                .with_for_update()
+            )
+            retired = await session.scalar(
+                sa.select(db.StreamSubtaskReplacement)
+                .where(
+                    db.StreamSubtaskReplacement.subtask_id == subtask.id,
+                    db.StreamSubtaskReplacement.operation_id
+                    == (slot.release_operation_id if slot else None),
+                    db.StreamSubtaskReplacement.state == "RETIRED",
+                )
+                .with_for_update()
+            )
+            if (
+                slot is None
+                or not slot.released
+                or slot.worker_id != subtask.assigned_worker_id
+                or retired is None
+                or retired.retirement_outcome is None
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "Released control target lacks its exact normal-retirement proof",
+                )
+            envelope = retired.retirement_outcome
+            retired_receipt = physical.StreamSubtaskVerifiedRetirement.model_validate(
+                envelope.get("receipt")
+            )
+            attempts = list(
+                (
+                    await session.scalars(
+                        sa.select(db.StreamDAGLaunchAttempt)
+                        .where(db.StreamDAGLaunchAttempt.subtask_id == subtask.id)
+                        .order_by(db.StreamDAGLaunchAttempt.attempt_index)
+                        .with_for_update()
+                    )
+                ).all()
+            )
+            closed_digest = complete_closed_launch_digest(scope, subtask, attempts)
+            if (
+                envelope.get("all_attempts_closed_digest") != closed_digest
+                or retired_receipt.task_state != "COMPLETED"
+                or retired_receipt.grant_id != subtask.current_grant_id
+                or retired_receipt.physical_epoch != subtask.physical_epoch
+                or retired_receipt.task_run_id != subtask.task_run_id
+            ):
+                raise NativeStreamError(
+                    "IDENTITY_CONFLICT",
+                    "Normal retirement differs from the frozen control target",
+                )
+            capability = next(
+                (
+                    row
+                    for row in attempts
+                    if row.registered_grant_id == subtask.current_grant_id
+                ),
+                None,
+            )
+        if capability is None:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Control cannot freeze an unknown assigned worker identity",
+            )
+        generation = dag_worker_generation_digest(
+            worker_id=UUID(str(capability.worker_id)),
+            work_pool_id=UUID(str(capability.work_pool_id)),
+            host_id=UUID(str(capability.host_id)),
+            boot_id=UUID(str(capability.boot_id)),
+            launcher_process_id=capability.launcher_process_id,
+            launcher_start_ticks=capability.launcher_start_ticks,
+        )
+        target_material.append(
+            {
+                "subtask_id": str(subtask.id),
+                "task_run_id": str(subtask.task_run_id),
+                "worker_id": str(capability.worker_id),
+                "worker_generation_digest": generation,
+                "grant_id": str(subtask.current_grant_id)
+                if subtask.current_grant_id
+                else None,
+                "physical_epoch": subtask.physical_epoch,
+            }
+        )
+        target = db.StreamDAGControlTarget(
+            id=uuid7(),
+            graph_revision_id=graph.id,
+            control_operation_id=control_id,
+            start_operation_id=graph.admission_operation_id,
+            subtask_id=subtask.id,
+            task_run_id=subtask.task_run_id,
+            worker_id=capability.worker_id,
+            work_pool_id=capability.work_pool_id,
+            host_id=capability.host_id,
+            boot_id=capability.boot_id,
+            launcher_process_id=capability.launcher_process_id,
+            launcher_start_ticks=capability.launcher_start_ticks,
+            worker_generation_digest=generation,
+            flow_generation=scope.authority.generation,
+            flow_holder_id=scope.authority.holder_id,
+            flow_run_run_count=scope.flow.run_count,
+            grant_id=subtask.current_grant_id,
+            physical_epoch=subtask.physical_epoch,
+            state="PENDING",
+        )
+        if retired_receipt is not None and closed_digest is not None:
+            stop_id = uuid5(control_id, "prefect-stream-dag-stop-v1/" + str(subtask.id))
+            principal = physical.StreamWorkerPrincipal(
+                work_pool_id=capability.work_pool_id,
+                host_id=capability.host_id,
+                boot_id=capability.boot_id,
+                launcher_process_id=capability.launcher_process_id,
+                launcher_start_ticks=capability.launcher_start_ticks,
+            )
+            stop_digest = dag_digest(
+                s.StreamDAGWorkerStopRequest(
+                    principal=principal,
+                    operation_id=stop_id,
+                    control_operation_id=control_id,
+                ).model_dump(mode="json")
+            )
+            stop_receipt = make_dag_receipt(
+                s.StreamDAGStopReceipt,
+                {
+                    "operation_id": str(stop_id),
+                    "control_operation_id": str(control_id),
+                    "graph_revision_id": str(graph.id),
+                    "subtask_id": str(subtask.id),
+                    "task_run_id": str(subtask.task_run_id),
+                    "grant_id": str(subtask.current_grant_id),
+                    "physical_epoch": subtask.physical_epoch,
+                    "state": "STOPPED",
+                    "task_state": "COMPLETED",
+                    "tag_allocation_released": True,
+                    "physical_slot_released": True,
+                    "all_attempts_closed_digest": closed_digest,
+                },
+            )
+            target.state = "STOPPED"
+            target.stop_operation_id = stop_id
+            target.stop_request_digest = stop_digest
+            target.all_attempts_closed_digest = closed_digest
+            target.stop_receipt = stop_receipt.model_dump(mode="json")
+            target.stopped_at = cast(DateTime, now("UTC"))
+            target_material[-1]["retired_outcome_digest"] = (
+                retired_receipt.outcome_digest
+            )
+            target_material[-1]["all_attempts_closed_digest"] = closed_digest
+        targets.append(target)
+    material = {
+        "graph_revision_id": str(graph.id),
+        "kind": kind,
+        "cause": cause,
+        "targets": target_material,
+    }
+    row = db.StreamDAGLifecycleOperation(
+        id=control_id,
+        operation_id=control_id,
+        graph_revision_id=graph.id,
+        flow_run_id=scope.flow.id,
+        kind="CONTROL",
+        flow_generation=scope.authority.generation,
+        flow_holder_id=scope.authority.holder_id,
+        flow_run_run_count=scope.flow.run_count,
+        request_digest=dag_digest(material),
+        accepted_receipt=material,
+        outcome_digest=dag_digest(material),
+        state="STOPPING",
+        effective_control_kind=kind,
+        first_cause=cause,
+        target_set_digest=dag_digest(target_material),
+    )
+    session.add(row)
+    await session.flush()
+    session.add_all(targets)
+    graph.current_control_operation_id = control_id
+    await session.flush()
+    return row
+
+
+async def finalize_preview(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    scope: DAGGraphScope,
+    control: orm_models.StreamDAGLifecycleOperation,
+) -> None:
+    """Only an unassigned, zero-process preview can clean up synchronously."""
+    if scope.graph.admission_operation_id is not None:
+        raise NativeStreamError(
+            "PHYSICAL_STOP_REQUIRED", "Every admitted target needs worker closure"
+        )
+    await stream_dags.abort_dag_metadata(
+        session,
+        db,
+        scope.graph.id,
+        physical.StreamGraphAbortRequest(
+            operation_id=control.id,
+            graph_digest=scope.graph.graph_digest,
+            error="Unstarted streaming DAG preview was closed",
+        ),
+    )
+    finished_at = now("UTC")
+    terminal_id = uuid5(scope.graph.id, "prefect-stream-dag-finalize-v1")
+    material = {
+        "graph_revision_id": str(scope.graph.id),
+        "terminal_state": "FAILED",
+        "control_operation_id": str(control.id),
+        "total": sum(
+            row.parallelism
+            for row in topology.StreamDAGSealRequest.model_validate(
+                scope.graph.declaration
+            ).operators
+        ),
+        "stopped": 0,
+    }
+    terminal = db.StreamDAGLifecycleOperation(
+        id=terminal_id,
+        operation_id=terminal_id,
+        graph_revision_id=scope.graph.id,
+        flow_run_id=scope.flow.id,
+        kind="FINALIZE",
+        flow_generation=scope.authority.generation,
+        flow_holder_id=scope.authority.holder_id,
+        flow_run_run_count=scope.flow.run_count,
+        request_digest=dag_digest(material),
+        accepted_receipt=material,
+        outcome_digest=dag_digest(material),
+        state="COMPLETED",
+        effective_control_kind=control.effective_control_kind,
+        control_operation_id=control.id,
+        terminal_state="FAILED",
+        terminal_outcome=material,
+        completed_at=finished_at,
+    )
+    session.add(terminal)
+    await session.flush()
+    scope.graph.terminal_operation_id = terminal_id
+    control.state = "COMPLETED"
+    control.completed_at = cast(DateTime, finished_at)
+    await session.flush()
+
+
+async def abort_stream_dag_preview(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    request: s.StreamDAGAbortPreviewRequest,
+    execution: StreamExecutionCredentials | None,
+) -> s.StreamDAGOperationResult:
+    scope = await lock_dag_graph(session, db, graph_id, execution, update=True)
+    digest = validate_operation(scope, request, "abort-preview")
+    receipt = await known_operation(
+        session, db, scope, request.operation_id, "ABORT_PREVIEW", digest
+    )
+    if receipt is None:
+        require_mutable_execution(scope)
+        if (
+            scope.graph.state != "SEALED"
+            or scope.graph.admission_operation_id is not None
+        ):
+            raise NativeStreamError(
+                "CONTROL_CONFLICT", "Only an unassigned preview can be aborted"
+            )
+        async with session.begin_nested():
+            control = await begin_dag_control(
+                session, db, scope, "PREVIEW_ABORT", {"kind": "PREVIEW_ABORT"}
+            )
+            await finalize_preview(session, db, scope, control)
+            receipt = await save_operation(
+                session,
+                db,
+                scope,
+                request.operation_id,
+                "ABORT_PREVIEW",
+                digest,
+                control,
+            )
+    return s.StreamDAGOperationResult(
+        receipt=receipt, execution=await project_execution(session, db, scope)
+    )
+
+
+async def cancel_stream_dag(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    request: s.StreamDAGCancelRequest,
+    execution: StreamExecutionCredentials | None,
+) -> s.StreamDAGOperationResult:
+    scope = await lock_dag_graph(session, db, graph_id, execution, update=True)
+    digest = validate_operation(scope, request, "cancel")
+    receipt = await known_operation(
+        session, db, scope, request.operation_id, "CANCEL", digest
+    )
+    if receipt is None:
+        require_mutable_execution(scope)
+        if scope.graph.admission_operation_id is None:
+            raise NativeStreamError(
+                "CONTROL_CONFLICT", "An unstarted preview must use abort-preview"
+            )
+        async with session.begin_nested():
+            control = await begin_dag_control(
+                session,
+                db,
+                scope,
+                "CANCEL",
+                {"kind": "CANCEL", "reason": request.reason},
+            )
+            receipt = await save_operation(
+                session, db, scope, request.operation_id, "CANCEL", digest, control
+            )
+    return s.StreamDAGOperationResult(
+        receipt=receipt, execution=await project_execution(session, db, scope)
+    )
+
+
+async def fail_stream_dag(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    request: s.StreamDAGFailRequest,
+    execution: StreamExecutionCredentials | None,
+) -> s.StreamDAGOperationResult:
+    scope = await lock_dag_graph(session, db, graph_id, execution, update=True)
+    digest = validate_operation(scope, request, "fail")
+    receipt = await known_operation(
+        session, db, scope, request.operation_id, "FAIL", digest
+    )
+    if receipt is None:
+        require_mutable_execution(scope)
+        kind: s.ControlKind = (
+            "PREVIEW_ABORT"
+            if scope.graph.admission_operation_id is None
+            else "STARTUP_ABORT"
+            if scope.graph.startup_completed_at is None
+            else "FAIL"
+        )
+        async with session.begin_nested():
+            control = await begin_dag_control(
+                session, db, scope, kind, {"kind": request.failure_kind}
+            )
+            if scope.graph.admission_operation_id is None:
+                await finalize_preview(session, db, scope, control)
+            receipt = await save_operation(
+                session, db, scope, request.operation_id, "FAIL", digest, control
+            )
+    return s.StreamDAGOperationResult(
+        receipt=receipt, execution=await project_execution(session, db, scope)
+    )
+
+
+@dataclass(frozen=True)
+class DAGChildScope:
+    graph: DAGGraphScope
+    subtask: orm_models.StreamPhysicalSubtask
+    grant: orm_models.StreamSubtaskGrant
+    launch: orm_models.StreamDAGLaunchAttempt
+
+
+async def lock_dag_child(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    credentials: physical.StreamSubtaskCredentials,
+    *,
+    subtask_id: UUID | None = None,
+    graph_update: bool = False,
+    grant_update: bool = False,
+    observe: bool = False,
+    ready: bool = False,
+    active: bool = False,
+) -> DAGChildScope:
+    """One ordered prefix for scoped bootstrap, DATA and signed events."""
+    await require_physical_backend(session, db)
+    locator = await session.get(db.StreamSubtaskGrant, credentials.grant_id)
+    if locator is None or not hmac.compare_digest(
+        locator.capability_digest, capability_digest(credentials.capability)
+    ):
+        raise NativeStreamError("SUBTASK_AUTH_INVALID", "Invalid subtask credential")
+    graph_id = await session.scalar(
+        sa.select(db.StreamPhysicalSubtask.graph_revision_id).where(
+            db.StreamPhysicalSubtask.id == locator.subtask_id
+        )
+    )
+    if graph_id is None:
+        raise NativeStreamError("SUBTASK_FENCED", "Physical target no longer exists")
+    scope = await lock_dag_graph(
+        session, db, graph_id, None, update=graph_update, worker=True
+    )
+    if graph_update:
+        assigned = sa.select(db.StreamPhysicalSubtask.assigned_worker_id).where(
+            db.StreamPhysicalSubtask.graph_revision_id == graph_id,
+            db.StreamPhysicalSubtask.assigned_worker_id.is_not(None),
+        )
+        await session.execute(
+            sa.select(db.Worker.id)
+            .where(db.Worker.id.in_(assigned))
+            .order_by(db.Worker.id)
+            .with_for_update(read=True)
+        )
+    if locator.worker_id is None:
+        raise NativeStreamError(
+            "SUBTASK_FENCED", "DAG grants require an assigned worker"
+        )
+    await session.execute(
+        sa.select(db.Worker.id)
+        .where(db.Worker.id == locator.worker_id)
+        .with_for_update(read=True)
+    )
+    subtask = await session.scalar(
+        sa.select(db.StreamPhysicalSubtask)
+        .where(db.StreamPhysicalSubtask.id == locator.subtask_id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    grant = await session.scalar(
+        sa.select(db.StreamSubtaskGrant)
+        .where(db.StreamSubtaskGrant.id == credentials.grant_id)
+        .with_for_update(read=not grant_update)
+        .execution_options(populate_existing=True)
+    )
+    if (
+        subtask is None
+        or grant is None
+        or (
+            not hmac.compare_digest(
+                grant.capability_digest, capability_digest(credentials.capability)
+            )
+            or (subtask_id is not None and subtask.id != subtask_id)
+            or subtask.current_grant_id != grant.id
+            or subtask.physical_epoch != grant.physical_epoch
+            or subtask.assigned_worker_id != grant.worker_id
+            or subtask.graph_revision_id != scope.graph.id
+            or grant.flow_generation != scope.authority.generation
+            or grant.flow_holder_id != scope.authority.holder_id
+            or grant.launcher_binding_kind != "ASSIGNED_WORKER"
+            or grant.state
+            not in (
+                {"REGISTERED", "RETIRED", "RELEASED"} if observe else {"REGISTERED"}
+            )
+        )
+    ):
+        raise NativeStreamError(
+            "SUBTASK_FENCED", "DAG subtask grant is no longer current"
+        )
+    slot = await session.scalar(
+        sa.select(db.StreamPhysicalSlotAllocation)
+        .where(db.StreamPhysicalSlotAllocation.subtask_id == subtask.id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    if (
+        slot is None
+        or slot.graph_revision_id != scope.graph.id
+        or slot.worker_id != subtask.assigned_worker_id
+        or slot.admission_operation_id != scope.graph.admission_operation_id
+        or slot.released != subtask.physical_slot_released
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "DAG child reservation identity differs"
+        )
+    if not observe and slot.released:
+        raise NativeStreamError(
+            "SUBTASK_FENCED", "A released physical target cannot perform child work"
+        )
+    launches = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamDAGLaunchAttempt)
+                .where(db.StreamDAGLaunchAttempt.registered_grant_id == grant.id)
+                .with_for_update(read=True)
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    )
+    if len(launches) != 1:
+        raise NativeStreamError(
+            "SUBTASK_FENCED", "DAG grant lacks its unique recorded launch"
+        )
+    launch = launches[0]
+    if (
+        launch.graph_revision_id != scope.graph.id
+        or launch.subtask_id != subtask.id
+        or launch.task_run_id != subtask.task_run_id
+        or launch.start_operation_id != scope.graph.admission_operation_id
+        or launch.grant_id != grant.id
+        or launch.planned_physical_epoch != grant.physical_epoch
+        or launch.worker_id != grant.worker_id
+        or (
+            launch.host_id,
+            launch.boot_id,
+            launch.launcher_process_id,
+            launch.launcher_start_ticks,
+            launch.child_process_id,
+            launch.process_start_ticks,
+        )
+        != (
+            grant.host_id,
+            grant.boot_id,
+            grant.launcher_process_id,
+            grant.launcher_start_ticks,
+            grant.child_process_id,
+            grant.process_start_ticks,
+        )
+        or (not observe and launch.state != "PID_RECORDED")
+        or launch.flow_generation != scope.authority.generation
+        or launch.flow_holder_id != scope.authority.holder_id
+        or launch.flow_run_run_count != scope.flow.run_count
+    ):
+        raise NativeStreamError(
+            "SUBTASK_FENCED", "DAG recorded process identity differs"
+        )
+    if not observe and (
+        scope.authority.state != "ACTIVE"
+        or scope.authority.cancel_requested
+        or scope.graph.current_control_operation_id is not None
+        or scope.graph.terminal_operation_id is not None
+    ):
+        raise NativeStreamError(
+            "CANCEL_REQUESTED", "DAG execution is fenced by control"
+        )
+    if ready and grant.bootstrap_ready_at is None:
+        raise NativeStreamError(
+            "BOOTSTRAP_NOT_READY",
+            "The current child has not acknowledged its bootstrap",
+        )
+    if active and (
+        scope.graph.state != "ADMITTED" or scope.graph.startup_completed_at is None
+    ):
+        raise NativeStreamError(
+            "ACTIVATION_NOT_READY", "DAG activation barrier has not committed"
+        )
+    child = DAGChildScope(scope, subtask, grant, launch)
+    if ready:
+        validate_current_bootstrap_ready(child)
+    return child
+
+
+def bootstrap_ready_witness(
+    child: DAGChildScope, operation_id: UUID, bootstrap_digest: str
+) -> bytes:
+    grant, graph = child.grant, child.graph.graph
+    if grant.child_process_id is None or grant.process_start_ticks is None:
+        raise NativeStreamError("SUBTASK_FENCED", "Registered child process is missing")
+    return canonical_dag_bootstrap_ready_witness(
+        operation_id=UUID(str(operation_id)),
+        flow_run_id=UUID(str(child.graph.flow.id)),
+        flow_run_run_count=child.graph.flow.run_count,
+        flow_generation=child.graph.authority.generation,
+        flow_holder_id=UUID(str(child.graph.authority.holder_id)),
+        graph_revision_id=UUID(str(graph.id)),
+        graph_digest=graph.graph_digest,
+        routing_digest=graph_routing_digest(graph.graph_digest),
+        assignment_epoch=child.subtask.assignment_epoch,
+        subtask_id=UUID(str(child.subtask.id)),
+        task_run_id=UUID(str(child.subtask.task_run_id)),
+        physical_epoch=grant.physical_epoch,
+        grant_id=UUID(str(grant.id)),
+        holder_id=UUID(str(grant.holder_id)),
+        scope_digest=grant.scope_digest,
+        event_key_id=grant.event_key_id,
+        child_process_id=grant.child_process_id,
+        process_start_ticks=grant.process_start_ticks,
+        bootstrap_digest=bootstrap_digest,
+    )
+
+
+def validate_current_bootstrap_ready(child: DAGChildScope) -> None:
+    """A non-null receipt is not authority without its exact signed witness."""
+    grant, graph = child.grant, child.graph.graph
+    if (
+        grant.bootstrap_digest is None
+        or grant.bootstrap_witness is None
+        or grant.bootstrap_ready_operation_id is None
+        or grant.bootstrap_ready_request_digest is None
+        or grant.bootstrap_ready_signature is None
+        or grant.bootstrap_ready_receipt is None
+        or grant.bootstrap_ready_at is None
+    ):
+        raise NativeStreamError(
+            "BOOTSTRAP_NOT_READY",
+            "Current child has no complete bootstrap acknowledgement",
+        )
+    try:
+        bootstrap = s.StreamDAGSubtaskBootstrap.model_validate(grant.bootstrap_witness)
+        receipt = s.StreamDAGBootstrapReadyResult.model_validate(
+            grant.bootstrap_ready_receipt
+        )
+        request = s.StreamDAGBootstrapReadyRequest(
+            operation_id=grant.bootstrap_ready_operation_id,
+            bootstrap_digest=grant.bootstrap_digest,
+            signature=grant.bootstrap_ready_signature,
+        )
+        valid = (
+            bootstrap.grant.id == grant.id
+            and bootstrap.launch_attempt_id == child.launch.id
+            and bootstrap.bootstrap_digest == grant.bootstrap_digest
+            and dag_digest(
+                bootstrap.model_dump(mode="json", exclude={"bootstrap_digest"})
+            )
+            == grant.bootstrap_digest
+            and receipt.operation_id
+            == request.operation_id
+            == uuid5(grant.id, "prefect-stream-dag-bootstrap-ready-v1")
+            and receipt.graph_revision_id == graph.id
+            and receipt.subtask_id == child.subtask.id
+            and receipt.grant_id == grant.id
+            and receipt.physical_epoch == grant.physical_epoch
+            and receipt.bootstrap_digest == grant.bootstrap_digest
+            and receipt.ready_at == grant.bootstrap_ready_at
+            and receipt.request_digest
+            == grant.bootstrap_ready_request_digest
+            == dag_digest(request.model_dump(mode="json"))
+            and receipt.outcome_digest
+            == dag_digest(receipt.model_dump(mode="json", exclude={"outcome_digest"}))
+            and verify_dag_bootstrap_ready(
+                bytes.fromhex(grant.event_public_key),
+                bootstrap_ready_witness(
+                    child, request.operation_id, grant.bootstrap_digest
+                ),
+                request.signature,
+            )
+        )
+    except (ValueError, TypeError) as exc:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Stored bootstrap acknowledgement is invalid"
+        ) from exc
+    if not valid:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT",
+            "Stored bootstrap acknowledgement differs from its current child",
+        )
+
+
+async def read_stream_dag_subtask_bootstrap(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    execution: physical.StreamSubtaskCredentials,
+) -> s.StreamDAGSubtaskBootstrap:
+    child = await lock_dag_child(
+        session, db, execution, subtask_id=subtask_id, grant_update=True
+    )
+    graph, subtask, grant = child.graph.graph, child.subtask, child.grant
+    if grant.bootstrap_witness is not None:
+        bootstrap = s.StreamDAGSubtaskBootstrap.model_validate(grant.bootstrap_witness)
+        if (
+            bootstrap.grant.id != grant.id
+            or bootstrap.launch_attempt_id != child.launch.id
+            or bootstrap.bootstrap_digest != grant.bootstrap_digest
+            or dag_digest(
+                bootstrap.model_dump(mode="json", exclude={"bootstrap_digest"})
+            )
+            != grant.bootstrap_digest
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Stored bootstrap witness differs"
+            )
+        return bootstrap
+    plan = await stream_dags.dag_admission_topology_witness(session, db, graph)
+    projected = next(row for row in plan.subtasks if row.id == subtask.id)
+    declaration = topology.StreamDAGSealRequest.model_validate(graph.declaration)
+    spec = next(
+        row
+        for row in declaration.operators
+        if row.operator_uid == projected.operator_uid
+    )
+    task = await session.scalar(
+        sa.select(db.TaskRun)
+        .where(db.TaskRun.id == subtask.task_run_id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    if task is None or task.flow_run_run_count != child.graph.flow.run_count:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Bootstrap TaskRun attempt differs"
+        )
+    incoming = next(
+        (
+            (edge, part)
+            for edge in plan.edges
+            for part in edge.partitions
+            if part.target_subtask_id == subtask.id
+        ),
+        None,
+    )
+    input_projection = None
+    if incoming is not None:
+        edge, part = incoming
+        if spec.input_port is None:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Operator input port is missing"
+            )
+        input_projection = s.StreamDAGInputProjection(
+            subscriber_id=part.subscriber_id,
+            edge_id=edge.id,
+            edge_partition_id=part.id,
+            input_port_uid=spec.input_port.uid,
+            input_stream_id=part.stream_id,
+            schema_id=spec.input_port.schema_id,
+            schema_digest=spec.input_port.schema_digest,
+        )
+    assignment = s.StreamDAGExecutionAssignment.model_validate(
+        {
+            **projected.model_dump(mode="json"),
+            "graph_revision_id": graph.id,
+            "current_grant_id": grant.id,
+            "physical_epoch": grant.physical_epoch,
+        }
+    )
+    material = {
+        "flow_run_id": child.graph.flow.id,
+        "flow_run_run_count": child.graph.flow.run_count,
+        "flow_generation": child.graph.authority.generation,
+        "flow_holder_id": child.graph.authority.holder_id,
+        "assignment": assignment,
+        "grant": grant_projection(grant, subtask),
+        "context": stream_routes.context_for_subtask(plan, subtask.id),
+        "operator_parallelism": spec.parallelism,
+        "input": input_projection,
+        "output": s.StreamDAGOutputProjection(
+            port_uid=spec.output_port.uid, stream_id=subtask.output_stream_id
+        ),
+        "entrypoint": spec.entrypoint,
+        "task_key": spec.task_key,
+        "task_version": spec.task_version,
+        "artifact_digest": spec.artifact_digest,
+        "context_key": spec.context_key,
+        "task_policy": spec.task_policy,
+        "timeout_seconds": spec.timeout_seconds,
+        "effective_tags": sorted(set(spec.tags)),
+        "parameters": spec.parameters[subtask.subtask_index],
+        "input_key": spec.input_key,
+        "task_run": core.TaskRun.model_validate(task, from_attributes=True),
+        "reserved_tag_names": ["tag:" + tag for tag in sorted(set(spec.tags))],
+        "event_public_key": grant.event_public_key,
+        "launch_attempt_id": child.launch.id,
+        "worker_generation_digest": child.launch.worker_generation_digest,
+    }
+    # Validate/canonicalize through the exact wire model before its one-time digest.
+    candidate = s.StreamDAGSubtaskBootstrap.model_validate(
+        {**material, "bootstrap_digest": "0" * 64}
+    )
+    bootstrap = candidate.model_copy(
+        update={
+            "bootstrap_digest": dag_digest(
+                candidate.model_dump(mode="json", exclude={"bootstrap_digest"})
+            )
+        }
+    )
+    grant.bootstrap_digest = bootstrap.bootstrap_digest
+    grant.bootstrap_witness = bootstrap.model_dump(mode="json")
+    await session.flush()
+    return bootstrap
+
+
+async def mark_stream_dag_subtask_bootstrap_ready(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    request: s.StreamDAGBootstrapReadyRequest,
+    execution: physical.StreamSubtaskCredentials,
+) -> s.StreamDAGBootstrapReadyResult:
+    child = await lock_dag_child(
+        session, db, execution, subtask_id=subtask_id, grant_update=True
+    )
+    grant, graph = child.grant, child.graph.graph
+    digest = dag_digest(request.model_dump(mode="json"))
+    if (
+        request.operation_id != uuid5(grant.id, "prefect-stream-dag-bootstrap-ready-v1")
+        or grant.bootstrap_digest != request.bootstrap_digest
+        or grant.bootstrap_witness is None
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Bootstrap acknowledgement differs"
+        )
+    if grant.bootstrap_ready_operation_id is not None:
+        if (
+            grant.bootstrap_ready_operation_id != request.operation_id
+            or grant.bootstrap_ready_request_digest != digest
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Bootstrap acknowledgement replay differs"
+            )
+        return s.StreamDAGBootstrapReadyResult.model_validate(
+            grant.bootstrap_ready_receipt
+        )
+    if grant.child_process_id is None or grant.process_start_ticks is None:
+        raise NativeStreamError("SUBTASK_FENCED", "Registered child process is missing")
+    witness = bootstrap_ready_witness(
+        child, request.operation_id, request.bootstrap_digest
+    )
+    if not verify_dag_bootstrap_ready(
+        bytes.fromhex(grant.event_public_key), witness, request.signature
+    ):
+        raise NativeStreamError(
+            "SUBTASK_AUTH_INVALID", "Invalid bootstrap acknowledgement signature"
+        )
+    ready_at = now("UTC")
+    material = {
+        "operation_id": str(request.operation_id),
+        "graph_revision_id": str(graph.id),
+        "subtask_id": str(subtask_id),
+        "grant_id": str(grant.id),
+        "physical_epoch": grant.physical_epoch,
+        "bootstrap_digest": request.bootstrap_digest,
+        "ready_at": ready_at.isoformat(),
+        "request_digest": digest,
+    }
+    receipt = make_dag_receipt(s.StreamDAGBootstrapReadyResult, material)
+    grant.bootstrap_ready_operation_id = request.operation_id
+    grant.bootstrap_ready_request_digest = digest
+    grant.bootstrap_ready_signature = request.signature
+    grant.bootstrap_ready_at = cast(DateTime, ready_at)
+    grant.bootstrap_ready_receipt = receipt.model_dump(mode="json")
+    await session.flush()
+    return receipt
+
+
+async def read_stream_dag_subtask_activation(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    execution: physical.StreamSubtaskCredentials,
+) -> s.StreamDAGActivationObservation:
+    child = await lock_dag_child(
+        session, db, execution, subtask_id=subtask_id, observe=True
+    )
+    graph = child.graph.graph
+    phase: Literal["WAITING", "ACTIVE", "STOPPING", "TERMINAL"] = (
+        "TERMINAL"
+        if graph.terminal_operation_id is not None
+        else "STOPPING"
+        if graph.current_control_operation_id is not None
+        else "ACTIVE"
+        if graph.startup_completed_at is not None
+        and child.grant.bootstrap_ready_at is not None
+        else "WAITING"
+    )
+    return s.StreamDAGActivationObservation(
+        graph_revision_id=graph.id,
+        subtask_id=subtask_id,
+        grant_id=child.grant.id,
+        physical_epoch=child.grant.physical_epoch,
+        phase=phase,
+        activation_operation_id=graph.activation_operation_id,
+    )
+
+
+async def activate_stream_dag(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    request: s.StreamDAGActivateRequest,
+    execution: StreamExecutionCredentials | None,
+) -> s.StreamDAGOperationResult:
+    scope = await lock_dag_graph(session, db, graph_id, execution, update=True)
+    digest = validate_operation(scope, request, "activate")
+    receipt = await known_operation(
+        session, db, scope, request.operation_id, "ACTIVATE", digest
+    )
+    if receipt is not None:
+        return s.StreamDAGOperationResult(
+            receipt=receipt, execution=await project_execution(session, db, scope)
+        )
+    require_mutable_execution(scope)
+    if (
+        scope.graph.current_control_operation_id is not None
+        or scope.graph.state != "ADMITTED"
+    ):
+        raise NativeStreamError(
+            "CONTROL_CONFLICT", "DAG control or admission prevents activation"
+        )
+    plan = await stream_dags.dag_plan(session, db, scope.graph)
+    worker_ids = sorted(
+        {
+            row.assigned_worker_id
+            for row in plan.subtasks
+            if row.assigned_worker_id is not None
+        }
+    )
+    workers = list(
+        (
+            await session.scalars(
+                sa.select(db.Worker)
+                .where(db.Worker.id.in_(worker_ids))
+                .order_by(db.Worker.id)
+                .with_for_update(read=True)
+            )
+        ).all()
+    )
+    capabilities = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamWorkerCapability)
+                .where(
+                    db.StreamWorkerCapability.worker_id.in_(worker_ids),
+                    db.StreamWorkerCapability.protocol == DAG_PROFILE,
+                    db.StreamWorkerCapability.protocol_version == 1,
+                )
+                .order_by(db.StreamWorkerCapability.worker_id)
+                .with_for_update(read=True)
+            )
+        ).all()
+    )
+    if (
+        len(workers) != len(worker_ids)
+        or len(capabilities) != len(worker_ids)
+        or any(row.status != WorkerStatus.ONLINE for row in workers)
+        or any(
+            row.last_renewed_at < now("UTC") - timedelta(seconds=120)
+            for row in capabilities
+        )
+    ):
+        raise NativeStreamError(
+            "WORKER_NOT_READY",
+            "Activation requires the exact current online worker set",
+        )
+    by_worker = {row.worker_id: row for row in capabilities}
+    subtasks = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSubtask)
+                .where(db.StreamPhysicalSubtask.graph_revision_id == graph_id)
+                .order_by(db.StreamPhysicalSubtask.id)
+                .with_for_update(read=True)
+            )
+        ).all()
+    )
+    grants = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamSubtaskGrant)
+                .where(
+                    db.StreamSubtaskGrant.id.in_(
+                        [
+                            row.current_grant_id
+                            for row in subtasks
+                            if row.current_grant_id is not None
+                        ]
+                    )
+                )
+                .order_by(db.StreamSubtaskGrant.id)
+                .with_for_update(read=True)
+            )
+        ).all()
+    )
+    by_grant = {row.id: row for row in grants}
+    material: list[dict[str, Any]] = []
+    for subtask in subtasks:
+        grant = (
+            by_grant.get(subtask.current_grant_id) if subtask.current_grant_id else None
+        )
+        capability = (
+            by_worker.get(subtask.assigned_worker_id)
+            if subtask.assigned_worker_id
+            else None
+        )
+        launch = (
+            await session.scalar(
+                sa.select(db.StreamDAGLaunchAttempt).where(
+                    db.StreamDAGLaunchAttempt.registered_grant_id
+                    == subtask.current_grant_id
+                )
+            )
+            if subtask.current_grant_id
+            else None
+        )
+        if (
+            grant is None
+            or capability is None
+            or launch is None
+            or grant.state != "REGISTERED"
+            or grant.bootstrap_ready_at is None
+            or grant.bootstrap_digest is None
+            or grant.bootstrap_ready_receipt is None
+            or launch.state != "PID_RECORDED"
+            or launch.grant_id != grant.id
+            or launch.subtask_id != subtask.id
+            or grant.physical_epoch != subtask.physical_epoch
+            or grant.subtask_id != subtask.id
+            or grant.launcher_binding_kind != "ASSIGNED_WORKER"
+            or grant.worker_id != subtask.assigned_worker_id
+            or (
+                grant.work_pool_id,
+                grant.host_id,
+                grant.boot_id,
+                grant.launcher_process_id,
+                grant.launcher_start_ticks,
+            )
+            != (
+                capability.work_pool_id,
+                capability.host_id,
+                capability.boot_id,
+                capability.launcher_process_id,
+                capability.launcher_start_ticks,
+            )
+            or (grant.child_process_id, grant.process_start_ticks)
+            != (launch.child_process_id, launch.process_start_ticks)
+            or (grant.flow_generation, grant.flow_holder_id)
+            != (scope.authority.generation, scope.authority.holder_id)
+        ):
+            raise NativeStreamError(
+                "BOOTSTRAP_NOT_READY",
+                "Activation requires all current recorded children and bootstrap acknowledgements",
+            )
+        material.append(
+            {
+                "subtask_id": str(subtask.id),
+                "grant_id": str(grant.id),
+                "physical_epoch": grant.physical_epoch,
+                "launch_attempt_id": str(launch.id),
+                "bootstrap_digest": grant.bootstrap_digest,
+                "ready_operation_id": str(grant.bootstrap_ready_operation_id),
+            }
+        )
+        validate_current_bootstrap_ready(DAGChildScope(scope, subtask, grant, launch))
+    async with session.begin_nested():
+        receipt = await save_operation(
+            session, db, scope, request.operation_id, "ACTIVATE", digest
+        )
+        operation = await session.get(
+            db.StreamDAGLifecycleOperation, request.operation_id
+        )
+        assert operation is not None
+        operation.target_set_digest = dag_digest(material)
+        scope.graph.activation_operation_id = request.operation_id
+        scope.graph.activation_request_digest = digest
+        scope.graph.startup_completed_at = cast(DateTime, now("UTC"))
+        await session.flush()
+    return s.StreamDAGOperationResult(
+        receipt=receipt, execution=await project_execution(session, db, scope)
+    )
+
+
+async def authorize_dag_child_routing(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    context: routed.StreamDAGRouteContext,
+    execution: physical.StreamSubtaskCredentials,
+) -> tuple[DAGChildScope, stream_routes.NativeDAGRouteStore]:
+    child = await lock_dag_child(
+        session,
+        db,
+        execution,
+        subtask_id=context.producer_subtask_id,
+        ready=True,
+        active=True,
+    )
+    plan = await stream_dags.dag_admission_topology_witness(
+        session, db, child.graph.graph
+    )
+    if stream_routes.context_for_subtask(plan, child.subtask.id) != context:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT",
+            "DAG route context differs from the sealed own producer",
+        )
+    proof = stream_routes.DAGRouteAuthorization(
+        session=session,
+        transaction=session.get_transaction(),
+        context=context,
+        flow_run_id=child.graph.flow.id,
+        task_run_id=child.subtask.task_run_id,
+        generation=child.graph.authority.generation,
+        holder_id=child.graph.authority.holder_id,
+        flow_run_run_count=child.graph.flow.run_count,
+        flow=child.graph.flow,
+        authority=child.graph.authority,
+        graph=child.graph.graph,
+        subtask=child.subtask,
+        plan_bytes=plan.model_dump_json().encode("utf-8"),
+    )
+    return child, stream_routes.NativeDAGRouteStore(session, db, proof)
+
+
+async def open_stream_dag_source(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: s.StreamDAGSourceOpenRequest,
+    execution: physical.StreamSubtaskCredentials,
+) -> storage.SourceAdmission:
+    child, store = await authorize_dag_child_routing(
+        session, db, request.context, execution
+    )
+    return await store.claim_source(child.grant.holder_id)
+
+
+async def open_stream_dag_consumer(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: s.StreamDAGConsumerOpenRequest,
+    execution: physical.StreamSubtaskCredentials,
+) -> storage.ConsumerBinding:
+    child, store = await authorize_dag_child_routing(
+        session, db, request.context, execution
+    )
+    return await store.open_consumer(child.grant.holder_id)
+
+
+async def read_stream_dag_consumer(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: s.StreamDAGConsumerReadRequest,
+    execution: physical.StreamSubtaskCredentials,
+) -> storage.StreamDelivery | None:
+    _, store = await authorize_dag_child_routing(
+        session, db, request.context, execution
+    )
+    return await store.read_consumer(request.binding)
+
+
+async def append_stream_dag_source(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: routed.StreamDAGSourceAppendRequest,
+    execution: stream_routes.RouteCredentials,
+) -> routed.StreamDAGRouteOutcome:
+    if not isinstance(execution, physical.StreamSubtaskCredentials):
+        return await stream_routes.require_dag_route_execution(
+            session, db, request, execution
+        )
+    _, store = await authorize_dag_child_routing(
+        session, db, request.context, execution
+    )
+    stream_routes.validate_route_context(store.authorization.plan, request)
+    return await store.append_source(request)
+
+
+async def complete_stream_dag_consumer(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: routed.StreamDAGConsumerCompleteRequest,
+    execution: stream_routes.RouteCredentials,
+) -> routed.StreamDAGRouteOutcome:
+    if not isinstance(execution, physical.StreamSubtaskCredentials):
+        return await stream_routes.require_dag_route_execution(
+            session, db, request, execution
+        )
+    _, store = await authorize_dag_child_routing(
+        session, db, request.context, execution
+    )
+    stream_routes.validate_route_context(store.authorization.plan, request)
+    return await store.complete_consumer(request)
+
+
+async def own_stream_status(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    execution: physical.StreamSubtaskCredentials,
+    *,
+    input_stream: bool,
+) -> storage.StreamInfo:
+    child = await lock_dag_child(
+        session, db, execution, subtask_id=subtask_id, ready=True, active=True
+    )
+    stream_id = (
+        child.subtask.input_stream_id
+        if input_stream
+        else child.subtask.output_stream_id
+    )
+    if stream_id is None:
+        raise NativeStreamError("SUBTASK_SCOPE_DENIED", "A SOURCE has no input stream")
+    row = await session.scalar(
+        sa.select(db.StreamPartition)
+        .where(db.StreamPartition.id == stream_id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    if row is None or row.flow_run_id != child.graph.flow.id:
+        raise NativeStreamError("IDENTITY_CONFLICT", "Own DAG stream identity differs")
+    return storage.StreamInfo.model_validate(row, from_attributes=True)
+
+
+async def read_stream_dag_input_status(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    execution: physical.StreamSubtaskCredentials,
+) -> storage.StreamInfo:
+    return await own_stream_status(
+        session, db, subtask_id, execution, input_stream=True
+    )
+
+
+async def read_stream_dag_output_status(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    subtask_id: UUID,
+    execution: physical.StreamSubtaskCredentials,
+) -> storage.StreamInfo:
+    return await own_stream_status(
+        session, db, subtask_id, execution, input_stream=False
+    )
+
+
+async def finish_dag_producer(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: s.StreamDAGSourceFinishRequest | s.StreamDAGConsumerFinishRequest,
+    execution: physical.StreamSubtaskCredentials,
+) -> s.StreamDAGProducerFinishReceipt:
+    child, store = await authorize_dag_child_routing(
+        session, db, request.context, execution
+    )
+    source = isinstance(request, s.StreamDAGSourceFinishRequest)
+    action = "source" if source else "consumer"
+    if request.operation_id != uuid5(
+        child.subtask.id, f"prefect-stream-dag-{action}-finish-v1"
+    ):
+        raise NativeStreamError("IDENTITY_CONFLICT", "DAG finish operation differs")
+    task = await store.lock_current_task(allow_final=True)
+    plan = store.authorization.plan
+    outgoing = [
+        edge
+        for edge in plan.edges
+        if edge.producer_operator_uid == request.context.operator_uid
+    ]
+    ids = [
+        row.output_stream_id
+        for row in plan.subtasks
+        if row.operator_uid == request.context.operator_uid
+    ]
+    ids.extend(part.stream_id for edge in outgoing for part in edge.partitions)
+    if child.subtask.input_stream_id is not None:
+        ids.append(child.subtask.input_stream_id)
+    partitions = await store.lock_partitions(ids)
+    output = partitions[child.subtask.output_stream_id]
+    input_sequence: int | None = None
+    source_position: int | None = None
+    if isinstance(request, s.StreamDAGSourceFinishRequest):
+        if child.subtask.input_stream_id is not None:
+            raise NativeStreamError(
+                "SUBTASK_SCOPE_DENIED", "Only a source can finish source production"
+            )
+        store.require_source_owner(task, output, request.binding)
+        if output.producer_position != request.expected_position:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Source EOF position differs from its accepted prefix",
+            )
+        source_position = request.expected_position
+    else:
+        if child.subtask.input_stream_id is None:
+            raise NativeStreamError(
+                "SUBTASK_SCOPE_DENIED", "A source has no consumer EOF"
+            )
+        consumer = await session.scalar(
+            sa.select(db.StreamConsumer)
+            .where(db.StreamConsumer.id == request.binding.consumer_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if consumer is None:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "DAG stable subscriber is missing"
+            )
+        store.require_consumer_owner(task, output, consumer, request.binding)
+        upstream = partitions[child.subtask.input_stream_id]
+        if (
+            consumer.inflight_sequence is not None
+            or upstream.state != "COMPLETED"
+            or consumer.completed_through != upstream.last_sequence
+        ):
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT",
+                "Consumer EOF requires its complete acknowledged input",
+            )
+        input_sequence = consumer.completed_through
+    semantic = {
+        "graph_revision_id": str(child.graph.graph.id),
+        "graph_digest": child.graph.graph.graph_digest,
+        "routing_digest": request.context.routing_digest,
+        "producer_subtask_id": str(child.subtask.id),
+        "producer_stream_id": str(output.id),
+        "kind": "SOURCE_EOF" if source else "CONSUMER_EOF",
+        "accepted_source_position": source_position,
+        "accepted_input_sequence": input_sequence,
+        "tail_sequence": output.last_sequence,
+    }
+    digest = dag_digest(semantic)
+    existing = await session.get(db.StreamDAGLifecycleOperation, request.operation_id)
+    if existing is not None:
+        if (
+            existing.graph_revision_id != child.graph.graph.id
+            or existing.subject_subtask_id != child.subtask.id
+            or existing.kind != ("SOURCE_FINISH" if source else "CONSUMER_FINISH")
+            or existing.request_digest != digest
+        ):
+            raise NativeStreamError("IDENTITY_CONFLICT", "DAG finish replay differs")
+        receipt = s.StreamDAGProducerFinishReceipt.model_validate(
+            existing.accepted_receipt
+        )
+        if (
+            receipt.semantic_digest != digest
+            or receipt.outcome_digest
+            != dag_digest(receipt.model_dump(mode="json", exclude={"outcome_digest"}))
+            or output.state != "COMPLETED"
+            or output.tail_sequence != receipt.tail_sequence
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Stored EOF receipt or producer differs"
+            )
+        return receipt
+    async with session.begin_nested():
+        await store.finish_producer()
+        receipt = make_dag_receipt(
+            s.StreamDAGProducerFinishReceipt,
+            {
+                "operation_id": str(request.operation_id),
+                "graph_revision_id": str(child.graph.graph.id),
+                "producer_subtask_id": str(child.subtask.id),
+                "producer_stream_id": str(output.id),
+                "kind": semantic["kind"],
+                "tail_sequence": output.last_sequence,
+                "accepted_source_position": source_position,
+                "accepted_input_sequence": input_sequence,
+                "semantic_digest": digest,
+            },
+        )
+        session.add(
+            db.StreamDAGLifecycleOperation(
+                id=request.operation_id,
+                operation_id=request.operation_id,
+                graph_revision_id=child.graph.graph.id,
+                flow_run_id=child.graph.flow.id,
+                kind="SOURCE_FINISH" if source else "CONSUMER_FINISH",
+                flow_generation=child.graph.authority.generation,
+                flow_holder_id=child.graph.authority.holder_id,
+                flow_run_run_count=child.graph.flow.run_count,
+                request_digest=digest,
+                accepted_receipt=receipt.model_dump(mode="json"),
+                outcome_digest=receipt.outcome_digest,
+                state="COMPLETED",
+                subject_subtask_id=child.subtask.id,
+                completed_at=now("UTC"),
+            )
+        )
+        await session.flush()
+    return receipt
+
+
+async def finish_stream_dag_source(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: s.StreamDAGSourceFinishRequest,
+    execution: physical.StreamSubtaskCredentials,
+) -> s.StreamDAGProducerFinishReceipt:
+    return await finish_dag_producer(session, db, request, execution)
+
+
+async def finish_stream_dag_consumer(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    request: s.StreamDAGConsumerFinishRequest,
+    execution: physical.StreamSubtaskCredentials,
+) -> s.StreamDAGProducerFinishReceipt:
+    return await finish_dag_producer(session, db, request, execution)
+
+
+async def terminate_controlled_task(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    scope: DAGGraphScope,
+    control: orm_models.StreamDAGLifecycleOperation,
+    task: orm_models.TaskRun,
+) -> None:
+    """A verified stopped target reaches terminal state through normal policy."""
+    if task.state_type in {
+        StateType.COMPLETED,
+        StateType.FAILED,
+        StateType.CRASHED,
+        StateType.CANCELLED,
+    }:
+        return
+    proposed = (
+        states.Cancelled(message="Streaming DAG cancellation completed")
+        if control.effective_control_kind == "CANCEL"
+        else states.Failed(
+            message="Streaming DAG execution was stopped",
+            state_details=states.StateDetails(retriable=False),
+        )
+    )
+    with dag_lifecycle_control(session, scope.graph, control.id, task_run_id=task.id):
+        await guard_task_lifecycle(session, db, task.id, None, proposed, force=False)
+        result = await task_run_models.set_task_run_state(
+            session=session,
+            task_run_id=task.id,
+            state=proposed,
+            force=False,
+            task_policy=CoreTaskPolicy,
+        )
+    if (
+        result.status != SetStateStatus.ACCEPT
+        or result.state is None
+        or not result.state.is_final()
+    ):
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT", "DAG target terminal state was refused"
+        )
+
+
+async def finalize_stopped_dag_control(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    scope: DAGGraphScope,
+    control: orm_models.StreamDAGLifecycleOperation,
+) -> None:
+    """The last exact STOP owns graph/data cleanup and terminal Flow authority."""
+    scope.validate(session, update=True)
+    graph = scope.graph
+    targets = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamDAGControlTarget)
+                .where(db.StreamDAGControlTarget.control_operation_id == control.id)
+                .order_by(db.StreamDAGControlTarget.subtask_id)
+                .with_for_update()
+            )
+        ).all()
+    )
+    plan = await stream_dags.dag_admission_topology_witness(session, db, graph)
+    if {row.subtask_id for row in targets} != {row.id for row in plan.subtasks}:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "DAG control target set is incomplete"
+        )
+    if any(row.state != "STOPPED" for row in targets):
+        return
+    slots = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSlotAllocation)
+                .where(db.StreamPhysicalSlotAllocation.graph_revision_id == graph.id)
+                .order_by(db.StreamPhysicalSlotAllocation.subtask_id)
+                .with_for_update()
+            )
+        ).all()
+    )
+    if {row.subtask_id for row in slots} != {row.id for row in plan.subtasks} or any(
+        not row.released for row in slots
+    ):
+        raise NativeStreamError(
+            "PHYSICAL_STOP_REQUIRED", "DAG physical reservations remain held"
+        )
+    stream_ids = {row.output_stream_id for row in plan.subtasks} | {
+        part.stream_id for edge in plan.edges for part in edge.partitions
+    }
+    partitions = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPartition)
+                .where(db.StreamPartition.flow_run_id == scope.flow.id)
+                .order_by(db.StreamPartition.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    )
+    if {row.id for row in partitions} != stream_ids:
+        raise NativeStreamError("IDENTITY_CONFLICT", "DAG cleanup stream set differs")
+    task_ids = {row.manifest.task_run_id for row in plan.subtasks}
+    tasks = list(
+        (
+            await session.scalars(
+                sa.select(db.TaskRun)
+                .where(db.TaskRun.flow_run_id == scope.flow.id)
+                .order_by(db.TaskRun.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    )
+    if {row.id for row in tasks} != task_ids or any(
+        row.state_type
+        not in {
+            StateType.COMPLETED,
+            StateType.FAILED,
+            StateType.CRASHED,
+            StateType.CANCELLED,
+        }
+        for row in tasks
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "DAG cleanup requires the exact terminal TaskRun set"
+        )
+    summary = {
+        "graph_revision_id": str(graph.id),
+        "control_operation_id": str(control.id),
+        "terminal_state": "CANCELLED"
+        if control.effective_control_kind == "CANCEL"
+        else "FAILED",
+        "total": len(targets),
+        "stopped": len(targets),
+        "record_count": sum(row.record_count for row in partitions),
+        "byte_count": sum(row.byte_count for row in partitions),
+        "all_targets_stopped_digest": dag_digest(
+            [
+                {
+                    "subtask_id": str(row.subtask_id),
+                    "all_attempts_closed_digest": row.all_attempts_closed_digest,
+                }
+                for row in targets
+            ]
+        ),
+    }
+    for partition in partitions:
+        if partition.state == "OPEN":
+            finish_stream_partition(partition, "Streaming DAG execution was stopped")
+    # Only the input-REFERENCE receipt FK is deferred. Keep all immediate
+    # PAYLOAD/receipt pins intact until their dependants have been removed.
+    await session.execute(
+        sa.delete(db.StreamRecord).where(
+            db.StreamRecord.stream_id.in_(stream_ids),
+            db.StreamRecord.record_kind == "REFERENCE",
+        )
+    )
+    consumer_ids = sa.select(db.StreamConsumer.id).where(
+        db.StreamConsumer.graph_revision_id == graph.id
+    )
+    await session.execute(
+        sa.delete(db.StreamCompletion).where(
+            db.StreamCompletion.consumer_id.in_(consumer_ids)
+        )
+    )
+    await session.execute(
+        sa.delete(db.StreamRouteReceipt).where(
+            db.StreamRouteReceipt.graph_revision_id == graph.id
+        )
+    )
+    await session.execute(
+        sa.delete(db.StreamConsumer).where(
+            db.StreamConsumer.graph_revision_id == graph.id
+        )
+    )
+    await session.execute(
+        sa.delete(db.StreamRecord).where(db.StreamRecord.stream_id.in_(stream_ids))
+    )
+    await release_allocations(session, db, [row.id for row in plan.subtasks])
+    released_at = cast(DateTime, now("UTC"))
+    for partition in partitions:
+        partition.released = True
+        partition.record_count = 0
+        partition.byte_count = 0
+    manifests = (
+        await session.scalars(
+            sa.select(db.StreamSubmission).where(
+                db.StreamSubmission.graph_revision_id == graph.id
+            )
+        )
+    ).all()
+    for manifest in manifests:
+        manifest.state = "RELEASED"
+        manifest.released_at = released_at
+    if graph.startup_completed_at is None:
+        graph.abort_operation_id = control.id
+        graph.abort_request_digest = control.request_digest
+        graph.abort_error = "Streaming DAG execution was stopped"
+    graph.state = "RELEASED"
+    terminal_id = uuid5(graph.id, "prefect-stream-dag-finalize-v1")
+    terminal = db.StreamDAGLifecycleOperation(
+        id=terminal_id,
+        operation_id=terminal_id,
+        graph_revision_id=graph.id,
+        flow_run_id=scope.flow.id,
+        kind="FINALIZE",
+        flow_generation=scope.authority.generation,
+        flow_holder_id=scope.authority.holder_id,
+        flow_run_run_count=scope.flow.run_count,
+        request_digest=dag_digest(summary),
+        accepted_receipt=summary,
+        outcome_digest=dag_digest(summary),
+        state="COMPLETED",
+        effective_control_kind=control.effective_control_kind,
+        control_operation_id=control.id,
+        terminal_state=summary["terminal_state"],
+        terminal_outcome=summary,
+        completed_at=released_at,
+    )
+    session.add(terminal)
+    await session.flush()
+
+    graph.terminal_operation_id = terminal.id
+    control.state = "COMPLETED"
+    control.completed_at = released_at
+    proposed = (
+        states.Cancelled(message="Streaming DAG cancellation completed")
+        if control.effective_control_kind == "CANCEL"
+        else states.Failed(
+            message="Streaming DAG execution failed",
+            state_details=states.StateDetails(retriable=False),
+        )
+    )
+    with dag_lifecycle_control(session, graph, control.id):
+        authority = await guard_flow_lifecycle(
+            session, db, scope.flow.id, None, proposed, force=False
+        )
+        result = await flow_run_models.set_flow_run_state(
+            session=session,
+            flow_run_id=scope.flow.id,
+            state=proposed,
+            force=False,
+            flow_policy=CoreFlowPolicy,
+        )
+        if (
+            result.status != SetStateStatus.ACCEPT
+            or result.state is None
+            or not result.state.is_final()
+        ):
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "Final DAG Flow state was refused"
+            )
+        await apply_flow_lifecycle_result(session, db, authority, result.state)
+    scope.authority.state = "RELEASED"
+    snapshot = await session.scalar(
+        sa.select(db.NativeStreamDeploymentSnapshot).where(
+            db.NativeStreamDeploymentSnapshot.flow_run_id == scope.flow.id
+        )
+    )
+    if snapshot is not None:
+        snapshot.state = "RELEASED"
+    await session.flush()
+
+
+async def finalize_completed_dag(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    scope: DAGGraphScope,
+) -> None:
+    """Normal graph completion preserves the Running parent for plain Python."""
+    scope.validate(session, update=True)
+    graph = scope.graph
+    if graph.current_control_operation_id is not None:
+        raise NativeStreamError(
+            "CONTROL_CONFLICT", "A graph control owns terminal cleanup"
+        )
+    if graph.terminal_operation_id is not None:
+        return
+    if graph.startup_completed_at is None:
+        raise NativeStreamError(
+            "ACTIVATION_NOT_READY", "Unactivated DAG cannot complete normally"
+        )
+    plan = await stream_dags.dag_admission_topology_witness(session, db, graph)
+    slots = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSlotAllocation)
+                .where(db.StreamPhysicalSlotAllocation.graph_revision_id == graph.id)
+                .order_by(db.StreamPhysicalSlotAllocation.subtask_id)
+                .with_for_update()
+            )
+        ).all()
+    )
+    if {row.subtask_id for row in slots} != {row.id for row in plan.subtasks}:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Normal DAG completion reservation set differs"
+        )
+    if any(not row.released for row in slots):
+        return
+    tasks = list(
+        (
+            await session.scalars(
+                sa.select(db.TaskRun)
+                .where(db.TaskRun.flow_run_id == scope.flow.id)
+                .order_by(db.TaskRun.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    )
+    if {row.id for row in tasks} != {
+        row.manifest.task_run_id for row in plan.subtasks
+    } or any(row.state_type != StateType.COMPLETED for row in tasks):
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT",
+            "Normal graph completion needs every exact Completed TaskRun",
+        )
+    subtask_rows = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPhysicalSubtask).where(
+                    db.StreamPhysicalSubtask.graph_revision_id == graph.id
+                )
+            )
+        ).all()
+    )
+    retired = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamSubtaskReplacement).where(
+                    db.StreamSubtaskReplacement.subtask_id.in_(
+                        [row.id for row in subtask_rows]
+                    ),
+                    db.StreamSubtaskReplacement.state == "RETIRED",
+                )
+            )
+        ).all()
+    )
+    retirement_by_subtask = {row.subtask_id: row for row in retired}
+    by_slot = {row.subtask_id: row for row in slots}
+    closed_targets: list[dict[str, Any]] = []
+    for subtask in sorted(subtask_rows, key=lambda row: row.id):
+        operation = retirement_by_subtask.get(subtask.id)
+        envelope = operation.retirement_outcome if operation else None
+        if (
+            envelope is None
+            or operation is None
+            or envelope.get("all_attempts_closed_digest") is None
+        ):
+            raise NativeStreamError(
+                "PHYSICAL_STOP_REQUIRED",
+                "Normal completion lacks a durable complete launch closure",
+            )
+        receipt = physical.StreamSubtaskVerifiedRetirement.model_validate(
+            envelope.get("receipt")
+        )
+        if (
+            receipt.task_state != "COMPLETED"
+            or receipt.grant_id != subtask.current_grant_id
+            or receipt.physical_epoch != subtask.physical_epoch
+            or receipt.task_run_id != subtask.task_run_id
+            or by_slot[subtask.id].release_operation_id != operation.operation_id
+        ):
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT",
+                "Normal retirement scope differs from its physical reservation",
+            )
+        closed_targets.append(
+            {
+                "subtask_id": str(subtask.id),
+                "all_attempts_closed_digest": envelope["all_attempts_closed_digest"],
+            }
+        )
+    stream_ids = {row.output_stream_id for row in plan.subtasks} | {
+        part.stream_id for edge in plan.edges for part in edge.partitions
+    }
+    partitions = list(
+        (
+            await session.scalars(
+                sa.select(db.StreamPartition)
+                .where(db.StreamPartition.flow_run_id == scope.flow.id)
+                .order_by(db.StreamPartition.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    )
+    if {row.id for row in partitions} != stream_ids or any(
+        row.state != "COMPLETED" for row in partitions
+    ):
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT",
+            "Normal completion requires all producer and input EOFs",
+        )
+    summary = {
+        "graph_revision_id": str(graph.id),
+        "terminal_state": "COMPLETED",
+        "total": len(tasks),
+        "stopped": len(tasks),
+        "record_count": sum(row.record_count for row in partitions),
+        "byte_count": sum(row.byte_count for row in partitions),
+        "all_targets_stopped_digest": dag_digest(closed_targets),
+    }
+    await session.execute(
+        sa.delete(db.StreamRecord).where(
+            db.StreamRecord.stream_id.in_(stream_ids),
+            db.StreamRecord.record_kind == "REFERENCE",
+        )
+    )
+    consumer_ids = sa.select(db.StreamConsumer.id).where(
+        db.StreamConsumer.graph_revision_id == graph.id
+    )
+    await session.execute(
+        sa.delete(db.StreamCompletion).where(
+            db.StreamCompletion.consumer_id.in_(consumer_ids)
+        )
+    )
+    await session.execute(
+        sa.delete(db.StreamRouteReceipt).where(
+            db.StreamRouteReceipt.graph_revision_id == graph.id
+        )
+    )
+    await session.execute(
+        sa.delete(db.StreamConsumer).where(
+            db.StreamConsumer.graph_revision_id == graph.id
+        )
+    )
+    await session.execute(
+        sa.delete(db.StreamRecord).where(db.StreamRecord.stream_id.in_(stream_ids))
+    )
+    await release_allocations(session, db, [row.id for row in plan.subtasks])
+    completed_at = cast(DateTime, now("UTC"))
+    for row in partitions:
+        row.released = True
+        row.record_count = 0
+        row.byte_count = 0
+    for manifest in (
+        await session.scalars(
+            sa.select(db.StreamSubmission).where(
+                db.StreamSubmission.graph_revision_id == graph.id
+            )
+        )
+    ).all():
+        manifest.state = "RELEASED"
+        manifest.released_at = completed_at
+    terminal_id = uuid5(graph.id, "prefect-stream-dag-finalize-v1")
+    session.add(
+        db.StreamDAGLifecycleOperation(
+            id=terminal_id,
+            operation_id=terminal_id,
+            graph_revision_id=graph.id,
+            flow_run_id=scope.flow.id,
+            kind="FINALIZE",
+            flow_generation=scope.authority.generation,
+            flow_holder_id=scope.authority.holder_id,
+            flow_run_run_count=scope.flow.run_count,
+            request_digest=dag_digest(summary),
+            accepted_receipt=summary,
+            outcome_digest=dag_digest(summary),
+            state="COMPLETED",
+            terminal_state="COMPLETED",
+            terminal_outcome=summary,
+            completed_at=completed_at,
+        )
+    )
+    await session.flush()
+    graph.terminal_operation_id = terminal_id
+    graph.state = "RELEASED"
+    await session.flush()
+
+
+async def record_dag_failed_task_event(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph: orm_models.StreamGraphRevision,
+    subtask: orm_models.StreamPhysicalSubtask,
+    event_id: UUID,
+) -> None:
+    """A validated signed final Task failure closes output and joins control."""
+    task = await session.get(db.TaskRun, subtask.task_run_id, populate_existing=True)
+    flow = await session.get(db.FlowRun, graph.flow_run_id)
+    authority = await session.scalar(
+        sa.select(db.StreamExecutionAuthority).where(
+            db.StreamExecutionAuthority.flow_run_id == graph.flow_run_id
+        )
+    )
+    if (
+        task is None
+        or flow is None
+        or authority is None
+        or task.state_id != event_id
+        or task.state_type is None
+        or task.state_type not in {StateType.FAILED, StateType.CRASHED}
+    ):
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Signed final Task failure scope differs"
+        )
+    if task.run_count < (task.empirical_policy.retries or 0) + 1 and (
+        task.state is None or task.state.state_details.retriable is not False
+    ):
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT", "A retriable Task failure cannot stop the DAG"
+        )
+    scope = DAGGraphScope(
+        session, session.get_transaction(), flow, authority, graph, True
+    )
+    existing_control = (
+        await session.get(
+            db.StreamDAGLifecycleOperation, graph.current_control_operation_id
+        )
+        if graph.current_control_operation_id
+        else None
+    )
+    control = (
+        existing_control
+        if existing_control is not None
+        and existing_control.effective_control_kind == "CANCEL"
+        else await begin_dag_control(
+            session,
+            db,
+            scope,
+            "FAIL",
+            {
+                "kind": "SIGNED_TASK_FAILURE",
+                "subtask_id": str(subtask.id),
+                "task_run_id": str(task.id),
+                "event_id": str(event_id),
+            },
+        )
+    )
+    operation_id = uuid5(
+        graph.id, "prefect-stream-dag-task-failure-v1/" + str(event_id)
+    )
+    material = {
+        "event_id": str(event_id),
+        "subtask_id": str(subtask.id),
+        "task_run_id": str(task.id),
+        "run_count": task.run_count,
+        "state_type": task.state_type.value,
+        "control_operation_id": str(control.id),
+    }
+    digest = dag_digest(material)
+    previous = await session.get(db.StreamDAGLifecycleOperation, operation_id)
+    if previous is not None:
+        if previous.request_digest != digest or previous.source_event_id != event_id:
+            raise NativeStreamError(
+                "IDENTITY_CONFLICT", "Signed failure journal replay differs"
+            )
+        return
+    plan = await stream_dags.dag_admission_topology_witness(session, db, graph)
+    own = next(row for row in plan.subtasks if row.id == subtask.id)
+    contributors = [
+        row for row in plan.subtasks if row.operator_uid == own.operator_uid
+    ]
+    outgoing = [
+        edge for edge in plan.edges if edge.producer_operator_uid == own.operator_uid
+    ]
+    ids = {row.output_stream_id for row in contributors} | {
+        part.stream_id for edge in outgoing for part in edge.partitions
+    }
+    partitions = {
+        row.id: row
+        for row in (
+            await session.scalars(
+                sa.select(db.StreamPartition)
+                .where(db.StreamPartition.id.in_(ids))
+                .order_by(db.StreamPartition.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+    }
+    if set(partitions) != ids:
+        raise NativeStreamError(
+            "IDENTITY_CONFLICT", "Signed failure producer/edge set differs"
+        )
+    output = partitions[subtask.output_stream_id]
+    if output.state == "OPEN":
+        finish_stream_partition(
+            output, "A signed TaskRun failure stopped this producer"
+        )
+    elif output.state != "FAILED":
+        raise NativeStreamError(
+            "TERMINAL_CONFLICT", "Completed producer cannot report a failed TaskRun"
+        )
+    for edge in outgoing:
+        for part in edge.partitions:
+            required = [
+                row
+                for row in contributors
+                if edge.exchange != "forward"
+                or row.subtask_index == part.partition_index
+            ]
+            current = [partitions[row.output_stream_id].state for row in required]
+            if required and all(state in {"COMPLETED", "FAILED"} for state in current):
+                target = partitions[part.stream_id]
+                if target.state == "OPEN":
+                    finish_stream_partition(
+                        target,
+                        "A sealed upstream producer failed"
+                        if "FAILED" in current
+                        else None,
+                    )
+    session.add(
+        db.StreamDAGLifecycleOperation(
+            id=operation_id,
+            operation_id=operation_id,
+            graph_revision_id=graph.id,
+            flow_run_id=flow.id,
+            kind="TASK_FAILURE",
+            flow_generation=authority.generation,
+            flow_holder_id=authority.holder_id,
+            flow_run_run_count=flow.run_count,
+            request_digest=digest,
+            accepted_receipt=material,
+            outcome_digest=digest,
+            state="ACCEPTED",
+            effective_control_kind=control.effective_control_kind,
+            control_operation_id=control.id,
+            subject_subtask_id=subtask.id,
+            source_event_id=event_id,
+            source_task_state_id=task.state_id,
+        )
+    )
+    await session.flush()
+
+
+async def request_dag_flow_cancellation(
+    session: AsyncSession,
+    db: PrefectDBInterface,
+    graph_id: UUID,
+    proposed_state: states.State,
+) -> orm_models.StreamExecutionAuthority:
+    """Trusted generic Flow cancellation commits DAG control before kill.
+
+    This is called only by the existing platform Flow lifecycle guard. An
+    admitted region first exposes CANCELLING; only the last verified STOP may
+    commit Cancelled. No child or runtime signal can manufacture this authority.
+    """
+    scope = await lock_dag_graph(session, db, graph_id, None, update=True, worker=True)
+    graph = scope.graph
+    if graph.terminal_operation_id is not None:
+        terminal = await session.get(
+            db.StreamDAGLifecycleOperation, graph.terminal_operation_id
+        )
+        if (
+            terminal is None
+            or terminal.kind != "FINALIZE"
+            or terminal.terminal_state != "COMPLETED"
+            or graph.current_control_operation_id is not None
+        ):
+            raise NativeStreamError(
+                "TERMINAL_CONFLICT", "DAG lifetime already has its terminal control"
+            )
+        # The completed DAG is clean; ordinary parent Python remains cancellable.
+        return scope.authority
+    if graph.admission_operation_id is None:
+        control = await begin_dag_control(
+            session, db, scope, "PREVIEW_ABORT", {"kind": "PLATFORM_CANCEL"}
+        )
+        await finalize_preview(session, db, scope, control)
+        proposed_state.type = StateType.CANCELLED
+        proposed_state.name = "Cancelled"
+        return scope.authority
+    await begin_dag_control(session, db, scope, "CANCEL", {"kind": "PLATFORM_CANCEL"})
+    proposed_state.type = StateType.CANCELLING
+    proposed_state.name = "Cancelling"
+    await session.flush()
+    return scope.authority

@@ -1,0 +1,135 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_public_dag_lifecycle_two_real_workers_postgres[False-normal] _______
+
+execution_api = <tests.test_native_stream_recovery_http.RestartableAPI object at 0x7efdde57d1c0>
+tmp_path = PosixPath('/tmp/native-ni012-runtime-live/run-sync-f91fcd8d/pytest/test_public_dag_lifecycle_two_0')
+db = <prefect.server.database.interface.PrefectDBInterface object at 0x7efddfef8d10>
+asynchronous = False, mode = 'normal'
+
+    @pytest.mark.parametrize(
+        "asynchronous,mode",
+        [
+            (False, "normal"),
+            (True, "normal"),
+            (False, "preview"),
+            (False, "failure"),
+            (False, "cancel"),
+        ],
+    )
+    @pytest.mark.timeout(300)
+    async def test_public_dag_lifecycle_two_real_workers_postgres(
+        execution_api: RestartableAPI,
+        tmp_path: Path,
+        db: Any,
+        asynchronous: bool,
+        mode: str,
+    ):
+        server = execution_api
+        user_module = tmp_path / "native_dag_example.py"
+        user_module.write_text(_USER_MODULE)
+        definition = load_flow_from_entrypoint(
+            str(user_module) + ":" + ("documents_async" if asynchronous else "documents")
+        )
+        pool = "dag-runtime-" + uuid4().hex
+        names = ["dag-left-" + uuid4().hex, "dag-right-" + uuid4().hex]
+        with temporary_settings(
+            {PREFECT_API_URL: server.url, PREFECT_API_AUTH_STRING: server.auth}
+        ):
+            async with get_client() as client:
+                try:
+                    await client.create_global_concurrency_limit(
+                        GlobalConcurrencyLimitCreate(name="tag:" + _TAG, limit=4)
+                    )
+                except ObjectAlreadyExists:
+                    limit = await client.read_global_concurrency_limit_by_name(
+                        "tag:" + _TAG
+                    )
+                    assert limit.limit == 4 and limit.active_slots == 0
+                template = ProcessWorker.get_default_base_job_template()
+                template["prefect_native_streaming"] = {
+                    "schema_version": 1,
+                    "profile": "bounded-linear-v1",
+                }
+                await client.create_work_pool(
+                    WorkPoolCreate(name=pool, type="process", base_job_template=template)
+                )
+>               deployment = RunnerDeployment.from_flow(
+                    definition,
+                    name="dag-lifecycle",
+                    work_pool_name=pool,
+                    concurrency_limit=1,
+                    job_variables={"working_dir": str(Path.cwd()), "stream_output": True},
+                )
+
+tests/test_native_stream_dag_execution_http.py:188: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/prefect/deployments/runner.py:1111: in from_flow
+    cls._set_defaults_from_flow(deployment, flow)
+src/prefect/deployments/runner.py:948: in _set_defaults_from_flow
+    declaration = native_deployment_declaration(flow)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+flow = <prefect.flows.Flow object at 0x7efdde59dd30>
+
+    def native_deployment_declaration(flow: Any) -> dict[str, Any] | None:
+        config = getattr(flow, "streaming", None)
+        if config is None:
+            return None
+        if not flow.version:
+            raise StreamProtocolError(
+                "A native deployment requires an explicit Flow version"
+            )
+        if type(flow.retries) is not int or not 1 <= flow.retries <= 63:
+>           raise StreamProtocolError(
+                "Native deployment recovery requires 1..63 configured Flow retries"
+            )
+E           prefect.streams.StreamProtocolError: Native deployment recovery requires 1..63 configured Flow retries
+
+src/prefect/_internal/stream_deployment.py:25: StreamProtocolError
+---------------------------- Captured stdout setup -----------------------------
+Generating test database connection URL from 'postgresql+asyncpg://[redacted-owned-test-dsn]'
+Connecting to postgres at 'postgres://[redacted-owned-test-dsn]'
+Creating test postgres database 'native_ni012_runtime_c77e9b9e_tests_master'
+Using test database connection URL 'postgresql+asyncpg://[redacted-owned-test-dsn]'
+Running hosted API server on port 57591
+---------------------------- Captured stderr setup -----------------------------
+13:10:47.246 | INFO    | uvicorn.error - Started server process [262640]
+13:10:47.250 | INFO    | uvicorn.error - Waiting for application startup.
+13:10:47.497 | DEBUG   | prefect.server - Worker channel configuration: cleanup_queue_storage=prefect.server.worker_communication.cleanup_queue.memory cleanup_lease_seconds=30.0 cleanup_max_delivery_attempts=3 cleanup_completed_idempotency_retention_seconds=None
+13:10:47.503 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: ensure_cancelling_timeout_checks
+13:10:47.503 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_cancelled_flow_runs
+13:10:47.504 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_subflow_runs
+13:10:47.504 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_vacuum_tasks
+13:10:47.504 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_event_vacuum_tasks
+13:10:47.504 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_orphan_vacuum_tasks
+13:10:47.504 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_worker_health
+13:10:47.505 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_late_runs
+13:10:47.505 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: monitor_expired_pauses
+13:10:47.505 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_deployments
+13:10:47.505 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: schedule_recent_deployments
+13:10:47.505 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: send_telemetry_heartbeat
+13:10:47.505 | DEBUG   | prefect.server.services.perpetual_services - Skipping disabled perpetual service: evaluate_proactive_triggers_periodic
+13:10:47.505 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: monitor_expired_leases
+13:10:47.506 | DEBUG   | prefect.server.services.perpetual_services - Registered perpetual service: reconcile_cleanup_delivery
+13:10:47.506 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: monitor_expired_leases
+13:10:47.507 | INFO    | prefect.server.services.perpetual_services - Scheduling perpetual service: reconcile_cleanup_delivery
+13:10:47.508 | INFO    | prefect.server.services.perpetual_services - Perpetual services: 2 enabled, 13 disabled, 15 total
+13:10:47.510 | INFO    | uvicorn.error - Application startup complete.
+13:10:47.510 | INFO    | uvicorn.error - Uvicorn running on socket ('127.0.0.1', 57591) (Press CTRL+C to quit)
+13:10:47.590 | INFO    | uvicorn.access - 127.0.0.1:35818 - "GET /api/health HTTP/1.1" 200
+----------------------------- Captured stderr call -----------------------------
+13:10:51.708 | DEBUG   | prefect.client - Connecting to API at http://127.0.0.1:33453/api/
+------------------------------ Captured log call -------------------------------
+DEBUG    prefect.client:__init__.py:1230 Connecting to API at http://127.0.0.1:33453/api/
+--------------------------- Captured stdout teardown ---------------------------
+Cleaning up test postgres database
+--------------------------- Captured stderr teardown ---------------------------
+13:10:52.742 | INFO    | uvicorn.error - Shutting down
+13:10:52.843 | INFO    | uvicorn.error - Waiting for application shutdown.
+13:10:52.845 | INFO    | uvicorn.error - Application shutdown complete.
+13:10:52.845 | INFO    | uvicorn.error - Finished server process [262640]
+=========================== short test summary info ============================
+FAILED tests/test_native_stream_dag_execution_http.py::test_public_dag_lifecycle_two_real_workers_postgres[False-normal]
+1 failed in 12.17s
