@@ -26,6 +26,7 @@
 | [Planner fixtures: evidence](chapters/08-planner-fixtures-evidence.md) | `state`, дополнительное чтение | Remaining TEXT `flink-table/flink-table-planner/src/test/resources`; immutable owner остаётся `table`, чтение учитывается union без смены denominator |
 | [Planner main: архитектура lowering](chapters/10-planner-main-architecture.md) | `architect`, дополнительное чтение | Remaining TEXT planner `src/main/` после личного закрытия исходных1942files/277494lines; immutable owner=`table` |
 | [Planner Java/Scala tests: evidence](chapters/11-planner-tests-evidence.md) | `execution`, дополнительное чтение | Remaining TEXT planner `src/test/java/` и `src/test/scala/` после union-closure исходного execution owner; immutable owner остаётся `table` |
+| [Chinese docs: evidence](chapters/12-chinese-docs-evidence.md) | `state`, дополнительное чтение | Remaining TEXT `docs/content.zh/` после полного личного чтения planner resources; immutable owner остаётся `root` |
 
 После личного полного закрытия исходного owner `control` (2 451 текстовый файл, 388 013 строк) начато дополнительное чтение оставшегося TEXT `flink-tests/src/test/resources/`: [глава09 — форматы тестовых ресурсов](chapters/09-test-resource-formats.md). Root не начинает новые файлы этого subtree; уже подтверждённые диапазоны сохраняются и исключаются из remaining union. Immutable owner остаётся `root`, исходный denominator не меняется. Начало handoff не означает закрытия оставшихся resources; binaries учитываются отдельно.
 
