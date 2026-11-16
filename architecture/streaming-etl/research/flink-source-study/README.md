@@ -25,6 +25,10 @@
 | [Остальная поверхность репозитория](chapters/07-build-boundaries-tests-web.md) | `root` | Общие файлы, build/CI, docs, packaging/examples и прочие строки inventory |
 | [Planner fixtures: evidence](chapters/08-planner-fixtures-evidence.md) | `state`, дополнительное чтение | Remaining TEXT `flink-table/flink-table-planner/src/test/resources`; immutable owner остаётся `table`, чтение учитывается union без смены denominator |
 
+Дополнительный reserve: после личного полного закрытия исходного owner `control` читает весь оставшийся TEXT `flink-tests/src/test/resources/` и ведёт отдельную главу09. Root прекратил начинать новые файлы этого subtree; уже подтверждённые диапазоны сохраняются и исключаются из remaining union. Immutable owner остаётся `root`, исходный denominator не меняется. На момент согласования это reservation следующей работы, а не заявление, что resources прочитаны; глава09 будет связана после её создания.
+
+Для выравнивания дальнейшего чтения согласованы ещё два непересекающихся reserve внутри owner `table`: после личного полного закрытия исходной области `architect` берёт remaining TEXT `flink-table/flink-table-planner/src/main/`, а `execution` — remaining TEXT `flink-table/flink-table-planner/src/test/java/` и `src/test/scala/`. Table reader больше не начинает новые файлы этих subtrees; его последний ExecNodeBase1–369 подтверждён до handoff, pending ranges отсутствуют. `state` сохраняет planner test/resources. Уже прочитанное исключается по union всех ledgers; immutable ownership и исходные denominators не меняются. Эти reservations не означают прочтения ещё открытых файлов.
+
 Точная принадлежность каждого файла записана в `inventory.jsonl`; таблица выше служит навигацией, а не заменяет этот перечень. Главы добавляются по мере чтения. Ссылки на готовность, если они появятся, должны опираться на проверку ledger, а не на наличие главы.
 
 ## Как сохраняются доказательства
