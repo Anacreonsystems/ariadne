@@ -23,6 +23,7 @@
 | [Table/SQL](chapters/05-table-sql-planner-runtime.md) | `table` | Planner, code generation, SQL runtime/operators и associated tests/resources |
 | [Коннекторы, форматы, storage, библиотеки и метрики](chapters/06-connectors-formats-storage-metrics.md) | `architect` | In-tree connectors, formats, filesystems, CEP, state-processing API, queryable state, metrics |
 | [Остальная поверхность репозитория](chapters/07-build-boundaries-tests-web.md) | `root` | Общие файлы, build/CI, docs, packaging/examples и прочие строки inventory |
+| [Planner fixtures: evidence](chapters/08-planner-fixtures-evidence.md) | `state`, дополнительное чтение | Remaining TEXT `flink-table/flink-table-planner/src/test/resources`; immutable owner остаётся `table`, чтение учитывается union без смены denominator |
 
 Точная принадлежность каждого файла записана в `inventory.jsonl`; таблица выше служит навигацией, а не заменяет этот перечень. Главы добавляются по мере чтения. Ссылки на готовность, если они появятся, должны опираться на проверку ledger, а не на наличие главы.
 
