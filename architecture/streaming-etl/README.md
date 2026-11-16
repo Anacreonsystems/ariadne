@@ -1,5 +1,10 @@
 # Ariadne native streaming
 
+The current source research for the new engine is tracked in the
+[Apache Flink architecture study](research/flink-source-study/README.md).
+It documents a pinned source revision and confirmed reading ranges; the study
+is in progress and does not replace the historical acceptance records below.
+
 Start with the [finite streaming SDK guide](sdk_guide.md) for ordinary Prefect
 Tasks, an explicit A1→B1/C2 graph, reference payloads and deployment/worker setup.
 The walkthrough distinguishes current real-process evidence from the remaining
