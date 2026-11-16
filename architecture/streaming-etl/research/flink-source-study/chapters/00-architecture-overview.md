@@ -89,6 +89,8 @@ Source fetcher передаёт batch, но concrete file emitter обновля
 
 Generic async sink обеспечивает at-least-once, а не универсальный exactly-once external side effect. Timeout может повторить batch, чей первый запрос позднее успешно запишется. CAS result-handler предотвращает повторное изменение локального writer state, но не отменяет внешнюю запись. FileSink имеет другую структуру: writer persist/closeForCommit→committables→FileCommitter.commitAfterRecovery, а compaction добавляет persistent precommit topology. Семантика внешнего sink определяется этим полным протоколом и underlying recoverable writer. [Глава 06 с прочитанными timeout/restore tests](06-connectors-formats-storage-metrics.md).
 
+Даже внутри filesystem connector существуют отдельные protocols: table streaming использует legacy Buckets writer, optional table compaction и all-task partition-policy gate; batch table OutputFormat публикует выбранные finished attempts через finalizeGlobal на master. Его loader выполняет overwrite deletion и file moves до metadata policies, без общей rollback boundary. Поэтому гарантии Sink2 FileSink нельзя переносить на всё, что пишет files. Partition-time commit trigger явно сохраняет map checkpoint→watermark: reset runtime watermark после restore совместим с checkpointed копией, если конкретный subsystem сам её хранит. [Разбор table filesystem путей](06-connectors-formats-storage-metrics.md).
+
 ## Потребности разработчика и системы: наблюдаемые критерии
 
 Эти критерии формулируют, как проверять описанную архитектуру по исходникам. Они не являются новыми утверждёнными требованиями Ariadne.
