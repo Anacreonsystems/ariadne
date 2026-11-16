@@ -4,17 +4,21 @@
 
 **Чтение всего корпуса не завершено.** `corpus.json` и `inventory.jsonl` описывают объём: 27 476 файлов, из них 21 373 UTF-8 текста, 4 084 544 строки. Это учёт файлов, а не свидетельство понимания их содержимого. Бинарные файлы учитываются отдельно и не обозначаются как прочитанный текст. Полное чтение файла означает потребление всех его строк без усечения; чтение production-класса не закрывает его тесты, ресурсы или зависимости.
 
+[Сквозная архитектура и наблюдаемые критерии](chapters/00-architecture-overview.md) связывает уже изученные пути графа, deployment, mailbox, state, checkpoint и sink. Это развивающийся свод с явными границами доказательств.
+
 ## Навигация
+
+Проверки последнего сохранённого промежуточного среза: [verification.md](verification.md).
 
 | Область | Ответственный reader | Состав |
 |---|---|---|
 | [Управление кластером и job](chapters/01-control-plane-scheduling.md) | `control` | JobMaster, scheduler, execution graph, resource/slot management, deployment и HA |
-| Исполнение и обмен | `execution` | Task/StreamTask, mailbox, graph translation, network, shuffle, backpressure |
-| Состояние, checkpoint и время | `state` | State backend, snapshots/recovery, checkpoint, timers/windows |
-| API, типы и сериализация | `api` | API contracts, transformations, serializers и API-adjacent модули |
-| Table/SQL | `table` | Planner, code generation, SQL runtime/operators и associated tests/resources |
+| [Исполнение и обмен](chapters/02-task-execution-network-backpressure.md) | `execution` | Task/StreamTask, mailbox, graph translation, network, shuffle, backpressure |
+| [Состояние, checkpoint и время](chapters/03-state-checkpoints-windows-timers.md) | `state` | State backend, snapshots/recovery, checkpoint, timers/windows |
+| [API, типы и сериализация](chapters/04-api-types-serialization-python.md) | `api` | API contracts, transformations, serializers и API-adjacent модули |
+| [Table/SQL](chapters/05-table-sql-planner-runtime.md) | `table` | Planner, code generation, SQL runtime/operators и associated tests/resources |
 | [Коннекторы, форматы, storage, библиотеки и метрики](chapters/06-connectors-formats-storage-metrics.md) | `architect` | In-tree connectors, formats, filesystems, CEP, state-processing API, queryable state, metrics |
-| Остальная поверхность репозитория | `root` | Общие файлы, build/CI, docs, packaging/examples и прочие строки inventory |
+| [Остальная поверхность репозитория](chapters/07-build-boundaries-tests-web.md) | `root` | Общие файлы, build/CI, docs, packaging/examples и прочие строки inventory |
 
 Точная принадлежность каждого файла записана в `inventory.jsonl`; таблица выше служит навигацией, а не заменяет этот перечень. Главы добавляются по мере чтения. Ссылки на готовность, если они появятся, должны опираться на проверку ledger, а не на наличие главы.
 
